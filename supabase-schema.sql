@@ -24,11 +24,12 @@ create table if not exists public.employees (
 );
 
 -- 3. โปรเจค
+-- งานภายในบริษัท (ฝ่าย Design สั่งให้ฝ่าย Production ผลิต) จึงไม่มีฟิลด์ลูกค้า
+-- code is unique: 1 โปรเจค = 1 code เสมอ, ป้องกันสร้างโปรเจคซ้ำโดยไม่ตั้งใจ
 create table if not exists public.projects (
   id         uuid primary key default gen_random_uuid(),
-  code       text not null,
+  code       text not null unique,
   name       text not null,
-  customer   text,
   status     text not null default 'active',   -- active / closed
   created_at timestamptz not null default now()
 );
@@ -50,28 +51,37 @@ create table if not exists public.operations (
 );
 
 -- 6. Part master — กำหนด routing (ลำดับขั้นตอนที่ part นี้ต้องผ่าน)
+-- 1 โปรเจค (project_id) มีได้หลาย Part แต่ part_no ต้องไม่ซ้ำกันภายในโปรเจคเดียวกัน
 create table if not exists public.part_master (
-  id          uuid primary key default gen_random_uuid(),
-  project_id  uuid references public.projects(id),
-  part_no     text not null,
-  part_name   text not null,
-  material    text,
-  unit_weight numeric not null default 0,       -- น้ำหนักโดยประมาณต่อชิ้น (กก.)
-  routing     jsonb not null default '[]',       -- เช่น ["ตัด","เจาะ","บาก","ประกอบ"]
-  created_at  timestamptz not null default now()
+  id                uuid primary key default gen_random_uuid(),
+  project_id        uuid not null references public.projects(id),
+  part_no           text not null,
+  part_name         text not null,
+  material          text,
+  unit_weight       numeric not null default 0,   -- น้ำหนักโดยประมาณต่อชิ้น (กก.) — ค่าเริ่มต้นตอน Release
+  default_length_mm numeric,                       -- ความยาวโดยประมาณต่อชิ้น (มม.) — ค่าเริ่มต้นตอน Release
+  routing           jsonb not null default '[]',   -- เช่น ["ตัด","เจาะ","บาก","ประกอบ"]
+  created_at        timestamptz not null default now(),
+  unique (project_id, part_no)
 );
 
 -- 7. Release — การปล่อยงานแต่ละครั้ง
+-- เก็บน้ำหนัก/ความยาวที่ใช้จริงของล็อตนี้ไว้ตรงนี้ (ค่าเริ่มต้นดึงจาก Part Master
+-- แต่แก้ไขต่อ Release ได้) แล้ว "จ่าย" ค่านี้ลงทุกชิ้นใน part_units ตอนสร้าง QR
+-- เพื่อให้หน้าสแกนหน้าเครื่องไม่ต้องให้พนักงานพิมพ์ข้อมูลใดๆ เพิ่มอีกเลย
 create table if not exists public.releases (
   id             uuid primary key default gen_random_uuid(),
-  part_master_id uuid references public.part_master(id),
-  qty            int not null,
+  part_master_id uuid not null references public.part_master(id),
+  qty            int not null check (qty > 0),
+  unit_weight    numeric,          -- น้ำหนัก/ชิ้นของล็อตนี้ (กก.)
+  length_mm      numeric,          -- ความยาว/ชิ้นของล็อตนี้ (มม.)
   released_by    uuid references public.employees(id),
   release_date   timestamptz not null default now(),
   note           text
 );
 
 -- 8. Part units — 1 แถว = 1 ชิ้นจริง มี QR ของตัวเอง
+-- weight/length_mm ถูกกำหนดตั้งแต่ตอน Release (จากล็อต) — หน้าสแกนอ่านอย่างเดียว ไม่ต้องพิมพ์
 create table if not exists public.part_units (
   id             uuid primary key default gen_random_uuid(),
   release_id     uuid references public.releases(id),
@@ -79,7 +89,8 @@ create table if not exists public.part_units (
   unit_no        int not null,                   -- ลำดับชิ้นในล็อต เช่น 1..50
   qr_code        text not null unique,            -- โค้ดที่พิมพ์ลงป้าย เช่น PRJ001-A12-0001
   status         text not null default 'released',-- released / in_progress / finished
-  weight         numeric,                          -- น้ำหนักจริงถ้าชั่งตอนสแกน
+  weight         numeric,                          -- น้ำหนักของชิ้นนี้ (กก.) — คัดลอกมาจาก release ตอนสร้าง
+  length_mm      numeric,                          -- ความยาวของชิ้นนี้ (มม.) — คัดลอกมาจาก release ตอนสร้าง
   created_at     timestamptz not null default now()
 );
 
