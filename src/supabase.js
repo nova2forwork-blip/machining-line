@@ -59,12 +59,54 @@ export async function updateRow(table, id, patch) {
   return data;
 }
 
+// Bulk update: apply the same patch to every row matching the given filters.
+// Used e.g. to propagate a release's edited weight/length down to all its part_units.
+export async function updateRows(table, filters, patch) {
+  let q = supabase.from(table).update(patch);
+  for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
+  const { data, error } = await q.select();
+  if (error) {
+    console.warn("updateRows error", table, error);
+    throw error;
+  }
+  return data || [];
+}
+
 export async function deleteRow(table, id) {
   const { error } = await supabase.from(table).delete().eq("id", id);
   if (error) {
     console.warn("deleteRow error", table, error);
     throw error;
   }
+}
+
+// Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
+export async function deleteRows(table, ids) {
+  if (!ids || ids.length === 0) return;
+  const { error } = await supabase.from(table).delete().in("id", ids);
+  if (error) {
+    console.warn("deleteRows error", table, error);
+    throw error;
+  }
+}
+
+// Delete a release entirely, along with every part_unit it created and any
+// scan_logs recorded against those units (FK constraints require deleting
+// children before parents). Caller is responsible for warning the user first
+// if any of those units have already been scanned — this does not check.
+export async function deleteReleaseCascade(releaseId) {
+  const { data: units, error: unitsErr } = await supabase
+    .from("part_units").select("id").eq("release_id", releaseId);
+  if (unitsErr) throw unitsErr;
+  const unitIds = (units || []).map((u) => u.id);
+  if (unitIds.length > 0) {
+    const { error: scanErr } = await supabase.from("scan_logs").delete().in("part_unit_id", unitIds);
+    if (scanErr) throw scanErr;
+    const { error: unitDelErr } = await supabase.from("part_units").delete().in("id", unitIds);
+    if (unitDelErr) throw unitDelErr;
+  }
+  const { error: relErr } = await supabase.from("releases").delete().eq("id", releaseId);
+  if (relErr) throw relErr;
 }
 
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
@@ -105,6 +147,19 @@ export async function getAllUnitsFull(statusFilter) {
   const { data, error } = await q;
   if (error) {
     console.warn("getAllUnitsFull error", error);
+    return [];
+  }
+  return data || [];
+}
+
+// ทุก release พร้อม join part/project/พนักงานที่ปล่อยงาน (ใช้ทำหน้าจัดการ Release)
+export async function getReleasesFull() {
+  const { data, error } = await supabase
+    .from("releases")
+    .select("*, part_master(part_no, part_name, project_id, projects(code, name)), employee:employees(name, code)")
+    .order("release_date", { ascending: false });
+  if (error) {
+    console.warn("getReleasesFull error", error);
     return [];
   }
   return data || [];
