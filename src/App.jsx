@@ -6,6 +6,7 @@ import {
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
+import { parseReleaseExcel } from "./excelImport.js";
 import Icon from "./icons.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -492,6 +493,170 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
   );
 }
 
+// ─── Import Release จากไฟล์ Excel (หลาย Part ในใบเดียว) ─────────────────────
+// ไฟล์ต้นแบบ: "Production Release Report" — มี Release Order + Project ที่หัว
+// เอกสาร ตามด้วยตารางรายการ Part หลายแถว (Code / Qty / Length / Weight-per-m /
+// Material / Remark) แต่ละแถวจะกลายเป็น 1 release + สร้าง QR ต่อชิ้นให้ครบ
+// ตาม Qty เหมือนการ Release ทีละ Part ทุกประการ — ต่างกันที่ทำทีเดียวหลาย Part
+// และ Part ที่ยังไม่มีใน Part Master จะถูกสร้างให้อัตโนมัติจากข้อมูลในไฟล์
+function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
+  const [file, setFile] = useState(null);
+  const [parsed, setParsed] = useState(null); // { releaseOrder, projectCode, items }
+  const [projectId, setProjectId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [progress, setProgress] = useState("");
+
+  async function handleFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f); setErr(""); setParsed(null);
+    try {
+      const result = await parseReleaseExcel(f);
+      setParsed(result);
+      const matchedProject = projects.find(
+        (p) => p.code.trim().toLowerCase() === result.projectCode.trim().toLowerCase()
+      );
+      setProjectId(matchedProject ? matchedProject.id : "");
+    } catch (e2) {
+      setErr(e2.message || "อ่านไฟล์ไม่สำเร็จ");
+    }
+  }
+
+  const partsInProject = parts.filter((p) => p.project_id === projectId);
+  const rowsPreview = (parsed?.items || []).map((it) => ({
+    ...it,
+    existingPart: partsInProject.find((p) => p.part_no.trim().toLowerCase() === it.code.trim().toLowerCase()),
+  }));
+  const newPartCount = rowsPreview.filter((r) => !r.existingPart).length;
+  const totalUnits = rowsPreview.reduce((sum, r) => sum + r.qty, 0);
+
+  async function doImport() {
+    if (!parsed || !projectId) return;
+    setBusy(true); setErr("");
+    const allUnits = [];
+    let releasesCreated = 0;
+    let partsCreated = 0;
+    try {
+      // ทำทีละแถวตามลำดับ (ไม่ Promise.all) เพื่อกันสร้าง Part ซ้ำแข่งกันเอง
+      for (let i = 0; i < rowsPreview.length; i++) {
+        const row = rowsPreview[i];
+        setProgress(`กำลังนำเข้า ${i + 1} / ${rowsPreview.length} — ${row.code}`);
+
+        let part = row.existingPart;
+        if (!part) {
+          part = await insertRow("part_master", {
+            project_id: projectId,
+            part_no: row.code,
+            part_name: row.code,
+            material: row.material,
+            unit_weight: row.unit_weight ?? 0,
+            default_length_mm: row.length_mm,
+            routing: [],
+          });
+          partsCreated += 1;
+        }
+
+        const release = await insertRow("releases", {
+          part_master_id: part.id,
+          qty: row.qty,
+          unit_weight: row.unit_weight,
+          length_mm: row.length_mm,
+          released_by: user.id,
+          note: row.remark,
+          release_order: parsed.releaseOrder || null,
+        });
+        releasesCreated += 1;
+
+        const suffix = release.id.slice(0, 6).toUpperCase();
+        const units = Array.from({ length: row.qty }, (_, u) => ({
+          release_id: release.id,
+          part_master_id: part.id,
+          unit_no: u + 1,
+          qr_code: `${part.part_no}-${suffix}-${String(u + 1).padStart(4, "0")}`,
+          status: "released",
+          weight: release.unit_weight,
+          length_mm: release.length_mm,
+        }));
+        const created = await insertRows("part_units", units);
+        allUnits.push(...created);
+      }
+      onImported({ units: allUnits, releaseOrder: parsed.releaseOrder, releasesCreated, partsCreated });
+      onClose();
+    } catch (e2) {
+      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + (allUnits.length ? ` (สร้างสำเร็จไปแล้ว ${releasesCreated} release ก่อนพัง — ตรวจสอบประวัติ Release ด้านล่างได้)` : ""));
+    }
+    setBusy(false); setProgress("");
+  }
+
+  return (
+    <Modal title="นำเข้า Release จาก Excel" sub="รองรับไฟล์ฟอร์ม Production Release Report (หลาย Part ในใบเดียว)" onClose={onClose}>
+      {!parsed && (
+        <>
+          <Field label="เลือกไฟล์ Excel (.xlsx)">
+            <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="input" />
+          </Field>
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 4 }}>{err}</div>}
+        </>
+      )}
+
+      {parsed && (
+        <>
+          <div className="grid-2" style={{ marginBottom: 10 }}>
+            <Field label="เลขที่ Release Order (จากไฟล์)">
+              <Input value={parsed.releaseOrder || "-"} readOnly />
+            </Field>
+            <Field label="โปรเจค">
+              <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+                options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+            </Field>
+          </div>
+          {!projectId && (
+            <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>
+              ไม่พบโปรเจค "{parsed.projectCode}" ที่ตรงกันในระบบ — กรุณาเลือกโปรเจคเป้าหมายเอง
+            </div>
+          )}
+
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
+            พบ {rowsPreview.length} รายการ Part · รวม {fmtNum(totalUnits)} ชิ้น
+            {newPartCount > 0 && <> · <b style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</b></>}
+          </div>
+
+          <div className="table-wrap" style={{ maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
+            <table className="data-table">
+              <thead>
+                <tr><th>Code</th><th>Qty</th><th>ยาว (มม.)</th><th>น้ำหนัก/ชิ้น</th><th>วัสดุ</th><th>สถานะ</th></tr>
+              </thead>
+              <tbody>
+                {rowsPreview.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.code}</td>
+                    <td>{r.qty}</td>
+                    <td>{r.length_mm ? fmtNum(r.length_mm) : "-"}</td>
+                    <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                    <td>{r.material || "-"}</td>
+                    <td>{r.existingPart ? <Badge tone="steel">มีอยู่แล้ว</Badge> : <Badge tone="warning">สร้างใหม่</Badge>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+          {busy && progress && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{progress}</div>}
+
+          <div className="modal-actions">
+            <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+            <Btn type="button" variant="accent" onClick={doImport} disabled={busy || !projectId}>
+              {busy ? "กำลังนำเข้า..." : `นำเข้าและสร้าง QR ทั้งหมด (${fmtNum(totalUnits)} ใบ)`}
+            </Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function ReleasePage({ user }) {
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
@@ -506,6 +671,8 @@ function ReleasePage({ user }) {
   const [busy, setBusy] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewPart, setShowNewPart] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [lastBatchLabel, setLastBatchLabel] = useState(""); // ชื่อชุดสำหรับหัวข้อพิมพ์ป้าย เมื่อ import จาก Excel
 
   const [labelPreset, setLabelPreset] = useState("20x20");
   const [customW, setCustomW] = useState(20);
@@ -551,6 +718,7 @@ function ReleasePage({ user }) {
       }));
       const created = await insertRows("part_units", units);
       setLastUnits(created);
+      setLastBatchLabel(selectedPart.part_no);
       setNote(""); setQty(10);
       await load();
     } catch (e) {
@@ -566,7 +734,7 @@ function ReleasePage({ user }) {
   }
   function doPrint() {
     const { w, h } = currentSize();
-    printLabels(lastUnits, { widthMm: w, heightMm: h, showCode, mode: printMode, title: `QR-${selectedPart?.part_no || ""}` });
+    printLabels(lastUnits, { widthMm: w, heightMm: h, showCode, mode: printMode, title: `QR-${lastBatchLabel || selectedPart?.part_no || ""}` });
   }
 
   return (
@@ -576,6 +744,9 @@ function ReleasePage({ user }) {
           <div className="page-title">Release Production</div>
           <div className="page-sub">ปล่อยงานใหม่และสร้าง QR ต่อชิ้นสำหรับพิมพ์ป้าย</div>
         </div>
+        <Btn variant="ghost" onClick={() => setShowImport(true)}>
+          <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
+        </Btn>
       </div>
 
       <Card title="ปล่อยงานใหม่">
@@ -665,11 +836,12 @@ function ReleasePage({ user }) {
       <Card title="ประวัติการ Release ล่าสุด">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>วันที่</th><th>Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>Release Order</th><th>Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
               {recent.slice(0, 10).map((r) => (
                 <tr key={r.id}>
                   <td>{fmtDT(r.release_date)}</td>
+                  <td>{r.release_order || "-"}</td>
                   <td>{parts.find((p) => p.id === r.part_master_id)?.part_no || "-"}</td>
                   <td>{r.qty}</td>
                   <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
@@ -681,6 +853,24 @@ function ReleasePage({ user }) {
           </table>
         </div>
       </Card>
+
+      {showImport && (
+        <ImportReleaseModal
+          user={user}
+          projects={projects}
+          parts={parts}
+          onClose={() => setShowImport(false)}
+          onImported={async ({ units, releaseOrder, releasesCreated, partsCreated }) => {
+            setLastUnits(units);
+            setLastBatchLabel(releaseOrder || "batch");
+            await load();
+            alert(
+              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${units.length} QR)` +
+              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : "")
+            );
+          }}
+        />
+      )}
 
       {showNewProject && (
         <QuickAddProjectModal
