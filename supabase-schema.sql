@@ -77,8 +77,12 @@ create table if not exists public.releases (
   length_mm      numeric,          -- ความยาว/ชิ้นของล็อตนี้ (มม.)
   released_by    uuid references public.employees(id),
   release_date   timestamptz not null default now(),
-  note           text
+  note           text,
+  release_order  text              -- เลขที่ใบสั่งปล่อยงาน เช่น "P-012" จากไฟล์ Excel
+                                    -- หลาย release ที่ import จากไฟล์เดียวกันจะมีค่านี้เหมือนกัน
+                                    -- ใช้จัดกลุ่มดู/พิมพ์ป้ายทั้งชุดพร้อมกัน
 );
+create index if not exists releases_release_order_idx on public.releases (release_order);
 
 -- 8. Part units — 1 แถว = 1 ชิ้นจริง มี QR ของตัวเอง
 -- weight/length_mm ถูกกำหนดตั้งแต่ตอน Release (จากล็อต) — หน้าสแกนอ่านอย่างเดียว ไม่ต้องพิมพ์
