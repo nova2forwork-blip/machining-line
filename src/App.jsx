@@ -5,67 +5,17 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
+import { printLabels, LABEL_PRESETS } from "./labels.js";
+import Icon from "./icons.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 
-// ─── Theme ──────────────────────────────────────────────────────────────────
-const C = {
-  bg: "#0d1520", panel: "#141d2b", panel2: "#1a2436", border: "#223047",
-  text: "#e2e8f0", muted: "#8ca0b8", accent: "#3b82f6", success: "#10b981",
-  warning: "#f59e0b", danger: "#ef4444",
+// ─── Chart theme (matches CSS custom properties — recharts needs literal values) ──
+const CHART = {
+  grid: "#2c3540", muted: "#8b93a1", tooltipBg: "#212832", tooltipBorder: "#2c3540",
+  text: "#edf1f4", accent: "#d98c3d", success: "#48b083",
 };
-
-// ─── Small UI atoms ─────────────────────────────────────────────────────────
-const Btn = ({ children, variant = "default", style, ...rest }) => {
-  const bg = { default: C.panel2, accent: C.accent, danger: C.danger, success: C.success }[variant];
-  return (
-    <button
-      {...rest}
-      style={{
-        background: bg, color: "#fff", border: `1px solid ${variant === "default" ? C.border : bg}`,
-        borderRadius: 8, padding: "9px 16px", fontSize: 14, fontWeight: 500, cursor: "pointer", ...style,
-      }}
-    >{children}</button>
-  );
-};
-const Input = forwardRef((props, ref) => (
-  <input {...props} ref={ref} style={{
-    background: C.panel2, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8,
-    padding: "9px 12px", fontSize: 14, width: "100%", outline: "none", ...(props.style || {}),
-  }} />
-));
-const Select = ({ options, ...props }) => (
-  <select {...props} style={{
-    background: C.panel2, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8,
-    padding: "9px 12px", fontSize: 14, width: "100%", outline: "none", ...(props.style || {}),
-  }}>
-    <option value="">— เลือก —</option>
-    {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-  </select>
-);
-const Label = ({ children }) => (
-  <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>{children}</div>
-);
-const Field = ({ label, children }) => (
-  <div style={{ marginBottom: 12 }}><Label>{label}</Label>{children}</div>
-);
-const Card = ({ title, right, children }) => (
-  <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", marginBottom: 16 }}>
-    {(title || right) && (
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 15, fontWeight: 500, color: C.text }}>{title}</div>
-        <div>{right}</div>
-      </div>
-    )}
-    {children}
-  </div>
-);
-const Badge = ({ children, color = C.accent }) => (
-  <span style={{ background: color + "22", color, border: `1px solid ${color}55`, borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 500 }}>{children}</span>
-);
-const Th = ({ children, ...rest }) => <th {...rest} style={{ textAlign: "left", padding: "8px 10px", fontSize: 12, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{children}</th>;
-const Td = ({ children, ...rest }) => <td {...rest} style={{ padding: "8px 10px", fontSize: 13, color: C.text, borderBottom: `1px solid ${C.border}` }}>{children}</td>;
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
@@ -88,20 +38,17 @@ function rangeFor(preset) {
 }
 function PresetPicker({ value, onChange }) {
   return (
-    <div style={{ display: "flex", gap: 8 }}>
+    <div className="chip-row">
       {PRESETS.map((p) => (
-        <button key={p.value} onClick={() => onChange(p.value)} style={{
-          background: value === p.value ? C.accent : C.panel2, color: "#fff",
-          border: `1px solid ${value === p.value ? C.accent : C.border}`, borderRadius: 8,
-          padding: "6px 12px", fontSize: 13, cursor: "pointer",
-        }}>{p.label}</button>
+        <button key={p.value} className={`chip ${value === p.value ? "active" : ""}`} onClick={() => onChange(p.value)}>
+          {p.label}
+        </button>
       ))}
     </div>
   );
 }
 
 // ─── Routing helpers ─────────────────────────────────────────────────────────
-// routing เก็บเป็น array ชื่อขั้นตอน เช่น ["ตัด","เจาะ","บาก","ประกอบ"]
 function progressFor(routing, doneOpNames) {
   const done = new Set(doneOpNames);
   return (routing || []).map((op) => ({ op, done: done.has(op) }));
@@ -109,6 +56,87 @@ function progressFor(routing, doneOpNames) {
 function nextOpFor(routing, doneOpNames) {
   const done = new Set(doneOpNames);
   return (routing || []).find((op) => !done.has(op)) || null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// UI ATOMS
+// ══════════════════════════════════════════════════════════════════════════
+const Btn = ({ children, variant = "default", size, className = "", ...rest }) => {
+  const vClass = { accent: "btn-accent", success: "btn-success", danger: "btn-danger", ghost: "btn-ghost" }[variant] || "";
+  const sClass = { lg: "btn-lg", sm: "btn-sm" }[size] || "";
+  return <button {...rest} className={`btn ${vClass} ${sClass} ${className}`}>{children}</button>;
+};
+const Input = forwardRef(({ className = "", ...props }, ref) => (
+  <input {...props} ref={ref} className={`input ${className}`} />
+));
+const Select = ({ options, className = "", ...props }) => (
+  <select {...props} className={`select ${className}`}>
+    <option value="">— เลือก —</option>
+    {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>
+);
+const Field = ({ label, children }) => (
+  <div className="field"><div className="label-el">{label}</div>{children}</div>
+);
+const Card = ({ title, right, children, className = "" }) => (
+  <div className={`card ${className}`}>
+    {(title || right) && (
+      <div className="card-head">
+        <div className="card-title">{title}</div>
+        <div>{right}</div>
+      </div>
+    )}
+    {children}
+  </div>
+);
+const TONES = {
+  accent: { c: "var(--accent-hi)", bg: "rgba(217,140,61,.14)", bd: "rgba(217,140,61,.4)" },
+  success: { c: "var(--success-hi)", bg: "rgba(72,176,131,.14)", bd: "rgba(72,176,131,.4)" },
+  steel: { c: "var(--steel-hi)", bg: "rgba(91,143,186,.14)", bd: "rgba(91,143,186,.4)" },
+  warning: { c: "var(--warning)", bg: "rgba(220,176,35,.14)", bd: "rgba(220,176,35,.4)" },
+  danger: { c: "var(--danger-hi)", bg: "rgba(221,91,79,.14)", bd: "rgba(221,91,79,.4)" },
+  muted: { c: "var(--muted)", bg: "rgba(139,147,161,.1)", bd: "rgba(139,147,161,.3)" },
+};
+const Badge = ({ children, tone = "accent" }) => {
+  const t = TONES[tone] || TONES.accent;
+  return <span className="badge" style={{ color: t.c, background: t.bg, borderColor: t.bd }}>{children}</span>;
+};
+const StatCard = ({ label, value, icon }) => (
+  <div className="card">
+    <div className="stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {icon && <Icon name={icon} size={13} />}{label}
+    </div>
+    <div className="stat-value">{value}</div>
+  </div>
+);
+
+// Signature element: the routing rail — a numbered track of the real
+// operation sequence a part unit must travel through.
+function RoutingRail({ routing, doneOps }) {
+  const steps = routing || [];
+  const doneSet = new Set(doneOps || []);
+  let currentAssigned = false;
+  if (steps.length === 0) {
+    return <div style={{ fontSize: 12.5, color: "var(--muted)" }}>ยังไม่ได้กำหนด Routing สำหรับ Part นี้</div>;
+  }
+  return (
+    <div className="rail">
+      {steps.map((op, i) => {
+        const done = doneSet.has(op);
+        const isCurrent = !done && !currentAssigned;
+        if (isCurrent) currentAssigned = true;
+        return (
+          <div className="rail-node-wrap" key={op}>
+            {i > 0 && <div className={`rail-line ${doneSet.has(steps[i - 1]) ? "done" : ""}`} />}
+            <div className="rail-node">
+              <div className={`rail-dot ${done ? "done" : isCurrent ? "current" : ""}`}>{done ? "✓" : i + 1}</div>
+              <div className={`rail-label ${done ? "done" : isCurrent ? "current" : ""}`}>{op}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -131,20 +159,27 @@ function Login({ onLogin }) {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.bg }}>
-      <form onSubmit={submit} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 14, padding: 32, width: 340 }}>
-        <div style={{ fontSize: 20, fontWeight: 500, color: C.text, marginBottom: 2 }}>Machining Line System</div>
-        <div style={{ fontSize: 13, color: C.muted, marginBottom: 22 }}>ระบบบันทึกการทำงานเครื่องจักร</div>
+    <div className="login-wrap">
+      <form onSubmit={submit} className="login-card">
+        <div className="login-mark"><Icon name="bolt" size={24} style={{ stroke: "var(--accent-ink)" }} /></div>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: 21, fontWeight: 600, color: "var(--text)" }}>
+          Machining Line System
+        </div>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24, marginTop: 3 }}>
+          ระบบบันทึกการทำงานเครื่องจักร
+        </div>
         <Field label="รหัสพนักงาน">
           <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น admin" autoFocus />
         </Field>
         <Field label="รหัสผ่าน">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </Field>
-        {err && <div style={{ color: C.danger, fontSize: 13, marginBottom: 12 }}>{err}</div>}
-        <Btn variant="accent" style={{ width: "100%" }} disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</Btn>
-        <div style={{ fontSize: 11, color: C.muted, marginTop: 14, lineHeight: 1.6 }}>
-          ค่าเริ่มต้น: admin / admin123 — ระบบจะออกจากระบบอัตโนมัติเมื่อปิดแท็บนี้
+        {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <Btn variant="accent" size="lg" className="btn-block" disabled={busy}>
+          {busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+        </Btn>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
+          ค่าเริ่มต้น: admin / admin123<br />ระบบจะออกจากระบบอัตโนมัติเมื่อปิดแท็บนี้
         </div>
       </form>
     </div>
@@ -152,57 +187,134 @@ function Login({ onLogin }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// SHELL — sidebar + routing between pages
+// SHELL — responsive nav: sidebar (desktop) / topbar+drawer+bottom nav (mobile)
 // ══════════════════════════════════════════════════════════════════════════
 const MENU = [
   { group: "การผลิต", items: [
-    { key: "release", label: "Release Production" },
-    { key: "detail", label: "Production Detail" },
-    { key: "finished", label: "Finished Part" },
-  ]},
+    { key: "release", label: "Release Production", icon: "box" },
+    { key: "detail", label: "สแกนหน้าเครื่อง", icon: "scan" },
+    { key: "finished", label: "Finished Part", icon: "check" },
+    { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
+  ] },
   { group: "รายงาน", items: [
-    { key: "report", label: "Report" },
-    { key: "machines", label: "Machines Summary" },
-    { key: "projects", label: "Projects Summary" },
-    { key: "parts", label: "Parts Summary" },
-  ]},
+    { key: "report", label: "Report", icon: "chart" },
+    { key: "machines", label: "Machines Summary", icon: "machine" },
+    { key: "projects", label: "Projects Summary", icon: "folder" },
+    { key: "parts", label: "Parts Summary", icon: "grid" },
+  ] },
   { group: "ระบบ", items: [
-    { key: "setup", label: "Setup" },
-  ]},
+    { key: "setup", label: "Setup", icon: "settings" },
+  ] },
 ];
+const BOTTOM_LEFT = { key: "release", label: "Release", icon: "box" };
+const BOTTOM_LEFT2 = { key: "finished", label: "เสร็จแล้ว", icon: "check" };
+const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart" };
 
 function Shell({ user, onLogout }) {
   const [tab, setTab] = useState("release");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
+
+  function go(key) { setTab(key); setDrawerOpen(false); }
+
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, display: "flex" }}>
-      <div style={{ width: 230, background: C.panel, borderRight: `1px solid ${C.border}`, padding: 18, flexShrink: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 500, color: C.text }}>Machining Line</div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 18 }}>{user.name} · {ROLE_LABELS[user.role] || user.role}</div>
+    <div className="app-shell">
+      {/* ── Desktop sidebar ── */}
+      <div className="sidebar">
+        <div className="brand">
+          <div className="brand-mark"><Icon name="bolt" size={19} style={{ stroke: "var(--accent-ink)" }} /></div>
+          <div>
+            <div className="brand-name">Machining Line</div>
+            <div className="brand-sub">ระบบบันทึกการทำงานเครื่องจักร</div>
+          </div>
+        </div>
         {MENU.map((g) => (
-          <div key={g.group} style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, margin: "6px 0" }}>{g.group}</div>
+          <div className="nav-group" key={g.group}>
+            <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
-              <div key={it.key} onClick={() => setTab(it.key)} style={{
-                padding: "8px 10px", borderRadius: 8, cursor: "pointer", fontSize: 13.5,
-                color: tab === it.key ? "#fff" : C.text,
-                background: tab === it.key ? C.accent : "transparent", marginBottom: 2,
-              }}>{it.label}</div>
+              <div key={it.key} className={`nav-item ${tab === it.key ? "active" : ""}`} onClick={() => go(it.key)}>
+                <Icon name={it.icon} size={17} />{it.label}
+              </div>
             ))}
           </div>
         ))}
-        <div onClick={onLogout} style={{ padding: "8px 10px", borderRadius: 8, cursor: "pointer", fontSize: 13.5, color: C.danger, marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-          Exit Application
+        <div className="sidebar-footer">
+          <div className="user-chip">
+            <div className="user-avatar">{(user.name || "U").slice(0, 1)}</div>
+            <div>
+              <div className="user-name">{user.name}</div>
+              <div className="user-role">{ROLE_LABELS[user.role] || user.role}</div>
+            </div>
+          </div>
+          <div className="nav-item logout-item" onClick={onLogout}><Icon name="logout" size={17} />ออกจากระบบ</div>
         </div>
       </div>
-      <div style={{ flex: 1, padding: 24, maxWidth: 1100, overflowX: "auto" }}>
-        {tab === "release" && <ReleasePage user={user} />}
-        {tab === "detail" && <ScanPage user={user} />}
-        {tab === "finished" && <FinishedPartPage />}
-        {tab === "report" && <ReportPage />}
-        {tab === "machines" && <MachinesSummaryPage />}
-        {tab === "projects" && <ProjectsSummaryPage />}
-        {tab === "parts" && <PartsSummaryPage />}
-        {tab === "setup" && <SetupPage />}
+
+      {/* ── Mobile topbar ── */}
+      <div className="topbar">
+        <div className="icon-btn" onClick={() => setDrawerOpen(true)}><Icon name="menu" size={19} /></div>
+        <div className="topbar-title">{currentLabel}</div>
+        <div className="icon-btn" onClick={onLogout}><Icon name="logout" size={18} style={{ stroke: "var(--danger)" }} /></div>
+      </div>
+
+      {/* ── Mobile drawer ── */}
+      <div className={`drawer-backdrop ${drawerOpen ? "open" : ""}`} onClick={() => setDrawerOpen(false)} />
+      <div className={`drawer ${drawerOpen ? "open" : ""}`}>
+        <div className="brand">
+          <div className="brand-mark"><Icon name="bolt" size={19} style={{ stroke: "var(--accent-ink)" }} /></div>
+          <div>
+            <div className="brand-name">Machining Line</div>
+            <div className="brand-sub">{user.name} · {ROLE_LABELS[user.role] || user.role}</div>
+          </div>
+        </div>
+        {MENU.map((g) => (
+          <div className="nav-group" key={g.group}>
+            <div className="nav-group-label">{g.group}</div>
+            {g.items.map((it) => (
+              <div key={it.key} className={`nav-item ${tab === it.key ? "active" : ""}`} onClick={() => go(it.key)}>
+                <Icon name={it.icon} size={17} />{it.label}
+              </div>
+            ))}
+          </div>
+        ))}
+        <div className="nav-item logout-item" onClick={onLogout} style={{ marginTop: 10, borderTop: "1px solid var(--border-soft)", paddingTop: 14 }}>
+          <Icon name="logout" size={17} />ออกจากระบบ
+        </div>
+      </div>
+
+      {/* ── Page content ── */}
+      <div className="content">
+        <div className="content-inner">
+          {tab === "release" && <ReleasePage user={user} />}
+          {tab === "detail" && <ScanPage user={user} />}
+          {tab === "finished" && <FinishedPartPage />}
+          {tab === "labels" && <QrLabelsPage />}
+          {tab === "report" && <ReportPage />}
+          {tab === "machines" && <MachinesSummaryPage />}
+          {tab === "projects" && <ProjectsSummaryPage />}
+          {tab === "parts" && <PartsSummaryPage />}
+          {tab === "setup" && <SetupPage />}
+        </div>
+      </div>
+
+      {/* ── Mobile bottom nav ── */}
+      <div className="bottom-nav">
+        <div className={`bottom-nav-item ${tab === BOTTOM_LEFT.key ? "active" : ""}`} onClick={() => go(BOTTOM_LEFT.key)}>
+          <Icon name={BOTTOM_LEFT.icon} size={20} /><span>{BOTTOM_LEFT.label}</span>
+        </div>
+        <div className={`bottom-nav-item ${tab === BOTTOM_LEFT2.key ? "active" : ""}`} onClick={() => go(BOTTOM_LEFT2.key)}>
+          <Icon name={BOTTOM_LEFT2.icon} size={20} /><span>{BOTTOM_LEFT2.label}</span>
+        </div>
+        <div className="bottom-nav-scan" onClick={() => go("detail")}>
+          <div className="bottom-nav-scan-btn"><Icon name="scan" size={22} strokeWidth={2.2} /></div>
+          <span>สแกน</span>
+        </div>
+        <div className={`bottom-nav-item ${tab === BOTTOM_RIGHT.key ? "active" : ""}`} onClick={() => go(BOTTOM_RIGHT.key)}>
+          <Icon name={BOTTOM_RIGHT.icon} size={20} /><span>{BOTTOM_RIGHT.label}</span>
+        </div>
+        <div className="bottom-nav-item" onClick={() => setDrawerOpen(true)}>
+          <Icon name="more" size={20} /><span>เพิ่มเติม</span>
+        </div>
       </div>
     </div>
   );
@@ -221,7 +333,12 @@ function ReleasePage({ user }) {
   const [lastUnits, setLastUnits] = useState(null);
   const [recent, setRecent] = useState([]);
   const [busy, setBusy] = useState(false);
-  const printRef = useRef(null);
+
+  const [labelPreset, setLabelPreset] = useState("20x20");
+  const [customW, setCustomW] = useState(20);
+  const [customH, setCustomH] = useState(20);
+  const [showCode, setShowCode] = useState(false);
+  const [printMode, setPrintMode] = useState("sheet");
 
   const load = useCallback(async () => {
     setProjects(await listRows("projects", { order: "code" }));
@@ -258,24 +375,27 @@ function ReleasePage({ user }) {
     setBusy(false);
   }
 
-  function printLabels() {
-    const w = window.open("", "_blank");
-    const html = `<html><head><title>QR labels</title><style>
-      body{font-family:sans-serif;margin:0;padding:12px}
-      .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-      .lbl{border:1px solid #999;border-radius:6px;padding:8px;text-align:center;font-size:11px}
-      .lbl svg{width:90px;height:90px}
-    </style></head><body><div class="grid">${
-      (lastUnits || []).map((u) => `<div class="lbl">${document.getElementById("qr-" + u.id)?.outerHTML || ""}<div>${u.qr_code}</div></div>`).join("")
-    }</div></body></html>`;
-    w.document.write(html); w.document.close(); w.print();
+  function currentSize() {
+    if (labelPreset === "custom") return { w: Number(customW) || 20, h: Number(customH) || 20 };
+    const p = LABEL_PRESETS.find((x) => x.value === labelPreset);
+    return { w: p.w, h: p.h };
+  }
+  function doPrint() {
+    const { w, h } = currentSize();
+    printLabels(lastUnits, { widthMm: w, heightMm: h, showCode, mode: printMode, title: `QR-${selectedPart?.part_no || ""}` });
   }
 
   return (
     <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Release Production</h2>
+      <div className="page-head">
+        <div>
+          <div className="page-title">Release Production</div>
+          <div className="page-sub">ปล่อยงานใหม่และสร้าง QR ต่อชิ้นสำหรับพิมพ์ป้าย</div>
+        </div>
+      </div>
+
       <Card title="ปล่อยงานใหม่">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div className="grid-2">
           <Field label="โปรเจค">
             <Select value={projectId} onChange={(e) => { setProjectId(e.target.value); setPartId(""); }}
               options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
@@ -292,23 +412,45 @@ function ReleasePage({ user }) {
           </Field>
         </div>
         {selectedPart && (
-          <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
-            Routing: {(selectedPart.routing || []).join(" → ") || "ยังไม่ได้กำหนด (ไปตั้งค่าที่ Setup)"} ·
-            น้ำหนัก/ชิ้น: {fmtNum(selectedPart.unit_weight)} กก.
+          <div style={{ marginBottom: 14 }}>
+            <RoutingRail routing={selectedPart.routing} doneOps={[]} />
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>น้ำหนักโดยประมาณ/ชิ้น: {fmtNum(selectedPart.unit_weight)} กก.</div>
           </div>
         )}
-        <Btn variant="accent" onClick={doRelease} disabled={busy || !partId}>
-          {busy ? "กำลังสร้าง QR..." : `Release + สร้าง QR ${qty || 0} ใบ`}
+        <Btn variant="accent" size="lg" onClick={doRelease} disabled={busy || !partId}>
+          <Icon name="box" size={16} />{busy ? "กำลังสร้าง QR..." : `Release + สร้าง QR ${qty || 0} ใบ`}
         </Btn>
       </Card>
 
       {lastUnits && (
-        <Card title={`QR ที่สร้างล่าสุด (${lastUnits.length} ใบ)`} right={<Btn onClick={printLabels}>พิมพ์ป้ายทั้งหมด</Btn>}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px,1fr))", gap: 10 }}>
+        <Card title={`QR ที่สร้างล่าสุด (${lastUnits.length} ใบ)`}>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
+            <Field label="ขนาดป้าย">
+              <Select value={labelPreset} onChange={(e) => setLabelPreset(e.target.value)}
+                options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 170 }} />
+            </Field>
+            {labelPreset === "custom" && (
+              <>
+                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 80 }} /></Field>
+                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 80 }} /></Field>
+              </>
+            )}
+            <Field label="รูปแบบการพิมพ์">
+              <div className="chip-row">
+                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>แผ่น A4 (ตาราง)</span>
+                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>ม้วนป้าย (ทีละดวง)</span>
+              </div>
+            </Field>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 10 }}>
+              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
+            </label>
+            <Btn variant="accent" onClick={doPrint} style={{ marginBottom: 2 }}><Icon name="printer" size={15} />พิมพ์ป้ายทั้งหมด</Btn>
+          </div>
+          <div className="grid-auto">
             {lastUnits.map((u) => (
-              <div key={u.id} style={{ background: "#fff", borderRadius: 8, padding: 8, textAlign: "center" }}>
-                <div id={`qr-${u.id}`}><QRCodeSVG value={u.qr_code} size={90} /></div>
-                <div style={{ fontSize: 10, color: "#111", marginTop: 4, wordBreak: "break-all" }}>{u.qr_code}</div>
+              <div key={u.id} className="label-preview">
+                <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={96} />
+                <div className="code">{u.qr_code}</div>
               </div>
             ))}
           </div>
@@ -316,40 +458,35 @@ function ReleasePage({ user }) {
       )}
 
       <Card title="ประวัติการ Release ล่าสุด">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>วันที่</Th><Th>Part</Th><Th>จำนวน</Th><Th>หมายเหตุ</Th></tr></thead>
-          <tbody>
-            {recent.slice(0, 10).map((r) => (
-              <tr key={r.id}>
-                <Td>{fmtDT(r.release_date)}</Td>
-                <Td>{parts.find((p) => p.id === r.part_master_id)?.part_no || "-"}</Td>
-                <Td>{r.qty}</Td>
-                <Td>{r.note || "-"}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>วันที่</th><th>Part</th><th>จำนวน</th><th>หมายเหตุ</th></tr></thead>
+            <tbody>
+              {recent.slice(0, 10).map((r) => (
+                <tr key={r.id}>
+                  <td>{fmtDT(r.release_date)}</td>
+                  <td>{parts.find((p) => p.id === r.part_master_id)?.part_no || "-"}</td>
+                  <td>{r.qty}</td>
+                  <td>{r.note || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 2) PRODUCTION DETAIL — สแกน QR หน้าเครื่องจักร (มือถือ/สแกนเกาน์/พิมพ์เอง)
+// 2) SCAN — station setup, then a dedicated full-screen scan flow
 // ══════════════════════════════════════════════════════════════════════════
 function ScanPage({ user }) {
   const [machines, setMachines] = useState([]);
   const [operations, setOperations] = useState([]);
   const [machineId, setMachineId] = useState("");
   const [opId, setOpId] = useState("");
-  const [qrInput, setQrInput] = useState("");
-  const [unit, setUnit] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [weight, setWeight] = useState("");
-  const [msg, setMsg] = useState("");
-  const [cameraOn, setCameraOn] = useState(false);
-  const inputRef = useRef(null);
-  const scannerRef = useRef(null);
+  const [stationOpen, setStationOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -358,14 +495,71 @@ function ScanPage({ user }) {
     })();
   }, []);
 
+  const machine = machines.find((m) => m.id === machineId);
+  const operation = operations.find((o) => o.id === opId);
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">สแกนหน้าเครื่องจักร</div>
+          <div className="page-sub">เลือกเครื่องจักรและขั้นตอนที่ทำ แล้วเริ่มสแกนแบบเต็มหน้าจอ</div>
+        </div>
+      </div>
+
+      <Card title="ตั้งค่าสถานีสแกน">
+        <div className="grid-2">
+          <Field label="เครื่องจักร">
+            <Select value={machineId} onChange={(e) => setMachineId(e.target.value)}
+              options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} />
+          </Field>
+          <Field label="ขั้นตอนที่ทำ">
+            <Select value={opId} onChange={(e) => setOpId(e.target.value)}
+              options={operations.map((o) => ({ value: o.id, label: o.name }))} />
+          </Field>
+        </div>
+        <Btn variant="accent" size="lg" className="btn-block" disabled={!machineId || !opId} onClick={() => setStationOpen(true)}>
+          <Icon name="scan" size={18} /> เริ่มสแกน
+        </Btn>
+      </Card>
+
+      <Card title="วิธีใช้งาน">
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--muted)", lineHeight: 2 }}>
+          <li>ยิงด้วยเครื่องสแกนบาร์โค้ด แล้วระบบจะค้นหาให้อัตโนมัติ</li>
+          <li>หรือเปิดกล้องมือถือเพื่อสแกน QR เอง</li>
+          <li>สแกนต่อเนื่องได้เรื่อยๆ โดยไม่ต้องออกจากหน้าจอสแกน</li>
+        </ul>
+      </Card>
+
+      {stationOpen && (
+        <ScanStation
+          user={user} machine={machine} operation={operation}
+          onExit={() => setStationOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ScanStation({ user, machine, operation, onExit }) {
+  const [qrInput, setQrInput] = useState("");
+  const [unit, setUnit] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [weight, setWeight] = useState("");
+  const [msg, setMsg] = useState("");
+  const [msgTone, setMsgTone] = useState("muted");
+  const [cameraOn, setCameraOn] = useState(false);
+  const [sessionCount, setSessionCount] = useState(0);
+  const inputRef = useRef(null);
+  const scannerRef = useRef(null);
+
   useEffect(() => { inputRef.current?.focus(); }, [unit]);
 
-  // กล้องมือถือ (ใช้ html5-qrcode) — เปิด/ปิดตามปุ่มผู้ใช้
   useEffect(() => {
     if (!cameraOn) return;
     let scanner;
     import("html5-qrcode").then(({ Html5QrcodeScanner }) => {
-      scanner = new Html5QrcodeScanner("qr-cam", { fps: 10, qrbox: 220 }, false);
+      scanner = new Html5QrcodeScanner("qr-cam-region", { fps: 10, qrbox: 220 }, false);
       scanner.render((decodedText) => {
         setQrInput(decodedText);
         lookup(decodedText);
@@ -374,98 +568,115 @@ function ScanPage({ user }) {
       scannerRef.current = scanner;
     });
     return () => { scannerRef.current?.clear?.().catch(() => {}); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn]);
 
   async function lookup(code) {
     const c = (code ?? qrInput).trim();
     if (!c) return;
-    setMsg("กำลังค้นหา...");
+    setMsg("กำลังค้นหา..."); setMsgTone("muted");
     const u = await findUnitByQr(c);
-    if (!u) { setUnit(null); setHistory([]); setMsg("ไม่พบ QR นี้ในระบบ"); return; }
+    if (!u) { setUnit(null); setHistory([]); setMsg("ไม่พบ QR นี้ในระบบ"); setMsgTone("danger"); return; }
     const h = await getUnitHistory(u.id);
     setUnit(u); setHistory(h); setMsg("");
     const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
     const next = nextOpFor(u.part_master?.routing, doneOps);
-    const nextOpRow = operations.find((o) => o.name === next);
-    if (nextOpRow) setOpId(nextOpRow.id);
     setWeight(u.weight || u.part_master?.unit_weight || "");
+    if (next && operation && next !== operation.name) {
+      setMsg(`ขั้นตอนถัดไปของชิ้นนี้คือ "${next}" ไม่ใช่ "${operation.name}" — ตรวจสอบก่อนบันทึก`);
+      setMsgTone("warning");
+    }
   }
 
-  function onQrKeyDown(e) {
-    if (e.key === "Enter") { e.preventDefault(); lookup(); }
-  }
+  function onQrKeyDown(e) { if (e.key === "Enter") { e.preventDefault(); lookup(); } }
 
   async function confirmScan() {
-    if (!unit || !machineId || !opId) { setMsg("กรุณาเลือกเครื่องจักรและขั้นตอนก่อน"); return; }
+    if (!unit || !machine || !operation) return;
     const routing = unit.part_master?.routing || [];
     const doneOps = history.map((x) => x.operation?.name).filter(Boolean);
-    const opName = operations.find((o) => o.id === opId)?.name;
     await insertRow("scan_logs", {
-      part_unit_id: unit.id, machine_id: machineId, operation_id: opId,
+      part_unit_id: unit.id, machine_id: machine.id, operation_id: operation.id,
       employee_id: user.id, weight: weight || null,
     });
-    const newDone = new Set([...doneOps, opName]);
+    const newDone = new Set([...doneOps, operation.name]);
     const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
     await updateRow("part_units", unit.id, { status: finished ? "finished" : "in_progress", weight: weight || unit.weight });
     setMsg(finished ? "บันทึกแล้ว — ชิ้นนี้ทำครบทุกขั้นตอนแล้ว ✓" : "บันทึกการสแกนเรียบร้อย");
+    setMsgTone("success");
+    setSessionCount((c) => c + 1);
     setQrInput(""); setUnit(null); setHistory([]);
+    setTimeout(() => setMsg(""), 2200);
     inputRef.current?.focus();
   }
 
   const doneOps = history.map((x) => x.operation?.name).filter(Boolean);
 
   return (
-    <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Production Detail — สแกนหน้าเครื่องจักร</h2>
-      <Card title="1) ตั้งค่าเครื่องจักร / ขั้นตอน">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <Field label="เครื่องจักร"><Select value={machineId} onChange={(e) => setMachineId(e.target.value)}
-            options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
-          <Field label="ขั้นตอนที่ทำ"><Select value={opId} onChange={(e) => setOpId(e.target.value)}
-            options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
+    <div className="scan-station">
+      <div className="scan-topbar">
+        <div className="icon-btn" onClick={onExit} style={{ background: "rgba(255,255,255,.08)", borderColor: "rgba(255,255,255,.14)" }}>
+          <Icon name="arrowLeft" size={18} style={{ stroke: "#fff" }} />
         </div>
-      </Card>
+        <div className="scan-topbar-info">
+          <div className="scan-topbar-title">{machine?.code} — {machine?.name}</div>
+          <div className="scan-topbar-sub">ขั้นตอน: {operation?.name}</div>
+        </div>
+        <div className="scan-counter">สแกนแล้ว {sessionCount} ชิ้น</div>
+      </div>
 
-      <Card title="2) สแกน QR" right={<Btn onClick={() => setCameraOn((v) => !v)}>{cameraOn ? "ปิดกล้อง" : "เปิดกล้องมือถือ"}</Btn>}>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>
-          พิมพ์/ยิงด้วยเครื่องสแกนบาร์โค้ด แล้วกด Enter หรือเปิดกล้องมือถือเพื่อสแกนเองก็ได้
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+      <div className="scan-viewport">
+        {cameraOn ? (
+          <div id="qr-cam-region" style={{ width: "min(92vw,420px)" }} />
+        ) : unit ? (
+          <div className="scan-idle-hint">
+            <Icon name="check" size={40} />
+            <div>พบชิ้นงานแล้ว — ดูรายละเอียดด้านล่าง</div>
+          </div>
+        ) : (
+          <div className="scan-frame">
+            <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
+            <div className="scan-line" />
+          </div>
+        )}
+      </div>
+
+      <div className="scan-manual">
+        <div style={{ display: "flex", gap: 8 }}>
           <Input ref={inputRef} value={qrInput} onChange={(e) => setQrInput(e.target.value)} onKeyDown={onQrKeyDown}
-            placeholder="สแกนหรือพิมพ์รหัส QR แล้วกด Enter" autoFocus />
-          <Btn variant="accent" onClick={() => lookup()}>ค้นหา</Btn>
+            placeholder="ยิงบาร์โค้ด หรือพิมพ์รหัส QR แล้วกด Enter" autoFocus />
+          <Btn variant="accent" onClick={() => lookup()}><Icon name="search" size={16} /></Btn>
         </div>
-        {cameraOn && <div id="qr-cam" style={{ marginBottom: 10 }} />}
-        {msg && <div style={{ fontSize: 13, color: unit ? C.success : C.warning }}>{msg}</div>}
-      </Card>
+        <button className="btn scan-toggle-cam" onClick={() => setCameraOn((v) => !v)}>
+          <Icon name="camera" size={15} style={{ marginRight: 6 }} />{cameraOn ? "ปิดกล้อง" : "เปิดกล้องสแกน QR"}
+        </button>
+      </div>
 
-      {unit && (
-        <Card title={`ชิ้นงาน: ${unit.qr_code}`}>
-          <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
-            {unit.part_master?.part_no} — {unit.part_master?.part_name}
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-            {progressFor(unit.part_master?.routing, doneOps).map((s) => (
-              <Badge key={s.op} color={s.done ? C.success : C.muted}>{s.op}{s.done ? " ✓" : ""}</Badge>
-            ))}
-          </div>
-          <Field label="น้ำหนัก (กก.)"><Input type="number" step="0.01" value={weight} onChange={(e) => setWeight(e.target.value)} /></Field>
-          <Btn variant="success" onClick={confirmScan}>บันทึกการสแกน</Btn>
-
-          {history.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <Label>ประวัติชิ้นนี้</Label>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><Th>เวลา</Th><Th>เครื่องจักร</Th><Th>ขั้นตอน</Th><Th>พนักงาน</Th></tr></thead>
-                <tbody>
-                  {history.map((h) => (
-                    <tr key={h.id}><Td>{fmtDT(h.scanned_at)}</Td><Td>{h.machine?.name}</Td><Td>{h.operation?.name}</Td><Td>{h.employee?.name}</Td></tr>
-                  ))}
-                </tbody>
-              </table>
+      {(msg || unit) && (
+        <div className="scan-sheet">
+          <div className="scan-sheet-handle" />
+          {msg && (
+            <div className="scan-msg" style={{
+              color: msgTone === "danger" ? "var(--danger-hi)" : msgTone === "warning" ? "var(--warning)" : msgTone === "success" ? "var(--success-hi)" : "var(--text)",
+            }}>{msg}</div>
+          )}
+          {unit && (
+            <div style={{ padding: "0 2px" }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>
+                {unit.qr_code}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+                {unit.part_master?.part_no} — {unit.part_master?.part_name}
+              </div>
+              <RoutingRail routing={unit.part_master?.routing} doneOps={doneOps} />
+              <Field label="น้ำหนัก (กก.)">
+                <Input type="number" step="0.01" value={weight} onChange={(e) => setWeight(e.target.value)} />
+              </Field>
+              <Btn variant="success" size="lg" className="btn-block" onClick={confirmScan}>
+                <Icon name="check" size={17} /> ยืนยันการสแกน
+              </Btn>
             </div>
           )}
-        </Card>
+        </div>
       )}
     </div>
   );
@@ -480,33 +691,165 @@ function FinishedPartPage() {
   const totalWeight = units.reduce((s, u) => s + Number(u.weight || u.part_master?.unit_weight || 0), 0);
   return (
     <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Finished Part</h2>
-      <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-        <Card title="ชิ้นที่เสร็จทั้งหมด"><div style={{ fontSize: 26, color: C.text }}>{units.length.toLocaleString()}</div></Card>
-        <Card title="น้ำหนักรวม (กก.)"><div style={{ fontSize: 26, color: C.text }}>{fmtNum(totalWeight)}</div></Card>
+      <div className="page-head"><div className="page-title">Finished Part</div></div>
+      <div className="stat-row">
+        <StatCard label="ชิ้นที่เสร็จทั้งหมด" value={units.length.toLocaleString()} icon="check" />
+        <StatCard label="น้ำหนักรวม (กก.)" value={fmtNum(totalWeight)} icon="weight" />
       </div>
       <Card title="รายการชิ้นงานที่เสร็จสมบูรณ์">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>QR</Th><Th>Part</Th><Th>โปรเจค</Th><Th>น้ำหนัก</Th></tr></thead>
-          <tbody>
-            {units.map((u) => (
-              <tr key={u.id}>
-                <Td>{u.qr_code}</Td>
-                <Td>{u.part_master?.part_no} — {u.part_master?.part_name}</Td>
-                <Td>{u.part_master?.projects?.name || "-"}</Td>
-                <Td>{fmtNum(u.weight || u.part_master?.unit_weight)}</Td>
-              </tr>
-            ))}
-            {units.length === 0 && <tr><Td colSpan={4}>ยังไม่มีชิ้นงานที่เสร็จสมบูรณ์</Td></tr>}
-          </tbody>
-        </table>
+        {units.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="check" size={32} />
+            <div className="empty-state-title">ยังไม่มีชิ้นงานที่เสร็จสมบูรณ์</div>
+            <div className="empty-state-sub">รายการจะปรากฏที่นี่เมื่อชิ้นงานผ่านครบทุกขั้นตอนตาม Routing</div>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>QR</th><th>Part</th><th>โปรเจค</th><th>น้ำหนัก</th></tr></thead>
+              <tbody>
+                {units.map((u) => (
+                  <tr key={u.id}>
+                    <td style={{ fontFamily: "var(--font-mono)" }}>{u.qr_code}</td>
+                    <td>{u.part_master?.part_no} — {u.part_master?.part_name}</td>
+                    <td>{u.part_master?.projects?.name || "-"}</td>
+                    <td>{fmtNum(u.weight || u.part_master?.unit_weight)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 4) REPORT — สรุปรวม แยกตามขั้นตอน ตามช่วงเวลา
+// 4) QR / LABELS — reprint labels for any past release lot, true-size (2×2cm default)
+// ══════════════════════════════════════════════════════════════════════════
+function QrLabelsPage() {
+  const [releases, setReleases] = useState([]);
+  const [parts, setParts] = useState([]);
+  const [releaseId, setReleaseId] = useState("");
+  const [units, setUnits] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+
+  const [labelPreset, setLabelPreset] = useState("20x20");
+  const [customW, setCustomW] = useState(20);
+  const [customH, setCustomH] = useState(20);
+  const [showCode, setShowCode] = useState(false);
+  const [printMode, setPrintMode] = useState("sheet");
+
+  useEffect(() => {
+    (async () => {
+      setReleases(await listRows("releases", { order: "release_date", ascending: false }));
+      setParts(await listRows("part_master", { order: "part_no" }));
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!releaseId) { setUnits([]); setSelected(new Set()); return; }
+    setLoading(true);
+    listRows("part_units", { order: "unit_no", filters: { release_id: releaseId } }).then((rows) => {
+      setUnits(rows);
+      setSelected(new Set(rows.map((r) => r.id)));
+      setLoading(false);
+    });
+  }, [releaseId]);
+
+  function toggle(id) {
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAll() {
+    setSelected((s) => (s.size === units.length ? new Set() : new Set(units.map((u) => u.id))));
+  }
+  function partOf(r) { return parts.find((p) => p.id === r.part_master_id); }
+
+  function currentSize() {
+    if (labelPreset === "custom") return { w: Number(customW) || 20, h: Number(customH) || 20 };
+    const p = LABEL_PRESETS.find((x) => x.value === labelPreset);
+    return { w: p.w, h: p.h };
+  }
+  function doPrint() {
+    const chosen = units.filter((u) => selected.has(u.id));
+    if (!chosen.length) { alert("กรุณาเลือกอย่างน้อย 1 ชิ้น"); return; }
+    const { w, h } = currentSize();
+    printLabels(chosen, { widthMm: w, heightMm: h, showCode, mode: printMode, title: "QR labels" });
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">พิมพ์ QR / ป้าย</div>
+          <div className="page-sub">ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 2×2 ซม.</div>
+        </div>
+      </div>
+
+      <Card title="เลือกล็อตที่ต้องการพิมพ์">
+        <Field label="ล็อต Release">
+          <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
+            options={releases.map((r) => ({ value: r.id, label: `${fmtDT(r.release_date)} — ${partOf(r)?.part_no || "-"} × ${r.qty} ชิ้น` }))} />
+        </Field>
+      </Card>
+
+      {loading && <Card><div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div></Card>}
+
+      {!loading && units.length > 0 && (
+        <Card title={`ชิ้นงานในล็อตนี้ (${units.length})`} right={
+          <Btn size="sm" onClick={toggleAll}>{selected.size === units.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
+        }>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 18 }}>
+            {units.map((u) => (
+              <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`}>
+                <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)" }} />
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{u.qr_code}</span>
+                <span style={{ display: "none" }}><QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={90} /></span>
+              </label>
+            ))}
+          </div>
+
+          <hr className="section-divider" />
+
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <Field label="ขนาดป้าย">
+              <Select value={labelPreset} onChange={(e) => setLabelPreset(e.target.value)}
+                options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 170 }} />
+            </Field>
+            {labelPreset === "custom" && (
+              <>
+                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 80 }} /></Field>
+                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 80 }} /></Field>
+              </>
+            )}
+            <Field label="รูปแบบ">
+              <div className="chip-row">
+                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>แผ่น A4</span>
+                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>ม้วนป้าย</span>
+              </div>
+            </Field>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 10 }}>
+              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
+            </label>
+            <Btn variant="accent" onClick={doPrint} style={{ marginBottom: 2 }}><Icon name="printer" size={15} />พิมพ์ ({selected.size})</Btn>
+          </div>
+        </Card>
+      )}
+
+      {!loading && releaseId && units.length === 0 && (
+        <div className="empty-state">
+          <Icon name="qr" size={32} />
+          <div className="empty-state-title">ไม่พบชิ้นงานในล็อตนี้</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 5) REPORT
 // ══════════════════════════════════════════════════════════════════════════
 function ReportPage() {
   const [preset, setPreset] = useState("week");
@@ -529,24 +872,24 @@ function ReportPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ color: C.text, fontWeight: 500 }}>Report</h2>
+      <div className="page-head">
+        <div className="page-title">Report</div>
         <PresetPicker value={preset} onChange={setPreset} />
       </div>
-      <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-        <Card title="จำนวนการสแกน"><div style={{ fontSize: 26, color: C.text }}>{logs.length.toLocaleString()}</div></Card>
-        <Card title="ชิ้นงานที่มีความเคลื่อนไหว"><div style={{ fontSize: 26, color: C.text }}>{distinctUnits.toLocaleString()}</div></Card>
-        <Card title="น้ำหนักรวม (กก.)"><div style={{ fontSize: 26, color: C.text }}>{fmtNum(totalWeight)}</div></Card>
+      <div className="stat-row">
+        <StatCard label="จำนวนการสแกน" value={logs.length.toLocaleString()} icon="scan" />
+        <StatCard label="ชิ้นงานที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
+        <StatCard label="น้ำหนักรวม (กก.)" value={fmtNum(totalWeight)} icon="weight" />
       </div>
-      <Card title="แยกตามขั้นตอนการทำงาน (ตัด / เจาะ / บาก ฯลฯ)">
+      <Card title="แยกตามขั้นตอนการทำงาน">
         <div style={{ height: 260 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData}>
-              <CartesianGrid stroke={C.border} strokeDasharray="3 3" />
-              <XAxis dataKey="name" stroke={C.muted} fontSize={12} />
-              <YAxis stroke={C.muted} fontSize={12} />
-              <Tooltip contentStyle={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.text }} />
-              <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={C.accent} radius={[4, 4, 0, 0]} />
+              <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="name" stroke={CHART.muted} fontSize={12} />
+              <YAxis stroke={CHART.muted} fontSize={12} />
+              <Tooltip contentStyle={{ background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}`, color: CHART.text, borderRadius: 10 }} />
+              <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={CHART.accent} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -556,7 +899,7 @@ function ReportPage() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 5) MACHINES SUMMARY
+// 6) MACHINES SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function MachinesSummaryPage() {
   const [preset, setPreset] = useState("week");
@@ -577,33 +920,35 @@ function MachinesSummaryPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ color: C.text, fontWeight: 500 }}>Machines Summary</h2>
+      <div className="page-head">
+        <div className="page-title">Machines Summary</div>
         <PresetPicker value={preset} onChange={setPreset} />
       </div>
       <Card title="ผลงานแยกตามเครื่องจักร">
         <div style={{ height: 240, marginBottom: 16 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows}>
-              <CartesianGrid stroke={C.border} strokeDasharray="3 3" />
-              <XAxis dataKey="name" stroke={C.muted} fontSize={12} />
-              <YAxis stroke={C.muted} fontSize={12} />
-              <Tooltip contentStyle={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.text }} />
-              <Bar dataKey="count" name="จำนวนชิ้น" fill={C.success} radius={[4, 4, 0, 0]} />
+              <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="name" stroke={CHART.muted} fontSize={12} />
+              <YAxis stroke={CHART.muted} fontSize={12} />
+              <Tooltip contentStyle={{ background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}`, color: CHART.text, borderRadius: 10 }} />
+              <Bar dataKey="count" name="จำนวนชิ้น" fill={CHART.success} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>เครื่องจักร</Th><Th>จำนวนครั้ง</Th><Th>น้ำหนักรวม (กก.)</Th></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.name}><Td>{r.name}</Td><Td>{r.count}</Td><Td>{fmtNum(r.weight)}</Td></tr>)}</tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>เครื่องจักร</th><th>จำนวนครั้ง</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <tbody>{rows.map((r) => <tr key={r.name}><td>{r.name}</td><td>{r.count}</td><td>{fmtNum(r.weight)}</td></tr>)}</tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 6) PROJECTS SUMMARY — ความคืบหน้าทั้งหมด (all-time)
+// 7) PROJECTS SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function ProjectsSummaryPage() {
   const [units, setUnits] = useState([]);
@@ -619,27 +964,39 @@ function ProjectsSummaryPage() {
   const rows = Object.values(byProject);
   return (
     <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Projects Summary</h2>
+      <div className="page-head"><div className="page-title">Projects Summary</div></div>
       <Card title="ความคืบหน้าแยกตามโปรเจค (สะสมทั้งหมด)">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>โปรเจค</Th><Th>ปล่อยงาน (ชิ้น)</Th><Th>เสร็จแล้ว</Th><Th>% เสร็จ</Th><Th>น้ำหนักรวม (กก.)</Th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.name}>
-                <Td>{r.name}</Td><Td>{r.total}</Td><Td>{r.finished}</Td>
-                <Td>{r.total ? Math.round((r.finished / r.total) * 100) : 0}%</Td>
-                <Td>{fmtNum(r.weight)}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const pct = r.total ? Math.round((r.finished / r.total) * 100) : 0;
+                return (
+                  <tr key={r.name}>
+                    <td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? "var(--success)" : "var(--accent)" }} />
+                        </div>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{pct}%</span>
+                      </div>
+                    </td>
+                    <td>{fmtNum(r.weight)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 7) PARTS SUMMARY — สรุปแยกชนิด part (all-time)
+// 8) PARTS SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function PartsSummaryPage() {
   const [units, setUnits] = useState([]);
@@ -655,23 +1012,25 @@ function PartsSummaryPage() {
   const rows = Object.values(byPart).sort((a, b) => b.total - a.total);
   return (
     <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Parts Summary</h2>
+      <div className="page-head"><div className="page-title">Parts Summary</div></div>
       <Card title="สรุปแยกตามชนิด Part (สะสมทั้งหมด)">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>Part No.</Th><Th>ชื่อ Part</Th><Th>ปล่อยงาน</Th><Th>เสร็จแล้ว</Th><Th>น้ำหนักรวม (กก.)</Th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.part}><Td>{r.part}</Td><Td>{r.name}</Td><Td>{r.total}</Td><Td>{r.finished}</Td><Td>{fmtNum(r.weight)}</Td></tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>Part No.</th><th>ชื่อ Part</th><th>ปล่อยงาน</th><th>เสร็จแล้ว</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.part}><td>{r.part}</td><td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td><td>{fmtNum(r.weight)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 8) SETUP — master data (departments / employees / machines / operations / projects / part master)
+// 9) SETUP
 // ══════════════════════════════════════════════════════════════════════════
 function SetupPage() {
   const [tab, setTab] = useState("machines");
@@ -685,14 +1044,10 @@ function SetupPage() {
   ];
   return (
     <div>
-      <h2 style={{ color: C.text, fontWeight: 500, marginBottom: 16 }}>Setup</h2>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+      <div className="page-head"><div className="page-title">Setup</div></div>
+      <div className="chip-row" style={{ marginBottom: 18 }}>
         {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={{
-            background: tab === t.key ? C.accent : C.panel2, color: "#fff",
-            border: `1px solid ${tab === t.key ? C.accent : C.border}`, borderRadius: 8,
-            padding: "7px 14px", fontSize: 13, cursor: "pointer",
-          }}>{t.label}</button>
+          <span key={t.key} className={`chip ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</span>
         ))}
       </div>
       {tab === "machines" && <SimpleCrud table="machines" fields={[
@@ -711,7 +1066,6 @@ function SetupPage() {
   );
 }
 
-// generic CRUD สำหรับตารางง่ายๆ (machines / operations / projects / departments)
 function SimpleCrud({ table, fields }) {
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState({});
@@ -729,24 +1083,27 @@ function SimpleCrud({ table, fields }) {
     <Card title="เพิ่มรายการใหม่">
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         {fields.map((f) => (
-          <div key={f.key} style={{ minWidth: 160 }}>
-            <Label>{f.label}</Label>
-            <Input type={f.type || "text"} value={form[f.key] || ""} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} />
+          <div key={f.key} style={{ minWidth: 170 }}>
+            <Field label={f.label}>
+              <Input type={f.type || "text"} value={form[f.key] || ""} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} />
+            </Field>
           </div>
         ))}
-        <div style={{ alignSelf: "flex-end" }}><Btn variant="accent" onClick={add}>เพิ่ม</Btn></div>
+        <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead><tr>{fields.map((f) => <Th key={f.key}>{f.label}</Th>)}<Th></Th></tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              {fields.map((f) => <Td key={f.key}>{r[f.key]}</Td>)}
-              <Td><span onClick={() => remove(r.id)} style={{ color: C.danger, cursor: "pointer" }}>ลบ</span></Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr>{fields.map((f) => <th key={f.key}>{f.label}</th>)}<th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                {fields.map((f) => <td key={f.key}>{r[f.key]}</td>)}
+                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }
@@ -774,7 +1131,7 @@ function EmployeeCrud() {
 
   return (
     <Card title="เพิ่มพนักงานใหม่">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 14 }}>
+      <div className="grid-3" style={{ marginBottom: 6 }}>
         <Field label="รหัสพนักงาน"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
         <Field label="ชื่อ"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label="รหัสผ่านเริ่มต้น"><Input value={form.password || ""} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
@@ -784,19 +1141,25 @@ function EmployeeCrud() {
           options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
       </div>
       <Btn variant="accent" onClick={add}>เพิ่มพนักงาน</Btn>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-        <thead><tr><Th>รหัส</Th><Th>ชื่อ</Th><Th>แผนก</Th><Th>สิทธิ์</Th><Th>สถานะ</Th></tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <Td>{r.code}</Td><Td>{r.name}</Td>
-              <Td>{departments.find((d) => d.id === r.department_id)?.name || "-"}</Td>
-              <Td>{ROLE_LABELS[r.role] || r.role}</Td>
-              <Td><span onClick={() => toggle(r)} style={{ cursor: "pointer", color: r.active ? C.success : C.muted }}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</span></Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap" style={{ marginTop: 16 }}>
+        <table className="data-table">
+          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>สถานะ</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{r.code}</td><td>{r.name}</td>
+                <td>{departments.find((d) => d.id === r.department_id)?.name || "-"}</td>
+                <td>{ROLE_LABELS[r.role] || r.role}</td>
+                <td>
+                  <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
+                    <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }
@@ -832,7 +1195,7 @@ function PartMasterCrud() {
 
   return (
     <Card title="เพิ่ม Part ใหม่ + กำหนด Routing">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 10 }}>
+      <div className="grid-3" style={{ marginBottom: 4 }}>
         <Field label="โปรเจค"><Select value={form.project_id || ""} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
           options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} /></Field>
         <Field label="รหัส Part"><Input value={form.part_no || ""} onChange={(e) => setForm({ ...form, part_no: e.target.value })} /></Field>
@@ -840,30 +1203,31 @@ function PartMasterCrud() {
         <Field label="วัสดุ"><Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} /></Field>
         <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
       </div>
-      <Label>Routing — เลือกขั้นตอนที่ part นี้ต้องผ่าน</Label>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+      <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
+      <div className="chip-row" style={{ marginBottom: 16 }}>
         {operations.map((o) => {
           const active = (form.routing || []).includes(o.name);
           return (
-            <span key={o.id} onClick={() => toggleOp(o.name)} style={{
-              cursor: "pointer", padding: "6px 12px", borderRadius: 8, fontSize: 13,
-              background: active ? C.accent : C.panel2, color: "#fff", border: `1px solid ${active ? C.accent : C.border}`,
-            }}>{o.name}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}</span>
+            <span key={o.id} onClick={() => toggleOp(o.name)} className={`chip ${active ? "active" : ""}`}>
+              {o.name}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
+            </span>
           );
         })}
       </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-        <thead><tr><Th>Part No.</Th><Th>ชื่อ</Th><Th>Routing</Th><Th></Th></tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <Td>{r.part_no}</Td><Td>{r.part_name}</Td><Td>{(r.routing || []).join(" → ")}</Td>
-              <Td><span onClick={() => remove(r.id)} style={{ color: C.danger, cursor: "pointer" }}>ลบ</span></Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap" style={{ marginTop: 16 }}>
+        <table className="data-table">
+          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>Routing</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{r.part_no}</td><td>{r.part_name}</td><td>{(r.routing || []).join(" → ")}</td>
+                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }
