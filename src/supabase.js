@@ -71,7 +71,7 @@ export async function deleteRow(table, id) {
 export async function findUnitByQr(qrCode) {
   const { data, error } = await supabase
     .from("part_units")
-    .select("*, part_master(*), release:releases(*)")
+    .select("*, part_master(*, projects(code, name)), release:releases(*)")
     .eq("qr_code", qrCode.trim())
     .maybeSingle();
   if (error) {
@@ -99,7 +99,7 @@ export async function getUnitHistory(partUnitId) {
 export async function getAllUnitsFull(statusFilter) {
   let q = supabase
     .from("part_units")
-    .select("*, part_master(part_no, part_name, unit_weight, routing, project_id, projects(name))")
+    .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
     .order("created_at", { ascending: false });
   if (statusFilter) q = q.eq("status", statusFilter);
   const { data, error } = await q;
@@ -114,7 +114,7 @@ export async function getAllUnitsFull(statusFilter) {
 export async function getScanLogsBetween(fromIso, toIso) {
   const { data, error } = await supabase
     .from("scan_logs")
-    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name), part_unit:part_units(unit_no, part_master_id, part_master(part_no, part_name, project_id, unit_weight, routing, projects(name)))")
+    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name), part_unit:part_units(unit_no, part_master_id, weight, length_mm, part_master(part_no, part_name, project_id, unit_weight, default_length_mm, routing, projects(name)))")
     .gte("scanned_at", fromIso)
     .lte("scanned_at", toIso)
     .order("scanned_at", { ascending: false });
