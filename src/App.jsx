@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  listRows, insertRow, insertRows, updateRow, deleteRow,
-  findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull,
+  listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows, deleteReleaseCascade,
+  findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
@@ -234,6 +234,7 @@ const MENU = [
     { key: "detail", label: "สแกนหน้าเครื่อง", icon: "scan" },
     { key: "finished", label: "Finished Part", icon: "check" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
+    { key: "manageReleases", label: "จัดการ Release", icon: "grid" },
   ] },
   { group: "รายงาน", items: [
     { key: "report", label: "Report", icon: "chart" },
@@ -328,6 +329,7 @@ function Shell({ user, onLogout }) {
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage />}
+          {tab === "manageReleases" && <ReleaseManagePage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsSummaryPage />}
@@ -1283,6 +1285,230 @@ function QrLabelsPage() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// 4.5) MANAGE RELEASES — แก้ไข/ลบ Release ที่เคยปล่อยงานไปแล้ว
+// ══════════════════════════════════════════════════════════════════════════
+// แก้ไขได้: จำนวน / น้ำหนักต่อชิ้น / ความยาวต่อชิ้น / หมายเหตุ / เลข Release Order
+// - เพิ่มจำนวน  → สร้าง QR ใหม่ต่อท้าย (unit_no ต่อจากใบล่าสุด)
+// - ลดจำนวน    → ลบเฉพาะ QR ที่ "ยังไม่ถูกสแกน" (status = released) เท่านั้น
+//                ลบต่ำกว่าจำนวนที่สแกนไปแล้วไม่ได้ เพื่อไม่ให้ประวัติการทำงานหาย
+// - แก้น้ำหนัก/ความยาว → จ่ายค่าลงทุกชิ้นในล็อตนี้ใหม่ (เหมือนตอน Release ครั้งแรก)
+// ลบทั้ง Release → ลบ QR (part_units) และประวัติสแกน (scan_logs) ของล็อตนั้นทั้งหมด
+function ReleaseEditModal({ release, onClose, onSaved }) {
+  const [qty, setQty] = useState(release.qty);
+  const [unitWeight, setUnitWeight] = useState(release.unit_weight ?? "");
+  const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
+  const [note, setNote] = useState(release.note ?? "");
+  const [releaseOrder, setReleaseOrder] = useState(release.release_order ?? "");
+  const [units, setUnits] = useState(null); // null = ยังโหลดไม่เสร็จ
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }).then(setUnits);
+  }, [release.id]);
+
+  const scannedCount = units ? units.filter((u) => u.status !== "released").length : 0;
+  const releasedCount = units ? units.length - scannedCount : 0;
+  const qtyNum = Number(qty) || 0;
+  const delta = qtyNum - release.qty;
+
+  async function doSave() {
+    if (!units) return;
+    if (qtyNum < 1) { setErr("จำนวนต้องมากกว่า 0"); return; }
+    if (qtyNum < scannedCount) {
+      setErr(`ลดจำนวนต่ำกว่านี้ไม่ได้ — มีชิ้นที่สแกนไปแล้ว ${scannedCount} ชิ้นในล็อตนี้`);
+      return;
+    }
+    if (delta < 0 && Math.abs(delta) > releasedCount) {
+      setErr(`ลบได้สูงสุด ${releasedCount} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
+      return;
+    }
+    setBusy(true); setErr("");
+    try {
+      const patch = {
+        qty: qtyNum,
+        unit_weight: unitWeight === "" ? null : Number(unitWeight),
+        length_mm: lengthMm === "" ? null : Number(lengthMm),
+        note: note || null,
+        release_order: releaseOrder || null,
+      };
+      await updateRow("releases", release.id, patch);
+
+      // ถ้าน้ำหนัก/ความยาวเปลี่ยน ให้จ่ายค่าลงทุกชิ้นของล็อตนี้ใหม่ทั้งหมด
+      if (patch.unit_weight !== (release.unit_weight ?? null) || patch.length_mm !== (release.length_mm ?? null)) {
+        await updateRows("part_units", { release_id: release.id }, { weight: patch.unit_weight, length_mm: patch.length_mm });
+      }
+
+      if (delta > 0) {
+        const maxUnitNo = units.reduce((m, u) => Math.max(m, u.unit_no), 0);
+        const suffix = release.id.slice(0, 6).toUpperCase();
+        const partNo = release.part_master?.part_no || "PART";
+        const newUnits = Array.from({ length: delta }, (_, i) => ({
+          release_id: release.id,
+          part_master_id: release.part_master_id,
+          unit_no: maxUnitNo + i + 1,
+          qr_code: `${partNo}-${suffix}-${String(maxUnitNo + i + 1).padStart(4, "0")}`,
+          status: "released",
+          weight: patch.unit_weight,
+          length_mm: patch.length_mm,
+        }));
+        await insertRows("part_units", newUnits);
+      } else if (delta < 0) {
+        const removable = units.filter((u) => u.status === "released").sort((a, b) => b.unit_no - a.unit_no);
+        const toRemove = removable.slice(0, Math.abs(delta)).map((u) => u.id);
+        await deleteRows("part_units", toRemove);
+      }
+
+      onSaved();
+    } catch (e) {
+      setErr("บันทึกไม่สำเร็จ: " + e.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal title="แก้ไข Release" sub={`Part ${release.part_master?.part_no || "-"} — โปรเจค ${release.part_master?.projects?.code || "-"}`} onClose={onClose}>
+      {units === null ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
+      ) : (
+        <>
+          <div className="grid-2">
+            <Field label="จำนวน (ชิ้น)">
+              <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+            </Field>
+            <Field label="เลขที่ Release Order">
+              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} placeholder="ไม่บังคับ" />
+            </Field>
+            <Field label="น้ำหนัก/ชิ้น (กก.)">
+              <Input type="number" step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
+            </Field>
+            <Field label="ความยาว/ชิ้น (มม.)">
+              <Input type="number" step="0.1" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
+            </Field>
+          </div>
+          <Field label="หมายเหตุ">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
+          </Field>
+
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+            ตอนนี้มี {units.length} ชิ้น — สแกนไปแล้ว {scannedCount} ชิ้น, ยังไม่สแกน {releasedCount} ชิ้น
+            {delta > 0 && <><br />จะสร้าง QR เพิ่มอีก <b>{delta}</b> ใบ ต่อท้ายล็อตเดิม</>}
+            {delta < 0 && <><br />จะลบ QR ที่ยังไม่สแกนออก <b>{Math.abs(delta)}</b> ใบ</>}
+          </div>
+
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+
+          <div className="modal-actions">
+            <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+            <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function ReleaseManagePage() {
+  const [releases, setReleases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setReleases(await getReleasesFull());
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = releases.filter((r) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [
+      r.release_order, r.part_master?.part_no, r.part_master?.projects?.code,
+      r.part_master?.projects?.name, r.note,
+    ].some((v) => (v || "").toLowerCase().includes(q));
+  });
+
+  async function handleDelete(release) {
+    setBusyId(release.id);
+    try {
+      const units = await listRows("part_units", { filters: { release_id: release.id } });
+      const scanned = units.filter((u) => u.status !== "released").length;
+      const msg = scanned > 0
+        ? `ล็อตนี้มี ${units.length} ชิ้น และมี ${scanned} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบ Release นี้จะลบ QR และประวัติสแกนของชิ้นทั้งหมดในล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
+        : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
+      if (!confirm(msg)) { setBusyId(null); return; }
+      await deleteReleaseCascade(release.id);
+      await load();
+    } catch (e) {
+      alert("ลบไม่สำเร็จ: " + e.message);
+    }
+    setBusyId(null);
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">จัดการ Release</div>
+          <div className="page-sub">แก้ไขจำนวน/น้ำหนัก/ความยาว/หมายเหตุ หรือลบ Release ที่เคยปล่อยงานไปแล้ว</div>
+        </div>
+      </div>
+
+      <Card>
+        <Field label="ค้นหา">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="เลข Release Order / รหัส Part / รหัสโปรเจค / หมายเหตุ" />
+        </Field>
+        <div className="table-wrap" style={{ marginTop: 12 }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>วันที่</th><th>Release Order</th><th>โปรเจค</th><th>Part</th><th>จำนวน</th>
+                <th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th><th>ปล่อยโดย</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.id}>
+                  <td>{fmtDT(r.release_date)}</td>
+                  <td>{r.release_order || "-"}</td>
+                  <td>{r.part_master?.projects?.code || "-"}</td>
+                  <td>{r.part_master?.part_no || "-"}</td>
+                  <td>{r.qty}</td>
+                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
+                  <td>{r.note || "-"}</td>
+                  <td>{r.employee?.name || "-"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>แก้ไข</span>
+                    <span onClick={() => busyId !== r.id && handleDelete(r)} style={{ color: "var(--danger-hi)", cursor: busyId === r.id ? "wait" : "pointer" }}>
+                      {busyId === r.id ? "กำลังลบ..." : "ลบ"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ไม่พบ Release</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {editing && (
+        <ReleaseEditModal
+          release={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // 5) REPORT
 // ══════════════════════════════════════════════════════════════════════════
 const RANGE_MODES = [
@@ -1479,29 +1705,39 @@ function MachinesSummaryPage() {
 // ══════════════════════════════════════════════════════════════════════════
 function ProjectsSummaryPage() {
   const [units, setUnits] = useState([]);
-  useEffect(() => { getAllUnitsFull().then(setUnits); }, []);
-  const byProject = {};
+  const [projects, setProjects] = useState([]);
+  useEffect(() => {
+    getAllUnitsFull().then(setUnits);
+    listRows("projects", { order: "code" }).then(setProjects);
+  }, []);
+  // นับสถิติแยกตาม project_id ก่อน แล้วค่อย "left join" กับรายชื่อโปรเจคทั้งหมด
+  // เพื่อให้โปรเจคที่ยังไม่เคย Release เลยก็ยังขึ้นแถวในตาราง (แถวละ 0)
+  const byProjectId = {};
   units.forEach((u) => {
-    const name = u.part_master?.projects?.name || "ไม่ระบุโปรเจค";
-    byProject[name] = byProject[name] || { name, total: 0, finished: 0, weight: 0 };
-    byProject[name].total += 1;
-    if (u.status === "finished") byProject[name].finished += 1;
-    byProject[name].weight += Number(u.weight || u.part_master?.unit_weight || 0);
+    const pid = u.part_master?.project_id;
+    if (!pid) return;
+    byProjectId[pid] = byProjectId[pid] || { total: 0, finished: 0, weight: 0 };
+    byProjectId[pid].total += 1;
+    if (u.status === "finished") byProjectId[pid].finished += 1;
+    byProjectId[pid].weight += Number(u.weight || u.part_master?.unit_weight || 0);
   });
-  const rows = Object.values(byProject);
+  const rows = projects.map((p) => ({
+    id: p.id, code: p.code, name: p.name,
+    ...(byProjectId[p.id] || { total: 0, finished: 0, weight: 0 }),
+  }));
   return (
     <div>
       <div className="page-head"><div className="page-title">Projects Summary</div></div>
       <Card title="ความคืบหน้าแยกตามโปรเจค (สะสมทั้งหมด)">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <thead><tr><th>รหัส</th><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
             <tbody>
               {rows.map((r) => {
                 const pct = r.total ? Math.round((r.finished / r.total) * 100) : 0;
                 return (
-                  <tr key={r.name}>
-                    <td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td>
+                  <tr key={r.id}>
+                    <td>{r.code}</td><td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td>
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
@@ -1527,16 +1763,26 @@ function ProjectsSummaryPage() {
 // ══════════════════════════════════════════════════════════════════════════
 function PartsSummaryPage() {
   const [units, setUnits] = useState([]);
-  useEffect(() => { getAllUnitsFull().then(setUnits); }, []);
-  const byPart = {};
+  const [parts, setParts] = useState([]);
+  useEffect(() => {
+    getAllUnitsFull().then(setUnits);
+    listRows("part_master", { order: "part_no" }).then(setParts);
+  }, []);
+  const byPartId = {};
   units.forEach((u) => {
-    const key = u.part_master?.part_no || "ไม่ระบุ";
-    byPart[key] = byPart[key] || { part: key, name: u.part_master?.part_name, total: 0, finished: 0, weight: 0 };
-    byPart[key].total += 1;
-    if (u.status === "finished") byPart[key].finished += 1;
-    byPart[key].weight += Number(u.weight || u.part_master?.unit_weight || 0);
+    const pid = u.part_master_id;
+    if (!pid) return;
+    byPartId[pid] = byPartId[pid] || { total: 0, finished: 0, weight: 0 };
+    byPartId[pid].total += 1;
+    if (u.status === "finished") byPartId[pid].finished += 1;
+    byPartId[pid].weight += Number(u.weight || u.part_master?.unit_weight || 0);
   });
-  const rows = Object.values(byPart).sort((a, b) => b.total - a.total);
+  const rows = parts
+    .map((p) => ({
+      part: p.part_no, name: p.part_name,
+      ...(byPartId[p.id] || { total: 0, finished: 0, weight: 0 }),
+    }))
+    .sort((a, b) => b.total - a.total);
   return (
     <div>
       <div className="page-head"><div className="page-title">Parts Summary</div></div>
