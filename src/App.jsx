@@ -13,8 +13,8 @@ import {
 
 // ─── Chart theme (matches CSS custom properties — recharts needs literal values) ──
 const CHART = {
-  grid: "#2c3540", muted: "#8b93a1", tooltipBg: "#212832", tooltipBorder: "#2c3540",
-  text: "#edf1f4", accent: "#d98c3d", success: "#48b083",
+  grid: "#e1e9e5", muted: "#6d7d76", tooltipBg: "#ffffff", tooltipBorder: "#e1e9e5",
+  text: "#142420", accent: "#10b981", success: "#22c55e",
 };
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
@@ -90,12 +90,12 @@ const Card = ({ title, right, children, className = "" }) => (
   </div>
 );
 const TONES = {
-  accent: { c: "var(--accent-hi)", bg: "rgba(217,140,61,.14)", bd: "rgba(217,140,61,.4)" },
-  success: { c: "var(--success-hi)", bg: "rgba(72,176,131,.14)", bd: "rgba(72,176,131,.4)" },
-  steel: { c: "var(--steel-hi)", bg: "rgba(91,143,186,.14)", bd: "rgba(91,143,186,.4)" },
-  warning: { c: "var(--warning)", bg: "rgba(220,176,35,.14)", bd: "rgba(220,176,35,.4)" },
-  danger: { c: "var(--danger-hi)", bg: "rgba(221,91,79,.14)", bd: "rgba(221,91,79,.4)" },
-  muted: { c: "var(--muted)", bg: "rgba(139,147,161,.1)", bd: "rgba(139,147,161,.3)" },
+  accent: { c: "var(--accent-dk)", bg: "rgba(16,185,129,.12)", bd: "rgba(16,185,129,.3)" },
+  success: { c: "#15803d", bg: "rgba(34,197,94,.14)", bd: "rgba(34,197,94,.3)" },
+  steel: { c: "#1d4ed8", bg: "rgba(59,130,246,.12)", bd: "rgba(59,130,246,.3)" },
+  warning: { c: "#b45309", bg: "rgba(245,158,11,.14)", bd: "rgba(245,158,11,.32)" },
+  danger: { c: "#b91c1c", bg: "rgba(239,68,68,.12)", bd: "rgba(239,68,68,.3)" },
+  muted: { c: "var(--muted)", bg: "rgba(109,125,118,.1)", bd: "rgba(109,125,118,.25)" },
 };
 const Badge = ({ children, tone = "accent" }) => {
   const t = TONES[tone] || TONES.accent;
