@@ -110,6 +110,29 @@ const StatCard = ({ label, value, icon }) => (
   </div>
 );
 
+// Generic modal shell used by the quick-create Project / Part popups.
+function Modal({ title, sub, onClose, children }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal">
+        <div className="modal-head">
+          <div>
+            <div className="modal-title">{title}</div>
+            {sub && <div className="modal-sub">{sub}</div>}
+          </div>
+          <span className="modal-close" onClick={onClose}><Icon name="close" size={16} /></span>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Signature element: the routing rail — a numbered track of the real
 // operation sequence a part unit must travel through.
 function RoutingRail({ routing, doneOps }) {
@@ -323,16 +346,151 @@ function Shell({ user, onLogout }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 1) RELEASE PRODUCTION — ปล่อยงาน + สร้าง QR ต่อชิ้น
 // ══════════════════════════════════════════════════════════════════════════
+// Postgres unique-violation code, used to give a friendly Thai message
+// instead of a raw DB error when someone reuses a code that must be unique.
+function isDuplicateError(e) {
+  return e?.code === "23505" || /duplicate key|already exists/i.test(e?.message || "");
+}
+
+// ─── Quick-create: Project ──────────────────────────────────────────────────
+// Lets the user spin up a new project right from the Release page instead of
+// hopping over to Setup — keeps "create project → create part → release" as
+// one uninterrupted flow.
+function QuickAddProjectModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    const code = (form.code || "").trim();
+    const name = (form.name || "").trim();
+    if (!code || !name) { setErr("กรอกรหัสโปรเจคและชื่อโปรเจคให้ครบ"); return; }
+    setBusy(true); setErr("");
+    try {
+      const project = await insertRow("projects", { code, name });
+      onCreated(project);
+      onClose();
+    } catch (e2) {
+      setErr(isDuplicateError(e2) ? `รหัสโปรเจค "${code}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : "เกิดข้อผิดพลาด: " + e2.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal title="โปรเจคใหม่" sub="1 โปรเจคสามารถมีได้หลาย Part และหลาย Release" onClose={onClose}>
+      <form onSubmit={submit}>
+        <Field label="รหัสโปรเจค *">
+          <Input autoFocus value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="เช่น PRJ001" />
+        </Field>
+        <Field label="ชื่อโปรเจค *">
+          <Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น สายการผลิตชิ้นส่วน A" />
+        </Field>
+        {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 2 }}>{err}</div>}
+        <div className="modal-actions">
+          <Btn type="button" variant="ghost" onClick={onClose}>ยกเลิก</Btn>
+          <Btn type="submit" variant="accent" disabled={busy}>{busy ? "กำลังสร้าง..." : "สร้างโปรเจค"}</Btn>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Quick-create: Part (+ Routing) ─────────────────────────────────────────
+// A project needs at least one Part before it can be Released, so this
+// mirrors PartMasterCrud but scoped to one project and reachable inline.
+function QuickAddPartModal({ project, onClose, onCreated }) {
+  const [operations, setOperations] = useState([]);
+  const [form, setForm] = useState({ routing: [] });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
+
+  function toggleOp(name) {
+    setForm((f) => {
+      const has = (f.routing || []).includes(name);
+      return { ...f, routing: has ? f.routing.filter((x) => x !== name) : [...(f.routing || []), name] };
+    });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    const part_no = (form.part_no || "").trim();
+    if (!part_no) { setErr("กรอกรหัส Part ให้ครบ"); return; }
+    setBusy(true); setErr("");
+    try {
+      const part = await insertRow("part_master", {
+        project_id: project.id, part_no, part_name: (form.part_name || "").trim() || part_no,
+        material: (form.material || "").trim() || null,
+        unit_weight: Number(form.unit_weight || 0),
+        default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
+        routing: form.routing || [],
+      });
+      onCreated(part);
+      onClose();
+    } catch (e2) {
+      setErr(isDuplicateError(e2) ? `Part "${part_no}" มีอยู่แล้วในโปรเจคนี้` : "เกิดข้อผิดพลาด: " + e2.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal title="Part ใหม่" sub={`ในโปรเจค ${project.code} — ${project.name}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="grid-2">
+          <Field label="รหัส Part *">
+            <Input autoFocus value={form.part_no || ""} onChange={(e) => setForm({ ...form, part_no: e.target.value })} />
+          </Field>
+          <Field label="ชื่อ Part">
+            <Input value={form.part_name || ""} onChange={(e) => setForm({ ...form, part_name: e.target.value })} />
+          </Field>
+          <Field label="วัสดุ">
+            <Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} />
+          </Field>
+          <Field label="น้ำหนัก/ชิ้น (กก.)">
+            <Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} />
+          </Field>
+          <Field label="ความยาว/ชิ้น (มม.)">
+            <Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} />
+          </Field>
+        </div>
+        <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
+        <div className="chip-row" style={{ marginBottom: 6 }}>
+          {operations.map((o) => {
+            const active = (form.routing || []).includes(o.name);
+            return (
+              <span key={o.id} onClick={() => toggleOp(o.name)} className={`chip ${active ? "active" : ""}`}>
+                {o.name}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
+              </span>
+            );
+          })}
+          {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปตั้งค่าที่ Setup ก่อน</span>}
+        </div>
+        {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 8 }}>{err}</div>}
+        <div className="modal-actions">
+          <Btn type="button" variant="ghost" onClick={onClose}>ยกเลิก</Btn>
+          <Btn type="submit" variant="accent" disabled={busy}>{busy ? "กำลังสร้าง..." : "สร้าง Part"}</Btn>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function ReleasePage({ user }) {
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [partId, setPartId] = useState("");
   const [qty, setQty] = useState(10);
+  const [relWeight, setRelWeight] = useState("");
+  const [relLength, setRelLength] = useState("");
   const [note, setNote] = useState("");
   const [lastUnits, setLastUnits] = useState(null);
   const [recent, setRecent] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [showNewPart, setShowNewPart] = useState(false);
 
   const [labelPreset, setLabelPreset] = useState("20x20");
   const [customW, setCustomW] = useState(20);
@@ -349,6 +507,13 @@ function ReleasePage({ user }) {
 
   const partsInProject = parts.filter((p) => !projectId || p.project_id === projectId);
   const selectedPart = parts.find((p) => p.id === partId);
+  const selectedProject = projects.find((p) => p.id === projectId);
+
+  useEffect(() => {
+    setRelWeight(selectedPart ? selectedPart.unit_weight ?? "" : "");
+    setRelLength(selectedPart ? selectedPart.default_length_mm ?? "" : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partId]);
 
   async function doRelease() {
     if (!partId || !qty) return;
@@ -356,6 +521,8 @@ function ReleasePage({ user }) {
     try {
       const release = await insertRow("releases", {
         part_master_id: partId, qty: Number(qty), released_by: user.id, note,
+        unit_weight: relWeight === "" ? null : Number(relWeight),
+        length_mm: relLength === "" ? null : Number(relLength),
       });
       const suffix = release.id.slice(0, 6).toUpperCase();
       const units = Array.from({ length: Number(qty) }, (_, i) => ({
@@ -364,6 +531,8 @@ function ReleasePage({ user }) {
         unit_no: i + 1,
         qr_code: `${selectedPart.part_no}-${suffix}-${String(i + 1).padStart(4, "0")}`,
         status: "released",
+        weight: release.unit_weight,
+        length_mm: release.length_mm,
       }));
       const created = await insertRows("part_units", units);
       setLastUnits(created);
@@ -396,25 +565,41 @@ function ReleasePage({ user }) {
 
       <Card title="ปล่อยงานใหม่">
         <div className="grid-2">
-          <Field label="โปรเจค">
-            <Select value={projectId} onChange={(e) => { setProjectId(e.target.value); setPartId(""); }}
-              options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
-          </Field>
-          <Field label="Part">
-            <Select value={partId} onChange={(e) => setPartId(e.target.value)}
-              options={partsInProject.map((p) => ({ value: p.id, label: `${p.part_no} — ${p.part_name}` }))} />
-          </Field>
+          <div className="field-inline-btn">
+            <Field label="โปรเจค">
+              <Select value={projectId} onChange={(e) => { setProjectId(e.target.value); setPartId(""); }}
+                options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+            </Field>
+            <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่" onClick={() => setShowNewProject(true)}>
+              <Icon name="plus" size={16} />
+            </Btn>
+          </div>
+          <div className="field-inline-btn">
+            <Field label="Part">
+              <Select value={partId} onChange={(e) => setPartId(e.target.value)}
+                options={partsInProject.map((p) => ({ value: p.id, label: `${p.part_no} — ${p.part_name}` }))} />
+            </Field>
+            <Btn type="button" variant="ghost" className="icon-btn-add" title={projectId ? "สร้าง Part ใหม่" : "เลือกโปรเจคก่อน"}
+              disabled={!projectId} onClick={() => setShowNewPart(true)}>
+              <Icon name="plus" size={16} />
+            </Btn>
+          </div>
           <Field label="จำนวน (ชิ้น)">
             <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
           </Field>
           <Field label="หมายเหตุ">
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
           </Field>
+          <Field label="น้ำหนัก/ชิ้น (กก.)">
+            <Input type="number" step="0.01" value={relWeight} onChange={(e) => setRelWeight(e.target.value)} placeholder="เช่น 1.25" />
+          </Field>
+          <Field label="ความยาว/ชิ้น (มม.)">
+            <Input type="number" step="0.1" value={relLength} onChange={(e) => setRelLength(e.target.value)} placeholder="เช่น 600" />
+          </Field>
         </div>
         {selectedPart && (
           <div style={{ marginBottom: 14 }}>
             <RoutingRail routing={selectedPart.routing} doneOps={[]} />
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>น้ำหนักโดยประมาณ/ชิ้น: {fmtNum(selectedPart.unit_weight)} กก.</div>
           </div>
         )}
         <Btn variant="accent" size="lg" onClick={doRelease} disabled={busy || !partId}>
@@ -451,6 +636,11 @@ function ReleasePage({ user }) {
               <div key={u.id} className="label-preview">
                 <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={96} />
                 <div className="code">{u.qr_code}</div>
+                {(u.weight || u.length_mm) && (
+                  <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>
+                    {u.weight ? `${fmtNum(u.weight)} กก.` : ""}{u.weight && u.length_mm ? " · " : ""}{u.length_mm ? `${fmtNum(u.length_mm)} มม.` : ""}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -460,13 +650,15 @@ function ReleasePage({ user }) {
       <Card title="ประวัติการ Release ล่าสุด">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>วันที่</th><th>Part</th><th>จำนวน</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
               {recent.slice(0, 10).map((r) => (
                 <tr key={r.id}>
                   <td>{fmtDT(r.release_date)}</td>
                   <td>{parts.find((p) => p.id === r.part_master_id)?.part_no || "-"}</td>
                   <td>{r.qty}</td>
+                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
                   <td>{r.note || "-"}</td>
                 </tr>
               ))}
@@ -474,6 +666,27 @@ function ReleasePage({ user }) {
           </table>
         </div>
       </Card>
+
+      {showNewProject && (
+        <QuickAddProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreated={(project) => {
+            setProjects((prev) => [...prev, project].sort((a, b) => a.code.localeCompare(b.code)));
+            setProjectId(project.id);
+            setPartId("");
+          }}
+        />
+      )}
+      {showNewPart && selectedProject && (
+        <QuickAddPartModal
+          project={selectedProject}
+          onClose={() => setShowNewPart(false)}
+          onCreated={(part) => {
+            setParts((prev) => [...prev, part].sort((a, b) => a.part_no.localeCompare(b.part_no)));
+            setPartId(part.id);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -545,7 +758,6 @@ function ScanStation({ user, machine, operation, onExit }) {
   const [qrInput, setQrInput] = useState("");
   const [unit, setUnit] = useState(null);
   const [history, setHistory] = useState([]);
-  const [weight, setWeight] = useState("");
   const [msg, setMsg] = useState("");
   const [msgTone, setMsgTone] = useState("muted");
   const [cameraOn, setCameraOn] = useState(false);
@@ -581,7 +793,6 @@ function ScanStation({ user, machine, operation, onExit }) {
     setUnit(u); setHistory(h); setMsg("");
     const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
     const next = nextOpFor(u.part_master?.routing, doneOps);
-    setWeight(u.weight || u.part_master?.unit_weight || "");
     if (next && operation && next !== operation.name) {
       setMsg(`ขั้นตอนถัดไปของชิ้นนี้คือ "${next}" ไม่ใช่ "${operation.name}" — ตรวจสอบก่อนบันทึก`);
       setMsgTone("warning");
@@ -590,17 +801,19 @@ function ScanStation({ user, machine, operation, onExit }) {
 
   function onQrKeyDown(e) { if (e.key === "Enter") { e.preventDefault(); lookup(); } }
 
+  // ไม่มีการพิมพ์ข้อมูลใดๆ เพิ่มตอนสแกน — น้ำหนัก/ความยาวถูกกำหนดไว้แล้วตั้งแต่ตอน
+  // Release และคัดลอกมาพร้อมกับชิ้นงานนี้ (unit.weight / unit.length_mm) จึงบันทึกซ้ำตรงๆ
   async function confirmScan() {
     if (!unit || !machine || !operation) return;
     const routing = unit.part_master?.routing || [];
     const doneOps = history.map((x) => x.operation?.name).filter(Boolean);
     await insertRow("scan_logs", {
       part_unit_id: unit.id, machine_id: machine.id, operation_id: operation.id,
-      employee_id: user.id, weight: weight || null,
+      employee_id: user.id, weight: unit.weight ?? null,
     });
     const newDone = new Set([...doneOps, operation.name]);
     const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
-    await updateRow("part_units", unit.id, { status: finished ? "finished" : "in_progress", weight: weight || unit.weight });
+    await updateRow("part_units", unit.id, { status: finished ? "finished" : "in_progress" });
     setMsg(finished ? "บันทึกแล้ว — ชิ้นนี้ทำครบทุกขั้นตอนแล้ว ✓" : "บันทึกการสแกนเรียบร้อย");
     setMsgTone("success");
     setSessionCount((c) => c + 1);
@@ -668,9 +881,24 @@ function ScanStation({ user, machine, operation, onExit }) {
                 {unit.part_master?.part_no} — {unit.part_master?.part_name}
               </div>
               <RoutingRail routing={unit.part_master?.routing} doneOps={doneOps} />
-              <Field label="น้ำหนัก (กก.)">
-                <Input type="number" step="0.01" value={weight} onChange={(e) => setWeight(e.target.value)} />
-              </Field>
+              <div className="scan-info-grid">
+                <div className="scan-info-cell">
+                  <div className="scan-info-label">โปรเจค</div>
+                  <div className="scan-info-value">{unit.part_master?.projects?.name || "-"}</div>
+                </div>
+                <div className="scan-info-cell">
+                  <div className="scan-info-label">Release</div>
+                  <div className="scan-info-value">{unit.release?.release_date ? fmtDT(unit.release.release_date) : "-"}</div>
+                </div>
+                <div className="scan-info-cell">
+                  <div className="scan-info-label">น้ำหนัก</div>
+                  <div className="scan-info-value">{unit.weight ? `${fmtNum(unit.weight)} กก.` : "-"}</div>
+                </div>
+                <div className="scan-info-cell">
+                  <div className="scan-info-label">ความยาว</div>
+                  <div className="scan-info-value">{unit.length_mm ? `${fmtNum(unit.length_mm)} มม.` : "-"}</div>
+                </div>
+              </div>
               <Btn variant="success" size="lg" className="btn-block" onClick={confirmScan}>
                 <Icon name="check" size={17} /> ยืนยันการสแกน
               </Btn>
@@ -706,7 +934,7 @@ function FinishedPartPage() {
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>QR</th><th>Part</th><th>โปรเจค</th><th>น้ำหนัก</th></tr></thead>
+              <thead><tr><th>QR</th><th>Part</th><th>โปรเจค</th><th>น้ำหนัก</th><th>ความยาว</th></tr></thead>
               <tbody>
                 {units.map((u) => (
                   <tr key={u.id}>
@@ -714,6 +942,7 @@ function FinishedPartPage() {
                     <td>{u.part_master?.part_no} — {u.part_master?.part_name}</td>
                     <td>{u.part_master?.projects?.name || "-"}</td>
                     <td>{fmtNum(u.weight || u.part_master?.unit_weight)}</td>
+                    <td>{u.length_mm || u.part_master?.default_length_mm ? `${fmtNum(u.length_mm || u.part_master?.default_length_mm)} มม.` : "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1057,7 +1286,7 @@ function SetupPage() {
         { key: "name", label: "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)" }, { key: "seq", label: "ลำดับ", type: "number" },
       ]} />}
       {tab === "projects" && <SimpleCrud table="projects" fields={[
-        { key: "code", label: "รหัสโปรเจค" }, { key: "name", label: "ชื่อโปรเจค" }, { key: "customer", label: "ลูกค้า" },
+        { key: "code", label: "รหัสโปรเจค" }, { key: "name", label: "ชื่อโปรเจค" },
       ]} />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
@@ -1187,7 +1416,9 @@ function PartMasterCrud() {
     if (!form.part_no || !form.project_id) { alert("กรอกโปรเจคและรหัส Part ให้ครบ"); return; }
     await insertRow("part_master", {
       project_id: form.project_id, part_no: form.part_no, part_name: form.part_name || form.part_no,
-      material: form.material, unit_weight: Number(form.unit_weight || 0), routing: form.routing || [],
+      material: form.material, unit_weight: Number(form.unit_weight || 0),
+      default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
+      routing: form.routing || [],
     });
     setForm({ routing: [] }); load();
   }
@@ -1202,6 +1433,7 @@ function PartMasterCrud() {
         <Field label="ชื่อ Part"><Input value={form.part_name || ""} onChange={(e) => setForm({ ...form, part_name: e.target.value })} /></Field>
         <Field label="วัสดุ"><Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} /></Field>
         <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
+        <Field label="ความยาวโดยประมาณ/ชิ้น (มม.)"><Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} /></Field>
       </div>
       <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
       <div className="chip-row" style={{ marginBottom: 16 }}>
@@ -1217,11 +1449,14 @@ function PartMasterCrud() {
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
-          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>Routing</th><th></th></tr></thead>
+          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>Routing</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td>{r.part_no}</td><td>{r.part_name}</td><td>{(r.routing || []).join(" → ")}</td>
+                <td>{r.part_no}</td><td>{r.part_name}</td>
+                <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                <td>{r.default_length_mm ? `${fmtNum(r.default_length_mm)} มม.` : "-"}</td>
+                <td>{(r.routing || []).join(" → ")}</td>
                 <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
               </tr>
             ))}
