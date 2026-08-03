@@ -31,3 +31,9 @@ alter table public.part_units  add column if not exists length_mm numeric;
 -- 5) (ทางเลือก) เอาคอลัมน์ "ลูกค้า" ออก เพราะเป็นงานภายใน (Design สั่ง Production)
 --    ไม่ใช่งานลูกค้าภายนอก — เอา comment ออกถ้าต้องการลบข้อมูลลูกค้าที่เคยกรอกไว้จริงๆ
 -- alter table public.projects drop column if exists customer;
+
+-- 6) รองรับ "นำเข้า Release จากไฟล์ Excel" (หลาย Part ในใบสั่งปล่อยงานเดียวกัน):
+--    เก็บเลขที่ใบสั่ง (เช่น "P-012") ไว้กับทุก release ที่มาจากไฟล์เดียวกัน
+--    เพื่อดูเป็นชุด/พิมพ์ป้ายทั้งชุดพร้อมกันได้ภายหลัง
+alter table public.releases add column if not exists release_order text;
+create index if not exists releases_release_order_idx on public.releases (release_order);
