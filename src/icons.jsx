@@ -21,6 +21,7 @@ const paths = {
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2",
   weight: "M9 3h6l1.5 4h-9L9 3ZM4 8h16l1 12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1L4 8Z",
   more: "M5 12h.01M12 12h.01M19 12h.01",
+  plus: "M12 5v14M5 12h14",
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 1.8, style, className }) {
