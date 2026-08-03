@@ -36,6 +36,21 @@ function rangeFor(preset) {
   else from.setFullYear(to.getFullYear() - 1);
   return { from: from.toISOString(), to: to.toISOString() };
 }
+// ─── Month / custom range helpers (used by Report's flexible date filter) ──
+function monthRangeFor(monthStr) {
+  if (!monthStr) return rangeFor("month");
+  const [y, m] = monthStr.split("-").map(Number);
+  const from = new Date(y, m - 1, 1, 0, 0, 0, 0);
+  const to = new Date(y, m, 0, 23, 59, 59, 999); // last day of that month
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+function customRangeFor(fromStr, toStr) {
+  const from = fromStr ? new Date(`${fromStr}T00:00:00`) : new Date(0);
+  const to = toStr ? new Date(`${toStr}T23:59:59.999`) : new Date();
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function daysAgoStr(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 function PresetPicker({ value, onChange }) {
   return (
     <div className="chip-row">
@@ -312,7 +327,7 @@ function Shell({ user, onLogout }) {
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage />}
-          {tab === "report" && <ReportPage />}
+          {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsSummaryPage />}
           {tab === "parts" && <PartsSummaryPage />}
@@ -1080,18 +1095,48 @@ function QrLabelsPage() {
 // ══════════════════════════════════════════════════════════════════════════
 // 5) REPORT
 // ══════════════════════════════════════════════════════════════════════════
-function ReportPage() {
-  const [preset, setPreset] = useState("week");
-  const [logs, setLogs] = useState([]);
-  useEffect(() => {
-    const { from, to } = rangeFor(preset);
-    getScanLogsBetween(from, to).then(setLogs);
-  }, [preset]);
+const RANGE_MODES = [
+  { value: "preset", label: "ช่วงเวลาด่วน" },
+  { value: "month", label: "รายเดือน" },
+  { value: "custom", label: "กำหนดเอง (จาก–ถึง)" },
+];
 
-  const totalWeight = logs.reduce((s, l) => s + Number(l.weight || l.part_unit?.part_master?.unit_weight || 0), 0);
-  const distinctUnits = new Set(logs.map((l) => l.part_unit_id)).size;
+function ReportPage({ goTo }) {
+  // ── Quick actions: create a project, or jump to Release Production ──
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [createdMsg, setCreatedMsg] = useState("");
+
+  // ── Flexible date filter: quick preset / specific month / custom from–to ──
+  const [rangeMode, setRangeMode] = useState("preset");
+  const [preset, setPreset] = useState("week");
+  const [monthValue, setMonthValue] = useState(() => todayStr().slice(0, 7));
+  const [customFrom, setCustomFrom] = useState(() => daysAgoStr(7));
+  const [customTo, setCustomTo] = useState(() => todayStr());
+
+  // ── Filter by a specific Part number ──
+  const [parts, setParts] = useState([]);
+  const [partFilter, setPartFilter] = useState("");
+
+  const [logs, setLogs] = useState([]);
+
+  useEffect(() => { listRows("part_master", { order: "part_no" }).then(setParts); }, []);
+
+  useEffect(() => {
+    const range =
+      rangeMode === "month" ? monthRangeFor(monthValue) :
+      rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
+      rangeFor(preset);
+    getScanLogsBetween(range.from, range.to).then(setLogs);
+  }, [rangeMode, preset, monthValue, customFrom, customTo]);
+
+  const filteredLogs = partFilter
+    ? logs.filter((l) => l.part_unit?.part_master?.part_no === partFilter)
+    : logs;
+
+  const totalWeight = filteredLogs.reduce((s, l) => s + Number(l.weight || l.part_unit?.part_master?.unit_weight || 0), 0);
+  const distinctUnits = new Set(filteredLogs.map((l) => l.part_unit_id)).size;
   const byOp = {};
-  logs.forEach((l) => {
+  filteredLogs.forEach((l) => {
     const name = l.operation?.name || "ไม่ระบุ";
     byOp[name] = byOp[name] || { name, count: 0, weight: 0 };
     byOp[name].count += 1;
@@ -1102,11 +1147,64 @@ function ReportPage() {
   return (
     <div>
       <div className="page-head">
-        <div className="page-title">Report</div>
-        <PresetPicker value={preset} onChange={setPreset} />
+        <div>
+          <div className="page-title">Report</div>
+          <div className="page-sub">สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn variant="ghost" onClick={() => setShowNewProject(true)}>
+            <Icon name="folder" size={15} />สร้างโปรเจคใหม่
+          </Btn>
+          <Btn variant="accent" onClick={() => goTo && goTo("release")}>
+            <Icon name="box" size={15} />เพิ่ม Release
+          </Btn>
+        </div>
       </div>
+
+      {createdMsg && (
+        <div className="card" style={{ background: "var(--accent-tint)", borderColor: "var(--accent)", color: "var(--accent-dk)", fontSize: 13, fontWeight: 600, padding: "12px 16px" }}>
+          {createdMsg}
+        </div>
+      )}
+
+      <Card title="ช่วงเวลาที่ต้องการดู">
+        <div className="chip-row" style={{ marginBottom: 16 }}>
+          {RANGE_MODES.map((m) => (
+            <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
+              {m.label}
+            </span>
+          ))}
+        </div>
+
+        {rangeMode === "preset" && <div style={{ marginBottom: 4 }}><PresetPicker value={preset} onChange={setPreset} /></div>}
+
+        {rangeMode === "month" && (
+          <div style={{ maxWidth: 220, marginBottom: 4 }}>
+            <Field label="เลือกเดือนที่ต้องการดู">
+              <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} />
+            </Field>
+          </div>
+        )}
+
+        {rangeMode === "custom" && (
+          <div className="grid-2" style={{ maxWidth: 420, marginBottom: 4 }}>
+            <Field label="จากวันที่"><Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} /></Field>
+            <Field label="ถึงวันที่"><Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} /></Field>
+          </div>
+        )}
+
+        <div className="section-divider" />
+
+        <div style={{ maxWidth: 280 }}>
+          <Field label="กรองเฉพาะ Part (เว้นว่าง = ดูทุก Part)">
+            <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)}
+              options={parts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
+          </Field>
+        </div>
+      </Card>
+
       <div className="stat-row">
-        <StatCard label="จำนวนการสแกน" value={logs.length.toLocaleString()} icon="scan" />
+        <StatCard label="จำนวนการสแกน" value={filteredLogs.length.toLocaleString()} icon="scan" />
         <StatCard label="ชิ้นงานที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
         <StatCard label="น้ำหนักรวม (กก.)" value={fmtNum(totalWeight)} icon="weight" />
       </div>
@@ -1123,6 +1221,16 @@ function ReportPage() {
           </ResponsiveContainer>
         </div>
       </Card>
+
+      {showNewProject && (
+        <QuickAddProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreated={(project) => {
+            setCreatedMsg(`สร้างโปรเจค ${project.code} — ${project.name} สำเร็จ`);
+            setTimeout(() => setCreatedMsg(""), 3500);
+          }}
+        />
+      )}
     </div>
   );
 }
