@@ -37,3 +37,8 @@ alter table public.part_units  add column if not exists length_mm numeric;
 --    เพื่อดูเป็นชุด/พิมพ์ป้ายทั้งชุดพร้อมกันได้ภายหลัง
 alter table public.releases add column if not exists release_order text;
 create index if not exists releases_release_order_idx on public.releases (release_order);
+
+-- 7) ผูกพนักงานกับ "เครื่องจักรประจำ" + "ขั้นตอนประจำ" — หน้าสแกนจะไม่ให้เลือกเครื่อง/
+--    ขั้นตอนเองอีกต่อไป แต่ใช้ค่าที่ตั้งไว้ในตัวพนักงานแทน (ตั้งค่าที่ Setup > พนักงาน)
+alter table public.employees add column if not exists machine_id uuid references public.machines(id);
+alter table public.employees add column if not exists operation_id uuid references public.operations(id);
