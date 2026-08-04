@@ -467,3 +467,78 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 .empty-state svg { stroke: var(--muted-2); margin-bottom: 10px; }
 .empty-state-title { font-size: 13.5px; color: var(--text); font-weight: 600; margin-bottom: 3px; }
 .empty-state-sub { font-size: 12px; }
+
+/* ── Modal lock feedback (backdrop click ignored / busy-lock) ──────────── */
+.modal-close-disabled { opacity: .35; cursor: not-allowed; }
+@keyframes modalShake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
+.modal-shake { animation: modalShake .32s ease; }
+.modal-lock-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--accent-dk); background: var(--accent-tint);
+  border: 1px solid #cdeee1; border-radius: 9px; padding: 7px 10px; margin-bottom: 14px;
+}
+.modal-lock-hint svg { stroke: var(--accent-dk); flex-shrink: 0; }
+
+/* ── Toggle switch (e.g. "สร้าง QR ต่อชิ้น") ────────────────────────────── */
+.toggle-row {
+  display: flex; align-items: flex-start; gap: 12px; cursor: pointer; user-select: none;
+  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  padding: 12px 14px; margin-bottom: 16px;
+}
+.toggle-switch {
+  position: relative; flex-shrink: 0; width: 42px; height: 25px; border-radius: 20px;
+  background: var(--border); transition: background .18s ease; margin-top: 1px;
+}
+.toggle-switch.on { background: var(--accent); }
+.toggle-switch input {
+  position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; width: 100%; height: 100%;
+}
+.toggle-knob {
+  position: absolute; top: 3px; left: 3px; width: 19px; height: 19px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s ease;
+}
+.toggle-switch.on .toggle-knob { transform: translateX(17px); }
+.toggle-text { display: flex; flex-direction: column; gap: 2px; }
+.toggle-text-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.toggle-text-sub { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+
+/* ── Release page: mobile-first layout ──────────────────────────────────
+   หัวข้อ + ปุ่มนำเข้า Excel วางเรียงเต็มความกว้างบนมือถือ, ปุ่ม Release
+   ค้าง (sticky) เหนือแถบเมนูล่างให้กดได้ตลอดโดยไม่ต้องเลื่อนจนสุดฟอร์ม,
+   และตารางประวัติ Release พับเป็นการ์ดแทนตารางที่ต้องเลื่อนแนวนอน. */
+@media (max-width: 640px) {
+  .page-head-release { flex-direction: column; align-items: stretch; gap: 10px; }
+  .release-import-btn { width: 100%; justify-content: center; }
+
+  .release-submit-btn {
+    position: sticky; bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 100%; z-index: 5; box-shadow: 0 10px 26px -8px rgba(16,185,129,.5);
+  }
+
+  .data-table.responsive-cards { min-width: 0; }
+  .data-table.responsive-cards thead { display: none; }
+  .data-table.responsive-cards,
+  .data-table.responsive-cards tbody,
+  .data-table.responsive-cards tr,
+  .data-table.responsive-cards td { display: block; width: 100%; }
+  .data-table.responsive-cards tr.release-row {
+    cursor: pointer; margin-bottom: 10px; border: 1px solid var(--border-soft);
+    border-radius: var(--radius); padding: 12px 14px; background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
+  .data-table.responsive-cards tr.release-row:active { transform: scale(.99); }
+  .data-table.responsive-cards td {
+    border-bottom: none; padding: 4px 0; display: flex; justify-content: space-between;
+    align-items: baseline; gap: 10px; font-size: 13px;
+  }
+  .data-table.responsive-cards td::before {
+    content: attr(data-label); font-size: 11px; color: var(--muted); font-weight: 600; flex-shrink: 0;
+  }
+  .data-table.responsive-cards td[colspan] { display: block; text-align: center; padding: 20px 0; }
+  .data-table.responsive-cards td[colspan]::before { content: none; }
+}
