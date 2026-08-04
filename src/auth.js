@@ -20,7 +20,7 @@ export const ROLE_LABELS = {
 export async function verifyLogin(code, password) {
   const { data: emp, error } = await supabase
     .from("employees")
-    .select("*, departments(name)")
+    .select("*, departments(name), machines(id, code, name), operations(id, name)")
     .eq("code", code.trim())
     .maybeSingle();
   if (error || !emp || !emp.active) return null;
@@ -32,6 +32,8 @@ export async function verifyLogin(code, password) {
     name: emp.name,
     role: emp.role,
     department: emp.departments?.name || "-",
+    machine: emp.machines || null,      // เครื่องจักรประจำ — ใช้แทนการเลือกมือตอนสแกน
+    operation: emp.operations || null,  // ขั้นตอนประจำ — ใช้แทนการเลือกมือตอนสแกน
   };
 }
 
