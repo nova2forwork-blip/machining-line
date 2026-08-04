@@ -277,12 +277,20 @@ function Shell({ user, onLogout }) {
   const [tab, setTab] = useState("release");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
+  const [scanRequestId, setScanRequestId] = useState(0); // เพิ่มค่าทุกครั้งที่กดปุ่มสแกนกลมด้านล่าง เพื่อสั่งเปิดกล้องแบบเต็มจอทันที
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
 
   function go(key, opts) {
     setTab(key);
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
+  }
+
+  // ปุ่มสแกนกลมด้านล่าง: พาไปหน้าสแกน "และ" เปิดกล้องเต็มจอให้เลยทันที
+  // ไม่ต้องกดเข้าหน้าแล้วกด "เริ่มสแกน" อีกรอบ (ถ้าตั้งค่าเครื่องจักร/ขั้นตอนประจำไว้แล้ว)
+  function goScanNow() {
+    setScanRequestId((n) => n + 1);
+    go("detail");
   }
 
   return (
@@ -362,7 +370,7 @@ function Shell({ user, onLogout }) {
       <div className="content">
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
-          {tab === "detail" && <ScanPage user={user} />}
+          {tab === "detail" && <ScanPage user={user} autoScanTrigger={scanRequestId} />}
           {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "manageReleases" && <ReleaseManagePage />}
@@ -382,7 +390,7 @@ function Shell({ user, onLogout }) {
         <div className={`bottom-nav-item ${tab === BOTTOM_LEFT2.key ? "active" : ""}`} onClick={() => go(BOTTOM_LEFT2.key)}>
           <Icon name={BOTTOM_LEFT2.icon} size={20} /><span>{BOTTOM_LEFT2.label}</span>
         </div>
-        <div className="bottom-nav-scan" onClick={() => go("detail")}>
+        <div className="bottom-nav-scan" onClick={goScanNow}>
           <div className="bottom-nav-scan-btn"><Icon name="scan" size={22} strokeWidth={2.2} /></div>
           <span>สแกน</span>
         </div>
@@ -1000,9 +1008,15 @@ function ReleasePage({ user, goTo }) {
 // ══════════════════════════════════════════════════════════════════════════
 // เครื่องจักร + ขั้นตอนไม่ให้เลือกเองอีกต่อไป — ผูกไว้กับตัวพนักงานแล้วตั้งแต่ตอนล็อกอิน
 // (ตั้งค่าที่ Setup > พนักงาน) พนักงานที่ยังไม่ได้ตั้งค่าจะสแกนไม่ได้ จนกว่า Admin จะตั้งให้
-function ScanPage({ user }) {
+function ScanPage({ user, autoScanTrigger }) {
   const [stationOpen, setStationOpen] = useState(false);
   const ready = !!(user.machine && user.operation);
+
+  // มาจากปุ่มสแกนกลมด้านล่าง (bottom-nav) — เปิดกล้องเต็มจอให้ทันที ไม่ต้องกด "เริ่มสแกน" ซ้ำ
+  useEffect(() => {
+    if (autoScanTrigger && ready) setStationOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoScanTrigger]);
 
   return (
     <div>
