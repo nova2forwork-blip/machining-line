@@ -254,9 +254,14 @@ const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart"
 function Shell({ user, onLogout }) {
   const [tab, setTab] = useState("release");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
 
-  function go(key) { setTab(key); setDrawerOpen(false); }
+  function go(key, opts) {
+    setTab(key);
+    setDrawerOpen(false);
+    if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
+  }
 
   return (
     <div className="app-shell">
@@ -326,10 +331,10 @@ function Shell({ user, onLogout }) {
       {/* ── Page content ── */}
       <div className="content">
         <div className="content-inner">
-          {tab === "release" && <ReleasePage user={user} />}
+          {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "finished" && <FinishedPartPage />}
-          {tab === "labels" && <QrLabelsPage />}
+          {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "manageReleases" && <ReleaseManagePage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
@@ -660,7 +665,91 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
   );
 }
 
-function ReleasePage({ user }) {
+// จัดกลุ่ม release หลายแถวที่มาจากไฟล์ Excel เดียวกัน (release_order เดียวกัน) ให้เป็น
+// "การปล่อยงาน 1 ครั้ง" 1 แถวในตารางสรุป — ส่วน release เดี่ยวที่ไม่มี release_order
+// (ปล่อยทีละ Part ตามปกติ) ก็ยังคงแยกเป็นคนละแถวเหมือนเดิม
+function groupReleases(list) {
+  const map = new Map();
+  for (const r of list) {
+    const key = r.release_order ? `RO:${r.release_order}` : `S:${r.id}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        releaseOrder: r.release_order || null,
+        projectCode: r.part_master?.projects?.code || "-",
+        projectName: r.part_master?.projects?.name || "-",
+        date: r.release_date,
+        totalQty: 0,
+        totalWeight: 0,
+        notes: new Set(),
+        releases: [],
+      });
+    }
+    const g = map.get(key);
+    g.totalQty += r.qty || 0;
+    g.totalWeight += (r.qty || 0) * (r.unit_weight || 0);
+    if (r.note) g.notes.add(r.note);
+    if (new Date(r.release_date) < new Date(g.date)) g.date = r.release_date;
+    g.releases.push(r);
+  }
+  return Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function ReleaseGroupDetail({ group, onBack, goTo }) {
+  const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <Btn variant="ghost" size="sm" onClick={onBack} style={{ marginBottom: 8 }}>
+            <Icon name="arrowLeft" size={14} /> กลับไปหน้า Release
+          </Btn>
+          <div className="page-title">{group.releaseOrder ? `Release Order: ${group.releaseOrder}` : `Release — ${group.releases[0]?.part_master?.part_no || ""}`}</div>
+          <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtDT(group.date)}</div>
+        </div>
+      </div>
+
+      <div className="grid-3" style={{ marginBottom: 16 }}>
+        <Card><div className="label-el">จำนวนรวม</div><div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalQty)} ชิ้น</div></Card>
+        <Card><div className="label-el">น้ำหนักรวม</div><div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalWeight)} กก.</div></Card>
+        <Card><div className="label-el">จำนวน Part</div><div style={{ fontSize: 22, fontWeight: 700 }}>{group.releases.length} Part</div></Card>
+      </div>
+
+      <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr><th>Part No.</th><th>ชื่อ Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>น้ำหนักรวม</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th><th></th></tr>
+            </thead>
+            <tbody>
+              {group.releases.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.part_master?.part_no || "-"}</td>
+                  <td>{r.part_master?.part_name || "-"}</td>
+                  <td>{r.qty}</td>
+                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                  <td>{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>
+                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
+                  <td>{r.note || "-"}</td>
+                  <td>
+                    <span onClick={() => goTo && goTo("labels", { releaseId: r.id })} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <Icon name="printer" size={13} /> พิมพ์ QR
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      {noteLabel !== "-" && group.notes.size > 1 && (
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...group.notes].join(" · ")}</div>
+      )}
+    </div>
+  );
+}
+
+function ReleasePage({ user, goTo }) {
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
   const [projectId, setProjectId] = useState("");
@@ -669,30 +758,24 @@ function ReleasePage({ user }) {
   const [relWeight, setRelWeight] = useState("");
   const [relLength, setRelLength] = useState("");
   const [note, setNote] = useState("");
-  const [lastUnits, setLastUnits] = useState(null);
   const [recent, setRecent] = useState([]);
   const [busy, setBusy] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewPart, setShowNewPart] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [lastBatchLabel, setLastBatchLabel] = useState(""); // ชื่อชุดสำหรับหัวข้อพิมพ์ป้าย เมื่อ import จาก Excel
-
-  const [labelPreset, setLabelPreset] = useState("20x20");
-  const [customW, setCustomW] = useState(20);
-  const [customH, setCustomH] = useState(20);
-  const [showCode, setShowCode] = useState(false);
-  const [printMode, setPrintMode] = useState("sheet");
+  const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
 
   const load = useCallback(async () => {
     setProjects(await listRows("projects", { order: "code" }));
     setParts(await listRows("part_master", { order: "part_no" }));
-    setRecent(await listRows("releases", { order: "release_date", ascending: false }));
+    setRecent(await getReleasesFull());
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const partsInProject = parts.filter((p) => !projectId || p.project_id === projectId);
   const selectedPart = parts.find((p) => p.id === partId);
   const selectedProject = projects.find((p) => p.id === projectId);
+  const groups = groupReleases(recent.slice(0, 60)); // ดูย้อนหลังพอประมาณ ไม่โหลดทั้งหมด
 
   useEffect(() => {
     setRelWeight(selectedPart ? selectedPart.unit_weight ?? "" : "");
@@ -719,9 +802,7 @@ function ReleasePage({ user }) {
         weight: release.unit_weight,
         length_mm: release.length_mm,
       }));
-      const created = await insertRows("part_units", units);
-      setLastUnits(created);
-      setLastBatchLabel(selectedPart.part_no);
+      await insertRows("part_units", units); // สร้าง QR เบื้องหลังไว้เลย — ไปพิมพ์ทีหลังได้จากหน้ารายละเอียด/พิมพ์ QR
       setNote(""); setQty(10);
       await load();
     } catch (e) {
@@ -730,14 +811,8 @@ function ReleasePage({ user }) {
     setBusy(false);
   }
 
-  function currentSize() {
-    if (labelPreset === "custom") return { w: Number(customW) || 20, h: Number(customH) || 20 };
-    const p = LABEL_PRESETS.find((x) => x.value === labelPreset);
-    return { w: p.w, h: p.h };
-  }
-  function doPrint() {
-    const { w, h } = currentSize();
-    printLabels(lastUnits, { widthMm: w, heightMm: h, showCode, mode: printMode, title: `QR-${lastBatchLabel || selectedPart?.part_no || ""}` });
+  if (viewGroup) {
+    return <ReleaseGroupDetail group={viewGroup} onBack={() => setViewGroup(null)} goTo={goTo} />;
   }
 
   return (
@@ -745,7 +820,7 @@ function ReleasePage({ user }) {
       <div className="page-head">
         <div>
           <div className="page-title">Release Production</div>
-          <div className="page-sub">ปล่อยงานใหม่และสร้าง QR ต่อชิ้นสำหรับพิมพ์ป้าย</div>
+          <div className="page-sub">ปล่อยงานใหม่ — สร้าง QR ต่อชิ้นให้อัตโนมัติ ไปพิมพ์ป้ายทีหลังได้จากหน้ารายละเอียด</div>
         </div>
         <Btn variant="ghost" onClick={() => setShowImport(true)}>
           <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
@@ -796,62 +871,24 @@ function ReleasePage({ user }) {
         </Btn>
       </Card>
 
-      {lastUnits && (
-        <Card title={`QR ที่สร้างล่าสุด (${lastUnits.length} ใบ)`}>
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
-            <Field label="ขนาดป้าย">
-              <Select value={labelPreset} onChange={(e) => setLabelPreset(e.target.value)}
-                options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 170 }} />
-            </Field>
-            {labelPreset === "custom" && (
-              <>
-                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 80 }} /></Field>
-                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 80 }} /></Field>
-              </>
-            )}
-            <Field label="รูปแบบการพิมพ์">
-              <div className="chip-row">
-                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>แผ่น A4 (ตาราง)</span>
-                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>ม้วนป้าย (ทีละดวง)</span>
-              </div>
-            </Field>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 10 }}>
-              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
-            </label>
-            <Btn variant="accent" onClick={doPrint} style={{ marginBottom: 2 }}><Icon name="printer" size={15} />พิมพ์ป้ายทั้งหมด</Btn>
-          </div>
-          <div className="grid-auto">
-            {lastUnits.map((u) => (
-              <div key={u.id} className="label-preview">
-                <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={96} />
-                <div className="code">{u.qr_code}</div>
-                {(u.weight || u.length_mm) && (
-                  <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>
-                    {u.weight ? `${fmtNum(u.weight)} กก.` : ""}{u.weight && u.length_mm ? " · " : ""}{u.length_mm ? `${fmtNum(u.length_mm)} มม.` : ""}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
       <Card title="ประวัติการ Release ล่าสุด">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>วันที่</th><th>Release Order</th><th>Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวนรวม</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
-              {recent.slice(0, 10).map((r) => (
-                <tr key={r.id}>
-                  <td>{fmtDT(r.release_date)}</td>
-                  <td>{r.release_order || "-"}</td>
-                  <td>{parts.find((p) => p.id === r.part_master_id)?.part_no || "-"}</td>
-                  <td>{r.qty}</td>
-                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
-                  <td>{r.note || "-"}</td>
+              {groups.map((g) => (
+                <tr key={g.key} onClick={() => setViewGroup(g)} style={{ cursor: "pointer" }}>
+                  <td>{fmtDT(g.date)}</td>
+                  <td>{g.projectCode}</td>
+                  <td>{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
+                  <td>{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
+                  <td>{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
+                  <td>{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
                 </tr>
               ))}
+              {groups.length === 0 && (
+                <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มี Release</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -863,9 +900,7 @@ function ReleasePage({ user }) {
           projects={projects}
           parts={parts}
           onClose={() => setShowImport(false)}
-          onImported={async ({ units, releaseOrder, releasesCreated, partsCreated }) => {
-            setLastUnits(units);
-            setLastBatchLabel(releaseOrder || "batch");
+          onImported={async ({ units, releasesCreated, partsCreated }) => {
             await load();
             alert(
               `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${units.length} QR)` +
@@ -1166,7 +1201,7 @@ function FinishedPartPage() {
 // ══════════════════════════════════════════════════════════════════════════
 // 4) QR / LABELS — reprint labels for any past release lot, true-size (2×2cm default)
 // ══════════════════════════════════════════════════════════════════════════
-function QrLabelsPage() {
+function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [releases, setReleases] = useState([]);
   const [parts, setParts] = useState([]);
   const [releaseId, setReleaseId] = useState("");
@@ -1186,6 +1221,15 @@ function QrLabelsPage() {
       setParts(await listRows("part_master", { order: "part_no" }));
     })();
   }, []);
+
+  // มาจากปุ่ม "พิมพ์ QR" ในหน้ารายละเอียด Release — เลือกล็อตให้อัตโนมัติ
+  useEffect(() => {
+    if (initialReleaseId) {
+      setReleaseId(initialReleaseId);
+      onConsumeInitial && onConsumeInitial();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReleaseId]);
 
   useEffect(() => {
     if (!releaseId) { setUnits([]); setSelected(new Set()); return; }
