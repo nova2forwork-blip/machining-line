@@ -152,7 +152,63 @@ export async function getAllUnitsFull(statusFilter) {
   return data || [];
 }
 
-// ทุก release พร้อม join part/project/พนักงานที่ปล่อยงาน (ใช้ทำหน้าจัดการ Release)
+// ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
+// (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
+// Caller ต้องแจ้งเตือนผู้ใช้ก่อนเสมอ — ฟังก์ชันนี้ไม่เช็คว่ามีการสแกนไปแล้วหรือยัง
+export async function deleteProjectCascade(projectId) {
+  const { data: pm, error: pmErr } = await supabase
+    .from("part_master").select("id").eq("project_id", projectId);
+  if (pmErr) throw pmErr;
+  const partIds = (pm || []).map((p) => p.id);
+
+  if (partIds.length > 0) {
+    const { data: rel, error: relErr } = await supabase
+      .from("releases").select("id").in("part_master_id", partIds);
+    if (relErr) throw relErr;
+    const releaseIds = (rel || []).map((r) => r.id);
+
+    if (releaseIds.length > 0) {
+      const { data: units, error: unitsErr } = await supabase
+        .from("part_units").select("id").in("release_id", releaseIds);
+      if (unitsErr) throw unitsErr;
+      const unitIds = (units || []).map((u) => u.id);
+
+      if (unitIds.length > 0) {
+        const { error: scanErr } = await supabase.from("scan_logs").delete().in("part_unit_id", unitIds);
+        if (scanErr) throw scanErr;
+        const { error: unitDelErr } = await supabase.from("part_units").delete().in("id", unitIds);
+        if (unitDelErr) throw unitDelErr;
+      }
+      const { error: relDelErr } = await supabase.from("releases").delete().in("id", releaseIds);
+      if (relDelErr) throw relDelErr;
+    }
+    const { error: pmDelErr } = await supabase.from("part_master").delete().in("id", partIds);
+    if (pmDelErr) throw pmDelErr;
+  }
+
+  const { error: projErr } = await supabase.from("projects").delete().eq("id", projectId);
+  if (projErr) throw projErr;
+}
+
+// ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
+export async function getProjectImpact(projectId) {
+  const { data: pm } = await supabase.from("part_master").select("id").eq("project_id", projectId);
+  const partIds = (pm || []).map((p) => p.id);
+  if (partIds.length === 0) return { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  const { data: rel } = await supabase.from("releases").select("id").in("part_master_id", partIds);
+  const releaseIds = (rel || []).map((r) => r.id);
+  if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  const { data: units } = await supabase.from("part_units").select("status").in("release_id", releaseIds);
+  const unitList = units || [];
+  return {
+    partCount: partIds.length,
+    releaseCount: releaseIds.length,
+    unitCount: unitList.length,
+    scannedCount: unitList.filter((u) => u.status !== "released").length,
+  };
+}
 export async function getReleasesFull() {
   const { data, error } = await supabase
     .from("releases")
