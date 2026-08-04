@@ -321,8 +321,16 @@ function Shell({ user, onLogout }) {
       {/* ── Mobile topbar ── */}
       <div className="topbar">
         <div className="icon-btn" onClick={() => setDrawerOpen(true)}><Icon name="menu" size={19} /></div>
-        <div className="topbar-title">{currentLabel}</div>
-        <div className="icon-btn" onClick={onLogout}><Icon name="logout" size={18} style={{ stroke: "var(--danger)" }} /></div>
+        <div className="topbar-center">
+          <div className="topbar-title">{currentLabel}</div>
+          <div className="topbar-sub">{user.name} · {ROLE_LABELS[user.role] || user.role}</div>
+        </div>
+        <div className="topbar-actions">
+          <div className="icon-btn" onClick={onLogout} title="ออกจากระบบ">
+            <Icon name="logout" size={17} style={{ stroke: "var(--danger)" }} />
+          </div>
+          <div className="topbar-avatar" onClick={() => setDrawerOpen(true)}>{(user.name || "U").slice(0, 1)}</div>
+        </div>
       </div>
 
       {/* ── Mobile drawer ── */}
