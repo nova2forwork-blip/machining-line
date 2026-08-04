@@ -20,6 +20,8 @@ create table if not exists public.employees (
   password_hash  text not null,
   role           text not null default 'operator',  -- admin / supervisor / operator
   active         boolean not null default true,
+  machine_id     uuid references public.machines(id),    -- เครื่องจักรประจำ — ใช้ตอนสแกนแทนการเลือกมือ
+  operation_id   uuid references public.operations(id),  -- ขั้นตอนประจำ — ใช้ตอนสแกนแทนการเลือกมือ
   created_at     timestamptz not null default now()
 );
 
