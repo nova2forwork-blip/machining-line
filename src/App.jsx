@@ -1073,34 +1073,83 @@ function ScanPage({ user, autoScanTrigger }) {
   );
 }
 
+const QR_CAM_REGION_ID = "qr-cam-region";
+
 function ScanStation({ user, machine, operation, onExit }) {
   const [qrInput, setQrInput] = useState("");
   const [unit, setUnit] = useState(null);
   const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
   const [msgTone, setMsgTone] = useState("muted");
-  const [cameraOn, setCameraOn] = useState(false);
+  // เปิดกล้องอัตโนมัติทันทีที่เข้าหน้าสแกน — พร้อมสแกนเลยไม่ต้องกดเปิดเอง
+  const [cameraOn, setCameraOn] = useState(true);
+  // frozen = เจอ QR แล้ว ภาพค้างไว้ (ไม่สแกนซ้ำ) จนกว่าจะยืนยันหรือกดรีเฟรช
+  const [frozen, setFrozen] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const inputRef = useRef(null);
-  const scannerRef = useRef(null);
+  const scannerRef = useRef(null); // instance ของ Html5Qrcode ที่กำลังทำงานอยู่
 
   useEffect(() => { inputRef.current?.focus(); }, [unit]);
 
+  // เปิดกล้อง — บังคับใช้กล้องหลัง(ตัวหลัก ไม่ใช่ ultra-wide/telephoto) และเริ่มสแกนทันที
   useEffect(() => {
     if (!cameraOn) return;
-    let scanner;
-    import("html5-qrcode").then(({ Html5QrcodeScanner }) => {
-      scanner = new Html5QrcodeScanner("qr-cam-region", { fps: 10, qrbox: 220 }, false);
-      scanner.render((decodedText) => {
-        setQrInput(decodedText);
-        lookup(decodedText);
-        setCameraOn(false);
-      }, () => {});
-      scannerRef.current = scanner;
-    });
-    return () => { scannerRef.current?.clear?.().catch(() => {}); };
+    let cancelled = false;
+
+    async function onDecoded(decodedText) {
+      // เจอ QR แล้ว — สั่งค้างภาพไว้ก่อนทันที กันสแกนซ้ำ จนกว่าจะยืนยัน/กดรีเฟรช
+      try { scannerRef.current?.pause(true); } catch (_) {}
+      setFrozen(true);
+      setQrInput(decodedText);
+      lookup(decodedText);
+    }
+
+    async function pickRearCameraId(Html5Qrcode) {
+      try {
+        const devices = await Html5Qrcode.getCameras();
+        const back = (devices || []).filter((d) => /back|rear|environment/i.test(d.label || ""));
+        // เลี่ยงเลนส์ ultra-wide / telephoto ถ้ามีตัวเลือก เอากล้องหลังตัวหลักจริงๆ
+        const main = back.find((d) => !/ultra|wide[\s-]?angle|tele(photo)?|0\.5x/i.test(d.label || "")) || back[0];
+        return main ? main.id : null;
+      } catch (_) {
+        return null; // ยังไม่ได้สิทธิ์กล้อง — จะ fallback ไปใช้ facingMode แทน
+      }
+    }
+
+    (async () => {
+      const { Html5Qrcode } = await import("html5-qrcode");
+      if (cancelled) return;
+      const html5QrCode = new Html5Qrcode(QR_CAM_REGION_ID, false);
+      scannerRef.current = html5QrCode;
+      const config = { fps: 10, qrbox: 220 };
+      const rearId = await pickRearCameraId(Html5Qrcode);
+      if (cancelled) return;
+      try {
+        // บังคับกล้องหลังตัวหลักที่หาเจอ ถ้าไม่เจอค่อย fallback เป็น facingMode: environment (exact)
+        await html5QrCode.start(rearId || { facingMode: { exact: "environment" } }, config, onDecoded, () => {});
+      } catch (_) {
+        try {
+          if (!cancelled) await html5QrCode.start({ facingMode: "environment" }, config, onDecoded, () => {});
+        } catch (_e2) {
+          if (!cancelled) { setMsg("เปิดกล้องไม่สำเร็จ — ตรวจสอบสิทธิ์การเข้าถึงกล้อง"); setMsgTone("danger"); }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      const inst = scannerRef.current;
+      scannerRef.current = null;
+      if (inst) { inst.stop().then(() => inst.clear()).catch(() => inst.clear?.().catch(() => {})); }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn]);
+
+  // ยกเลิกผลที่ค้างไว้ แล้วสแกนใหม่ (โดยไม่ต้องกดยืนยัน)
+  function rescan() {
+    setUnit(null); setHistory([]); setMsg(""); setQrInput(""); setFrozen(false);
+    try { scannerRef.current?.resume(); } catch (_) {}
+  }
 
   async function lookup(code) {
     const c = (code ?? qrInput).trim();
@@ -1137,6 +1186,8 @@ function ScanStation({ user, machine, operation, onExit }) {
     setMsgTone("success");
     setSessionCount((c) => c + 1);
     setQrInput(""); setUnit(null); setHistory([]);
+    setFrozen(false);
+    try { scannerRef.current?.resume(); } catch (_) {} // พร้อมสแกนชิ้นถัดไปทันที
     setTimeout(() => setMsg(""), 2200);
     inputRef.current?.focus();
   }
@@ -1158,7 +1209,9 @@ function ScanStation({ user, machine, operation, onExit }) {
 
       <div className="scan-viewport">
         {cameraOn ? (
-          <div id="qr-cam-region" style={{ width: "min(92vw,420px)" }} />
+          // ไม่เอา div นี้ออกตอนเจอ QR แล้ว (frozen) — ให้ภาพที่สแกนได้ค้างอยู่ ให้เห็นว่าเจอชิ้นไหน
+          // จนกว่าจะกดยืนยัน หรือกดรีเฟรชเพื่อสแกนใหม่
+          <div id={QR_CAM_REGION_ID} style={{ width: "min(92vw,420px)" }} />
         ) : unit ? (
           <div className="scan-idle-hint">
             <Icon name="check" size={40} />
@@ -1218,9 +1271,14 @@ function ScanStation({ user, machine, operation, onExit }) {
                   <div className="scan-info-value">{unit.length_mm ? `${fmtNum(unit.length_mm)} มม.` : "-"}</div>
                 </div>
               </div>
-              <Btn variant="success" size="lg" className="btn-block" onClick={confirmScan}>
-                <Icon name="check" size={17} /> ยืนยันการสแกน
-              </Btn>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="success" size="lg" className="btn-block" onClick={confirmScan}>
+                  <Icon name="check" size={17} /> ยืนยันการสแกน
+                </Btn>
+                <Btn variant="ghost" size="lg" onClick={rescan} title="สแกนใหม่โดยไม่บันทึกรายการนี้">
+                  <Icon name="refresh" size={17} />
+                </Btn>
+              </div>
             </div>
           )}
         </div>
