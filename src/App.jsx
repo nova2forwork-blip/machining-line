@@ -1073,53 +1073,54 @@ function ScanPage({ user, autoScanTrigger }) {
   );
 }
 
-const QR_CAM_REGION_ID = "qr-cam-region";
-const QR_BOX_SIZE = 220; // ต้องตรงกับ config.qrbox ที่ส่งให้ html5-qrcode เพื่อให้กรอบที่วาดตรงกับพื้นที่ที่สแกนจริง
-
-// กรอบบอกตำแหน่งที่กำลังสแกนอยู่ วางทับบนภาพกล้องสดๆ — พื้นที่นอกกรอบถูกหรี่ลง (dim)
-// เพื่อให้เห็นชัดว่ากำลังอ่าน QR อันไหนอยู่ เวลามีหลาย QR อยู่ในเฟรมเดียวกัน
-function ScanTargetFrame({ frozen }) {
+// กรอบวงเล็บสีขาว (แบบกล้องมือถือ) ที่ขยับไปสวมพอดีกับตำแหน่ง QR ที่กำลังอ่านอยู่จริง —
+// ไม่ใช่กรอบคงที่กลางจอ เพื่อให้รู้ชัดว่ากำลังอ่าน QR อันไหนเวลามีหลายอันอยู่ในเฟรมเดียวกัน
+// box: { left, top, width, height } เป็นเปอร์เซ็นต์เทียบกับพื้นที่วิดีโอ (มาจากตำแหน่งจริงที่ jsQR ตรวจเจอ)
+function QrBracketFrame({ box, frozen }) {
+  if (!box) return null;
   const c = frozen ? "#22c55e" : "#ffffff";
-  const cornerStyle = (top, left, right, bottom) => ({
-    position: "absolute", width: 26, height: 26,
+  const corner = (top, left, right, bottom) => ({
+    position: "absolute", width: 22, height: 22,
     top, left, right, bottom,
     borderTop: top !== undefined ? `3px solid ${c}` : undefined,
     borderBottom: bottom !== undefined ? `3px solid ${c}` : undefined,
     borderLeft: left !== undefined ? `3px solid ${c}` : undefined,
     borderRight: right !== undefined ? `3px solid ${c}` : undefined,
-    borderTopLeftRadius: top !== undefined && left !== undefined ? 10 : undefined,
-    borderTopRightRadius: top !== undefined && right !== undefined ? 10 : undefined,
-    borderBottomLeftRadius: bottom !== undefined && left !== undefined ? 10 : undefined,
-    borderBottomRightRadius: bottom !== undefined && right !== undefined ? 10 : undefined,
+    borderTopLeftRadius: top !== undefined && left !== undefined ? 8 : undefined,
+    borderTopRightRadius: top !== undefined && right !== undefined ? 8 : undefined,
+    borderBottomLeftRadius: bottom !== undefined && left !== undefined ? 8 : undefined,
+    borderBottomRightRadius: bottom !== undefined && right !== undefined ? 8 : undefined,
+    filter: "drop-shadow(0 0 2px rgba(0,0,0,.6))",
   });
   return (
-    <>
-      <style>{`@keyframes qrTargetLine { 0% { top: 4%; } 100% { top: 94%; } }`}</style>
-      <div
-        style={{
-          position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-          width: QR_BOX_SIZE, height: QR_BOX_SIZE, maxWidth: "72%", maxHeight: "72%",
-          boxShadow: "0 0 0 2000px rgba(0,0,0,.5)", // หรี่พื้นที่นอกกรอบ ให้เห็นชัดว่าจุดสแกนอยู่ตรงไหน
-          borderRadius: 14, pointerEvents: "none",
-        }}
-      >
-        <div style={cornerStyle(-2, -2, undefined, undefined)} />
-        <div style={cornerStyle(-2, undefined, -2, undefined)} />
-        <div style={cornerStyle(undefined, -2, undefined, -2)} />
-        <div style={cornerStyle(undefined, undefined, -2, -2)} />
-        {!frozen && (
-          <div style={{ position: "absolute", left: "4%", right: "4%", height: 2, background: c, boxShadow: `0 0 8px ${c}`, animation: "qrTargetLine 1.4s ease-in-out infinite alternate" }} />
-        )}
-        <div style={{
-          position: "absolute", top: "100%", left: "50%", transform: "translate(-50%,10px)",
-          whiteSpace: "nowrap", fontSize: 12, color: "#fff", background: "rgba(0,0,0,.55)",
-          padding: "4px 10px", borderRadius: 20,
-        }}>
-          {frozen ? "เจอ QR แล้ว" : "วาง QR ให้อยู่ในกรอบนี้"}
-        </div>
-      </div>
-    </>
+    <div
+      style={{
+        position: "absolute", pointerEvents: "none",
+        left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%`,
+        transition: "left .08s linear, top .08s linear, width .08s linear, height .08s linear",
+      }}
+    >
+      <div style={corner(-2, -2, undefined, undefined)} />
+      <div style={corner(-2, undefined, -2, undefined)} />
+      <div style={corner(undefined, -2, undefined, -2)} />
+      <div style={corner(undefined, undefined, -2, -2)} />
+    </div>
   );
+}
+
+// แปลงจุดมุมทั้ง 4 ที่ jsQR หาเจอ (พิกัดพิกเซลของเฟรม) ให้เป็นกรอบสี่เหลี่ยม (เปอร์เซ็นต์) พร้อม padding เผื่อขอบเล็กน้อย
+function boxFromQrLocation(location, frameW, frameH) {
+  const xs = [location.topLeftCorner.x, location.topRightCorner.x, location.bottomLeftCorner.x, location.bottomRightCorner.x];
+  const ys = [location.topLeftCorner.y, location.topRightCorner.y, location.bottomLeftCorner.y, location.bottomRightCorner.y];
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const padX = (maxX - minX) * 0.12, padY = (maxY - minY) * 0.12;
+  const left = Math.max(0, minX - padX), top = Math.max(0, minY - padY);
+  const right = Math.min(frameW, maxX + padX), bottom = Math.min(frameH, maxY + padY);
+  return {
+    left: (left / frameW) * 100, top: (top / frameH) * 100,
+    width: ((right - left) / frameW) * 100, height: ((bottom - top) / frameH) * 100,
+  };
 }
 
 function ScanStation({ user, machine, operation, onExit }) {
@@ -1132,70 +1133,123 @@ function ScanStation({ user, machine, operation, onExit }) {
   const [cameraOn, setCameraOn] = useState(true);
   // frozen = เจอ QR แล้ว ภาพค้างไว้ (ไม่สแกนซ้ำ) จนกว่าจะยืนยันหรือกดรีเฟรช
   const [frozen, setFrozen] = useState(false);
+  const [qrBox, setQrBox] = useState(null); // ตำแหน่ง QR ล่าสุดที่เจอ (เปอร์เซ็นต์) ใช้วาดกรอบให้สวมพอดี
+  const [videoAspect, setVideoAspect] = useState("3 / 4");
   const [sessionCount, setSessionCount] = useState(0);
   const inputRef = useRef(null);
-  const scannerRef = useRef(null); // instance ของ Html5Qrcode ที่กำลังทำงานอยู่
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null); // แคนวาสที่ซ่อนไว้ ใช้แค่ถอดพิกเซลไปให้ jsQR อ่าน ไม่ได้แสดงผล
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
+  const frozenRef = useRef(false);
 
   useEffect(() => { inputRef.current?.focus(); }, [unit]);
+  useEffect(() => { frozenRef.current = frozen; }, [frozen]);
 
-  // เปิดกล้อง — บังคับใช้กล้องหลัง(ตัวหลัก ไม่ใช่ ultra-wide/telephoto) และเริ่มสแกนทันที
+  // เปิดกล้อง — บังคับใช้กล้องหลัง (ตัวหลัก ไม่ใช่ ultra-wide/telephoto) พร้อมสแกนทันที
+  // และวนอ่านเฟรมด้วย jsQR เพื่อรู้ตำแหน่งจริงของ QR ในภาพ (เอาไว้วาดกรอบให้สวมพอดี)
   useEffect(() => {
     if (!cameraOn) return;
     let cancelled = false;
 
-    async function onDecoded(decodedText) {
-      // เจอ QR แล้ว — สั่งค้างภาพไว้ก่อนทันที กันสแกนซ้ำ จนกว่าจะยืนยัน/กดรีเฟรช
-      try { scannerRef.current?.pause(true); } catch (_) {}
+    function onDecoded(decodedText) {
+      if (frozenRef.current) return; // มีผลค้างอยู่แล้ว รอยืนยัน/รีเฟรชก่อน
+      frozenRef.current = true;
       setFrozen(true);
+      videoRef.current?.pause(); // ค้างภาพไว้ให้เห็นว่าเจอชิ้นไหน
       setQrInput(decodedText);
       lookup(decodedText);
     }
 
-    async function pickRearCameraId(Html5Qrcode) {
+    async function pickRearDeviceId() {
       try {
-        const devices = await Html5Qrcode.getCameras();
-        const back = (devices || []).filter((d) => /back|rear|environment/i.test(d.label || ""));
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const back = devices.filter((d) => d.kind === "videoinput" && /back|rear|environment/i.test(d.label || ""));
         // เลี่ยงเลนส์ ultra-wide / telephoto ถ้ามีตัวเลือก เอากล้องหลังตัวหลักจริงๆ
         const main = back.find((d) => !/ultra|wide[\s-]?angle|tele(photo)?|0\.5x/i.test(d.label || "")) || back[0];
-        return main ? main.id : null;
+        return main?.deviceId || null;
       } catch (_) {
-        return null; // ยังไม่ได้สิทธิ์กล้อง — จะ fallback ไปใช้ facingMode แทน
+        return null; // ยังไม่ได้สิทธิ์กล้อง (ชื่อกล้องจะยังไม่ขึ้น) — ไปใช้ facingMode แทน
       }
     }
 
-    (async () => {
-      const { Html5Qrcode } = await import("html5-qrcode");
+    async function openCamera() {
+      const deviceId = await pickRearDeviceId();
       if (cancelled) return;
-      const html5QrCode = new Html5Qrcode(QR_CAM_REGION_ID, false);
-      scannerRef.current = html5QrCode;
-      const config = { fps: 10, qrbox: QR_BOX_SIZE };
-      const rearId = await pickRearCameraId(Html5Qrcode);
-      if (cancelled) return;
-      try {
-        // บังคับกล้องหลังตัวหลักที่หาเจอ ถ้าไม่เจอค่อย fallback เป็น facingMode: environment (exact)
-        await html5QrCode.start(rearId || { facingMode: { exact: "environment" } }, config, onDecoded, () => {});
-      } catch (_) {
-        try {
-          if (!cancelled) await html5QrCode.start({ facingMode: "environment" }, config, onDecoded, () => {});
-        } catch (_e2) {
-          if (!cancelled) { setMsg("เปิดกล้องไม่สำเร็จ — ตรวจสอบสิทธิ์การเข้าถึงกล้อง"); setMsgTone("danger"); }
-        }
+      const attempts = [
+        deviceId ? { video: { deviceId: { exact: deviceId } } } : null,
+        { video: { facingMode: { exact: "environment" } } },
+        { video: { facingMode: "environment" } },
+      ].filter(Boolean);
+      let stream = null;
+      for (const constraints of attempts) {
+        try { stream = await navigator.mediaDevices.getUserMedia(constraints); break; } catch (_) { /* ลองตัวถัดไป */ }
       }
-    })();
+      if (cancelled) { stream?.getTracks().forEach((t) => t.stop()); return; }
+      if (!stream) { setMsg("เปิดกล้องไม่สำเร็จ — ตรวจสอบสิทธิ์การเข้าถึงกล้อง"); setMsgTone("danger"); return; }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        if (video.videoWidth && video.videoHeight) setVideoAspect(`${video.videoWidth} / ${video.videoHeight}`);
+      };
+      try { await video.play(); } catch (_) {}
+      decodeLoop();
+    }
+
+    async function decodeLoop() {
+      const jsQRModule = await import("jsqr");
+      const jsQR = jsQRModule.default || jsQRModule;
+      if (cancelled) return;
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      const tick = () => {
+        if (cancelled) return;
+        if (!frozenRef.current && video.readyState === video.HAVE_ENOUGH_DATA) {
+          const w = video.videoWidth, h = video.videoHeight;
+          if (w && h) {
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(video, 0, 0, w, h);
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+            if (code) { setQrBox(boxFromQrLocation(code.location, w, h)); onDecoded(code.data); }
+            else setQrBox(null);
+          }
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    }
+
+    openCamera();
 
     return () => {
       cancelled = true;
-      const inst = scannerRef.current;
-      scannerRef.current = null;
-      if (inst) { inst.stop().then(() => inst.clear()).catch(() => inst.clear?.().catch(() => {})); }
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setQrBox(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn]);
 
+  // กลับไปสแกนต่อ — เล่นวิดีโอต่อ + เคลียร์กรอบเดิม ให้ jsQR เริ่มตามหา QR ใหม่
+  function resumeScanning() {
+    frozenRef.current = false;
+    setFrozen(false);
+    setQrBox(null);
+    videoRef.current?.play().catch(() => {});
+  }
+
   // ยกเลิกผลที่ค้างไว้ แล้วสแกนใหม่ (โดยไม่ต้องกดยืนยัน)
   function rescan() {
-    setUnit(null); setHistory([]); setMsg(""); setQrInput(""); setFrozen(false);
-    try { scannerRef.current?.resume(); } catch (_) {}
+    setUnit(null); setHistory([]); setMsg(""); setQrInput("");
+    resumeScanning();
   }
 
   async function lookup(code) {
@@ -1233,8 +1287,7 @@ function ScanStation({ user, machine, operation, onExit }) {
     setMsgTone("success");
     setSessionCount((c) => c + 1);
     setQrInput(""); setUnit(null); setHistory([]);
-    setFrozen(false);
-    try { scannerRef.current?.resume(); } catch (_) {} // พร้อมสแกนชิ้นถัดไปทันที
+    resumeScanning(); // พร้อมสแกนชิ้นถัดไปทันที
     setTimeout(() => setMsg(""), 2200);
     inputRef.current?.focus();
   }
@@ -1256,11 +1309,21 @@ function ScanStation({ user, machine, operation, onExit }) {
 
       <div className="scan-viewport">
         {cameraOn ? (
-          // ไม่เอา div นี้ออกตอนเจอ QR แล้ว (frozen) — ให้ภาพที่สแกนได้ค้างอยู่ ให้เห็นว่าเจอชิ้นไหน
+          // ไม่เอากล้องออกตอนเจอ QR แล้ว (frozen) — ให้ภาพค้างอยู่ ให้เห็นว่าเจอชิ้นไหน
           // จนกว่าจะกดยืนยัน หรือกดรีเฟรชเพื่อสแกนใหม่
-          <div style={{ position: "relative", width: "min(92vw,420px)" }}>
-            <div id={QR_CAM_REGION_ID} style={{ width: "100%" }} />
-            <ScanTargetFrame frozen={frozen} />
+          <div style={{ position: "relative", width: "min(92vw,420px)", aspectRatio: videoAspect, overflow: "hidden", borderRadius: 16, background: "#000" }}>
+            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <canvas ref={canvasRef} style={{ display: "none" }} />
+            <QrBracketFrame box={qrBox} frozen={frozen} />
+            {!qrBox && !frozen && (
+              <div style={{
+                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+                whiteSpace: "nowrap", fontSize: 12, color: "#fff", background: "rgba(0,0,0,.5)",
+                padding: "4px 10px", borderRadius: 20, pointerEvents: "none",
+              }}>
+                เล็งกล้องไปที่ QR code
+              </div>
+            )}
           </div>
         ) : unit ? (
           <div className="scan-idle-hint">
