@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows, deleteReleaseCascade,
+  listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
+  deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
@@ -901,46 +902,47 @@ function ReleasePage({ user }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 2) SCAN — station setup, then a dedicated full-screen scan flow
 // ══════════════════════════════════════════════════════════════════════════
+// เครื่องจักร + ขั้นตอนไม่ให้เลือกเองอีกต่อไป — ผูกไว้กับตัวพนักงานแล้วตั้งแต่ตอนล็อกอิน
+// (ตั้งค่าที่ Setup > พนักงาน) พนักงานที่ยังไม่ได้ตั้งค่าจะสแกนไม่ได้ จนกว่า Admin จะตั้งให้
 function ScanPage({ user }) {
-  const [machines, setMachines] = useState([]);
-  const [operations, setOperations] = useState([]);
-  const [machineId, setMachineId] = useState("");
-  const [opId, setOpId] = useState("");
   const [stationOpen, setStationOpen] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      setMachines(await listRows("machines", { order: "code", filters: { active: true } }));
-      setOperations(await listRows("operations", { order: "seq" }));
-    })();
-  }, []);
-
-  const machine = machines.find((m) => m.id === machineId);
-  const operation = operations.find((o) => o.id === opId);
+  const ready = !!(user.machine && user.operation);
 
   return (
     <div>
       <div className="page-head">
         <div>
           <div className="page-title">สแกนหน้าเครื่องจักร</div>
-          <div className="page-sub">เลือกเครื่องจักรและขั้นตอนที่ทำ แล้วเริ่มสแกนแบบเต็มหน้าจอ</div>
+          <div className="page-sub">ล็อกอินแล้วสแกนงานที่ตัวเองทำได้ทันที ไม่ต้องเลือกเครื่องจักร/ขั้นตอนเอง</div>
         </div>
       </div>
 
-      <Card title="ตั้งค่าสถานีสแกน">
-        <div className="grid-2">
-          <Field label="เครื่องจักร">
-            <Select value={machineId} onChange={(e) => setMachineId(e.target.value)}
-              options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} />
-          </Field>
-          <Field label="ขั้นตอนที่ทำ">
-            <Select value={opId} onChange={(e) => setOpId(e.target.value)}
-              options={operations.map((o) => ({ value: o.id, label: o.name }))} />
-          </Field>
-        </div>
-        <Btn variant="accent" size="lg" className="btn-block" disabled={!machineId || !opId} onClick={() => setStationOpen(true)}>
-          <Icon name="scan" size={18} /> เริ่มสแกน
-        </Btn>
+      <Card title="สถานีของคุณ">
+        {ready ? (
+          <>
+            <div className="grid-2" style={{ marginBottom: 16 }}>
+              <div>
+                <div className="label-el">เครื่องจักรประจำ</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{user.machine.code} — {user.machine.name}</div>
+              </div>
+              <div>
+                <div className="label-el">ขั้นตอนประจำ</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{user.operation.name}</div>
+              </div>
+            </div>
+            <Btn variant="accent" size="lg" className="btn-block" onClick={() => setStationOpen(true)}>
+              <Icon name="scan" size={18} /> เริ่มสแกน
+            </Btn>
+          </>
+        ) : (
+          <div className="empty-state">
+            <Icon name="scan" size={32} />
+            <div className="empty-state-title">ยังไม่ได้ตั้งค่าเครื่องจักร/ขั้นตอนประจำ</div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+              แจ้ง Admin ให้ตั้งค่าที่ Setup → พนักงาน ก่อน จึงจะเริ่มสแกนได้
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card title="วิธีใช้งาน">
@@ -953,7 +955,7 @@ function ScanPage({ user }) {
 
       {stationOpen && (
         <ScanStation
-          user={user} machine={machine} operation={operation}
+          user={user} machine={user.machine} operation={user.operation}
           onExit={() => setStationOpen(false)}
         />
       )}
@@ -1805,6 +1807,138 @@ function PartsSummaryPage() {
 // ══════════════════════════════════════════════════════════════════════════
 // 9) SETUP
 // ══════════════════════════════════════════════════════════════════════════
+// ─── Projects: เพิ่ม/แก้ไข/ลบ พร้อมเช็คผลกระทบก่อนลบ (มี Part/Release/QR อยู่ใต้โปรเจคไหม) ──
+function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
+  const [code, setCode] = useState(project.code);
+  const [name, setName] = useState(project.name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function save() {
+    const c = code.trim(), n = name.trim();
+    if (!c || !n) { setErr("กรอกรหัสและชื่อโปรเจคให้ครบ"); return; }
+    setBusy(true); setErr("");
+    try {
+      await updateRow("projects", project.id, { code: c, name: n });
+      onSaved();
+    } catch (e) {
+      setErr(isDuplicateError(e) ? `รหัสโปรเจค "${c}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : "บันทึกไม่สำเร็จ: " + e.message);
+    }
+    setBusy(false);
+  }
+
+  async function remove() {
+    const hasData = impact.partCount > 0;
+    const msg = impact.scannedCount > 0
+      ? `โปรเจคนี้มี ${impact.partCount} Part, ${impact.releaseCount} Release, ${impact.unitCount} ชิ้น (QR) และมี ${impact.scannedCount} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดนี้ทิ้งไปด้วย และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+      : hasData
+      ? `โปรเจคนี้มี ${impact.partCount} Part และ ${impact.unitCount} ชิ้น (QR) แต่ยังไม่มีการสแกน\n\nต้องการลบโปรเจคนี้พร้อมข้อมูลทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`
+      : `ต้องการลบโปรเจค "${project.code} — ${project.name}" หรือไม่?`;
+
+    if (impact.scannedCount > 0) {
+      const typed = prompt(msg);
+      if (typed !== project.code) { if (typed !== null) alert("รหัสโปรเจคไม่ตรง ยกเลิกการลบ"); return; }
+    } else if (!confirm(msg)) {
+      return;
+    }
+
+    setBusy(true); setErr("");
+    try {
+      await deleteProjectCascade(project.id);
+      onDeleted();
+    } catch (e) {
+      setErr("ลบไม่สำเร็จ: " + e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="แก้ไขโปรเจค" sub={`สร้างเมื่อ ${fmtDT(project.created_at)}`} onClose={onClose}>
+      <div className="grid-2">
+        <Field label="รหัสโปรเจค *"><Input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+        <Field label="ชื่อโปรเจค *"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+        ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
+        {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
+      </div>
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+        <span onClick={() => !busy && remove()} style={{ color: "var(--danger-hi)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}>
+          ลบโปรเจคนี้
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ProjectCrud() {
+  const [rows, setRows] = useState([]);
+  const [form, setForm] = useState({});
+  const [editing, setEditing] = useState(null); // { project, impact }
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => setRows(await listRows("projects", { order: "code" })), []);
+  useEffect(() => { load(); }, [load]);
+
+  async function add() {
+    const code = (form.code || "").trim(), name = (form.name || "").trim();
+    if (!code || !name) { setErr("กรอกรหัสและชื่อโปรเจคให้ครบ"); return; }
+    setErr("");
+    try {
+      await insertRow("projects", { code, name });
+      setForm({}); load();
+    } catch (e) {
+      setErr(isDuplicateError(e) ? `รหัสโปรเจค "${code}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : "เกิดข้อผิดพลาด: " + e.message);
+    }
+  }
+
+  async function openEdit(project) {
+    const impact = await getProjectImpact(project.id);
+    setEditing({ project, impact });
+  }
+
+  return (
+    <Card title="เพิ่มโปรเจคใหม่">
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ minWidth: 170 }}>
+          <Field label="รหัสโปรเจค"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
+        </div>
+        <div style={{ minWidth: 220 }}>
+          <Field label="ชื่อโปรเจค"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        </div>
+        <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
+      </div>
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr><th>รหัสโปรเจค</th><th>ชื่อโปรเจค</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{r.code}</td><td>{r.name}</td>
+                <td><span onClick={() => openEdit(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editing && (
+        <ProjectEditModal
+          project={editing.project} impact={editing.impact}
+          onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await load(); }}
+          onDeleted={async () => { setEditing(null); await load(); }}
+        />
+      )}
+    </Card>
+  );
+}
+
 function SetupPage() {
   const [tab, setTab] = useState("machines");
   const TABS = [
@@ -1829,9 +1963,7 @@ function SetupPage() {
       {tab === "operations" && <SimpleCrud table="operations" fields={[
         { key: "name", label: "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)" }, { key: "seq", label: "ลำดับ", type: "number" },
       ]} />}
-      {tab === "projects" && <SimpleCrud table="projects" fields={[
-        { key: "code", label: "รหัสโปรเจค" }, { key: "name", label: "ชื่อโปรเจค" },
-      ]} />}
+      {tab === "projects" && <ProjectCrud />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
       {tab === "parts" && <PartMasterCrud />}
@@ -1881,13 +2013,75 @@ function SimpleCrud({ table, fields }) {
   );
 }
 
+function EmployeeEditModal({ employee, departments, machines, operations, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: employee.name,
+    department_id: employee.department_id || "",
+    role: employee.role,
+    machine_id: employee.machine_id || "",
+    operation_id: employee.operation_id || "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function save() {
+    if (!form.name.trim()) { setErr("กรอกชื่อให้ครบ"); return; }
+    setBusy(true); setErr("");
+    try {
+      await updateRow("employees", employee.id, {
+        name: form.name.trim(),
+        department_id: form.department_id || null,
+        role: form.role,
+        machine_id: form.machine_id || null,
+        operation_id: form.operation_id || null,
+      });
+      onSaved();
+    } catch (e) {
+      setErr("บันทึกไม่สำเร็จ: " + e.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal title={`แก้ไขพนักงาน — ${employee.code}`} sub="ตั้งเครื่องจักร/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง" onClose={onClose}>
+      <div className="grid-2">
+        <Field label="ชื่อ"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+          options={departments.map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
+          options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
+        <div />
+        <Field label="เครื่องจักรประจำ *"><Select value={form.machine_id} onChange={(e) => setForm({ ...form, machine_id: e.target.value })}
+          options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
+        <Field label="ขั้นตอนประจำ *"><Select value={form.operation_id} onChange={(e) => setForm({ ...form, operation_id: e.target.value })}
+          options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
+      </div>
+      {(!form.machine_id || !form.operation_id) && (
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+          * ถ้าไม่ตั้งเครื่องจักร/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้
+        </div>
+      )}
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      <div className="modal-actions">
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function EmployeeCrud() {
   const [rows, setRows] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [operations, setOperations] = useState([]);
   const [form, setForm] = useState({ role: "operator" });
+  const [editing, setEditing] = useState(null);
   const load = useCallback(async () => {
     setRows(await listRows("employees", { order: "code" }));
     setDepartments(await listRows("departments", { order: "name" }));
+    setMachines(await listRows("machines", { order: "code" }));
+    setOperations(await listRows("operations", { order: "seq" }));
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -1897,6 +2091,7 @@ function EmployeeCrud() {
     await insertRow("employees", {
       code: form.code, name: form.name, department_id: form.department_id || null,
       role: form.role, password_hash,
+      machine_id: form.machine_id || null, operation_id: form.operation_id || null,
     });
     setForm({ role: "operator" }); load();
   }
@@ -1908,31 +2103,49 @@ function EmployeeCrud() {
         <Field label="รหัสพนักงาน"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
         <Field label="ชื่อ"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label="รหัสผ่านเริ่มต้น"><Input value={form.password || ""} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
-        <Field label="แผนก"><Select value={form.department_id || ""} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+        <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
           options={departments.map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
           options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
+        <div />
+        <Field label="เครื่องจักรประจำ"><Select value={form.machine_id} onChange={(e) => setForm({ ...form, machine_id: e.target.value })}
+          options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
+        <Field label="ขั้นตอนประจำ"><Select value={form.operation_id} onChange={(e) => setForm({ ...form, operation_id: e.target.value })}
+          options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+        พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข")
       </div>
       <Btn variant="accent" onClick={add}>เพิ่มพนักงาน</Btn>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
-          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>สถานะ</th></tr></thead>
+          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>เครื่องจักรประจำ</th><th>ขั้นตอนประจำ</th><th>สถานะ</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
                 <td>{r.code}</td><td>{r.name}</td>
                 <td>{departments.find((d) => d.id === r.department_id)?.name || "-"}</td>
                 <td>{ROLE_LABELS[r.role] || r.role}</td>
+                <td>{machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
+                <td>{operations.find((o) => o.id === r.operation_id)?.name || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
                 <td>
                   <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
                     <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
                   </span>
                 </td>
+                <td><span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {editing && (
+        <EmployeeEditModal
+          employee={editing} departments={departments} machines={machines} operations={operations}
+          onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await load(); }}
+        />
+      )}
     </Card>
   );
 }
