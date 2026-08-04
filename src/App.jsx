@@ -128,21 +128,43 @@ const StatCard = ({ label, value, icon }) => (
 );
 
 // Generic modal shell used by the quick-create Project / Part popups.
-function Modal({ title, sub, onClose, children }) {
+// closeOnBackdrop: false = คลิกพื้นที่ว่างรอบๆ จะไม่ปิด (ต้องกด X หรือปุ่มยกเลิกเท่านั้น)
+// locked: true = ล็อกเต็มรูปแบบชั่วคราว (ปิดไม่ได้เลยแม้กด X/Esc) — ใช้ตอนกำลังประมวลผล/นำเข้าอยู่
+function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked = false }) {
+  const [shake, setShake] = useState(false);
+
   useEffect(() => {
-    function onKey(e) { if (e.key === "Escape") onClose(); }
+    function onKey(e) { if (e.key === "Escape" && !locked) onClose(); }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, locked]);
+
+  function pulse() {
+    setShake(true);
+    setTimeout(() => setShake(false), 320);
+  }
+
+  function handleBackdropClick(e) {
+    if (e.target !== e.currentTarget) return;
+    if (locked) { pulse(); return; }
+    if (closeOnBackdrop) onClose();
+    else pulse(); // แจ้งเตือนเบาๆ ว่าหน้าต่างนี้ถูกล็อกไว้ ไม่ได้ค้าง
+  }
+
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal">
+    <div className="modal-backdrop" onMouseDown={handleBackdropClick}>
+      <div className={`modal${shake ? " modal-shake" : ""}`}>
         <div className="modal-head">
           <div>
             <div className="modal-title">{title}</div>
             {sub && <div className="modal-sub">{sub}</div>}
           </div>
-          <span className="modal-close" onClick={onClose}><Icon name="close" size={16} /></span>
+          <span
+            className={`modal-close${locked ? " modal-close-disabled" : ""}`}
+            onClick={() => { if (locked) { pulse(); return; } onClose(); }}
+          >
+            <Icon name="close" size={16} />
+          </span>
         </div>
         {children}
       </div>
@@ -598,7 +620,16 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
   }
 
   return (
-    <Modal title="นำเข้า Release จาก Excel" sub="รองรับไฟล์ฟอร์ม Production Release Report (หลาย Part ในใบเดียว)" onClose={onClose}>
+    <Modal
+      title="นำเข้า Release จาก Excel"
+      sub="รองรับไฟล์ฟอร์ม Production Release Report (หลาย Part ในใบเดียว)"
+      onClose={onClose}
+      closeOnBackdrop={false}
+      locked={busy}
+    >
+      <div className="modal-lock-hint">
+        <Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — คลิกนอกกรอบจะไม่ปิด กด "ยกเลิก" หรือ ✕ เพื่อออก
+      </div>
       {!parsed && (
         <>
           <Field label="เลือกไฟล์ Excel (.xlsx)">
@@ -764,6 +795,7 @@ function ReleasePage({ user, goTo }) {
   const [showNewPart, setShowNewPart] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
+  const [makeQr, setMakeQr] = useState(true); // ปิดได้เมื่อแค่ต้องการบันทึก Release ไว้ ไม่ต้องสร้าง QR ต่อชิ้น
 
   const load = useCallback(async () => {
     setProjects(await listRows("projects", { order: "code" }));
@@ -792,17 +824,19 @@ function ReleasePage({ user, goTo }) {
         unit_weight: relWeight === "" ? null : Number(relWeight),
         length_mm: relLength === "" ? null : Number(relLength),
       });
-      const suffix = release.id.slice(0, 6).toUpperCase();
-      const units = Array.from({ length: Number(qty) }, (_, i) => ({
-        release_id: release.id,
-        part_master_id: partId,
-        unit_no: i + 1,
-        qr_code: `${selectedPart.part_no}-${suffix}-${String(i + 1).padStart(4, "0")}`,
-        status: "released",
-        weight: release.unit_weight,
-        length_mm: release.length_mm,
-      }));
-      await insertRows("part_units", units); // สร้าง QR เบื้องหลังไว้เลย — ไปพิมพ์ทีหลังได้จากหน้ารายละเอียด/พิมพ์ QR
+      if (makeQr) {
+        const suffix = release.id.slice(0, 6).toUpperCase();
+        const units = Array.from({ length: Number(qty) }, (_, i) => ({
+          release_id: release.id,
+          part_master_id: partId,
+          unit_no: i + 1,
+          qr_code: `${selectedPart.part_no}-${suffix}-${String(i + 1).padStart(4, "0")}`,
+          status: "released",
+          weight: release.unit_weight,
+          length_mm: release.length_mm,
+        }));
+        await insertRows("part_units", units); // สร้าง QR เบื้องหลังไว้เลย — ไปพิมพ์ทีหลังได้จากหน้ารายละเอียด/พิมพ์ QR
+      } // ถ้าปิดสวิตช์ไว้ จะบันทึกแค่ยอด Release เท่านั้น ไม่สร้างชิ้น/QR ให้
       setNote(""); setQty(10);
       await load();
     } catch (e) {
@@ -817,12 +851,12 @@ function ReleasePage({ user, goTo }) {
 
   return (
     <div>
-      <div className="page-head">
+      <div className="page-head page-head-release">
         <div>
           <div className="page-title">Release Production</div>
           <div className="page-sub">ปล่อยงานใหม่ — สร้าง QR ต่อชิ้นให้อัตโนมัติ ไปพิมพ์ป้ายทีหลังได้จากหน้ารายละเอียด</div>
         </div>
-        <Btn variant="ghost" onClick={() => setShowImport(true)}>
+        <Btn variant="ghost" className="release-import-btn" onClick={() => setShowImport(true)}>
           <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
         </Btn>
       </div>
@@ -866,24 +900,43 @@ function ReleasePage({ user, goTo }) {
             <RoutingRail routing={selectedPart.routing} doneOps={[]} />
           </div>
         )}
-        <Btn variant="accent" size="lg" onClick={doRelease} disabled={busy || !partId}>
-          <Icon name="box" size={16} />{busy ? "กำลังสร้าง QR..." : `Release + สร้าง QR ${qty || 0} ใบ`}
+
+        <label className="toggle-row">
+          <span className={`toggle-switch${makeQr ? " on" : ""}`}>
+            <input type="checkbox" checked={makeQr} onChange={(e) => setMakeQr(e.target.checked)} />
+            <span className="toggle-knob" />
+          </span>
+          <span className="toggle-text">
+            <span className="toggle-text-title">สร้าง QR ต่อชิ้น</span>
+            <span className="toggle-text-sub">
+              {makeQr
+                ? "จะสร้างป้าย QR ให้ทุกชิ้นอัตโนมัติ ไปพิมพ์ป้ายทีหลังได้"
+                : "ปิดอยู่ — จะบันทึกแค่ยอด Release เท่านั้น ไม่สร้าง QR ให้ (ใช้เมื่อไม่ต้องแปะป้ายติดชิ้นงาน)"}
+            </span>
+          </span>
+        </label>
+
+        <Btn variant="accent" size="lg" className="release-submit-btn" onClick={doRelease} disabled={busy || !partId}>
+          <Icon name={makeQr ? "box" : "check"} size={16} />
+          {busy
+            ? (makeQr ? "กำลังสร้าง QR..." : "กำลังบันทึก...")
+            : (makeQr ? `Release + สร้าง QR ${qty || 0} ใบ` : "บันทึก Release (ไม่สร้าง QR)")}
         </Btn>
       </Card>
 
       <Card title="ประวัติการ Release ล่าสุด">
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table responsive-cards">
             <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวนรวม</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
               {groups.map((g) => (
-                <tr key={g.key} onClick={() => setViewGroup(g)} style={{ cursor: "pointer" }}>
-                  <td>{fmtDT(g.date)}</td>
-                  <td>{g.projectCode}</td>
-                  <td>{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                  <td>{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
-                  <td>{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
-                  <td>{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
+                <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
+                  <td data-label="วันที่">{fmtDT(g.date)}</td>
+                  <td data-label="โปรเจค">{g.projectCode}</td>
+                  <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
+                  <td data-label="จำนวนรวม">{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
+                  <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
+                  <td data-label="หมายเหตุ">{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
                 </tr>
               ))}
               {groups.length === 0 && (
