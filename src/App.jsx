@@ -1074,6 +1074,53 @@ function ScanPage({ user, autoScanTrigger }) {
 }
 
 const QR_CAM_REGION_ID = "qr-cam-region";
+const QR_BOX_SIZE = 220; // ต้องตรงกับ config.qrbox ที่ส่งให้ html5-qrcode เพื่อให้กรอบที่วาดตรงกับพื้นที่ที่สแกนจริง
+
+// กรอบบอกตำแหน่งที่กำลังสแกนอยู่ วางทับบนภาพกล้องสดๆ — พื้นที่นอกกรอบถูกหรี่ลง (dim)
+// เพื่อให้เห็นชัดว่ากำลังอ่าน QR อันไหนอยู่ เวลามีหลาย QR อยู่ในเฟรมเดียวกัน
+function ScanTargetFrame({ frozen }) {
+  const c = frozen ? "#22c55e" : "#ffffff";
+  const cornerStyle = (top, left, right, bottom) => ({
+    position: "absolute", width: 26, height: 26,
+    top, left, right, bottom,
+    borderTop: top !== undefined ? `3px solid ${c}` : undefined,
+    borderBottom: bottom !== undefined ? `3px solid ${c}` : undefined,
+    borderLeft: left !== undefined ? `3px solid ${c}` : undefined,
+    borderRight: right !== undefined ? `3px solid ${c}` : undefined,
+    borderTopLeftRadius: top !== undefined && left !== undefined ? 10 : undefined,
+    borderTopRightRadius: top !== undefined && right !== undefined ? 10 : undefined,
+    borderBottomLeftRadius: bottom !== undefined && left !== undefined ? 10 : undefined,
+    borderBottomRightRadius: bottom !== undefined && right !== undefined ? 10 : undefined,
+  });
+  return (
+    <>
+      <style>{`@keyframes qrTargetLine { 0% { top: 4%; } 100% { top: 94%; } }`}</style>
+      <div
+        style={{
+          position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+          width: QR_BOX_SIZE, height: QR_BOX_SIZE, maxWidth: "72%", maxHeight: "72%",
+          boxShadow: "0 0 0 2000px rgba(0,0,0,.5)", // หรี่พื้นที่นอกกรอบ ให้เห็นชัดว่าจุดสแกนอยู่ตรงไหน
+          borderRadius: 14, pointerEvents: "none",
+        }}
+      >
+        <div style={cornerStyle(-2, -2, undefined, undefined)} />
+        <div style={cornerStyle(-2, undefined, -2, undefined)} />
+        <div style={cornerStyle(undefined, -2, undefined, -2)} />
+        <div style={cornerStyle(undefined, undefined, -2, -2)} />
+        {!frozen && (
+          <div style={{ position: "absolute", left: "4%", right: "4%", height: 2, background: c, boxShadow: `0 0 8px ${c}`, animation: "qrTargetLine 1.4s ease-in-out infinite alternate" }} />
+        )}
+        <div style={{
+          position: "absolute", top: "100%", left: "50%", transform: "translate(-50%,10px)",
+          whiteSpace: "nowrap", fontSize: 12, color: "#fff", background: "rgba(0,0,0,.55)",
+          padding: "4px 10px", borderRadius: 20,
+        }}>
+          {frozen ? "เจอ QR แล้ว" : "วาง QR ให้อยู่ในกรอบนี้"}
+        </div>
+      </div>
+    </>
+  );
+}
 
 function ScanStation({ user, machine, operation, onExit }) {
   const [qrInput, setQrInput] = useState("");
@@ -1121,7 +1168,7 @@ function ScanStation({ user, machine, operation, onExit }) {
       if (cancelled) return;
       const html5QrCode = new Html5Qrcode(QR_CAM_REGION_ID, false);
       scannerRef.current = html5QrCode;
-      const config = { fps: 10, qrbox: 220 };
+      const config = { fps: 10, qrbox: QR_BOX_SIZE };
       const rearId = await pickRearCameraId(Html5Qrcode);
       if (cancelled) return;
       try {
@@ -1211,7 +1258,10 @@ function ScanStation({ user, machine, operation, onExit }) {
         {cameraOn ? (
           // ไม่เอา div นี้ออกตอนเจอ QR แล้ว (frozen) — ให้ภาพที่สแกนได้ค้างอยู่ ให้เห็นว่าเจอชิ้นไหน
           // จนกว่าจะกดยืนยัน หรือกดรีเฟรชเพื่อสแกนใหม่
-          <div id={QR_CAM_REGION_ID} style={{ width: "min(92vw,420px)" }} />
+          <div style={{ position: "relative", width: "min(92vw,420px)" }}>
+            <div id={QR_CAM_REGION_ID} style={{ width: "100%" }} />
+            <ScanTargetFrame frozen={frozen} />
+          </div>
         ) : unit ? (
           <div className="scan-idle-hint">
             <Icon name="check" size={40} />
