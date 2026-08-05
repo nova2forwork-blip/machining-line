@@ -604,7 +604,7 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
 // ตาราง Part: วาง (paste) จาก Excel ได้ทั้งบล็อก — คอลัมน์ตรงตามฟอร์ม Production
 // Release Report (Code, Qty, Length, Weight/M, Material, Total Kg, Remark)
 // แต่ละแถว = 1 release + สร้าง QR ต่อชิ้นให้ครบตาม Qty (เหมือนการนำเข้า Excel)
-const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "" });
+const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
 
 function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
@@ -612,9 +612,13 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const [projectId, setProjectId] = useState("");
   const [rows, setRows] = useState(() => Array.from({ length: 5 }, BLANK_ROW));
   const [makeQr, setMakeQr] = useState(true);
+  const [operations, setOperations] = useState([]);
+  const [bulkRouting, setBulkRouting] = useState([]); // Routing แม่แบบ สำหรับกด "ใช้กับ Part ใหม่ทั้งหมด"
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
+
+  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
 
   function setCell(rowId, key, value) {
     setRows((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
@@ -665,9 +669,32 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const totalQty = validRows.reduce((s, r) => s + (gnum(r.qty) || 0), 0);
   const totalKg = validRows.reduce((s, r) => s + (rowTotalKg(r) || 0), 0);
   const partsInProject = parts.filter((p) => p.project_id === projectId);
-  const newPartCount = validRows.filter(
-    (r) => !partsInProject.some((p) => p.part_no.trim().toLowerCase() === r.code.trim().toLowerCase())
-  ).length;
+
+  // Part เดิมในโปรเจคนี้ (ถ้ามี) — ใช้ตัดสินว่าแถวนี้เป็น Part ใหม่หรือของเดิม
+  function existingPartFor(row) {
+    const code = row.code.trim().toLowerCase();
+    if (!code) return null;
+    return partsInProject.find((p) => p.part_no.trim().toLowerCase() === code) || null;
+  }
+  const isNewPartRow = (row) => row.code.trim() && !existingPartFor(row);
+  const newPartCount = validRows.filter(isNewPartRow).length;
+  // Part ใหม่ที่ยังไม่เลือก Routing เลย — เตือนเพราะจะไม่มีวันขึ้นสถานะ "เสร็จ"
+  const newNoRouting = validRows.filter((r) => isNewPartRow(r) && (r.routing || []).length === 0).length;
+
+  function toggleRowOp(rowId, opName) {
+    setRows((rs) => rs.map((r) => {
+      if (r.id !== rowId) return r;
+      const has = (r.routing || []).includes(opName);
+      return { ...r, routing: has ? r.routing.filter((x) => x !== opName) : [...(r.routing || []), opName] };
+    }));
+  }
+  function toggleBulkOp(opName) {
+    setBulkRouting((b) => (b.includes(opName) ? b.filter((x) => x !== opName) : [...b, opName]));
+  }
+  // ใช้ Routing แม่แบบกับทุกแถวที่เป็น Part ใหม่พร้อมกัน
+  function applyBulkRouting() {
+    setRows((rs) => rs.map((r) => (isNewPartRow(r) ? { ...r, routing: [...bulkRouting] } : r)));
+  }
 
   async function doSave() {
     const ro = normalizeReleaseOrder(releaseOrder);
@@ -695,7 +722,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
           part = await insertRow("part_master", {
             project_id: projectId, part_no: row.code.trim(), part_name: row.code.trim(),
             material: row.material?.trim() || null,
-            unit_weight: weightPcs ?? 0, default_length_mm: lengthMm, routing: [],
+            unit_weight: weightPcs ?? 0, default_length_mm: lengthMm,
+            routing: row.routing || [],
           });
           partsCreated += 1;
         }
@@ -762,7 +790,29 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
         วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Code · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
         (คอลัมน์ No. และ Total Kg ระบบจัดการ/คำนวณให้เอง) · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M
+        <br />Routing: Part เดิมจะดึงขั้นตอนที่เคยตั้งไว้ให้อัตโนมัติ · Part ใหม่เลือกได้ในคอลัมน์ขวาสุด
       </div>
+
+      {newPartCount > 0 && operations.length > 0 && (
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 600, marginBottom: 6 }}>
+            ตั้ง Routing ให้ Part ใหม่พร้อมกัน ({newPartCount} Part ใหม่)
+          </div>
+          <div className="chip-row" style={{ marginBottom: 8 }}>
+            {operations.map((o) => {
+              const active = bulkRouting.includes(o.name);
+              return (
+                <span key={o.id} onClick={() => toggleBulkOp(o.name)} className={`chip ${active ? "active" : ""}`}>
+                  {o.name}{active ? ` (${bulkRouting.indexOf(o.name) + 1})` : ""}
+                </span>
+              );
+            })}
+          </div>
+          <Btn type="button" variant="ghost" size="sm" onClick={applyBulkRouting} disabled={bulkRouting.length === 0}>
+            ใช้ Routing นี้กับ Part ใหม่ทั้งหมด
+          </Btn>
+        </div>
+      )}
 
       <div className="pgrid-wrap">
         <table className="pgrid">
@@ -777,6 +827,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
               <th style={{ width: 92, textAlign: "right" }}>น้ำหนัก/ชิ้น</th>
               <th style={{ width: 92, textAlign: "right" }}>Total Kg</th>
               <th style={{ minWidth: 110 }}>Remark</th>
+              <th style={{ minWidth: 170 }}>Routing</th>
               <th style={{ width: 30 }}></th>
             </tr>
           </thead>
@@ -784,6 +835,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
             {rows.map((r, i) => {
               const wpcs = rowWeightPcs(r);
               const tkg = rowTotalKg(r);
+              const ex = existingPartFor(r);
+              const hasCode = r.code.trim() !== "";
               return (
                 <tr key={r.id}>
                   <td className="pgrid-idx">{i + 1}</td>
@@ -795,6 +848,29 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                   <td className="pgrid-ro">{wpcs != null ? fmtNum(wpcs) : "-"}</td>
                   <td className="pgrid-ro">{tkg != null ? fmtNum(tkg) : "-"}</td>
                   <td><input value={r.remark} onChange={(e) => setCell(r.id, "remark", e.target.value)} onPaste={(e) => handlePaste(e, i, "remark")} /></td>
+                  <td className="pgrid-routing">
+                    {!hasCode ? (
+                      <span style={{ color: "var(--muted-2)", paddingLeft: 8 }}>—</span>
+                    ) : ex ? (
+                      // Part เดิม — โชว์ routing ที่เคยตั้งไว้ อ่านอย่างเดียว
+                      (ex.routing || []).length > 0
+                        ? <span className="pgrid-routing-ro" title="ดึงจาก Part เดิมอัตโนมัติ">{ex.routing.join(" → ")}</span>
+                        : <span className="pgrid-routing-warn" title="Part เดิมนี้ยังไม่ได้ตั้ง Routing — ไปตั้งที่ Setup ได้">ยังไม่ตั้ง (Part เดิม)</span>
+                    ) : (
+                      // Part ใหม่ — เลือกขั้นตอนได้
+                      <div className="pgrid-chips">
+                        {operations.map((o) => {
+                          const active = (r.routing || []).includes(o.name);
+                          return (
+                            <span key={o.id} onClick={() => toggleRowOp(r.id, o.name)} className={`chip chip-sm ${active ? "active" : ""}`}>
+                              {o.name}{active ? ` (${r.routing.indexOf(o.name) + 1})` : ""}
+                            </span>
+                          );
+                        })}
+                        {operations.length === 0 && <span style={{ fontSize: 11, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน</span>}
+                      </div>
+                    )}
+                  </td>
                   <td className="pgrid-del" onClick={() => removeRow(r.id)} title="ลบแถว">✕</td>
                 </tr>
               );
@@ -808,6 +884,12 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <span>รวม <b>{fmtNum(totalQty)}</b> ชิ้น · <b>{validRows.length}</b> Part · น้ำหนักรวม <b>{fmtNum(totalKg)}</b> กก.</span>
         {newPartCount > 0 && <span style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</span>}
       </div>
+      {newNoRouting > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 6, lineHeight: 1.5 }}>
+          <Icon name="bolt" size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+          มี Part ใหม่ {newNoRouting} รายการที่ยังไม่ได้เลือก Routing — ชิ้นงานเหล่านี้จะไม่ขึ้นสถานะ "เสร็จ" จนกว่าจะตั้งขั้นตอน (เลือกในคอลัมน์ Routing หรือใช้ปุ่มด้านบน)
+        </div>
+      )}
 
       <label className="toggle-row" style={{ marginTop: 14 }}>
         <span className={`toggle-switch${makeQr ? " on" : ""}`}>
