@@ -281,7 +281,7 @@ function Shell({ user, onLogout }) {
   const [tab, setTab] = useState("release");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
-  const [scanRequestId, setScanRequestId] = useState(0); // เพิ่มค่าทุกครั้งที่กดปุ่มสแกนกลมด้านล่าง เพื่อสั่งเปิดกล้องแบบเต็มจอทันที
+
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
 
   function go(key, opts) {
@@ -290,10 +290,9 @@ function Shell({ user, onLogout }) {
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
   }
 
-  // ปุ่มสแกนกลมด้านล่าง: พาไปหน้าสแกน "และ" เปิดกล้องเต็มจอให้เลยทันที
-  // ไม่ต้องกดเข้าหน้าแล้วกด "เริ่มสแกน" อีกรอบ (ถ้าตั้งค่าเครื่องจักร/ขั้นตอนประจำไว้แล้ว)
+  // ปุ่มสแกนกลมด้านล่าง: พาไปหน้าเลือกโหมดก่อนเสมอ
+  // (ผู้ใช้เลือก หน้าเครื่อง / มือถือ แล้วค่อยกด "เริ่มสแกน" เอง)
   function goScanNow() {
-    setScanRequestId((n) => n + 1);
     go("detail");
   }
 
@@ -374,7 +373,7 @@ function Shell({ user, onLogout }) {
       <div className="content">
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
-          {tab === "detail" && <ScanPage user={user} autoScanTrigger={scanRequestId} />}
+          {tab === "detail" && <ScanPage user={user} />}
           {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "manageReleases" && <ReleaseManagePage />}
@@ -1515,17 +1514,11 @@ const SCAN_MODES = [
   },
 ];
 
-function ScanPage({ user, autoScanTrigger }) {
+function ScanPage({ user }) {
   const [stationOpen, setStationOpen] = useState(false);
-  // จำโหมดที่เลือกไว้ (session เท่านั้น — ปิดหน้าแล้วกลับมาเลือกใหม่)
+  // จำโหมดที่เลือกไว้ในหน้านี้ (ไม่ข้ามหน้า)
   const [scanMode, setScanMode] = useState("station");
   const ready = !!(user.machine && user.operation);
-
-  // มาจากปุ่มสแกนกลมด้านล่าง (bottom-nav) — เปิดกล้องเต็มจอให้ทันที ไม่ต้องกด "เริ่มสแกน" ซ้ำ
-  useEffect(() => {
-    if (autoScanTrigger && ready) setStationOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoScanTrigger]);
 
   return (
     <div>
