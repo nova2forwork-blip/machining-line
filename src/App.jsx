@@ -1319,6 +1319,8 @@ function ReleasePage({ user, goTo }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
+  // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
+  const [allUnitStats, setAllUnitStats] = useState({});
 
   // ── ค้นหา/กรองประวัติ: วันที่ (จาก–ถึง) · โปรเจค · เลข Release Order ──
   const [fromDate, setFromDate] = useState("");
@@ -1330,8 +1332,14 @@ function ReleasePage({ user, goTo }) {
     setLoading(true);
     setProjects(await listRows("projects", { order: "code" }));
     setParts(await listRows("part_master", { order: "part_no" }));
-    setRecent(await getReleasesFull());
+    const releases = await getReleasesFull();
+    setRecent(releases);
     setLoading(false);
+    // โหลด stats ความคืบหน้าแบบ background (ไม่บล็อก UI)
+    if (releases.length > 0) {
+      const ids = releases.map((r) => r.id);
+      getUnitStatsByReleaseIds(ids).then(setAllUnitStats);
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -1399,20 +1407,34 @@ function ReleasePage({ user, goTo }) {
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <div className="table-wrap">
           <table className="data-table responsive-cards">
-            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวนรวม</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
-              {groups.map((g) => (
-                <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
-                  <td data-label="วันที่">{fmtDT(g.date)}</td>
-                  <td data-label="โปรเจค">{g.projectCode}</td>
-                  <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                  <td data-label="จำนวนรวม">{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
-                  <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
-                  <td data-label="หมายเหตุ">{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
-                </tr>
-              ))}
+              {groups.map((g) => {
+                // รวม stats ของทุก release ในกลุ่มนี้
+                const gFinished = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.finished || 0), 0);
+                const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
+                const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
+                const statsReady = g.releases.every((r) => r.id in allUnitStats);
+                return (
+                  <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
+                    <td data-label="วันที่">{fmtDT(g.date)}</td>
+                    <td data-label="โปรเจค">{g.projectCode}</td>
+                    <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
+                    <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
+                    <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
+                      {statsReady && gPct !== null ? (
+                        <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
+                      ) : (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
+                      )}
+                    </td>
+                    <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
+                    <td data-label="หมายเหตุ">{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
+                  </tr>
+                );
+              })}
               {!loading && groups.length === 0 && (
-                <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
+                <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
                   {hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม"}
                 </td></tr>
               )}
@@ -1473,8 +1495,30 @@ function ReleasePage({ user, goTo }) {
 // ══════════════════════════════════════════════════════════════════════════
 // เครื่องจักร + ขั้นตอนไม่ให้เลือกเองอีกต่อไป — ผูกไว้กับตัวพนักงานแล้วตั้งแต่ตอนล็อกอิน
 // (ตั้งค่าที่ Setup > พนักงาน) พนักงานที่ยังไม่ได้ตั้งค่าจะสแกนไม่ได้ จนกว่า Admin จะตั้งให้
+// ── Scan mode constants ────────────────────────────────────────────────────
+// "station" = หน้าเครื่อง: auto-save ทันทีที่สแกน ตามลำดับ routing เลย ไม่ต้องกดยืนยัน
+// "mobile"  = มือถือ: แสดงข้อมูลชิ้นงาน + รอกดยืนยันก่อนบันทึก (ป้องกันสแกนผิด)
+const SCAN_MODES = [
+  {
+    value: "station",
+    label: "หน้าเครื่อง",
+    sub: "บันทึกอัตโนมัติทันทีที่สแกน",
+    icon: "machine",
+    tone: "accent",
+  },
+  {
+    value: "mobile",
+    label: "มือถือ",
+    sub: "ตรวจสอบแล้วกดยืนยันก่อนบันทึก",
+    icon: "camera",
+    tone: "steel",
+  },
+];
+
 function ScanPage({ user, autoScanTrigger }) {
   const [stationOpen, setStationOpen] = useState(false);
+  // จำโหมดที่เลือกไว้ (session เท่านั้น — ปิดหน้าแล้วกลับมาเลือกใหม่)
+  const [scanMode, setScanMode] = useState("station");
   const ready = !!(user.machine && user.operation);
 
   // มาจากปุ่มสแกนกลมด้านล่าง (bottom-nav) — เปิดกล้องเต็มจอให้ทันที ไม่ต้องกด "เริ่มสแกน" ซ้ำ
@@ -1488,27 +1532,23 @@ function ScanPage({ user, autoScanTrigger }) {
       <div className="page-head">
         <div>
           <div className="page-title">สแกนหน้าเครื่องจักร</div>
-          <div className="page-sub">ล็อกอินแล้วสแกนงานที่ตัวเองทำได้ทันที ไม่ต้องเลือกเครื่องจักร/ขั้นตอนเอง</div>
+          <div className="page-sub">เลือกโหมดให้ตรงกับวิธีใช้งาน แล้วกด "เริ่มสแกน"</div>
         </div>
       </div>
 
+      {/* ── สถานีของคุณ ─────────────────────────────────────── */}
       <Card title="สถานีของคุณ">
         {ready ? (
-          <>
-            <div className="grid-2" style={{ marginBottom: 16 }}>
-              <div>
-                <div className="label-el">เครื่องจักรประจำ</div>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{user.machine.code} — {user.machine.name}</div>
-              </div>
-              <div>
-                <div className="label-el">ขั้นตอนประจำ</div>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{user.operation.name}</div>
-              </div>
+          <div className="grid-2" style={{ marginBottom: 0 }}>
+            <div>
+              <div className="label-el">เครื่องจักรประจำ</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{user.machine.code} — {user.machine.name}</div>
             </div>
-            <Btn variant="accent" size="lg" className="btn-block" onClick={() => setStationOpen(true)}>
-              <Icon name="scan" size={18} /> เริ่มสแกน
-            </Btn>
-          </>
+            <div>
+              <div className="label-el">ขั้นตอนประจำ</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{user.operation.name}</div>
+            </div>
+          </div>
         ) : (
           <div className="empty-state">
             <Icon name="scan" size={32} />
@@ -1520,17 +1560,61 @@ function ScanPage({ user, autoScanTrigger }) {
         )}
       </Card>
 
-      <Card title="วิธีใช้งาน">
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--muted)", lineHeight: 2 }}>
-          <li>ยิงด้วยเครื่องสแกนบาร์โค้ด แล้วระบบจะค้นหาให้อัตโนมัติ</li>
-          <li>หรือเปิดกล้องมือถือเพื่อสแกน QR เอง</li>
-          <li>สแกนต่อเนื่องได้เรื่อยๆ โดยไม่ต้องออกจากหน้าจอสแกน</li>
-        </ul>
-      </Card>
+      {/* ── เลือกโหมดสแกน ────────────────────────────────────── */}
+      {ready && (
+        <Card title="เลือกโหมดสแกน">
+          <div className="scan-mode-grid">
+            {SCAN_MODES.map((m) => (
+              <button
+                key={m.value}
+                className={`scan-mode-card${scanMode === m.value ? " active" : ""}`}
+                onClick={() => setScanMode(m.value)}
+              >
+                <div className={`scan-mode-icon tone-${m.tone}`}>
+                  <Icon name={m.icon} size={22} />
+                </div>
+                <div className="scan-mode-label">{m.label}</div>
+                <div className="scan-mode-sub">{m.sub}</div>
+                {scanMode === m.value && (
+                  <div className="scan-mode-badge">
+                    <Icon name="check" size={11} /> เลือกอยู่
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* คำอธิบายโหมดที่เลือก */}
+          <div className="scan-mode-hint">
+            {scanMode === "station" ? (
+              <>
+                <Icon name="bolt" size={13} style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>หน้าเครื่อง</strong> — สแกน QR แล้วบันทึกทันทีตามลำดับ routing (ขั้นที่ 1→2→3)
+                  บันทึกเครื่องจักรและพนักงานอัตโนมัติ ไม่ต้องกดยืนยัน
+                </span>
+              </>
+            ) : (
+              <>
+                <Icon name="check" size={13} style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>มือถือ</strong> — สแกน QR แล้วดูข้อมูลชิ้นงานก่อน กดยืนยันเองเพื่อบันทึก
+                  เหมาะสำหรับตรวจสอบหรือสแกนนอกสถานีเครื่อง
+                </span>
+              </>
+            )}
+          </div>
+
+          <Btn variant="accent" size="lg" className="btn-block" style={{ marginTop: 14 }} onClick={() => setStationOpen(true)}>
+            <Icon name="scan" size={18} /> เริ่มสแกน — โหมด{scanMode === "station" ? "หน้าเครื่อง" : "มือถือ"}
+          </Btn>
+        </Card>
+      )}
 
       {stationOpen && (
         <ScanStation
           user={user} machine={user.machine} operation={user.operation}
+          mode={scanMode}
           onExit={() => setStationOpen(false)}
         />
       )}
@@ -1588,7 +1672,9 @@ function boxFromQrLocation(location, frameW, frameH) {
   };
 }
 
-function ScanStation({ user, machine, operation, onExit }) {
+function ScanStation({ user, machine, operation, mode = "station", onExit }) {
+  const isStation = mode === "station"; // true = หน้าเครื่อง (auto-save), false = มือถือ (ยืนยันก่อน)
+
   const [qrInput, setQrInput] = useState("");
   const [unit, setUnit] = useState(null);
   const [history, setHistory] = useState([]);
@@ -1601,6 +1687,10 @@ function ScanStation({ user, machine, operation, onExit }) {
   const [qrBox, setQrBox] = useState(null); // ตำแหน่ง QR ล่าสุดที่เจอ (เปอร์เซ็นต์) ใช้วาดกรอบให้สวมพอดี
   const [videoAspect, setVideoAspect] = useState("3 / 4");
   const [sessionCount, setSessionCount] = useState(0);
+  // station mode: toast ชั่วคราวบนกล้อง (success / warning / danger) แทน bottom sheet
+  const [toast, setToast] = useState(null); // { text, tone }
+  const toastTimerRef = useRef(null);
+
   const inputRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null); // แคนวาสที่ซ่อนไว้ ใช้แค่ถอดพิกเซลไปให้ jsQR อ่าน ไม่ได้แสดงผล
@@ -1610,6 +1700,14 @@ function ScanStation({ user, machine, operation, onExit }) {
 
   useEffect(() => { inputRef.current?.focus(); }, [unit]);
   useEffect(() => { frozenRef.current = frozen; }, [frozen]);
+
+  // แสดง toast บนกล้อง (station mode) แล้วหายเองหลัง delay ms
+  function showToast(text, tone = "success", delay = 2000) {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ text, tone });
+    toastTimerRef.current = setTimeout(() => setToast(null), delay);
+  }
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   // เปิดกล้อง — บังคับใช้กล้องหลัง (ตัวหลัก ไม่ใช่ ultra-wide/telephoto) พร้อมสแกนทันที
   // และวนอ่านเฟรมด้วย jsQR เพื่อรู้ตำแหน่งจริงของ QR ในภาพ (เอาไว้วาดกรอบให้สวมพอดี)
@@ -1717,70 +1815,120 @@ function ScanStation({ user, machine, operation, onExit }) {
     resumeScanning();
   }
 
+  // ── core save logic — shared between both modes ────────────────────────
+  // คืนค่า { ok, msg, tone } เพื่อให้ caller ตัดสินใจจะแสดงผลยังไง (toast vs sheet-msg)
+  async function doSave(u, h) {
+    if (!u || !machine || !operation) return { ok: false, msg: "ข้อมูลไม่ครบ", tone: "danger" };
+    const routing = u.part_master?.routing || [];
+    const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
+
+    // 1) กันสแกนขั้นตอนซ้ำ
+    if (doneOps.includes(operation.name)) {
+      return { ok: false, msg: `ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`, tone: "warning" };
+    }
+    // 2) ตรวจความสามารถของเครื่อง (backward compatible: ถ้าไม่เคยตั้งค่า = ไม่บล็อก)
+    try {
+      const caps = await listRows("machine_operations", { filters: { machine_id: machine.id } });
+      if (caps.length > 0 && !caps.some((c) => c.operation_id === operation.id)) {
+        return {
+          ok: false,
+          msg: `เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}"`,
+          tone: "danger",
+        };
+      }
+    } catch (_) { /* ตารางยังไม่ถูกสร้าง */ }
+
+    // 3) ตรวจลำดับ routing (เตือนถ้าไม่ได้ทำตามลำดับ — แต่ยังบันทึกได้)
+    const next = nextOpFor(routing, doneOps);
+    const outOfOrder = next && next !== operation.name;
+
+    await insertRow("scan_logs", {
+      part_unit_id: u.id, machine_id: machine.id, operation_id: operation.id,
+      employee_id: user.id, weight: u.weight ?? null,
+    });
+    const newDone = new Set([...doneOps, operation.name]);
+    const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
+    const stepsDone = routing.length > 0
+      ? routing.filter((r) => newDone.has(r)).length
+      : newDone.size;
+    await updateRow("part_units", u.id, {
+      status: finished ? "finished" : "in_progress",
+      steps_done: stepsDone,
+    });
+
+    const doneStep = routing.indexOf(operation.name) + 1; // ขั้นที่เท่าไหร่ใน routing (1-based)
+    const totalSteps = routing.length;
+    let msg, tone;
+    if (finished) {
+      msg = `✓ ครบทุกขั้นตอนแล้ว!`;
+      tone = "success";
+    } else if (outOfOrder) {
+      msg = `⚠ บันทึกแล้ว (ขั้นตอน "${operation.name}" — ลำดับไม่ตรง routing)`;
+      tone = "warning";
+    } else {
+      msg = totalSteps > 0
+        ? `✓ บันทึกแล้ว — ขั้น ${doneStep}/${totalSteps}`
+        : `✓ บันทึกการสแกนเรียบร้อย`;
+      tone = "success";
+    }
+    return { ok: true, msg, tone, finished };
+  }
+
   async function lookup(code) {
     const c = (code ?? qrInput).trim();
     if (!c) return;
-    setMsg("กำลังค้นหา..."); setMsgTone("muted");
-    const u = await findUnitByQr(c);
-    if (!u) { setUnit(null); setHistory([]); setMsg("ไม่พบ QR นี้ในระบบ"); setMsgTone("danger"); return; }
-    const h = await getUnitHistory(u.id);
-    setUnit(u); setHistory(h); setMsg("");
-    const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
-    const next = nextOpFor(u.part_master?.routing, doneOps);
-    if (next && operation && next !== operation.name) {
-      setMsg(`ขั้นตอนถัดไปของชิ้นนี้คือ "${next}" ไม่ใช่ "${operation.name}" — ตรวจสอบก่อนบันทึก`);
-      setMsgTone("warning");
+    if (isStation) {
+      // หน้าเครื่อง: lookup แล้ว auto-save ทันที ไม่ผ่าน sheet
+      const u = await findUnitByQr(c);
+      if (!u) {
+        showToast("ไม่พบ QR นี้ในระบบ", "danger", 2500);
+        rescan();
+        return;
+      }
+      const h = await getUnitHistory(u.id);
+      const result = await doSave(u, h);
+      if (result.ok) {
+        setSessionCount((n) => n + 1);
+        showToast(result.msg, result.tone, result.finished ? 2800 : 1800);
+      } else {
+        showToast(result.msg, result.tone, 3000);
+      }
+      setQrInput(""); setUnit(null); setHistory([]);
+      resumeScanning();
+      inputRef.current?.focus();
+    } else {
+      // มือถือ: lookup แล้วแสดงใน sheet รอกดยืนยัน
+      setMsg("กำลังค้นหา..."); setMsgTone("muted");
+      const u = await findUnitByQr(c);
+      if (!u) { setUnit(null); setHistory([]); setMsg("ไม่พบ QR นี้ในระบบ"); setMsgTone("danger"); return; }
+      const h = await getUnitHistory(u.id);
+      setUnit(u); setHistory(h); setMsg("");
+      const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
+      const next = nextOpFor(u.part_master?.routing, doneOps);
+      if (next && operation && next !== operation.name) {
+        setMsg(`ขั้นตอนถัดไปของชิ้นนี้คือ "${next}" ไม่ใช่ "${operation.name}" — ตรวจสอบก่อนบันทึก`);
+        setMsgTone("warning");
+      }
     }
   }
 
   function onQrKeyDown(e) { if (e.key === "Enter") { e.preventDefault(); lookup(); } }
 
-  // ไม่มีการพิมพ์ข้อมูลใดๆ เพิ่มตอนสแกน — น้ำหนัก/ความยาวถูกกำหนดไว้แล้วตั้งแต่ตอน
-  // Release และคัดลอกมาพร้อมกับชิ้นงานนี้ (unit.weight / unit.length_mm) จึงบันทึกซ้ำตรงๆ
+  // มือถือ mode เท่านั้น — กดยืนยันก่อนบันทึก
   async function confirmScan() {
     if (!unit || !machine || !operation) return;
-    const routing = unit.part_master?.routing || [];
-    const doneOps = history.map((x) => x.operation?.name).filter(Boolean);
-
-    // ── กันข้อมูลเพี้ยนตั้งแต่ต้นทาง ──
-    // 1) กันสแกนขั้นตอนซ้ำ (ชิ้นนี้ผ่านขั้นตอนนี้ไปแล้ว) — ไม่ให้บันทึกซ้ำ
-    if (doneOps.includes(operation.name)) {
-      setMsg(`ชิ้นนี้ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`);
-      setMsgTone("warning");
-      return;
+    const result = await doSave(unit, history);
+    if (result.ok) {
+      setMsg(result.msg);
+      setMsgTone(result.tone);
+      setSessionCount((c) => c + 1);
+      setQrInput(""); setUnit(null); setHistory([]);
+      resumeScanning();
+      setTimeout(() => setMsg(""), 2500);
+    } else {
+      setMsg(result.msg);
+      setMsgTone(result.tone);
     }
-    // 2) ตรวจว่าเครื่องนี้ทำขั้นตอนนี้ได้จริง (ถ้ามีการตั้งค่าความสามารถของเครื่องไว้)
-    //    ถ้ายังไม่เคยตั้งค่า machine_operations ให้เครื่องนี้เลย = ไม่บล็อก ( backward compatible)
-    try {
-      const caps = await listRows("machine_operations", { filters: { machine_id: machine.id } });
-      if (caps.length > 0 && !caps.some((c) => c.operation_id === operation.id)) {
-        setMsg(`เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}" — แจ้ง Admin ตรวจสอบที่ Setup > เครื่องจักร`);
-        setMsgTone("danger");
-        return;
-      }
-    } catch (_) { /* ตารางยังไม่ถูกสร้าง — ข้ามการตรวจ */ }
-
-    await insertRow("scan_logs", {
-      part_unit_id: unit.id, machine_id: machine.id, operation_id: operation.id,
-      employee_id: user.id, weight: unit.weight ?? null,
-    });
-    const newDone = new Set([...doneOps, operation.name]);
-    const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
-    // steps_done = จำนวนขั้นตอน (distinct) ที่ผ่านแล้ว — ใช้คำนวณความคืบหน้าถ่วงน้ำหนัก
-    // นับจาก newDone ที่จำกัดเฉพาะขั้นตอนใน routing กันค่าพองเกินจริง
-    const stepsDone = routing.length > 0
-      ? routing.filter((r) => newDone.has(r)).length
-      : newDone.size;
-    await updateRow("part_units", unit.id, {
-      status: finished ? "finished" : "in_progress",
-      steps_done: stepsDone,
-    });
-    setMsg(finished ? "บันทึกแล้ว — ชิ้นนี้ทำครบทุกขั้นตอนแล้ว ✓" : "บันทึกการสแกนเรียบร้อย");
-    setMsgTone("success");
-    setSessionCount((c) => c + 1);
-    setQrInput(""); setUnit(null); setHistory([]);
-    resumeScanning(); // พร้อมสแกนชิ้นถัดไปทันที
-    setTimeout(() => setMsg(""), 2200);
     inputRef.current?.focus();
   }
 
@@ -1794,15 +1942,18 @@ function ScanStation({ user, machine, operation, onExit }) {
         </div>
         <div className="scan-topbar-info">
           <div className="scan-topbar-title">{machine?.code} — {machine?.name}</div>
-          <div className="scan-topbar-sub">ขั้นตอน: {operation?.name}</div>
+          <div className="scan-topbar-sub">
+            ขั้นตอน: {operation?.name}
+            <span className={`scan-mode-pill ${isStation ? "station" : "mobile"}`}>
+              {isStation ? "หน้าเครื่อง" : "มือถือ"}
+            </span>
+          </div>
         </div>
         <div className="scan-counter">สแกนแล้ว {sessionCount} ชิ้น</div>
       </div>
 
       <div className="scan-viewport">
         {cameraOn ? (
-          // ไม่เอากล้องออกตอนเจอ QR แล้ว (frozen) — ให้ภาพค้างอยู่ ให้เห็นว่าเจอชิ้นไหน
-          // จนกว่าจะกดยืนยัน หรือกดรีเฟรชเพื่อสแกนใหม่
           <div style={{ position: "relative", width: "min(92vw,420px)", aspectRatio: videoAspect, overflow: "hidden", borderRadius: 16, background: "#000" }}>
             <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             <canvas ref={canvasRef} style={{ display: "none" }} />
@@ -1816,6 +1967,15 @@ function ScanStation({ user, machine, operation, onExit }) {
                 เล็งกล้องไปที่ QR code
               </div>
             )}
+            {/* Toast overlay — แสดงเฉพาะ station mode */}
+            {toast && (
+              <div className={`scan-toast tone-${toast.tone}`}>
+                {toast.tone === "success" && <Icon name="check" size={15} />}
+                {toast.tone === "warning" && <Icon name="clock" size={15} />}
+                {toast.tone === "danger" && <Icon name="close" size={15} />}
+                {toast.text}
+              </div>
+            )}
           </div>
         ) : unit ? (
           <div className="scan-idle-hint">
@@ -1826,6 +1986,12 @@ function ScanStation({ user, machine, operation, onExit }) {
           <div className="scan-frame">
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             <div className="scan-line" />
+            {/* Toast overlay เมื่อกล้องปิด */}
+            {toast && (
+              <div className={`scan-toast scan-toast-center tone-${toast.tone}`}>
+                {toast.text}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1841,7 +2007,8 @@ function ScanStation({ user, machine, operation, onExit }) {
         </button>
       </div>
 
-      {(msg || unit) && (
+      {/* Mobile mode only: bottom sheet ยืนยันก่อนบันทึก */}
+      {!isStation && (msg || unit) && (
         <div className="scan-sheet">
           <div className="scan-sheet-handle" />
           {msg && (
