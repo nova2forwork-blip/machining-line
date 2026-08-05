@@ -11,7 +11,25 @@ create table if not exists public.departments (
   name text not null unique
 );
 
--- 2. พนักงาน (ใช้ล็อคอินเข้าระบบ)
+-- 2. เครื่องจักร
+-- สร้างก่อน employees เพราะ employees.machine_id อ้างถึงตารางนี้
+create table if not exists public.machines (
+  id     uuid primary key default gen_random_uuid(),
+  code   text not null unique,
+  name   text not null,
+  type   text,                                  -- ตัด / เจาะ / บาก / ประกอบ ฯลฯ
+  active boolean not null default true
+);
+
+-- 3. ขั้นตอนการทำงาน (master list เช่น ตัด เจาะ บาก ประกอบ)
+-- สร้างก่อน employees เพราะ employees.operation_id อ้างถึงตารางนี้
+create table if not exists public.operations (
+  id   uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  seq  int not null default 0
+);
+
+-- 4. พนักงาน (ใช้ล็อคอินเข้าระบบ)
 create table if not exists public.employees (
   id             uuid primary key default gen_random_uuid(),
   code           text not null unique,          -- รหัสพนักงาน (ใช้ล็อคอิน)
@@ -25,7 +43,7 @@ create table if not exists public.employees (
   created_at     timestamptz not null default now()
 );
 
--- 3. โปรเจค
+-- 5. โปรเจค
 -- งานภายในบริษัท (ฝ่าย Design สั่งให้ฝ่าย Production ผลิต) จึงไม่มีฟิลด์ลูกค้า
 -- code is unique: 1 โปรเจค = 1 code เสมอ, ป้องกันสร้างโปรเจคซ้ำโดยไม่ตั้งใจ
 create table if not exists public.projects (
@@ -36,20 +54,12 @@ create table if not exists public.projects (
   created_at timestamptz not null default now()
 );
 
--- 4. เครื่องจักร
-create table if not exists public.machines (
-  id     uuid primary key default gen_random_uuid(),
-  code   text not null unique,
-  name   text not null,
-  type   text,                                  -- ตัด / เจาะ / บาก / ประกอบ ฯลฯ
-  active boolean not null default true
-);
-
--- 5. ขั้นตอนการทำงาน (master list เช่น ตัด เจาะ บาก ประกอบ)
-create table if not exists public.operations (
-  id   uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  seq  int not null default 0
+-- 5.1 ความสามารถของเครื่อง (many-to-many): เครื่องหนึ่งทำได้หลายขั้นตอน
+-- ใช้ตรวจตอนสแกนว่าเครื่องนี้ทำขั้นตอนนั้นได้จริง และแยกน้ำหนักราย-ขั้นตอนในรายงาน
+create table if not exists public.machine_operations (
+  machine_id   uuid not null references public.machines(id)   on delete cascade,
+  operation_id uuid not null references public.operations(id) on delete cascade,
+  primary key (machine_id, operation_id)
 );
 
 -- 6. Part master — กำหนด routing (ลำดับขั้นตอนที่ part นี้ต้องผ่าน)
@@ -95,6 +105,7 @@ create table if not exists public.part_units (
   unit_no        int not null,                   -- ลำดับชิ้นในล็อต เช่น 1..50
   qr_code        text not null unique,            -- โค้ดที่พิมพ์ลงป้าย เช่น PRJ001-A12-0001
   status         text not null default 'released',-- released / in_progress / finished
+  steps_done     int not null default 0,           -- จำนวนขั้นตอน (distinct) ที่ผ่านแล้ว — ใช้คำนวณความคืบหน้าถ่วงน้ำหนัก
   weight         numeric,                          -- น้ำหนักของชิ้นนี้ (กก.) — คัดลอกมาจาก release ตอนสร้าง
   length_mm      numeric,                          -- ความยาวของชิ้นนี้ (มม.) — คัดลอกมาจาก release ตอนสร้าง
   created_at     timestamptz not null default now()
@@ -122,6 +133,7 @@ alter table public.part_master enable row level security;
 alter table public.releases    enable row level security;
 alter table public.part_units  enable row level security;
 alter table public.scan_logs   enable row level security;
+alter table public.machine_operations enable row level security;
 
 create policy "allow_all" on public.departments for all using (true) with check (true);
 create policy "allow_all" on public.employees   for all using (true) with check (true);
@@ -132,6 +144,7 @@ create policy "allow_all" on public.part_master for all using (true) with check 
 create policy "allow_all" on public.releases    for all using (true) with check (true);
 create policy "allow_all" on public.part_units  for all using (true) with check (true);
 create policy "allow_all" on public.scan_logs   for all using (true) with check (true);
+create policy "allow_all" on public.machine_operations for all using (true) with check (true);
 
 -- ── Realtime: ให้หน้าจอ dashboard อัปเดตสดเวลามีการสแกน ──────────────────────
 -- (ต้องเปิดเพิ่มใน Dashboard: Database → Replication ด้วย)
