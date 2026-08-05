@@ -1,44 +1,41 @@
 -- ════════════════════════════════════════════════════════════
--- Migration: เพิ่มความถูกต้องของข้อมูล (project/part/release)
--- รันไฟล์นี้เฉพาะกรณีที่เคยสร้างฐานข้อมูลจาก supabase-schema.sql เวอร์ชันเก่าไปแล้ว
--- ถ้าเพิ่งสร้างโปรเจคใหม่และรัน supabase-schema.sql เวอร์ชันล่าสุด ไม่ต้องรันไฟล์นี้
+-- Migration: ความสามารถของเครื่องจักร + ตัวนับความคืบหน้า
+-- รองรับ: เครื่องหนึ่งทำได้หลายขั้นตอน, ตรวจตอนสแกนว่าเครื่องทำขั้นตอนนั้นได้จริง,
+--          และแยกน้ำหนักของเครื่องออกเป็นราย-ขั้นตอนในรายงาน
 --
 -- วิธีใช้: Supabase Dashboard → SQL Editor → New Query → วางทั้งหมด → Run
+-- (รันได้แม้เคย setup ฐานข้อมูลไปแล้ว — ใช้ if not exists ทั้งหมด)
 -- ════════════════════════════════════════════════════════════
 
--- 1) รหัสโปรเจค (projects.code) ต้องไม่ซ้ำกัน
---    ถ้ามี code ซ้ำอยู่แล้ว คำสั่งนี้จะ error — ให้แก้ไข/รวมข้อมูลที่ซ้ำก่อน แล้วค่อยรันใหม่
-alter table public.projects
-  add constraint projects_code_key unique (code);
+-- 1) ความสามารถของเครื่อง (many-to-many): เครื่อง 1 ตัว ทำได้หลายขั้นตอน /
+--    ขั้นตอน 1 อย่าง ทำได้หลายเครื่อง
+create table if not exists public.machine_operations (
+  machine_id   uuid not null references public.machines(id)   on delete cascade,
+  operation_id uuid not null references public.operations(id) on delete cascade,
+  primary key (machine_id, operation_id)
+);
 
--- 2) รหัส Part (part_no) ต้องไม่ซ้ำกันภายในโปรเจคเดียวกัน (ต่างโปรเจคใช้รหัสซ้ำกันได้)
-alter table public.part_master
-  alter column project_id set not null,
-  add constraint part_master_project_part_no_key unique (project_id, part_no);
+alter table public.machine_operations enable row level security;
 
--- 3) ทุก Release ต้องผูกกับ Part จริงเสมอ และจำนวนต้องมากกว่า 0
-alter table public.releases
-  alter column part_master_id set not null,
-  add constraint releases_qty_check check (qty > 0);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'machine_operations' and policyname = 'allow_all'
+  ) then
+    create policy "allow_all" on public.machine_operations for all using (true) with check (true);
+  end if;
+end $$;
 
--- 4) รองรับ "ไม่ต้องพิมพ์อะไรตอนสแกนหน้าเครื่อง": เก็บน้ำหนัก/ความยาวไว้ตั้งแต่ตอน
---    Release แล้วจ่ายลงทุกชิ้นใน part_units ทันที หน้าสแกนอ่านอย่างเดียว
-alter table public.part_master add column if not exists default_length_mm numeric;
-alter table public.releases    add column if not exists unit_weight numeric;
-alter table public.releases    add column if not exists length_mm numeric;
-alter table public.part_units  add column if not exists length_mm numeric;
+-- 2) (ทางเลือกขั้นสูง) ตัวนับจำนวนขั้นตอนที่ชิ้นงานผ่านไปแล้ว
+--    ใช้คำนวณ "น้ำหนักงานที่คืบหน้า" แบบถ่วงตามขั้นตอน (weightedProgress ใน metrics.js)
+--    ชิ้น 10 กก. ทำ 2/4 ขั้น = งานคืบหน้า 5 กก.
+alter table public.part_units add column if not exists steps_done int not null default 0;
 
--- 5) (ทางเลือก) เอาคอลัมน์ "ลูกค้า" ออก เพราะเป็นงานภายใน (Design สั่ง Production)
---    ไม่ใช่งานลูกค้าภายนอก — เอา comment ออกถ้าต้องการลบข้อมูลลูกค้าที่เคยกรอกไว้จริงๆ
--- alter table public.projects drop column if exists customer;
-
--- 6) รองรับ "นำเข้า Release จากไฟล์ Excel" (หลาย Part ในใบสั่งปล่อยงานเดียวกัน):
---    เก็บเลขที่ใบสั่ง (เช่น "P-012") ไว้กับทุก release ที่มาจากไฟล์เดียวกัน
---    เพื่อดูเป็นชุด/พิมพ์ป้ายทั้งชุดพร้อมกันได้ภายหลัง
-alter table public.releases add column if not exists release_order text;
-create index if not exists releases_release_order_idx on public.releases (release_order);
-
--- 7) ผูกพนักงานกับ "เครื่องจักรประจำ" + "ขั้นตอนประจำ" — หน้าสแกนจะไม่ให้เลือกเครื่อง/
---    ขั้นตอนเองอีกต่อไป แต่ใช้ค่าที่ตั้งไว้ในตัวพนักงานแทน (ตั้งค่าที่ Setup > พนักงาน)
-alter table public.employees add column if not exists machine_id uuid references public.machines(id);
-alter table public.employees add column if not exists operation_id uuid references public.operations(id);
+-- เติมค่าย้อนหลังให้ชิ้นที่เสร็จแล้ว = จำนวนขั้นตอนใน routing ของ Part นั้น
+update public.part_units pu
+set steps_done = coalesce(jsonb_array_length(pm.routing), 0)
+from public.part_master pm
+where pu.part_master_id = pm.id
+  and pu.status = 'finished'
+  and pu.steps_done = 0;
