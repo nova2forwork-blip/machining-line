@@ -23,6 +23,7 @@ const paths = {
   more: "M5 12h.01M12 12h.01M19 12h.01",
   plus: "M12 5v14M5 12h14",
   lock: "M6 11V8a6 6 0 0 1 12 0v3 M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z M12 15v2.5",
+  refresh: "M21 12a9 9 0 1 1-2.64-6.36M21 3v5h-5",
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 1.8, style, className }) {
