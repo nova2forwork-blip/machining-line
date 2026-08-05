@@ -235,6 +235,25 @@ export async function getReleasesFull() {
   return data || [];
 }
 
+// สถิติ part_units (total / finished / in_progress) จัดกลุ่มตาม release_id
+// ใช้ในหน้า Release Detail แสดงความคืบหน้าต่อ Part
+export async function getUnitStatsByReleaseIds(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("part_units")
+    .select("release_id, status")
+    .in("release_id", releaseIds);
+  if (error) { console.warn("getUnitStatsByReleaseIds error", error); return {}; }
+  const stats = {};
+  for (const u of data || []) {
+    if (!stats[u.release_id]) stats[u.release_id] = { total: 0, finished: 0, inProgress: 0 };
+    stats[u.release_id].total += 1;
+    if (u.status === "finished") stats[u.release_id].finished += 1;
+    else if (u.status === "in_progress") stats[u.release_id].inProgress += 1;
+  }
+  return stats;
+}
+
 // scan log ทั้งหมดในช่วงเวลา พร้อม join ที่ใช้ทำรายงาน
 export async function getScanLogsBetween(fromIso, toIso) {
   const { data, error } = await supabase
