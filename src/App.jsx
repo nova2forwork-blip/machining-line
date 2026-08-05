@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap,
+  deleteCap, getUnitStatsByReleaseIds,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
@@ -617,15 +617,45 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
+  const [undoCount, setUndoCount] = useState(0); // แสดงตัวเลขย้อนกลับล่าสุด (feedback เล็กๆ)
+
+  // ── Undo stack (Ctrl+Z) ─────────────────────────────────────────────────
+  // เก็บ snapshot ของ rows ก่อนทุกการเปลี่ยนแปลง ไม่เกิน 50 ขั้น
+  const historyRef = useRef([]);
+
+  // ใช้แทน setRows เสมอเมื่อต้องการ undo ได้
+  const setRowsU = useCallback((updater) => {
+    setRows((prev) => {
+      historyRef.current = [...historyRef.current, prev].slice(-50);
+      return typeof updater === "function" ? updater(prev) : updater;
+    });
+  }, []);
+
+  // Ctrl+Z / Cmd+Z — pop จาก stack แล้ว restore
+  useEffect(() => {
+    function onKeydown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !busy) {
+        if (historyRef.current.length === 0) return;
+        e.preventDefault();
+        const prev = historyRef.current[historyRef.current.length - 1];
+        historyRef.current = historyRef.current.slice(0, -1);
+        setRows(prev);
+        setUndoCount((n) => n + 1);
+        setTimeout(() => setUndoCount(0), 1200);
+      }
+    }
+    window.addEventListener("keydown", onKeydown);
+    return () => window.removeEventListener("keydown", onKeydown);
+  }, [busy]);
 
   useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
 
   function setCell(rowId, key, value) {
-    setRows((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
+    setRowsU((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
   }
-  function addRow() { setRows((rs) => [...rs, BLANK_ROW()]); }
+  function addRow() { setRowsU((rs) => [...rs, BLANK_ROW()]); }
   function removeRow(rowId) {
-    setRows((rs) => {
+    setRowsU((rs) => {
       const next = rs.filter((r) => r.id !== rowId);
       return next.length ? next : [BLANK_ROW()];
     });
@@ -640,7 +670,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     e.preventDefault();
 
     const isMultiCol = text.includes("\t");
-    setRows((rs) => {
+    setRowsU((rs) => {
       const next = [...rs];
       const ensure = (idx) => { while (next.length <= idx) next.push(BLANK_ROW()); };
 
@@ -682,7 +712,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const newNoRouting = validRows.filter((r) => isNewPartRow(r) && (r.routing || []).length === 0).length;
 
   function toggleRowOp(rowId, opName) {
-    setRows((rs) => rs.map((r) => {
+    setRowsU((rs) => rs.map((r) => {
       if (r.id !== rowId) return r;
       const has = (r.routing || []).includes(opName);
       return { ...r, routing: has ? r.routing.filter((x) => x !== opName) : [...(r.routing || []), opName] };
@@ -693,7 +723,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   }
   // ใช้ Routing แม่แบบกับทุกแถวที่เป็น Part ใหม่พร้อมกัน
   function applyBulkRouting() {
-    setRows((rs) => rs.map((r) => (isNewPartRow(r) ? { ...r, routing: [...bulkRouting] } : r)));
+    setRowsU((rs) => rs.map((r) => (isNewPartRow(r) ? { ...r, routing: [...bulkRouting] } : r)));
   }
 
   async function doSave() {
@@ -880,7 +910,18 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       </div>
 
       <div className="pgrid-foot">
-        <Btn type="button" variant="ghost" size="sm" onClick={addRow}><Icon name="plus" size={14} /> เพิ่มแถว</Btn>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Btn type="button" variant="ghost" size="sm" onClick={addRow}><Icon name="plus" size={14} /> เพิ่มแถว</Btn>
+          <span style={{ fontSize: 11.5, color: "var(--muted)", userSelect: "none" }} title="กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง">
+            <Icon name="refresh" size={12} style={{ verticalAlign: "-2px", marginRight: 3 }} />Ctrl+Z ย้อนกลับได้
+            {historyRef.current.length > 0 && (
+              <span style={{ marginLeft: 4, color: "var(--accent-dk)", fontWeight: 600 }}>({historyRef.current.length})</span>
+            )}
+          </span>
+          {undoCount > 0 && (
+            <span style={{ fontSize: 11.5, color: "var(--success)", fontWeight: 600, animation: "fadeIn .15s ease" }}>↩ ย้อนกลับแล้ว</span>
+          )}
+        </div>
         <span>รวม <b>{fmtNum(totalQty)}</b> ชิ้น · <b>{validRows.length}</b> Part · น้ำหนักรวม <b>{fmtNum(totalKg)}</b> กก.</span>
         {newPartCount > 0 && <span style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</span>}
       </div>
@@ -1120,8 +1161,41 @@ function groupReleases(list) {
   return Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
+// ── Mini progress bar (inline, no extra deps) ───────────────────────────────
+function ProgressBar({ pct, finished, total }) {
+  const p = Math.min(100, Math.max(0, pct));
+  const color = p === 100 ? "var(--success)" : p > 0 ? "var(--accent-dk)" : "var(--border)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 160 }}>
+      <div style={{ flex: 1, height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", border: "1px solid var(--border)" }}>
+        <div style={{ width: `${p}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color, whiteSpace: "nowrap", minWidth: 38, textAlign: "right" }}>
+        {p}%
+      </span>
+      <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
+        ({finished}/{total})
+      </span>
+    </div>
+  );
+}
+
 function ReleaseGroupDetail({ group, onBack, goTo }) {
   const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
+  const [unitStats, setUnitStats] = useState({});
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  useEffect(() => {
+    const ids = group.releases.map((r) => r.id);
+    setStatsLoading(true);
+    getUnitStatsByReleaseIds(ids).then((s) => { setUnitStats(s); setStatsLoading(false); });
+  }, [group]);
+
+  // รวมทุก Part ใน Release Order นี้
+  const totalFinished = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
+  const totalInProgress = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
+  const pctOverall = group.totalQty > 0 ? Math.round((totalFinished / group.totalQty) * 100) : 0;
+
   return (
     <div>
       <div className="page-head">
@@ -1135,34 +1209,96 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
       </div>
 
       <div className="grid-3" style={{ marginBottom: 16 }}>
-        <Card><div className="label-el">จำนวนรวม</div><div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalQty)} ชิ้น</div></Card>
-        <Card><div className="label-el">น้ำหนักรวม</div><div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalWeight)} กก.</div></Card>
-        <Card><div className="label-el">จำนวน Part</div><div style={{ fontSize: 22, fontWeight: 700 }}>{group.releases.length} Part</div></Card>
+        <Card>
+          <div className="label-el">จำนวนรวม</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalQty)} ชิ้น</div>
+        </Card>
+        <Card>
+          <div className="label-el">น้ำหนักรวม</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalWeight)} กก.</div>
+        </Card>
+        <Card>
+          <div className="label-el">จำนวน Part</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{group.releases.length} Part</div>
+        </Card>
+        <Card>
+          <div className="label-el" style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <Icon name="check" size={12} /> เสร็จแล้ว (ภาพรวม)
+          </div>
+          {statsLoading ? (
+            <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>กำลังโหลด...</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 700, color: pctOverall === 100 ? "var(--success)" : "var(--text)" }}>
+                {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(group.totalQty)} ชิ้น</span>
+              </div>
+              <ProgressBar pct={pctOverall} finished={totalFinished} total={group.totalQty} />
+              {totalInProgress > 0 && (
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
+                  กำลังทำ: {fmtNum(totalInProgress)} ชิ้น
+                </div>
+              )}
+            </>
+          )}
+        </Card>
       </div>
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
         <div className="table-wrap">
           <table className="data-table">
             <thead>
-              <tr><th>Part No.</th><th>ชื่อ Part</th><th>จำนวน</th><th>น้ำหนัก/ชิ้น</th><th>น้ำหนักรวม</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th><th></th></tr>
+              <tr>
+                <th>Part No.</th>
+                <th>ชื่อ Part</th>
+                <th>จำนวน</th>
+                <th>เสร็จแล้ว</th>
+                <th>ความคืบหน้า</th>
+                <th>น้ำหนัก/ชิ้น</th>
+                <th>น้ำหนักรวม</th>
+                <th>ความยาว/ชิ้น</th>
+                <th>หมายเหตุ</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
-              {group.releases.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.part_master?.part_no || "-"}</td>
-                  <td>{r.part_master?.part_name || "-"}</td>
-                  <td>{r.qty}</td>
-                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                  <td>{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>
-                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
-                  <td>{r.note || "-"}</td>
-                  <td>
-                    <span onClick={() => goTo && goTo("labels", { releaseId: r.id })} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
-                      <Icon name="printer" size={13} /> พิมพ์ QR
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {group.releases.map((r) => {
+                const st = unitStats[r.id] || null;
+                const finished = st?.finished ?? 0;
+                const total = st?.total ?? r.qty;
+                const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
+                return (
+                  <tr key={r.id}>
+                    <td>{r.part_master?.part_no || "-"}</td>
+                    <td>{r.part_master?.part_name || "-"}</td>
+                    <td>{r.qty}</td>
+                    <td>
+                      {statsLoading ? (
+                        <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
+                      ) : (
+                        <span style={{ fontWeight: 600, color: pct === 100 ? "var(--success)" : pct > 0 ? "var(--accent-dk)" : "var(--muted)" }}>
+                          {fmtNum(finished)} ชิ้น
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ minWidth: 180 }}>
+                      {statsLoading ? (
+                        <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
+                      ) : (
+                        <ProgressBar pct={pct} finished={finished} total={total} />
+                      )}
+                    </td>
+                    <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
+                    <td>{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>
+                    <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
+                    <td>{r.note || "-"}</td>
+                    <td>
+                      <span onClick={() => goTo && goTo("labels", { releaseId: r.id })} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        <Icon name="printer" size={13} /> พิมพ์ QR
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
