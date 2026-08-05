@@ -10,7 +10,7 @@ import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPas
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { parseReleaseExcel } from "./excelImport.js";
 import {
-  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix,
+  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
 import {
@@ -2511,6 +2511,7 @@ function ReportPage({ goTo }) {
   });
   const chartData = Object.values(byOp);
   const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
+  const partMatrix = partOpMatrix(filteredLogs); // ตารางแยก Part No. × ขั้นตอน
 
   return (
     <div>
@@ -2634,6 +2635,59 @@ function ReportPage({ goTo }) {
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10 }}>
           เครื่องที่ทำได้หลายขั้นตอนจะเห็นน้ำหนักแยกรายขั้นตอนในคอลัมน์ต่างๆ — ตัวเลขนี้คือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ
         </div>
+      </Card>
+
+      <Card title="Part No. × ขั้นตอน (จำนวนครั้งที่สแกน)">
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          แต่ละแถวคือเบอร์ Part — คอลัมน์คือขั้นตอนการทำงาน — ตัวเลขในช่องคือจำนวนครั้งที่สแกน (นับต่อการสแกน ไม่ใช่ต่อชิ้น)
+        </div>
+        {partMatrix.parts.length === 0 ? (
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Part No.</th>
+                  <th>ชื่อ Part</th>
+                  {partMatrix.opNames.map((op) => <th key={op}>{op}</th>)}
+                  <th>รวม</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partMatrix.parts.map((p) => (
+                  <tr key={p.partNo}>
+                    <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5 }}>{p.partNo}</td>
+                    <td style={{ color: "var(--muted)", fontSize: 12.5 }}>{p.partName}</td>
+                    {partMatrix.opNames.map((op) => {
+                      const cell = p.ops[op];
+                      return (
+                        <td key={op}>
+                          {cell ? (
+                            <span>
+                              {cell.count.toLocaleString()} ครั้ง
+                              {cell.weight > 0 && (
+                                <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtNum(cell.weight)} กก.</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--surface-3)" }}>—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td style={{ fontWeight: 600 }}>
+                      {p.total.count.toLocaleString()} ครั้ง
+                      {p.total.weight > 0 && (
+                        <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(p.total.weight)} กก.</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {showNewProject && (
