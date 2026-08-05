@@ -664,6 +664,11 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   //  - หลายคอลัมน์ (มี tab) → เติมทั้งแถวตามลำดับคอลัมน์ เริ่มจากแถวที่โฟกัส
   //  - คอลัมน์เดียว (มีแต่ขึ้นบรรทัดใหม่) → เติมลงคอลัมน์ที่โฟกัสไล่ลงไป
   function handlePaste(e, rowIndex, colKey) {
+    if (!projectId) {
+      e.preventDefault();
+      setErr("กรุณาเลือกโปรเจคก่อน แล้วจึงวางข้อมูล — ระบบต้องรู้โปรเจคเพื่อแยก Part เดิม/ใหม่ให้ถูกต้อง (เบอร์เดียวกันคนละโปรเจคถือเป็นคนละ Part)");
+      return;
+    }
     const text = e.clipboardData.getData("text");
     if (!text || (!text.includes("\t") && !text.includes("\n"))) return; // ค่าเดียว ปล่อยให้วางปกติ
     e.preventDefault();
@@ -704,6 +709,15 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     const code = row.code.trim().toLowerCase();
     if (!code) return null;
     return partsInProject.find((p) => p.part_no.trim().toLowerCase() === code) || null;
+  }
+  // เบอร์เดียวกันที่มีอยู่ใน "โปรเจคอื่น" — เตือนให้รู้ว่ามี routing อื่นอยู่ (อาจต่างกันโดยตั้งใจ)
+  // คนละโปรเจค = คนละ Part เสมอ จึงไม่ดึง routing ข้ามโปรเจคมาให้ แต่โชว์ให้ดูเป็นข้อมูลอ้างอิง
+  function otherProjectMatches(row) {
+    const code = row.code.trim().toLowerCase();
+    if (!code) return [];
+    return parts
+      .filter((p) => p.part_no.trim().toLowerCase() === code && p.project_id !== projectId)
+      .map((p) => ({ part: p, project: projects.find((pr) => pr.id === p.project_id) }));
   }
   const isNewPartRow = (row) => row.code.trim() && !existingPartFor(row);
   const newPartCount = validRows.filter(isNewPartRow).length;
@@ -843,7 +857,15 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </div>
       )}
 
-      <div className="pgrid-wrap">
+      {!projectId && (
+        <div className="pgrid-need-project">
+          <Icon name="folder" size={14} />
+          เลือกโปรเจคก่อน แล้วจึงกรอก/วางข้อมูล Part — ระบบต้องรู้โปรเจคเพื่อแยก Part เดิม/ใหม่ให้ถูกต้อง
+          <span style={{ color: "var(--muted)", fontWeight: 400 }}>(เบอร์เดียวกันคนละโปรเจค = คนละ Part คนละ Routing)</span>
+        </div>
+      )}
+
+      <div className="pgrid-wrap" style={!projectId ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
         <table className="pgrid">
           <thead>
             <tr>
@@ -886,7 +908,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                         ? <span className="pgrid-routing-ro" title="ดึงจาก Part เดิมอัตโนมัติ">{ex.routing.join(" → ")}</span>
                         : <span className="pgrid-routing-warn" title="Part เดิมนี้ยังไม่ได้ตั้ง Routing — ไปตั้งที่ Setup ได้">ยังไม่ตั้ง (Part เดิม)</span>
                     ) : (
-                      // Part ใหม่ — เลือกขั้นตอนได้
+                      // Part ใหม่ — เลือกขั้นตอนได้ + เตือนถ้าเบอร์นี้มีในโปรเจคอื่น
                       <div className="pgrid-chips">
                         {operations.map((o) => {
                           const active = (r.routing || []).includes(o.name);
@@ -897,6 +919,23 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                           );
                         })}
                         {operations.length === 0 && <span style={{ fontSize: 11, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน</span>}
+                        {(() => {
+                          const others = otherProjectMatches(r);
+                          if (others.length === 0) return null;
+                          return (
+                            <div className="pgrid-xproj" title="เบอร์เดียวกันมีในโปรเจคอื่น — คนละ Part จึงไม่ดึง routing มาให้ แสดงไว้อ้างอิงเท่านั้น">
+                              <Icon name="folder" size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />
+                              เบอร์นี้มีในโปรเจคอื่น: {others.slice(0, 2).map((m, k) => (
+                                <span key={k}>
+                                  {k > 0 ? " · " : ""}
+                                  {m.project?.code || "?"}
+                                  {(m.part.routing || []).length > 0 ? ` (${m.part.routing.join("→")})` : " (ยังไม่ตั้ง)"}
+                                </span>
+                              ))}
+                              {others.length > 2 ? ` +${others.length - 2}` : ""}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </td>
@@ -910,7 +949,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
 
       <div className="pgrid-foot">
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Btn type="button" variant="ghost" size="sm" onClick={addRow}><Icon name="plus" size={14} /> เพิ่มแถว</Btn>
+          <Btn type="button" variant="ghost" size="sm" onClick={addRow} disabled={!projectId}><Icon name="plus" size={14} /> เพิ่มแถว</Btn>
           <span style={{ fontSize: 11.5, color: "var(--muted)", userSelect: "none" }} title="กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง">
             <Icon name="refresh" size={12} style={{ verticalAlign: "-2px", marginRight: 3 }} />Ctrl+Z ย้อนกลับได้
             {historyRef.current.length > 0 && (
