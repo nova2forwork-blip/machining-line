@@ -4,10 +4,14 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
+  deleteCap,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { parseReleaseExcel } from "./excelImport.js";
+import {
+  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix,
+} from "./metrics.js";
 import Icon from "./icons.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -1276,13 +1280,40 @@ function ScanStation({ user, machine, operation, onExit }) {
     if (!unit || !machine || !operation) return;
     const routing = unit.part_master?.routing || [];
     const doneOps = history.map((x) => x.operation?.name).filter(Boolean);
+
+    // ── กันข้อมูลเพี้ยนตั้งแต่ต้นทาง ──
+    // 1) กันสแกนขั้นตอนซ้ำ (ชิ้นนี้ผ่านขั้นตอนนี้ไปแล้ว) — ไม่ให้บันทึกซ้ำ
+    if (doneOps.includes(operation.name)) {
+      setMsg(`ชิ้นนี้ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`);
+      setMsgTone("warning");
+      return;
+    }
+    // 2) ตรวจว่าเครื่องนี้ทำขั้นตอนนี้ได้จริง (ถ้ามีการตั้งค่าความสามารถของเครื่องไว้)
+    //    ถ้ายังไม่เคยตั้งค่า machine_operations ให้เครื่องนี้เลย = ไม่บล็อก ( backward compatible)
+    try {
+      const caps = await listRows("machine_operations", { filters: { machine_id: machine.id } });
+      if (caps.length > 0 && !caps.some((c) => c.operation_id === operation.id)) {
+        setMsg(`เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}" — แจ้ง Admin ตรวจสอบที่ Setup > เครื่องจักร`);
+        setMsgTone("danger");
+        return;
+      }
+    } catch (_) { /* ตารางยังไม่ถูกสร้าง — ข้ามการตรวจ */ }
+
     await insertRow("scan_logs", {
       part_unit_id: unit.id, machine_id: machine.id, operation_id: operation.id,
       employee_id: user.id, weight: unit.weight ?? null,
     });
     const newDone = new Set([...doneOps, operation.name]);
     const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
-    await updateRow("part_units", unit.id, { status: finished ? "finished" : "in_progress" });
+    // steps_done = จำนวนขั้นตอน (distinct) ที่ผ่านแล้ว — ใช้คำนวณความคืบหน้าถ่วงน้ำหนัก
+    // นับจาก newDone ที่จำกัดเฉพาะขั้นตอนใน routing กันค่าพองเกินจริง
+    const stepsDone = routing.length > 0
+      ? routing.filter((r) => newDone.has(r)).length
+      : newDone.size;
+    await updateRow("part_units", unit.id, {
+      status: finished ? "finished" : "in_progress",
+      steps_done: stepsDone,
+    });
     setMsg(finished ? "บันทึกแล้ว — ชิ้นนี้ทำครบทุกขั้นตอนแล้ว ✓" : "บันทึกการสแกนเรียบร้อย");
     setMsgTone("success");
     setSessionCount((c) => c + 1);
@@ -1412,7 +1443,7 @@ function FinishedPartPage() {
       <div className="page-head"><div className="page-title">Finished Part</div></div>
       <div className="stat-row">
         <StatCard label="ชิ้นที่เสร็จทั้งหมด" value={units.length.toLocaleString()} icon="check" />
-        <StatCard label="น้ำหนักรวม (กก.)" value={fmtNum(totalWeight)} icon="weight" />
+        <StatCard label="น้ำหนักวัสดุ (กก.)" value={fmtNum(totalWeight)} icon="weight" />
       </div>
       <Card title="รายการชิ้นงานที่เสร็จสมบูรณ์">
         {units.length === 0 ? (
@@ -1841,16 +1872,21 @@ function ReportPage({ goTo }) {
     ? logs.filter((l) => l.part_unit?.part_master?.part_no === partFilter)
     : logs;
 
-  const totalWeight = filteredLogs.reduce((s, l) => s + Number(l.weight || l.part_unit?.part_master?.unit_weight || 0), 0);
-  const distinctUnits = new Set(filteredLogs.map((l) => l.part_unit_id)).size;
+  // แยกน้ำหนักเป็น 2 ตัวเลขคนละความหมาย (ดู metrics.js):
+  //   material  = น้ำหนักวัสดุจริง นับแต่ละชิ้นครั้งเดียว
+  //   processed = ปริมาณงานที่ประมวลผล นับทุกครั้งที่สแกน (ชิ้นผ่านหลายขั้น = นับหลายครั้ง)
+  const material = materialWeight(filteredLogs);
+  const processed = processedWeight(filteredLogs);
+  const distinctUnits = distinctUnitCount(filteredLogs);
   const byOp = {};
   filteredLogs.forEach((l) => {
     const name = l.operation?.name || "ไม่ระบุ";
     byOp[name] = byOp[name] || { name, count: 0, weight: 0 };
     byOp[name].count += 1;
-    byOp[name].weight += Number(l.weight || l.part_unit?.part_master?.unit_weight || 0);
+    byOp[name].weight += Number(l.weight ?? l.part_unit?.part_master?.unit_weight ?? 0);
   });
   const chartData = Object.values(byOp);
+  const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
 
   return (
     <div>
@@ -1914,7 +1950,12 @@ function ReportPage({ goTo }) {
       <div className="stat-row">
         <StatCard label="จำนวนการสแกน" value={filteredLogs.length.toLocaleString()} icon="scan" />
         <StatCard label="ชิ้นงานที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
-        <StatCard label="น้ำหนักรวม (กก.)" value={fmtNum(totalWeight)} icon="weight" />
+        <StatCard label="น้ำหนักวัสดุ · นับต่อชิ้น (กก.)" value={fmtNum(material)} icon="weight" />
+        <StatCard label="ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)" value={fmtNum(processed)} icon="bolt" />
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
+        <b>น้ำหนักวัสดุ</b> = น้ำหนักของชิ้นงานจริง นับแต่ละชิ้นครั้งเดียว ·{" "}
+        <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอนถูกนับซ้ำตามจำนวนขั้น (ใช้วัดภาระงานรวมของสายการผลิต)
       </div>
       <Card title="แยกตามขั้นตอนการทำงาน">
         <div style={{ height: 260 }}>
@@ -1927,6 +1968,47 @@ function ReportPage({ goTo }) {
               <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={CHART.accent} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงานที่ประมวลผล)">
+        {matrix.machines.length === 0 ? (
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>เครื่องจักร</th>
+                  {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
+                  <th>รวม</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.machines.map((m) => (
+                  <tr key={m.name}>
+                    <td style={{ fontWeight: 600 }}>{m.name}</td>
+                    {matrix.opNames.map((op) => {
+                      const cell = m.ops[op];
+                      return (
+                        <td key={op}>
+                          {cell
+                            ? <span>{cell.count} ครั้ง{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                            : <span style={{ color: "var(--surface-3)" }}>—</span>}
+                        </td>
+                      );
+                    })}
+                    <td style={{ fontWeight: 600 }}>
+                      {m.total.count} ครั้ง{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10 }}>
+          เครื่องที่ทำได้หลายขั้นตอนจะเห็นน้ำหนักแยกรายขั้นตอนในคอลัมน์ต่างๆ — ตัวเลขนี้คือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ
         </div>
       </Card>
 
@@ -1954,14 +2036,9 @@ function MachinesSummaryPage() {
     getScanLogsBetween(from, to).then(setLogs);
   }, [preset]);
 
-  const byMachine = {};
-  logs.forEach((l) => {
-    const name = l.machine?.name || "ไม่ระบุ";
-    byMachine[name] = byMachine[name] || { name, count: 0, weight: 0 };
-    byMachine[name].count += 1;
-    byMachine[name].weight += Number(l.weight || l.part_unit?.part_master?.unit_weight || 0);
-  });
-  const rows = Object.values(byMachine).sort((a, b) => b.count - a.count);
+  // per-scan = ภาระงานของเครื่อง (ถูกต้อง: เครื่องทำงานกับชิ้นนั้นจริงทุกครั้งที่สแกน)
+  const matrix = machineOpMatrix(logs);
+  const rows = matrix.machines.map((m) => ({ name: m.name, count: m.total.count, weight: m.total.weight }));
 
   return (
     <div>
@@ -1969,7 +2046,10 @@ function MachinesSummaryPage() {
         <div className="page-title">Machines Summary</div>
         <PresetPicker value={preset} onChange={setPreset} />
       </div>
-      <Card title="ผลงานแยกตามเครื่องจักร">
+      <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          นับต่อการสแกน (per-scan) — สะท้อนภาระงานของเครื่อง ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ ไม่ใช่จำนวนวัสดุ
+        </div>
         <div style={{ height: 240, marginBottom: 16 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows}>
@@ -1977,14 +2057,42 @@ function MachinesSummaryPage() {
               <XAxis dataKey="name" stroke={CHART.muted} fontSize={12} />
               <YAxis stroke={CHART.muted} fontSize={12} />
               <Tooltip contentStyle={{ background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}`, color: CHART.text, borderRadius: 10 }} />
-              <Bar dataKey="count" name="จำนวนชิ้น" fill={CHART.success} radius={[5, 5, 0, 0]} />
+              <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={CHART.success} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>เครื่องจักร</th><th>จำนวนครั้ง</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
-            <tbody>{rows.map((r) => <tr key={r.name}><td>{r.name}</td><td>{r.count}</td><td>{fmtNum(r.weight)}</td></tr>)}</tbody>
+            <thead>
+              <tr>
+                <th>เครื่องจักร</th>
+                {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
+                <th>รวมทุกขั้นตอน</th>
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.machines.map((m) => (
+                <tr key={m.name}>
+                  <td style={{ fontWeight: 600 }}>{m.name}</td>
+                  {matrix.opNames.map((op) => {
+                    const cell = m.ops[op];
+                    return (
+                      <td key={op}>
+                        {cell
+                          ? <span>{cell.count} ครั้ง{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                          : <span style={{ color: "var(--surface-3)" }}>—</span>}
+                      </td>
+                    );
+                  })}
+                  <td style={{ fontWeight: 600 }}>
+                    {m.total.count} ครั้ง{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
+                  </td>
+                </tr>
+              ))}
+              {matrix.machines.length === 0 && (
+                <tr><td colSpan={matrix.opNames.length + 2} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
+              )}
+            </tbody>
           </table>
         </div>
       </Card>
@@ -2023,7 +2131,7 @@ function ProjectsSummaryPage() {
       <Card title="ความคืบหน้าแยกตามโปรเจค (สะสมทั้งหมด)">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>รหัส</th><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <thead><tr><th>รหัส</th><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักวัสดุ (กก.)</th></tr></thead>
             <tbody>
               {rows.map((r) => {
                 const pct = r.total ? Math.round((r.finished / r.total) * 100) : 0;
@@ -2081,7 +2189,7 @@ function PartsSummaryPage() {
       <Card title="สรุปแยกตามชนิด Part (สะสมทั้งหมด)">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>Part No.</th><th>ชื่อ Part</th><th>ปล่อยงาน</th><th>เสร็จแล้ว</th><th>น้ำหนักรวม (กก.)</th></tr></thead>
+            <thead><tr><th>Part No.</th><th>ชื่อ Part</th><th>ปล่อยงาน</th><th>เสร็จแล้ว</th><th>น้ำหนักวัสดุ (กก.)</th></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.part}><td>{r.part}</td><td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td><td>{fmtNum(r.weight)}</td></tr>
@@ -2247,9 +2355,7 @@ function SetupPage() {
           <span key={t.key} className={`chip ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</span>
         ))}
       </div>
-      {tab === "machines" && <SimpleCrud table="machines" fields={[
-        { key: "code", label: "รหัสเครื่อง" }, { key: "name", label: "ชื่อเครื่องจักร" }, { key: "type", label: "ประเภทงาน" },
-      ]} />}
+      {tab === "machines" && <MachineCrud />}
       {tab === "operations" && <SimpleCrud table="operations" fields={[
         { key: "name", label: "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)" }, { key: "seq", label: "ลำดับ", type: "number" },
       ]} />}
@@ -2258,6 +2364,140 @@ function SetupPage() {
       {tab === "employees" && <EmployeeCrud />}
       {tab === "parts" && <PartMasterCrud />}
     </div>
+  );
+}
+
+// เครื่องจักร + ความสามารถ (ทำขั้นตอนไหนได้บ้าง) — ใช้ตรวจตอนสแกนว่าเครื่องนี้
+// ทำขั้นตอนนั้นได้จริง และให้หน้ารายงานแยกน้ำหนักของเครื่องออกเป็นราย-ขั้นตอนได้
+function MachineCapModal({ machine, operations, caps, onClose, onSaved }) {
+  const initial = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
+  const [selected, setSelected] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  function toggle(opId) {
+    setSelected((s) => { const n = new Set(s); n.has(opId) ? n.delete(opId) : n.add(opId); return n; });
+  }
+
+  async function save() {
+    setBusy(true); setErr("");
+    try {
+      const current = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
+      const toAdd = [...selected].filter((id) => !current.has(id));
+      const toRemove = [...current].filter((id) => !selected.has(id));
+      if (toAdd.length) {
+        await insertRows("machine_operations", toAdd.map((operation_id) => ({ machine_id: machine.id, operation_id })));
+      }
+      for (const operation_id of toRemove) {
+        await deleteCap(machine.id, operation_id);
+      }
+      onSaved();
+    } catch (e) {
+      setErr("บันทึกไม่สำเร็จ: " + e.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal title={`ความสามารถของเครื่อง — ${machine.code}`} sub="เลือกขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง) — หน้าสแกนจะเตือนถ้าเครื่องทำขั้นตอนที่ไม่ได้ตั้งไว้" onClose={onClose}>
+      <div className="label-el">ขั้นตอนที่เครื่องนี้ทำได้</div>
+      <div className="chip-row" style={{ marginBottom: 10 }}>
+        {operations.map((o) => (
+          <span key={o.id} onClick={() => toggle(o.id)} className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
+        ))}
+        {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>}
+      </div>
+      {selected.size === 0 && (
+        <div style={{ fontSize: 12, color: "var(--warning)", marginBottom: 8 }}>
+          ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้จะสแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ
+        </div>
+      )}
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      <div className="modal-actions">
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function MachineCrud() {
+  const [rows, setRows] = useState([]);
+  const [operations, setOperations] = useState([]);
+  const [caps, setCaps] = useState([]);
+  const [form, setForm] = useState({});
+  const [editingCaps, setEditingCaps] = useState(null);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setRows(await listRows("machines", { order: "code" }));
+    setOperations(await listRows("operations", { order: "seq" }));
+    setCaps(await listRows("machine_operations"));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function add() {
+    if (!form.code || !form.name) { setErr("กรอกรหัสและชื่อเครื่องให้ครบ"); return; }
+    setErr("");
+    try {
+      await insertRow("machines", { code: form.code, name: form.name, type: form.type || null });
+      setForm({}); load();
+    } catch (e) {
+      setErr(isDuplicateError(e) ? `รหัสเครื่อง "${form.code}" มีอยู่แล้ว` : "เกิดข้อผิดพลาด: " + e.message);
+    }
+  }
+  async function remove(id) { if (confirm("ลบเครื่องนี้?")) { await deleteRow("machines", id); load(); } }
+
+  function capNames(machineId) {
+    const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
+    const names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
+    return names;
+  }
+
+  return (
+    <Card title="เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ">
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ minWidth: 140 }}><Field label="รหัสเครื่อง"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field></div>
+        <div style={{ minWidth: 180 }}><Field label="ชื่อเครื่องจักร"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field></div>
+        <div style={{ minWidth: 140 }}><Field label="ประเภทงาน"><Input value={form.type || ""} onChange={(e) => setForm({ ...form, type: e.target.value })} /></Field></div>
+        <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
+      </div>
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+        เครื่องหนึ่งทำได้หลายขั้นตอน — กด "ความสามารถ" เพื่อเลือกว่าเครื่องนี้ทำอะไรได้บ้าง ระบบจะใช้ตรวจตอนสแกน
+      </div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr><th>รหัสเครื่อง</th><th>ชื่อเครื่องจักร</th><th>ประเภท</th><th>ขั้นตอนที่ทำได้</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const names = capNames(r.id);
+              return (
+                <tr key={r.id}>
+                  <td>{r.code}</td><td>{r.name}</td><td>{r.type || "-"}</td>
+                  <td>
+                    {names.length > 0
+                      ? names.join(" · ")
+                      : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <span onClick={() => setEditingCaps(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>ความสามารถ</span>
+                    <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {editingCaps && (
+        <MachineCapModal
+          machine={editingCaps} operations={operations} caps={caps}
+          onClose={() => setEditingCaps(null)}
+          onSaved={async () => { setEditingCaps(null); await load(); }}
+        />
+      )}
+    </Card>
   );
 }
 
