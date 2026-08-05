@@ -367,6 +367,20 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
   height: 42px; width: 42px; padding: 0; flex-shrink: 0;
 }
 
+/* Add Release popup header: 3 equal-width fields + a + button that hangs to the right
+   so the โปรเจค box lines up with Release Order and วันที่ (ไม่ถูกปุ่ม + บีบให้แคบ) */
+.release-header-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+.release-header-fields > .field { margin-bottom: 0; }
+.release-header-fields > .icon-btn-add { align-self: end; justify-self: start; }
+@media (max-width: 680px) {
+  .release-header-fields { grid-template-columns: 1fr 1fr; }
+}
+
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
   padding: 7px 13px; border-radius: 9px; font-size: 12.5px; cursor: pointer; font-weight: 500;
