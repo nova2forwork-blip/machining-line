@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, getUnitStatsByReleaseIds,
+  deleteCap, getUnitStatsByReleaseIds, supabase,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
@@ -1216,10 +1216,137 @@ function ProgressBar({ pct, finished, total }) {
   );
 }
 
-function ReleaseGroupDetail({ group, onBack, goTo }) {
+// ── รายละเอียดความคืบหน้าของ Part เดียว (แยกตามขั้นตอน) ─────────────────────
+// กดจากแถว Part ในหน้ารายละเอียด Release — แสดงว่าเบอร์นี้ ตัดไปกี่ชิ้น เหลือเจาะ
+// เหลือบาก ฯลฯ โดยนับ "จำนวนชิ้น (distinct) ที่ผ่านแต่ละขั้นตอน" จาก scan_logs จริง
+function PartProgressModal({ release, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [opCounts, setOpCounts] = useState({}); // ชื่อขั้นตอน -> จำนวนชิ้นที่ผ่านแล้ว
+  const [notStarted, setNotStarted] = useState(0);
+  const [finished, setFinished] = useState(0);
+  const [totalUnits, setTotalUnits] = useState(release.qty || 0);
+
+  const routing = release.part_master?.routing || [];
+  const partNo = release.part_master?.part_no || "-";
+  const partName = release.part_master?.part_name || "";
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        // 1) ชิ้นทั้งหมดของล็อตนี้ (release เดียว = 1 Part)
+        const { data: units, error: uErr } = await supabase
+          .from("part_units").select("id, status").eq("release_id", release.id);
+        if (uErr) throw uErr;
+        const ids = (units || []).map((u) => u.id);
+        const fin = (units || []).filter((u) => u.status === "finished").length;
+
+        // 2) การสแกนทั้งหมดของชิ้นเหล่านี้ พร้อมชื่อขั้นตอน
+        let scans = [];
+        if (ids.length) {
+          const { data: sc, error: sErr } = await supabase
+            .from("scan_logs").select("part_unit_id, operation:operations(name)")
+            .in("part_unit_id", ids);
+          if (sErr) throw sErr;
+          scans = sc || [];
+        }
+
+        // 3) นับชิ้น (distinct) ต่อขั้นตอน + หาว่ากี่ชิ้นยังไม่เริ่มเลย
+        const byOp = {};
+        const scannedUnits = new Set();
+        for (const s of scans) {
+          const op = s.operation?.name;
+          if (!op) continue;
+          (byOp[op] = byOp[op] || new Set()).add(s.part_unit_id);
+          scannedUnits.add(s.part_unit_id);
+        }
+        const counts = {};
+        Object.entries(byOp).forEach(([op, set]) => { counts[op] = set.size; });
+
+        if (alive) {
+          setOpCounts(counts);
+          setFinished(fin);
+          setTotalUnits(ids.length || release.qty || 0);
+          setNotStarted((ids.length || 0) - scannedUnits.size);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (alive) { setErr("โหลดข้อมูลไม่สำเร็จ: " + e.message); setLoading(false); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [release]);
+
+  // ขั้นตอนที่ถูกสแกนแต่ไม่ได้อยู่ใน routing (กันข้อมูลหลุด routing) — เอามาแสดงต่อท้าย
+  const extraOps = Object.keys(opCounts).filter((op) => !routing.includes(op));
+  const stages = [...routing, ...extraOps];
+
+  return (
+    <Modal
+      title={`ความคืบหน้า — ${partNo}`}
+      sub={`${partName}${partName ? " · " : ""}ทั้งหมด ${fmtNum(totalUnits)} ชิ้น`}
+      onClose={onClose}
+    >
+      {loading ? (
+        <div style={{ color: "var(--muted)", fontSize: 13, padding: "12px 2px" }}>กำลังโหลด...</div>
+      ) : err ? (
+        <div style={{ color: "var(--danger-hi)", fontSize: 13 }}>{err}</div>
+      ) : stages.length === 0 ? (
+        <div style={{ color: "var(--warning)", fontSize: 13, lineHeight: 1.6 }}>
+          Part นี้ยังไม่ได้ตั้ง Routing — จึงยังไม่มีลำดับขั้นตอนให้ติดตาม ตั้งได้ที่ Setup &gt; Part Master
+        </div>
+      ) : (
+        <>
+          <div className="stage-list">
+            {stages.map((op, i) => {
+              const done = opCounts[op] || 0;
+              const remaining = Math.max(0, totalUnits - done);
+              const pct = totalUnits > 0 ? Math.round((done / totalUnits) * 100) : 0;
+              const isExtra = !routing.includes(op);
+              return (
+                <div className="stage-row" key={op}>
+                  <div className="stage-head">
+                    <span className="stage-name">
+                      <span className="stage-seq">{isExtra ? "?" : i + 1}</span>
+                      {op}{isExtra && <span className="stage-extra"> (นอก routing)</span>}
+                    </span>
+                    <span className="stage-nums">
+                      ทำแล้ว <b>{fmtNum(done)}</b> · เหลือ <b style={{ color: remaining > 0 ? "var(--warning)" : "var(--success)" }}>{fmtNum(remaining)}</b>
+                    </span>
+                  </div>
+                  <div className="stage-bar">
+                    <div className="stage-bar-fill" style={{ width: `${pct}%`, background: pct === 100 ? "var(--success)" : "var(--accent-dk)" }} />
+                    <span className="stage-bar-pct">{pct}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="stage-summary">
+            <div><span className="stage-summary-num">{fmtNum(notStarted)}</span><span>ยังไม่เริ่ม</span></div>
+            <div><span className="stage-summary-num" style={{ color: "var(--success)" }}>{fmtNum(finished)}</span><span>เสร็จครบทุกขั้นตอน</span></div>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.5 }}>
+            "ทำแล้ว" = จำนวนชิ้นที่สแกนผ่านขั้นตอนนั้นแล้ว · "เหลือ" = ยังไม่ผ่านขั้นตอนนั้น (เทียบกับทั้งล็อต {fmtNum(totalUnits)} ชิ้น)
+          </div>
+        </>
+      )}
+
+      <div className="modal-actions">
+        <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function ReleaseGroupDetail({ group, onBack, goTo, onHome }) {
   const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
   const [unitStats, setUnitStats] = useState({});
   const [statsLoading, setStatsLoading] = useState(true);
+  const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
 
   useEffect(() => {
     const ids = group.releases.map((r) => r.id);
@@ -1236,9 +1363,17 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
     <div>
       <div className="page-head">
         <div>
-          <Btn variant="ghost" size="sm" onClick={onBack} style={{ marginBottom: 8 }}>
-            <Icon name="arrowLeft" size={14} /> กลับไปหน้า Release
-          </Btn>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" size="sm" onClick={onBack}>
+              <Icon name="arrowLeft" size={14} /> กลับไปหน้า Release
+            </Btn>
+            <Btn variant="ghost" size="sm" onClick={() => (onHome ? onHome() : onBack())} title="กลับหน้าแรก">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: "-2px" }}>
+                <path d="M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h3v-6h6v6h3a1 1 0 0 0 1-1v-9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              หน้าแรก
+            </Btn>
+          </div>
           <div className="page-title">{group.releaseOrder ? `Release Order: ${group.releaseOrder}` : `Release — ${group.releases[0]?.part_master?.part_no || ""}`}</div>
           <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtDT(group.date)}</div>
         </div>
@@ -1294,6 +1429,7 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
                 <th>ความยาว/ชิ้น</th>
                 <th>หมายเหตุ</th>
                 <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -1303,8 +1439,8 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
                 const total = st?.total ?? r.qty;
                 const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
                 return (
-                  <tr key={r.id}>
-                    <td>{r.part_master?.part_no || "-"}</td>
+                  <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
+                    <td style={{ fontWeight: 600 }}>{r.part_master?.part_no || "-"}</td>
                     <td>{r.part_master?.part_name || "-"}</td>
                     <td>{r.qty}</td>
                     <td>
@@ -1328,9 +1464,12 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
                     <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
                     <td>{r.note || "-"}</td>
                     <td>
-                      <span onClick={() => goTo && goTo("labels", { releaseId: r.id })} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <span onClick={(e) => { e.stopPropagation(); goTo && goTo("labels", { releaseId: r.id }); }} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
                         <Icon name="printer" size={13} /> พิมพ์ QR
                       </span>
+                    </td>
+                    <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+                      ดูขั้นตอน <Icon name="arrowLeft" size={12} style={{ transform: "rotate(180deg)", verticalAlign: "-1px" }} />
                     </td>
                   </tr>
                 );
@@ -1342,6 +1481,8 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
       {noteLabel !== "-" && group.notes.size > 1 && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...group.notes].join(" · ")}</div>
       )}
+
+      {viewPart && <PartProgressModal release={viewPart} onClose={() => setViewPart(null)} />}
     </div>
   );
 }
@@ -1397,7 +1538,7 @@ function ReleasePage({ user, goTo }) {
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
 
   if (viewGroup) {
-    return <ReleaseGroupDetail group={viewGroup} onBack={() => setViewGroup(null)} goTo={goTo} />;
+    return <ReleaseGroupDetail group={viewGroup} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} />;
   }
 
   return (
