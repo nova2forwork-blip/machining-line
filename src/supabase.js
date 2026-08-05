@@ -109,6 +109,20 @@ export async function deleteReleaseCascade(releaseId) {
   if (relErr) throw relErr;
 }
 
+// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — เป็น composite key
+// ไม่มี id เดี่ยว จึงต้องลบด้วยสองเงื่อนไขพร้อมกัน
+export async function deleteCap(machineId, operationId) {
+  const { error } = await supabase
+    .from("machine_operations")
+    .delete()
+    .eq("machine_id", machineId)
+    .eq("operation_id", operationId);
+  if (error) {
+    console.warn("deleteCap error", error);
+    throw error;
+  }
+}
+
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
 export async function findUnitByQr(qrCode) {
   const { data, error } = await supabase
