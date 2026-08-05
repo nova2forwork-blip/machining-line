@@ -134,7 +134,7 @@ const StatCard = ({ label, value, icon }) => (
 // Generic modal shell used by the quick-create Project / Part popups.
 // closeOnBackdrop: false = คลิกพื้นที่ว่างรอบๆ จะไม่ปิด (ต้องกด X หรือปุ่มยกเลิกเท่านั้น)
 // locked: true = ล็อกเต็มรูปแบบชั่วคราว (ปิดไม่ได้เลยแม้กด X/Esc) — ใช้ตอนกำลังประมวลผล/นำเข้าอยู่
-function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked = false }) {
+function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked = false, wide = false }) {
   const [shake, setShake] = useState(false);
 
   useEffect(() => {
@@ -157,7 +157,7 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
 
   return (
     <div className="modal-backdrop" onMouseDown={handleBackdropClick}>
-      <div className={`modal${shake ? " modal-shake" : ""}`}>
+      <div className={`modal${wide ? " modal-wide" : ""}${shake ? " modal-shake" : ""}`}>
         <div className="modal-head">
           <div>
             <div className="modal-title">{title}</div>
@@ -418,6 +418,62 @@ function isDuplicateError(e) {
   return e?.code === "23505" || /duplicate key|already exists/i.test(e?.message || "");
 }
 
+// ─── Add Release popup helpers ──────────────────────────────────────────────
+// น้ำหนัก/ชิ้น = (ความยาว มม. → ม.) × น้ำหนัก/เมตร — สูตรเดียวกับตอนนำเข้า Excel
+const gnum = (v) => {
+  if (v === undefined || v === null || String(v).trim() === "") return null;
+  const n = Number(String(v).replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : null;
+};
+function rowWeightPcs(row) {
+  const len = gnum(row.length_mm), wpm = gnum(row.weight_per_m);
+  return len && wpm ? Number(((len / 1000) * wpm).toFixed(4)) : null;
+}
+function rowTotalKg(row) {
+  const q = gnum(row.qty), wpcs = rowWeightPcs(row);
+  return q && wpcs ? Number((q * wpcs).toFixed(2)) : null;
+}
+// รวมวันที่ที่เลือก + เวลาปัจจุบัน เพื่อให้ backdate ได้แต่ยังเรียงลำดับภายในวันได้
+function dateToIso(dateStr) {
+  if (!dateStr) return new Date().toISOString();
+  const now = new Date();
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+  return d.toISOString();
+}
+// Release Order ต้องเป็นรูปแบบ P-<ตัวเลข> เช่น P-009 (ตามฟอร์มจริงของโรงงาน)
+const RELEASE_ORDER_RE = /^P-\d+$/i;
+function normalizeReleaseOrder(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return `P-${s.padStart(3, "0")}`; // พิมพ์เลขล้วน → เติม P- ให้
+  return s;
+}
+// ลำดับคอลัมน์ตามฟอร์ม Excel จริง (Image): [No.] Code, Qty, Length, Weight/M, Material, [Total Kg], Remark
+// __skip__ = คอลัมน์ที่ระบบคำนวณเอง (Total Kg) — รับค่าที่วางมาแต่ทิ้ง แล้วคิดใหม่
+const PASTE_COLS = ["code", "qty", "length_mm", "weight_per_m", "material", "__skip__", "remark"];
+function parsePastedRows(text) {
+  const lines = String(text).replace(/\r/g, "").split("\n");
+  // ตัดบรรทัดว่างท้ายๆ ออก แต่เก็บบรรทัดกลางที่อาจว่างบางคอลัมน์
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines
+    .map((line) => line.split("\t"))
+    .filter((cells) => cells.some((c) => String(c).trim() !== ""))
+    .map((cells) => {
+      // ถ้ามีคอลัมน์เกินมา 1 และคอลัมน์แรกเป็นเลขลำดับล้วน → ตัดคอลัมน์ No. ทิ้ง
+      let cols = cells;
+      if (cols.length === PASTE_COLS.length + 1 && /^\d+$/.test(String(cols[0]).trim())) {
+        cols = cols.slice(1);
+      }
+      const row = {};
+      PASTE_COLS.forEach((key, i) => {
+        if (key === "__skip__") return;
+        if (cols[i] !== undefined) row[key] = String(cols[i]).trim();
+      });
+      return row;
+    });
+}
+
 // ─── Quick-create: Project ──────────────────────────────────────────────────
 // Lets the user spin up a new project right from the Release page instead of
 // hopping over to Setup — keeps "create project → create part → release" as
@@ -539,6 +595,242 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
           <Btn type="submit" variant="accent" disabled={busy}>{busy ? "กำลังสร้าง..." : "สร้าง Part"}</Btn>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── เพิ่ม Release (ป็อปอัป) — กรอกหัวเอกสาร + วางข้อมูล Part จาก Excel ได้เลย ──
+// หัวเอกสาร: Release Order (P-xxx), วันที่, โปรเจค
+// ตาราง Part: วาง (paste) จาก Excel ได้ทั้งบล็อก — คอลัมน์ตรงตามฟอร์ม Production
+// Release Report (Code, Qty, Length, Weight/M, Material, Total Kg, Remark)
+// แต่ละแถว = 1 release + สร้าง QR ต่อชิ้นให้ครบตาม Qty (เหมือนการนำเข้า Excel)
+const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "" });
+
+function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
+  const [releaseOrder, setReleaseOrder] = useState("");
+  const [date, setDate] = useState(() => todayStr());
+  const [projectId, setProjectId] = useState("");
+  const [rows, setRows] = useState(() => Array.from({ length: 5 }, BLANK_ROW));
+  const [makeQr, setMakeQr] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [err, setErr] = useState("");
+
+  function setCell(rowId, key, value) {
+    setRows((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
+  }
+  function addRow() { setRows((rs) => [...rs, BLANK_ROW()]); }
+  function removeRow(rowId) {
+    setRows((rs) => {
+      const next = rs.filter((r) => r.id !== rowId);
+      return next.length ? next : [BLANK_ROW()];
+    });
+  }
+
+  // วางข้อมูลจาก Excel:
+  //  - หลายคอลัมน์ (มี tab) → เติมทั้งแถวตามลำดับคอลัมน์ เริ่มจากแถวที่โฟกัส
+  //  - คอลัมน์เดียว (มีแต่ขึ้นบรรทัดใหม่) → เติมลงคอลัมน์ที่โฟกัสไล่ลงไป
+  function handlePaste(e, rowIndex, colKey) {
+    const text = e.clipboardData.getData("text");
+    if (!text || (!text.includes("\t") && !text.includes("\n"))) return; // ค่าเดียว ปล่อยให้วางปกติ
+    e.preventDefault();
+
+    const isMultiCol = text.includes("\t");
+    setRows((rs) => {
+      const next = [...rs];
+      const ensure = (idx) => { while (next.length <= idx) next.push(BLANK_ROW()); };
+
+      if (isMultiCol) {
+        const parsed = parsePastedRows(text);
+        parsed.forEach((data, i) => {
+          const idx = rowIndex + i;
+          ensure(idx);
+          next[idx] = { ...next[idx], ...data };
+        });
+      } else {
+        const values = text.replace(/\r/g, "").split("\n");
+        while (values.length && values[values.length - 1].trim() === "") values.pop();
+        values.forEach((v, i) => {
+          const idx = rowIndex + i;
+          ensure(idx);
+          next[idx] = { ...next[idx], [colKey]: v.trim() };
+        });
+      }
+      return next;
+    });
+  }
+
+  const project = projects.find((p) => p.id === projectId);
+  const validRows = rows.filter((r) => r.code.trim() && (gnum(r.qty) || 0) > 0);
+  const totalQty = validRows.reduce((s, r) => s + (gnum(r.qty) || 0), 0);
+  const totalKg = validRows.reduce((s, r) => s + (rowTotalKg(r) || 0), 0);
+  const partsInProject = parts.filter((p) => p.project_id === projectId);
+  const newPartCount = validRows.filter(
+    (r) => !partsInProject.some((p) => p.part_no.trim().toLowerCase() === r.code.trim().toLowerCase())
+  ).length;
+
+  async function doSave() {
+    const ro = normalizeReleaseOrder(releaseOrder);
+    if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009'); return; }
+    if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
+    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code และจำนวน Qty)"); return; }
+
+    setBusy(true); setErr("");
+    const iso = dateToIso(date);
+    let releasesCreated = 0, partsCreated = 0, unitsCreated = 0;
+    try {
+      // ทำทีละแถวตามลำดับ (ไม่ Promise.all) กันสร้าง Part ซ้ำแข่งกันเอง
+      for (let i = 0; i < validRows.length; i++) {
+        const row = validRows[i];
+        setProgress(`กำลังบันทึก ${i + 1} / ${validRows.length} — ${row.code}`);
+        const qty = gnum(row.qty);
+        const weightPcs = rowWeightPcs(row);
+        const lengthMm = gnum(row.length_mm);
+
+        let part = partsInProject.find(
+          (p) => p.part_no.trim().toLowerCase() === row.code.trim().toLowerCase()
+        );
+        if (!part) {
+          part = await insertRow("part_master", {
+            project_id: projectId, part_no: row.code.trim(), part_name: row.code.trim(),
+            material: row.material?.trim() || null,
+            unit_weight: weightPcs ?? 0, default_length_mm: lengthMm, routing: [],
+          });
+          partsCreated += 1;
+        }
+
+        const release = await insertRow("releases", {
+          part_master_id: part.id, qty, unit_weight: weightPcs, length_mm: lengthMm,
+          released_by: user.id, note: row.remark?.trim() || null,
+          release_order: ro, release_date: iso,
+        });
+        releasesCreated += 1;
+
+        if (makeQr) {
+          const suffix = release.id.slice(0, 6).toUpperCase();
+          const units = Array.from({ length: qty }, (_, u) => ({
+            release_id: release.id, part_master_id: part.id, unit_no: u + 1,
+            qr_code: `${part.part_no}-${suffix}-${String(u + 1).padStart(4, "0")}`,
+            status: "released", weight: weightPcs, length_mm: lengthMm,
+          }));
+          const created = await insertRows("part_units", units);
+          unitsCreated += created.length;
+        }
+      }
+      onSaved({ releaseOrder: ro, releasesCreated, partsCreated, unitsCreated });
+    } catch (e2) {
+      setErr(
+        "เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message +
+        (releasesCreated ? ` (บันทึกสำเร็จไปแล้ว ${releasesCreated} รายการก่อนพัง)` : "")
+      );
+    }
+    setBusy(false); setProgress("");
+  }
+
+  return (
+    <Modal
+      title="เพิ่ม Release" wide
+      sub="กรอกหัวเอกสาร แล้ววางข้อมูล Part จาก Excel ลงตารางได้เลย (Ctrl+V)"
+      onClose={onClose} closeOnBackdrop={false} locked={busy}
+    >
+      <div className="modal-lock-hint">
+        <Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — คลิกนอกกรอบจะไม่ปิด กด "ยกเลิก" หรือ ✕ เพื่อออก
+      </div>
+
+      <div className="grid-3" style={{ marginBottom: 12 }}>
+        <Field label="เลขที่ Release Order *">
+          <Input value={releaseOrder} placeholder="เช่น P-009"
+            onChange={(e) => setReleaseOrder(e.target.value)}
+            onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} />
+        </Field>
+        <Field label="วันที่ *">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <div className="field-inline-btn">
+          <Field label="โปรเจค *">
+            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+              options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+          </Field>
+          <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
+            onClick={() => onNeedProject && onNeedProject()}>
+            <Icon name="plus" size={16} />
+          </Btn>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
+        วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Code · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
+        (คอลัมน์ No. และ Total Kg ระบบจัดการ/คำนวณให้เอง) · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M
+      </div>
+
+      <div className="pgrid-wrap">
+        <table className="pgrid">
+          <thead>
+            <tr>
+              <th style={{ width: 34 }}>#</th>
+              <th style={{ minWidth: 130 }}>Code *</th>
+              <th style={{ width: 78 }}>จำนวน *</th>
+              <th style={{ width: 90 }}>Length (มม.)</th>
+              <th style={{ width: 90 }}>Weight/M</th>
+              <th style={{ minWidth: 110 }}>Material</th>
+              <th style={{ width: 92, textAlign: "right" }}>น้ำหนัก/ชิ้น</th>
+              <th style={{ width: 92, textAlign: "right" }}>Total Kg</th>
+              <th style={{ minWidth: 110 }}>Remark</th>
+              <th style={{ width: 30 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const wpcs = rowWeightPcs(r);
+              const tkg = rowTotalKg(r);
+              return (
+                <tr key={r.id}>
+                  <td className="pgrid-idx">{i + 1}</td>
+                  <td><input value={r.code} onChange={(e) => setCell(r.id, "code", e.target.value)} onPaste={(e) => handlePaste(e, i, "code")} placeholder="AN04-001-01" /></td>
+                  <td><input value={r.qty} onChange={(e) => setCell(r.id, "qty", e.target.value)} onPaste={(e) => handlePaste(e, i, "qty")} inputMode="numeric" /></td>
+                  <td><input value={r.length_mm} onChange={(e) => setCell(r.id, "length_mm", e.target.value)} onPaste={(e) => handlePaste(e, i, "length_mm")} inputMode="decimal" /></td>
+                  <td><input value={r.weight_per_m} onChange={(e) => setCell(r.id, "weight_per_m", e.target.value)} onPaste={(e) => handlePaste(e, i, "weight_per_m")} inputMode="decimal" /></td>
+                  <td><input value={r.material} onChange={(e) => setCell(r.id, "material", e.target.value)} onPaste={(e) => handlePaste(e, i, "material")} /></td>
+                  <td className="pgrid-ro">{wpcs != null ? fmtNum(wpcs) : "-"}</td>
+                  <td className="pgrid-ro">{tkg != null ? fmtNum(tkg) : "-"}</td>
+                  <td><input value={r.remark} onChange={(e) => setCell(r.id, "remark", e.target.value)} onPaste={(e) => handlePaste(e, i, "remark")} /></td>
+                  <td className="pgrid-del" onClick={() => removeRow(r.id)} title="ลบแถว">✕</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pgrid-foot">
+        <Btn type="button" variant="ghost" size="sm" onClick={addRow}><Icon name="plus" size={14} /> เพิ่มแถว</Btn>
+        <span>รวม <b>{fmtNum(totalQty)}</b> ชิ้น · <b>{validRows.length}</b> Part · น้ำหนักรวม <b>{fmtNum(totalKg)}</b> กก.</span>
+        {newPartCount > 0 && <span style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</span>}
+      </div>
+
+      <label className="toggle-row" style={{ marginTop: 14 }}>
+        <span className={`toggle-switch${makeQr ? " on" : ""}`}>
+          <input type="checkbox" checked={makeQr} onChange={(e) => setMakeQr(e.target.checked)} />
+          <span className="toggle-knob" />
+        </span>
+        <span className="toggle-text">
+          <span className="toggle-text-title">สร้าง QR ต่อชิ้น</span>
+          <span className="toggle-text-sub">
+            {makeQr ? "จะสร้างป้าย QR ให้ทุกชิ้นอัตโนมัติ ไปพิมพ์ทีหลังได้" : "ปิดอยู่ — บันทึกแค่ยอด Release ไม่สร้าง QR ให้"}
+          </span>
+        </span>
+      </label>
+
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+      {busy && progress && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>{progress}</div>}
+
+      <div className="modal-actions">
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn type="button" variant="accent" onClick={doSave} disabled={busy || validRows.length === 0}>
+          {busy ? "กำลังบันทึก..." : makeQr ? `บันทึก + สร้าง QR (${fmtNum(totalQty)} ใบ)` : "บันทึก Release"}
+        </Btn>
+      </div>
     </Modal>
   );
 }
@@ -803,67 +1095,44 @@ function ReleaseGroupDetail({ group, onBack, goTo }) {
 function ReleasePage({ user, goTo }) {
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
-  const [projectId, setProjectId] = useState("");
-  const [partId, setPartId] = useState("");
-  const [qty, setQty] = useState(10);
-  const [relWeight, setRelWeight] = useState("");
-  const [relLength, setRelLength] = useState("");
-  const [note, setNote] = useState("");
   const [recent, setRecent] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [showNewProject, setShowNewProject] = useState(false);
-  const [showNewPart, setShowNewPart] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
-  const [makeQr, setMakeQr] = useState(true); // ปิดได้เมื่อแค่ต้องการบันทึก Release ไว้ ไม่ต้องสร้าง QR ต่อชิ้น
+
+  // ── ค้นหา/กรองประวัติ: วันที่ (จาก–ถึง) · โปรเจค · เลข Release Order ──
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [orderSearch, setOrderSearch] = useState("");
 
   const load = useCallback(async () => {
+    setLoading(true);
     setProjects(await listRows("projects", { order: "code" }));
     setParts(await listRows("part_master", { order: "part_no" }));
     setRecent(await getReleasesFull());
+    setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const partsInProject = parts.filter((p) => !projectId || p.project_id === projectId);
-  const selectedPart = parts.find((p) => p.id === partId);
-  const selectedProject = projects.find((p) => p.id === projectId);
-  const groups = groupReleases(recent.slice(0, 60)); // ดูย้อนหลังพอประมาณ ไม่โหลดทั้งหมด
-
-  useEffect(() => {
-    setRelWeight(selectedPart ? selectedPart.unit_weight ?? "" : "");
-    setRelLength(selectedPart ? selectedPart.default_length_mm ?? "" : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partId]);
-
-  async function doRelease() {
-    if (!partId || !qty) return;
-    setBusy(true);
-    try {
-      const release = await insertRow("releases", {
-        part_master_id: partId, qty: Number(qty), released_by: user.id, note,
-        unit_weight: relWeight === "" ? null : Number(relWeight),
-        length_mm: relLength === "" ? null : Number(relLength),
-      });
-      if (makeQr) {
-        const suffix = release.id.slice(0, 6).toUpperCase();
-        const units = Array.from({ length: Number(qty) }, (_, i) => ({
-          release_id: release.id,
-          part_master_id: partId,
-          unit_no: i + 1,
-          qr_code: `${selectedPart.part_no}-${suffix}-${String(i + 1).padStart(4, "0")}`,
-          status: "released",
-          weight: release.unit_weight,
-          length_mm: release.length_mm,
-        }));
-        await insertRows("part_units", units); // สร้าง QR เบื้องหลังไว้เลย — ไปพิมพ์ทีหลังได้จากหน้ารายละเอียด/พิมพ์ QR
-      } // ถ้าปิดสวิตช์ไว้ จะบันทึกแค่ยอด Release เท่านั้น ไม่สร้างชิ้น/QR ให้
-      setNote(""); setQty(10);
-      await load();
-    } catch (e) {
-      alert("เกิดข้อผิดพลาด: " + e.message);
+  // กรองที่ระดับ release ก่อน แล้วค่อยจัดกลุ่ม เพื่อให้ค้นหาครอบคลุมทั้งประวัติ
+  const filteredReleases = recent.filter((r) => {
+    if (projectFilter && r.part_master?.projects?.code !== projectFilter) return false;
+    if (fromDate && new Date(r.release_date) < new Date(`${fromDate}T00:00:00`)) return false;
+    if (toDate && new Date(r.release_date) > new Date(`${toDate}T23:59:59.999`)) return false;
+    if (orderSearch) {
+      const q = orderSearch.trim().toLowerCase();
+      const hay = [r.release_order, r.part_master?.part_no, r.part_master?.projects?.name, r.note]
+        .some((v) => (v || "").toLowerCase().includes(q));
+      if (!hay) return false;
     }
-    setBusy(false);
-  }
+    return true;
+  });
+  const groups = groupReleases(filteredReleases);
+  const hasFilter = fromDate || toDate || projectFilter || orderSearch;
+  function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
 
   if (viewGroup) {
     return <ReleaseGroupDetail group={viewGroup} onBack={() => setViewGroup(null)} goTo={goTo} />;
@@ -874,77 +1143,42 @@ function ReleasePage({ user, goTo }) {
       <div className="page-head page-head-release">
         <div>
           <div className="page-title">Release Production</div>
-          <div className="page-sub">ปล่อยงานใหม่ — สร้าง QR ต่อชิ้นให้อัตโนมัติ ไปพิมพ์ป้ายทีหลังได้จากหน้ารายละเอียด</div>
+          <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้)</div>
         </div>
-        <Btn variant="ghost" className="release-import-btn" onClick={() => setShowImport(true)}>
-          <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
-        </Btn>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn variant="accent" onClick={() => setShowAdd(true)}>
+            <Icon name="plus" size={15} />เพิ่ม Release
+          </Btn>
+          <Btn variant="ghost" className="release-import-btn" onClick={() => setShowImport(true)}>
+            <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
+          </Btn>
+        </div>
       </div>
 
-      <Card title="ปล่อยงานใหม่">
+      <Card title="ค้นหา Release">
         <div className="grid-2">
-          <div className="field-inline-btn">
-            <Field label="โปรเจค">
-              <Select value={projectId} onChange={(e) => { setProjectId(e.target.value); setPartId(""); }}
-                options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
-            </Field>
-            <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่" onClick={() => setShowNewProject(true)}>
-              <Icon name="plus" size={16} />
-            </Btn>
-          </div>
-          <div className="field-inline-btn">
-            <Field label="Part">
-              <Select value={partId} onChange={(e) => setPartId(e.target.value)}
-                options={partsInProject.map((p) => ({ value: p.id, label: `${p.part_no} — ${p.part_name}` }))} />
-            </Field>
-            <Btn type="button" variant="ghost" className="icon-btn-add" title={projectId ? "สร้าง Part ใหม่" : "เลือกโปรเจคก่อน"}
-              disabled={!projectId} onClick={() => setShowNewPart(true)}>
-              <Icon name="plus" size={16} />
-            </Btn>
-          </div>
-          <Field label="จำนวน (ชิ้น)">
-            <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+          <Field label="จากวันที่">
+            <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
           </Field>
-          <Field label="หมายเหตุ">
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
+          <Field label="ถึงวันที่">
+            <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </Field>
-          <Field label="น้ำหนัก/ชิ้น (กก.)">
-            <Input type="number" step="0.01" value={relWeight} onChange={(e) => setRelWeight(e.target.value)} placeholder="เช่น 1.25" />
+          <Field label="โปรเจค">
+            <Select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+              options={projects.map((p) => ({ value: p.code, label: `${p.code} — ${p.name}` }))} />
           </Field>
-          <Field label="ความยาว/ชิ้น (มม.)">
-            <Input type="number" step="0.1" value={relLength} onChange={(e) => setRelLength(e.target.value)} placeholder="เช่น 600" />
+          <Field label="ค้นหา Release Order / Part / หมายเหตุ">
+            <Input value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} placeholder="เช่น P-009" />
           </Field>
         </div>
-        {selectedPart && (
-          <div style={{ marginBottom: 14 }}>
-            <RoutingRail routing={selectedPart.routing} doneOps={[]} />
+        {hasFilter && (
+          <div style={{ marginTop: 4 }}>
+            <Btn variant="ghost" size="sm" onClick={clearFilters}><Icon name="close" size={13} /> ล้างตัวกรอง</Btn>
           </div>
         )}
-
-        <label className="toggle-row">
-          <span className={`toggle-switch${makeQr ? " on" : ""}`}>
-            <input type="checkbox" checked={makeQr} onChange={(e) => setMakeQr(e.target.checked)} />
-            <span className="toggle-knob" />
-          </span>
-          <span className="toggle-text">
-            <span className="toggle-text-title">สร้าง QR ต่อชิ้น</span>
-            <span className="toggle-text-sub">
-              {makeQr
-                ? "จะสร้างป้าย QR ให้ทุกชิ้นอัตโนมัติ ไปพิมพ์ป้ายทีหลังได้"
-                : "ปิดอยู่ — จะบันทึกแค่ยอด Release เท่านั้น ไม่สร้าง QR ให้ (ใช้เมื่อไม่ต้องแปะป้ายติดชิ้นงาน)"}
-            </span>
-          </span>
-        </label>
-
-        <Btn variant="accent" size="lg" className="release-submit-btn" onClick={doRelease} disabled={busy || !partId}>
-          <Icon name={makeQr ? "box" : "check"} size={16} />
-          {busy
-            ? (makeQr ? "กำลังสร้าง QR..." : "กำลังบันทึก...")
-            : (makeQr ? `Release + สร้าง QR ${qty || 0} ใบ` : "บันทึก Release (ไม่สร้าง QR)")}
-        </Btn>
       </Card>
 
-      <Card title="ประวัติการ Release ล่าสุด">
+      <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <div className="table-wrap">
           <table className="data-table responsive-cards">
             <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวนรวม</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
@@ -959,13 +1193,34 @@ function ReleasePage({ user, goTo }) {
                   <td data-label="หมายเหตุ">{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
                 </tr>
               ))}
-              {groups.length === 0 && (
-                <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มี Release</td></tr>
+              {!loading && groups.length === 0 && (
+                <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
+                  {hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม"}
+                </td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {showAdd && (
+        <AddReleaseModal
+          user={user}
+          projects={projects}
+          parts={parts}
+          onClose={() => setShowAdd(false)}
+          onNeedProject={() => setShowNewProject(true)}
+          onSaved={async ({ releaseOrder, releasesCreated, partsCreated, unitsCreated }) => {
+            setShowAdd(false);
+            await load();
+            alert(
+              `บันทึก ${releaseOrder} สำเร็จ: ${releasesCreated} รายการ Part` +
+              (unitsCreated ? ` · สร้าง QR ${unitsCreated} ใบ` : "") +
+              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : "")
+            );
+          }}
+        />
+      )}
 
       {showImport && (
         <ImportReleaseModal
@@ -988,18 +1243,6 @@ function ReleasePage({ user, goTo }) {
           onClose={() => setShowNewProject(false)}
           onCreated={(project) => {
             setProjects((prev) => [...prev, project].sort((a, b) => a.code.localeCompare(b.code)));
-            setProjectId(project.id);
-            setPartId("");
-          }}
-        />
-      )}
-      {showNewPart && selectedProject && (
-        <QuickAddPartModal
-          project={selectedProject}
-          onClose={() => setShowNewPart(false)}
-          onCreated={(part) => {
-            setParts((prev) => [...prev, part].sort((a, b) => a.part_no.localeCompare(b.part_no)));
-            setPartId(part.id);
           }}
         />
       )}
@@ -1646,6 +1889,8 @@ function ReleaseEditModal({ release, onClose, onSaved }) {
       setErr(`ลบได้สูงสุด ${releasedCount} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
       return;
     }
+    const ro = normalizeReleaseOrder(releaseOrder);
+    if (ro && !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009 (หรือเว้นว่าง)'); return; }
     setBusy(true); setErr("");
     try {
       const patch = {
@@ -1653,7 +1898,7 @@ function ReleaseEditModal({ release, onClose, onSaved }) {
         unit_weight: unitWeight === "" ? null : Number(unitWeight),
         length_mm: lengthMm === "" ? null : Number(lengthMm),
         note: note || null,
-        release_order: releaseOrder || null,
+        release_order: ro || null,
       };
       await updateRow("releases", release.id, patch);
 
@@ -1700,7 +1945,8 @@ function ReleaseEditModal({ release, onClose, onSaved }) {
               <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
             </Field>
             <Field label="เลขที่ Release Order">
-              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} placeholder="ไม่บังคับ" />
+              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)}
+                onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
             </Field>
             <Field label="น้ำหนัก/ชิ้น (กก.)">
               <Input type="number" step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
