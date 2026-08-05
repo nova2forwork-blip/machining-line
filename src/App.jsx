@@ -809,7 +809,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — คลิกนอกกรอบจะไม่ปิด กด "ยกเลิก" หรือ ✕ เพื่อออก
       </div>
 
-      <div className="grid-3" style={{ marginBottom: 12 }}>
+      <div className="release-header-fields" style={{ marginBottom: 12 }}>
         <Field label="เลขที่ Release Order *">
           <Input value={releaseOrder} placeholder="เช่น P-009"
             onChange={(e) => setReleaseOrder(e.target.value)}
@@ -818,16 +818,14 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <Field label="วันที่ *">
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
-        <div className="field-inline-btn">
-          <Field label="โปรเจค *">
-            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
-              options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
-          </Field>
-          <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
-            onClick={() => onNeedProject && onNeedProject()}>
-            <Icon name="plus" size={16} />
-          </Btn>
-        </div>
+        <Field label="โปรเจค *">
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+            options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+        </Field>
+        <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
+          onClick={() => onNeedProject && onNeedProject()}>
+          <Icon name="plus" size={16} />
+        </Btn>
       </div>
 
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
