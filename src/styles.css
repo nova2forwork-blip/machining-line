@@ -497,6 +497,73 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
 .scan-info-label { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; letter-spacing: .01em; }
 .scan-info-value { font-size: 14px; color: var(--text); font-weight: 600; font-family: var(--font-mono); }
 
+/* ── Scan mode selector ─────────────────────────────────────── */
+.scan-mode-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
+}
+.scan-mode-card {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 6px; padding: 16px 12px 14px; border-radius: var(--radius);
+  border: 2px solid var(--border); background: var(--surface-2);
+  cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+  font-family: inherit; text-align: center;
+}
+.scan-mode-card:hover { border-color: var(--accent); background: var(--accent-tint); }
+.scan-mode-card.active {
+  border-color: var(--accent); background: var(--accent-tint);
+  box-shadow: 0 0 0 3px rgba(16,185,129,.15);
+}
+.scan-mode-icon {
+  width: 44px; height: 44px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.scan-mode-icon.tone-accent { background: rgba(16,185,129,.14); color: var(--accent-dk); }
+.scan-mode-icon.tone-steel  { background: rgba(59,130,246,.12); color: #1d4ed8; }
+.scan-mode-label { font-size: 14px; font-weight: 700; color: var(--text); line-height: 1; }
+.scan-mode-sub { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+.scan-mode-badge {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600; color: var(--accent-dk);
+  background: var(--accent-tint); border: 1px solid rgba(16,185,129,.35);
+  padding: 2px 7px; border-radius: 20px; margin-top: 2px;
+}
+.scan-mode-badge svg { stroke: var(--accent-dk); }
+.scan-mode-hint {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 10px;
+  font-size: 12.5px; color: var(--muted); line-height: 1.55;
+}
+.scan-mode-hint svg { stroke: var(--muted); margin-top: 1px; }
+.scan-mode-hint strong { color: var(--text); }
+
+/* ── Scan toast overlay (station mode) ─────────────────────── */
+.scan-toast {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 8px 16px; border-radius: 22px; font-size: 13px; font-weight: 600;
+  pointer-events: none; z-index: 10;
+  animation: toastpop .18s ease;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+.scan-toast.scan-toast-center { top: 50%; bottom: auto; transform: translate(-50%, -50%); }
+@keyframes toastpop { from { opacity: 0; transform: translateX(-50%) scale(.88); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+.scan-toast svg { flex-shrink: 0; }
+.scan-toast.tone-success { background: rgba(34,197,94,.92); color: #052e16; }
+.scan-toast.tone-success svg { stroke: #052e16; }
+.scan-toast.tone-warning { background: rgba(245,158,11,.92); color: #422006; }
+.scan-toast.tone-warning svg { stroke: #422006; }
+.scan-toast.tone-danger  { background: rgba(239,68,68,.92);  color: #450a0a; }
+.scan-toast.tone-danger svg { stroke: #450a0a; }
+
+/* ── Scan mode pill in topbar sub-line ───────────────────────── */
+.scan-mode-pill {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  padding: 1px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle;
+}
+.scan-mode-pill.station { background: rgba(16,185,129,.25); color: var(--accent-hi); }
+.scan-mode-pill.mobile  { background: rgba(59,130,246,.22); color: #93c5fd; }
+
 /* ── Label print preview / grid ──────────────────────────────── */
 .label-preview {
   background: #fff; border-radius: 8px; padding: 8px; text-align: center;
