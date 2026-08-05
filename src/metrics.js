@@ -84,6 +84,40 @@ export function machineOpMatrix(logs) {
   return { machines, opNames: Array.from(opNames).sort() };
 }
 
+// ── 5b) part × operation matrix (แสดงว่าแต่ละ Part No. ทำขั้นตอนอะไรบ้าง กี่ครั้ง) ─
+// คืนโครงสร้าง:
+//   {
+//     parts: [{ partNo, partName, total:{count,weight}, ops:{ opName:{count,weight} } }],
+//     opNames: [ชื่อขั้นตอนทั้งหมดที่พบ เรียงแล้ว],
+//   }
+export function partOpMatrix(logs) {
+  const byPart = new Map();
+  const opNames = new Set();
+
+  for (const l of logs || []) {
+    const partNo   = l.part_unit?.part_master?.part_no   || "ไม่ระบุ";
+    const partName = l.part_unit?.part_master?.part_name || "";
+    const op       = l.operation?.name || "ไม่ระบุ";
+    const wt       = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    opNames.add(op);
+
+    if (!byPart.has(partNo)) {
+      byPart.set(partNo, { partNo, partName, total: { count: 0, weight: 0 }, ops: {} });
+    }
+    const entry = byPart.get(partNo);
+    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
+    entry.ops[op].count  += 1;
+    entry.ops[op].weight += wt;
+    entry.total.count    += 1;
+    entry.total.weight   += wt;
+  }
+
+  const parts = Array.from(byPart.values()).sort(
+    (a, b) => b.total.count - a.total.count
+  );
+  return { parts, opNames: Array.from(opNames).sort() };
+}
+
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────
 // ต้องมีคอลัมน์ part_units.steps_done (ดู migration) — ชิ้น 10 กก. ทำ 2/4 ขั้น
 // นับเป็นงานคืบหน้า 5 กก. ให้ภาพความคืบหน้าที่ละเอียดกว่าการนับหัวชิ้น
