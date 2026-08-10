@@ -15,8 +15,16 @@ if (!SUPABASE_URL || !SUPABASE_ANON) {
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
+// อ่าน session token (ออกโดย verify_login, เก็บโดย auth.setSession) — แนบไปกับทุก
+// การเขียน เพื่อให้ DB ตรวจ token + role ก่อนอนุญาต (ดู migration-2-rls-lockdown.sql)
+function authToken() {
+  try { return JSON.parse(sessionStorage.getItem("mls-session"))?.token || null; }
+  catch { return null; }
+}
+
 // ── Generic table helpers ───────────────────────────────────────────────────
-// เรียกใช้ตรงๆ เช่น listRows("machines"), insertRow("machines", {...})
+// อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
+// (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
 
 export async function listRows(table, { order, ascending = true, filters } = {}) {
   let q = supabase.from(table).select("*");
@@ -33,61 +41,53 @@ export async function listRows(table, { order, ascending = true, filters } = {})
 }
 
 export async function insertRow(table, row) {
-  const { data, error } = await supabase.from(table).insert(row).select().single();
-  if (error) {
-    console.warn("insertRow error", table, error);
-    throw error;
-  }
+  const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
+  if (error) { console.warn("insertRow error", table, error); throw error; }
   return data;
 }
 
 export async function insertRows(table, rows) {
-  const { data, error } = await supabase.from(table).insert(rows).select();
-  if (error) {
-    console.warn("insertRows error", table, error);
-    throw error;
-  }
+  const { data, error } = await supabase.rpc("authz_insert_many", { p_token: authToken(), p_tbl: table, p_payload: rows });
+  if (error) { console.warn("insertRows error", table, error); throw error; }
   return data || [];
 }
 
 export async function updateRow(table, id, patch) {
-  const { data, error } = await supabase.from(table).update(patch).eq("id", id).select().single();
-  if (error) {
-    console.warn("updateRow error", table, error);
-    throw error;
-  }
+  const { data, error } = await supabase.rpc("authz_update", { p_token: authToken(), p_tbl: table, p_id: id, p_payload: patch });
+  if (error) { console.warn("updateRow error", table, error); throw error; }
   return data;
 }
 
 // Bulk update: apply the same patch to every row matching the given filters.
 // Used e.g. to propagate a release's edited weight/length down to all its part_units.
 export async function updateRows(table, filters, patch) {
-  let q = supabase.from(table).update(patch);
-  for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
-  const { data, error } = await q.select();
-  if (error) {
-    console.warn("updateRows error", table, error);
-    throw error;
-  }
-  return data || [];
+  const { data, error } = await supabase.rpc("authz_update_where", { p_token: authToken(), p_tbl: table, p_filters: filters, p_payload: patch });
+  if (error) { console.warn("updateRows error", table, error); throw error; }
+  return data || 0; // จำนวนแถวที่อัปเดต
 }
 
 export async function deleteRow(table, id) {
-  const { error } = await supabase.from(table).delete().eq("id", id);
-  if (error) {
-    console.warn("deleteRow error", table, error);
-    throw error;
-  }
+  const { error } = await supabase.rpc("authz_delete", { p_token: authToken(), p_tbl: table, p_id: id });
+  if (error) { console.warn("deleteRow error", table, error); throw error; }
 }
 
 // Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
 export async function deleteRows(table, ids) {
   if (!ids || ids.length === 0) return;
-  const { error } = await supabase.from(table).delete().in("id", ids);
-  if (error) {
-    console.warn("deleteRows error", table, error);
-    throw error;
-  }
+  const { error } = await supabase.rpc("authz_delete_many", { p_token: authToken(), p_tbl: table, p_ids: ids });
+  if (error) { console.warn("deleteRows error", table, error); throw error; }
+}
+
+// ออกจากระบบ — ยกเลิก token ฝั่ง DB (เรียกก่อน clearSession)
+export async function logoutSession() {
+  const t = authToken();
+  if (t) { try { await supabase.rpc("logout", { p_token: t }); } catch (_) { /* ignore */ } }
+}
+
+// เปิด/ปิดการใช้งานพนักงาน (admin เท่านั้น) — ผ่าน RPC
+export async function setEmployeeActive(id, active) {
+  const { error } = await supabase.rpc("set_employee_active", { p_token: authToken(), p_id: id, p_active: active });
+  if (error) { console.warn("set_employee_active error", error); throw error; }
 }
 
 // Delete a release entirely, along with every part_unit it created and any
@@ -95,32 +95,15 @@ export async function deleteRows(table, ids) {
 // children before parents). Caller is responsible for warning the user first
 // if any of those units have already been scanned — this does not check.
 export async function deleteReleaseCascade(releaseId) {
-  const { data: units, error: unitsErr } = await supabase
-    .from("part_units").select("id").eq("release_id", releaseId);
-  if (unitsErr) throw unitsErr;
-  const unitIds = (units || []).map((u) => u.id);
-  if (unitIds.length > 0) {
-    const { error: scanErr } = await supabase.from("scan_logs").delete().in("part_unit_id", unitIds);
-    if (scanErr) throw scanErr;
-    const { error: unitDelErr } = await supabase.from("part_units").delete().in("id", unitIds);
-    if (unitDelErr) throw unitDelErr;
-  }
-  const { error: relErr } = await supabase.from("releases").delete().eq("id", releaseId);
-  if (relErr) throw relErr;
+  // cascade (scan_logs → part_units → releases) ทำใน RPC เดียว = atomic + ตรวจสิทธิ์
+  const { error } = await supabase.rpc("authz_delete_release", { p_token: authToken(), p_release_id: releaseId });
+  if (error) { console.warn("deleteReleaseCascade error", error); throw error; }
 }
 
-// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — เป็น composite key
-// ไม่มี id เดี่ยว จึงต้องลบด้วยสองเงื่อนไขพร้อมกัน
+// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
 export async function deleteCap(machineId, operationId) {
-  const { error } = await supabase
-    .from("machine_operations")
-    .delete()
-    .eq("machine_id", machineId)
-    .eq("operation_id", operationId);
-  if (error) {
-    console.warn("deleteCap error", error);
-    throw error;
-  }
+  const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
+  if (error) { console.warn("deleteCap error", error); throw error; }
 }
 
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
@@ -170,38 +153,9 @@ export async function getAllUnitsFull(statusFilter) {
 // (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
 // Caller ต้องแจ้งเตือนผู้ใช้ก่อนเสมอ — ฟังก์ชันนี้ไม่เช็คว่ามีการสแกนไปแล้วหรือยัง
 export async function deleteProjectCascade(projectId) {
-  const { data: pm, error: pmErr } = await supabase
-    .from("part_master").select("id").eq("project_id", projectId);
-  if (pmErr) throw pmErr;
-  const partIds = (pm || []).map((p) => p.id);
-
-  if (partIds.length > 0) {
-    const { data: rel, error: relErr } = await supabase
-      .from("releases").select("id").in("part_master_id", partIds);
-    if (relErr) throw relErr;
-    const releaseIds = (rel || []).map((r) => r.id);
-
-    if (releaseIds.length > 0) {
-      const { data: units, error: unitsErr } = await supabase
-        .from("part_units").select("id").in("release_id", releaseIds);
-      if (unitsErr) throw unitsErr;
-      const unitIds = (units || []).map((u) => u.id);
-
-      if (unitIds.length > 0) {
-        const { error: scanErr } = await supabase.from("scan_logs").delete().in("part_unit_id", unitIds);
-        if (scanErr) throw scanErr;
-        const { error: unitDelErr } = await supabase.from("part_units").delete().in("id", unitIds);
-        if (unitDelErr) throw unitDelErr;
-      }
-      const { error: relDelErr } = await supabase.from("releases").delete().in("id", releaseIds);
-      if (relDelErr) throw relDelErr;
-    }
-    const { error: pmDelErr } = await supabase.from("part_master").delete().in("id", partIds);
-    if (pmDelErr) throw pmDelErr;
-  }
-
-  const { error: projErr } = await supabase.from("projects").delete().eq("id", projectId);
-  if (projErr) throw projErr;
+  // cascade (scan_logs → part_units → releases → part_master → projects) ใน RPC เดียว
+  const { error } = await supabase.rpc("authz_delete_project", { p_token: authToken(), p_project_id: projectId });
+  if (error) { console.warn("deleteProjectCascade error", error); throw error; }
 }
 
 // ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
@@ -252,6 +206,90 @@ export async function getUnitStatsByReleaseIds(releaseIds) {
     else if (u.status === "in_progress") stats[u.release_id].inProgress += 1;
   }
   return stats;
+}
+
+// ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
+// จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
+export async function getEmployees() {
+  const { data, error } = await supabase
+    .from("employees")
+    .select("id, code, name, role, active, department_id, machine_id, operation_id, created_at")
+    .order("code", { ascending: true });
+  if (error) { console.warn("getEmployees error", error); return []; }
+  return data || [];
+}
+
+// ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
+
+// บันทึกการสแกน 1 ครั้งแบบ atomic (กัน race + ตรวจความสามารถ + กันซ้ำ + อัปเดตสถานะ)
+// คืน { ok, reason?, finished?, out_of_order?, step?, total?, op? }
+export async function recordScan({ unitId, machineId, operationId, employeeId }) {
+  const { data, error } = await supabase.rpc("record_scan", {
+    p_token: authToken(),
+    p_unit_id: unitId,
+    p_machine_id: machineId,
+    p_operation_id: operationId,
+    p_employee_id: employeeId,
+  });
+  if (error) {
+    console.warn("record_scan error", error);
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+
+// สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
+// rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
+// คืน { releasesCreated, partsCreated, unitsCreated }
+export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows }) {
+  const { data, error } = await supabase.rpc("create_release_batch", {
+    p_token: authToken(),
+    p_project_id: projectId,
+    p_release_order: releaseOrder || null,
+    p_release_date: releaseDate || null,
+    p_released_by: releasedBy || null,
+    p_make_qr: !!makeQr,
+    p_rows: rows,
+  });
+  if (error) {
+    console.warn("create_release_batch error", error);
+    throw error;
+  }
+  return data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
+}
+
+// สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
+// ส่ง id=null เพื่อสร้างใหม่, password="" เพื่อไม่เปลี่ยนรหัสตอนแก้ไข
+export async function upsertEmployee(emp) {
+  const { data, error } = await supabase.rpc("upsert_employee", {
+    p_token: authToken(),
+    p_id: emp.id || null,
+    p_code: emp.code,
+    p_name: emp.name,
+    p_password: emp.password || "",
+    p_role: emp.role || "operator",
+    p_department_id: emp.department_id || null,
+    p_machine_id: emp.machine_id || null,
+    p_operation_id: emp.operation_id || null,
+    p_active: emp.active ?? true,
+  });
+  if (error) {
+    console.warn("upsert_employee error", error);
+    throw error;
+  }
+  return data; // uuid
+}
+
+// รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
+export async function getProjectSummary() {
+  const { data, error } = await supabase.rpc("project_summary");
+  if (error) { console.warn("project_summary error", error); return []; }
+  return data || [];
+}
+export async function getPartSummary() {
+  const { data, error } = await supabase.rpc("part_summary");
+  if (error) { console.warn("part_summary error", error); return []; }
+  return data || [];
 }
 
 // scan log ทั้งหมดในช่วงเวลา พร้อม join ที่ใช้ทำรายงาน
