@@ -5,7 +5,8 @@ import {
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, getUnitStatsByReleaseIds, supabase,
-  recordScan, createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
+  recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
+  createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
@@ -28,6 +29,34 @@ const CHART = {
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
+
+// ─── เสียง + สั่น ตอบรับการสแกน (สำคัญบนหน้าโรงงานที่ไม่ได้จ้องจอ) ───────────────
+let _audioCtx = null;
+function beep(kind) {
+  try {
+    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    const ctx = _audioCtx;
+    const play = (freq, start, dur, vol = 0.18) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "square"; o.frequency.value = freq; o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime + start;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.start(t); o.stop(t + dur + 0.02);
+    };
+    if (kind === "success") play(950, 0, 0.13);
+    else if (kind === "warning") { play(600, 0, 0.1); play(600, 0.14, 0.1); }
+    else { play(240, 0, 0.32, 0.22); } // error/danger — ต่ำและยาว
+  } catch (_) { /* บางเบราว์เซอร์บล็อกเสียงก่อน user gesture */ }
+}
+function feedback(tone) {
+  beep(tone === "danger" ? "danger" : tone === "warning" ? "warning" : "success");
+  try {
+    if (navigator.vibrate) navigator.vibrate(tone === "success" ? 60 : tone === "warning" ? [40, 50, 40] : [120, 70, 120]);
+  } catch (_) {}
+}
 
 // ─── Date range presets ─────────────────────────────────────────────────────
 const PRESETS = [
@@ -1647,7 +1676,7 @@ const SCAN_MODES = [
   {
     value: "station",
     label: "หน้าเครื่อง",
-    sub: "บันทึกอัตโนมัติทันทีที่สแกน",
+    sub: "สแกนทีละชิ้น มีเสียง · ค้าง 4 วิ แล้วต่อเอง",
     icon: "machine",
     tone: "accent",
   },
@@ -1729,8 +1758,8 @@ function ScanPage({ user }) {
               <>
                 <Icon name="bolt" size={13} style={{ flexShrink: 0 }} />
                 <span>
-                  <strong>หน้าเครื่อง</strong> — สแกน QR แล้วบันทึกทันทีตามลำดับ routing (ขั้นที่ 1→2→3)
-                  บันทึกเครื่องจักรและพนักงานอัตโนมัติ ไม่ต้องกดยืนยัน
+                  <strong>หน้าเครื่อง</strong> — สแกน <strong>ทีละชิ้น</strong>: ยิง QR 1 ชิ้น → มีเสียงและแจ้งเตือนผล
+                  → ค้างผล 4 วิ แล้ว<strong>สแกนชิ้นถัดไปได้เองอัตโนมัติ</strong> (ไม่ต้องกด · กันยิงรัวและสแกนซ้ำในจังหวะเดียว) เครื่อง/ขั้นตอน/พนักงานบันทึกอัตโนมัติ
                 </span>
               </>
             ) : (
@@ -1829,16 +1858,35 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
   // station mode: toast ชั่วคราวบนกล้อง (success / warning / danger) แทน bottom sheet
   const [toast, setToast] = useState(null); // { text, tone }
   const toastTimerRef = useRef(null);
+  // หน้าเครื่อง: ผลสแกนล่าสุดที่ "ค้างไว้" 4 วิ (สแกนทีละชิ้น) แล้วสแกนชิ้นถัดไปได้เองอัตโนมัติ
+  const [stationResult, setStationResult] = useState(null); // { ok, msg, tone, finished, code }
+  const [countdown, setCountdown] = useState(0);            // วินาทีที่เหลือก่อนสแกนต่ออัตโนมัติ
+  const STATION_HOLD_SEC = 4;
+
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [pending, setPending] = useState(scanQueueCount()); // จำนวนสแกนค้างในคิวออฟไลน์
 
   const inputRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null); // แคนวาสที่ซ่อนไว้ ใช้แค่ถอดพิกเซลไปให้ jsQR อ่าน ไม่ได้แสดงผล
   const streamRef = useRef(null);
+  const trackRef = useRef(null);  // video track (ใช้เปิด/ปิดไฟฉาย)
   const rafRef = useRef(null);
   const frozenRef = useRef(false);
+  const lastScanRef = useRef({ code: "", at: 0 }); // debounce กันอ่านโค้ดเดิมซ้ำรัวๆ
+  const lastDecodeRef = useRef(0);                  // throttle การถอด jsQR
+  const stationTimerRef = useRef(null);             // ตัวจับเวลานับถอยหลัง 4 วิ (auto-advance)
 
   useEffect(() => { inputRef.current?.focus(); }, [unit]);
   useEffect(() => { frozenRef.current = frozen; }, [frozen]);
+
+  // ติดตามจำนวนคิวออฟไลน์ + พยายามซิงค์เมื่อเข้าหน้าสแกน
+  useEffect(() => {
+    flushScanQueue().then(() => setPending(scanQueueCount()));
+    const off = onScanQueue((n) => setPending(n));
+    return off;
+  }, []);
 
   // แสดง toast บนกล้อง (station mode) แล้วหายเองหลัง delay ms
   function showToast(text, tone = "success", delay = 2000) {
@@ -1856,6 +1904,10 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 
     function onDecoded(decodedText) {
       if (frozenRef.current) return; // มีผลค้างอยู่แล้ว รอยืนยัน/รีเฟรชก่อน
+      // debounce: กันอ่านโค้ดเดิมซ้ำรัวๆ (เช่น QR เดิมยังค้างในเฟรมหลังบันทึกไปแล้ว)
+      const nowT = Date.now();
+      if (decodedText === lastScanRef.current.code && nowT - lastScanRef.current.at < 2500) return;
+      lastScanRef.current = { code: decodedText, at: nowT };
       frozenRef.current = true;
       setFrozen(true);
       videoRef.current?.pause(); // ค้างภาพไว้ให้เห็นว่าเจอชิ้นไหน
@@ -1897,6 +1949,11 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
         if (video.videoWidth && video.videoHeight) setVideoAspect(`${video.videoWidth} / ${video.videoHeight}`);
       };
       try { await video.play(); } catch (_) {}
+      // เก็บ track ไว้เปิด/ปิดไฟฉาย + ตรวจว่ารองรับไหม
+      const track = stream.getVideoTracks?.()[0] || null;
+      trackRef.current = track;
+      try { const caps = track?.getCapabilities?.(); setTorchSupported(!!(caps && caps.torch)); } catch (_) { setTorchSupported(false); }
+      setTorchOn(false);
       decodeLoop();
     }
 
@@ -1911,7 +1968,10 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 
       const tick = () => {
         if (cancelled) return;
-        if (!frozenRef.current && video.readyState === video.HAVE_ENOUGH_DATA) {
+        // throttle การถอด QR ~9 ครั้ง/วินาที (พอสำหรับสแกน แต่ลดภาระ CPU/แบตมือถือ)
+        const nowT = Date.now();
+        if (!frozenRef.current && video.readyState === video.HAVE_ENOUGH_DATA && nowT - lastDecodeRef.current > 110) {
+          lastDecodeRef.current = nowT;
           const w = video.videoWidth, h = video.videoHeight;
           if (w && h) {
             canvas.width = w; canvas.height = h;
@@ -1935,10 +1995,20 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
       rafRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      trackRef.current = null;
+      setTorchSupported(false); setTorchOn(false);
       setQrBox(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn]);
+
+  // เปิด/ปิดไฟฉาย (ถ้าอุปกรณ์รองรับ) — ช่วยสแกนในพื้นที่มืด
+  async function toggleTorch() {
+    const track = trackRef.current;
+    if (!track) return;
+    try { await track.applyConstraints({ advanced: [{ torch: !torchOn }] }); setTorchOn((v) => !v); }
+    catch (_) { setTorchSupported(false); }
+  }
 
   // กลับไปสแกนต่อ — เล่นวิดีโอต่อ + เคลียร์กรอบเดิม ให้ jsQR เริ่มตามหา QR ใหม่
   function resumeScanning() {
@@ -1948,73 +2018,92 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
     videoRef.current?.play().catch(() => {});
   }
 
+  function clearStationTimer() {
+    if (stationTimerRef.current) { clearInterval(stationTimerRef.current); stationTimerRef.current = null; }
+  }
+
   // ยกเลิกผลที่ค้างไว้ แล้วสแกนใหม่ (โดยไม่ต้องกดยืนยัน)
   function rescan() {
-    setUnit(null); setHistory([]); setMsg(""); setQrInput("");
+    clearStationTimer(); setCountdown(0);
+    setUnit(null); setHistory([]); setMsg(""); setQrInput(""); setStationResult(null);
     resumeScanning();
   }
 
+  // หน้าเครื่อง: สแกนชิ้นถัดไป (เคลียร์ผลที่ค้าง + เริ่มสแกนใหม่) — เรียกอัตโนมัติเมื่อครบ 4 วิ หรือกดเอง
+  function nextScan() {
+    clearStationTimer(); setCountdown(0);
+    setStationResult(null);
+    setQrInput(""); setUnit(null); setHistory([]);
+    // คงการ debounce โค้ดล่าสุดไว้ชั่วครู่ กันสแกน "ชิ้นเดิม" ที่ยังค้างในเฟรมซ้ำทันที
+    lastScanRef.current = { code: lastScanRef.current.code, at: Date.now() };
+    resumeScanning();
+    inputRef.current?.focus();
+  }
+
+  // เริ่มนับถอยหลัง 4 วิ แล้วสแกนชิ้นถัดไปให้เองอัตโนมัติ
+  function startStationHold() {
+    clearStationTimer();
+    let n = STATION_HOLD_SEC;
+    setCountdown(n);
+    stationTimerRef.current = setInterval(() => {
+      n -= 1;
+      if (n <= 0) { nextScan(); }
+      else setCountdown(n);
+    }, 1000);
+  }
+
+  // เคลียร์ timer เมื่อออกจากหน้าสแกน
+  useEffect(() => () => clearStationTimer(), []);
+
   // ── core save logic — shared between both modes ────────────────────────
   // คืนค่า { ok, msg, tone } เพื่อให้ caller ตัดสินใจจะแสดงผลยังไง (toast vs sheet-msg)
-  async function doSave(u /* , h */) {
-    if (!u || !machine || !operation) return { ok: false, msg: "ข้อมูลไม่ครบ", tone: "danger" };
-
-    // บันทึกผ่าน RPC ที่ทำทุกอย่างใน transaction เดียวฝั่ง DB (แก้ H4 race condition):
-    // ตรวจความสามารถเครื่อง → กันสแกนซ้ำ (unique constraint) → insert → คำนวณ status/steps_done
-    const res = await recordScan({
-      unitId: u.id, machineId: machine.id, operationId: operation.id, employeeId: user.id,
-    });
-
+  // แปลงผลลัพธ์ RPC เป็นข้อความ/โทน (+ เสียง/สั่น) — ใช้ร่วมทั้ง 2 โหมด
+  function interpret(res) {
+    if (res.queued) {
+      const r = { ok: true, msg: "บันทึกออฟไลน์ไว้แล้ว — จะซิงค์อัตโนมัติเมื่อเน็ตกลับ", tone: "warning" };
+      feedback("warning"); return r;
+    }
     if (!res.ok) {
       const reasonMsg = {
         not_found: "ไม่พบชิ้นงานนี้ในระบบ",
-        machine_cannot: `เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}"`,
-        duplicate: `ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`,
+        machine_cannot: `เครื่อง ${machine?.code || ""} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation?.name || ""}"`,
+        duplicate: `ผ่านขั้นตอน "${operation?.name || ""}" ไปแล้ว — ไม่บันทึกซ้ำ`,
+        no_station: "บัญชีนี้ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ — แจ้ง Admin",
+        unauthorized: "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่",
         error: "บันทึกไม่สำเร็จ" + (res.message ? ": " + res.message : ""),
       };
-      return {
-        ok: false,
-        msg: reasonMsg[res.reason] || "บันทึกไม่สำเร็จ",
-        tone: res.reason === "duplicate" ? "warning" : "danger",
-      };
+      const tone = res.reason === "duplicate" ? "warning" : "danger";
+      feedback(tone);
+      return { ok: false, msg: reasonMsg[res.reason] || "บันทึกไม่สำเร็จ", tone };
     }
-
-    const total = res.total || 0;
-    const step = res.step || 0;
+    const total = res.total || 0, step = res.step || 0;
     let msg, tone;
-    if (res.finished) {
-      msg = "✓ ครบทุกขั้นตอนแล้ว!"; tone = "success";
-    } else if (res.out_of_order) {
-      msg = `⚠ บันทึกแล้ว (ขั้นตอน "${operation.name}" — ลำดับไม่ตรง routing)`; tone = "warning";
-    } else {
-      msg = total > 0 ? `✓ บันทึกแล้ว — ขั้น ${step}/${total}` : "✓ บันทึกการสแกนเรียบร้อย";
-      tone = "success";
-    }
+    if (res.finished) { msg = "✓ ครบทุกขั้นตอนแล้ว!"; tone = "success"; }
+    else if (res.out_of_order) { msg = `⚠ บันทึกแล้ว (ขั้นตอน "${operation?.name || ""}" — ลำดับไม่ตรง routing)`; tone = "warning"; }
+    else { msg = total > 0 ? `✓ บันทึกแล้ว — ขั้น ${step}/${total}` : "✓ บันทึกการสแกนเรียบร้อย"; tone = "success"; }
+    feedback(tone);
     return { ok: true, msg, tone, finished: res.finished };
+  }
+
+  // โหมดมือถือ: บันทึกด้วย unit ที่ lookup ไว้แล้ว (เครื่อง/ขั้นตอน/พนักงานมาจาก token)
+  async function doSave(u) {
+    if (!u) return { ok: false, msg: "ข้อมูลไม่ครบ", tone: "danger" };
+    return interpret(await recordScan({ unitId: u.id }));
   }
 
   async function lookup(code) {
     const c = (code ?? qrInput).trim();
     if (!c) return;
+    // หน้าเครื่อง: ถ้ายังมีผลสแกนค้างอยู่ ไม่รับสแกนใหม่ (รวมถึงเครื่องยิงบาร์โค้ด) จนกดสแกนชิ้นถัดไป
+    if (isStation && stationResult) return;
     if (isStation) {
-      // หน้าเครื่อง: lookup แล้ว auto-save ทันที ไม่ผ่าน sheet
-      const u = await findUnitByQr(c);
-      if (!u) {
-        showToast("ไม่พบ QR นี้ในระบบ", "danger", 2500);
-        rescan();
-        return;
-      }
-      const h = await getUnitHistory(u.id);
-      const result = await doSave(u, h);
-      if (result.ok) {
-        setSessionCount((n) => n + 1);
-        showToast(result.msg, result.tone, result.finished ? 2800 : 1800);
-      } else {
-        showToast(result.msg, result.tone, 3000);
-      }
-      setQrInput(""); setUnit(null); setHistory([]);
-      resumeScanning();
-      inputRef.current?.focus();
+      // หน้าเครื่อง: สแกน "ทีละชิ้น" — บันทึกแล้วค้างภาพ + ค้างผลไว้ (มีเสียง+แจ้งเตือน)
+      // ต้องกด "สแกนชิ้นถัดไป" ก่อนจึงจะสแกนต่อ → กันยิงรัว และกันสแกนซ้ำในจังหวะเดียวกัน
+      frozenRef.current = true; setFrozen(true); videoRef.current?.pause();
+      const result = interpret(await recordScanByQr(c)); // interpret เล่นเสียง/สั่นให้แล้ว
+      if (result.ok) setSessionCount((n) => n + 1);
+      setStationResult({ ...result, code: c });
+      startStationHold(); // ค้างผล 4 วิ แล้วสแกนชิ้นถัดไปเองอัตโนมัติ
     } else {
       // มือถือ: lookup แล้วแสดงใน sheet รอกดยืนยัน
       setMsg("กำลังค้นหา..."); setMsgTone("muted");
@@ -2035,8 +2124,8 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 
   // มือถือ mode เท่านั้น — กดยืนยันก่อนบันทึก
   async function confirmScan() {
-    if (!unit || !machine || !operation) return;
-    const result = await doSave(unit, history);
+    if (!unit) return;
+    const result = await doSave(unit);
     if (result.ok) {
       setMsg(result.msg);
       setMsgTone(result.tone);
@@ -2068,7 +2157,15 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
             </span>
           </div>
         </div>
-        <div className="scan-counter">สแกนแล้ว {sessionCount} ชิ้น</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div className="scan-counter">สแกนแล้ว {sessionCount} ชิ้น</div>
+          {pending > 0 && (
+            <div className="scan-counter" style={{ color: "var(--warning)", background: "rgba(245,158,11,.16)", borderColor: "rgba(245,158,11,.4)" }}
+              title="สแกนที่ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ (จะซิงค์อัตโนมัติเมื่อเน็ตกลับ)">
+              ⏳ ค้างซิงค์ {pending}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="scan-viewport">
@@ -2121,10 +2218,52 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
             placeholder="ยิงบาร์โค้ด หรือพิมพ์รหัส QR แล้วกด Enter" autoFocus />
           <Btn variant="accent" onClick={() => lookup()}><Icon name="search" size={16} /></Btn>
         </div>
-        <button className="btn scan-toggle-cam" onClick={() => setCameraOn((v) => !v)}>
-          <Icon name="camera" size={15} style={{ marginRight: 6 }} />{cameraOn ? "ปิดกล้อง" : "เปิดกล้องสแกน QR"}
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button className="btn scan-toggle-cam" style={{ marginTop: 0, flex: 1 }} onClick={() => setCameraOn((v) => !v)}>
+            <Icon name="camera" size={15} style={{ marginRight: 6 }} />{cameraOn ? "ปิดกล้อง" : "เปิดกล้องสแกน QR"}
+          </button>
+          {cameraOn && torchSupported && (
+            <button className="btn scan-toggle-cam" style={{ marginTop: 0, width: 120, borderStyle: "solid",
+              background: torchOn ? "rgba(245,158,11,.18)" : "transparent",
+              borderColor: torchOn ? "var(--warning)" : "rgba(255,255,255,.22)",
+              color: torchOn ? "var(--warning)" : "rgba(255,255,255,.75)" }} onClick={toggleTorch}>
+              <Icon name="bolt" size={15} style={{ marginRight: 6 }} />{torchOn ? "ปิดไฟ" : "ไฟฉาย"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Station mode: ผลสแกนทีละชิ้น — ค้างไว้จนกดสแกนชิ้นถัดไป */}
+      {isStation && stationResult && (
+        <div className="scan-sheet">
+          <div className="scan-sheet-handle" />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "2px 4px 6px", textAlign: "center" }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+              background: stationResult.tone === "success" ? "rgba(34,197,94,.15)" : stationResult.tone === "warning" ? "rgba(245,158,11,.15)" : "rgba(239,68,68,.15)",
+            }}>
+              <Icon
+                name={stationResult.tone === "success" ? "check" : stationResult.tone === "warning" ? "clock" : "close"}
+                size={30}
+                style={{ stroke: stationResult.tone === "success" ? "var(--success)" : stationResult.tone === "warning" ? "var(--warning)" : "var(--danger)" }}
+              />
+            </div>
+            <div style={{
+              fontSize: 15.5, fontWeight: 700, lineHeight: 1.4,
+              color: stationResult.tone === "success" ? "var(--success)" : stationResult.tone === "warning" ? "var(--warning)" : "var(--danger)",
+            }}>{stationResult.msg}</div>
+            {stationResult.code && (
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--muted)", wordBreak: "break-all" }}>{stationResult.code}</div>
+            )}
+          </div>
+          <div style={{ textAlign: "center", fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+            พร้อมสแกนชิ้นถัดไปใน <b style={{ color: "var(--accent-dk)", fontSize: 15 }}>{countdown}</b> วิ…
+          </div>
+          <Btn variant="ghost" size="lg" className="btn-block" onClick={nextScan}>
+            <Icon name="scan" size={18} /> สแกนต่อทันที
+          </Btn>
+        </div>
+      )}
 
       {/* Mobile mode only: bottom sheet ยืนยันก่อนบันทึก */}
       {!isStation && (msg || unit) && (
