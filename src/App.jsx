@@ -7,7 +7,7 @@ import {
   deleteCap, getUnitStatsByReleaseIds, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
-  logoutSession, setEmployeeActive,
+  logoutSession, setEmployeeActive, recalcPartStatus,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
@@ -1228,6 +1228,7 @@ function PartProgressModal({ release, user, onClose }) {
   const [editRouting, setEditRouting] = useState((release.part_master?.routing || []).length === 0);
   const [savingRouting, setSavingRouting] = useState(false);
   const [routingErr, setRoutingErr] = useState("");
+  const [reloadKey, setReloadKey] = useState(0); // บังคับโหลดตัวเลขความคืบหน้าใหม่หลังแก้ routing
   const canEditRouting = isAdmin(user);
   const partNo = release.part_master?.part_no || "-";
   const partName = release.part_master?.part_name || "";
@@ -1243,7 +1244,10 @@ function PartProgressModal({ release, user, onClose }) {
     try {
       await updateRow("part_master", release.part_master_id, { routing });
       if (release.part_master) release.part_master.routing = routing; // อัปเดตในหน่วยความจำ เผื่อเปิดซ้ำ
+      // คำนวณสถานะย้อนหลังให้ชิ้นที่สแกนไปแล้ว (เช่น routing ขั้นเดียว → ที่สแกนแล้วเป็น finished ทันที)
+      await recalcPartStatus(release.part_master_id);
       setEditRouting(false);
+      setReloadKey((k) => k + 1); // โหลดตัวเลขความคืบหน้าใหม่
     } catch (e) {
       setRoutingErr("บันทึก Routing ไม่สำเร็จ: " + (e.message || "") + " (ต้องเป็นสิทธิ์ Admin)");
     }
@@ -1296,7 +1300,7 @@ function PartProgressModal({ release, user, onClose }) {
       }
     })();
     return () => { alive = false; };
-  }, [release]);
+  }, [release, reloadKey]);
 
   // ขั้นตอนที่ถูกสแกนแต่ไม่ได้อยู่ใน routing (กันข้อมูลหลุด routing) — เอามาแสดงต่อท้าย
   const extraOps = Object.keys(opCounts).filter((op) => !routing.includes(op));
