@@ -180,7 +180,7 @@ export async function getProjectImpact(projectId) {
 export async function getReleasesFull() {
   const { data, error } = await supabase
     .from("releases")
-    .select("*, part_master(part_no, part_name, project_id, projects(code, name)), employee:employees(name, code)")
+    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name)), employee:employees(name, code)")
     .order("release_date", { ascending: false });
   if (error) {
     console.warn("getReleasesFull error", error);
@@ -315,6 +315,13 @@ export async function upsertEmployee(emp) {
     throw error;
   }
   return data; // uuid
+}
+
+// คำนวณสถานะชิ้นงานย้อนหลังของ Part หนึ่ง (หลังตั้ง/แก้ Routing) — คืน { updated, finished }
+export async function recalcPartStatus(partMasterId) {
+  const { data, error } = await supabase.rpc("recalc_part_status", { p_token: authToken(), p_part_master_id: partMasterId });
+  if (error) { console.warn("recalc_part_status error", error); throw error; }
+  return data || { updated: 0, finished: 0 };
 }
 
 // รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
