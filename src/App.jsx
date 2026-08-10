@@ -1214,7 +1214,7 @@ function ProgressBar({ pct, finished, total }) {
 // ── รายละเอียดความคืบหน้าของ Part เดียว (แยกตามขั้นตอน) ─────────────────────
 // กดจากแถว Part ในหน้ารายละเอียด Release — แสดงว่าเบอร์นี้ ตัดไปกี่ชิ้น เหลือเจาะ
 // เหลือบาก ฯลฯ โดยนับ "จำนวนชิ้น (distinct) ที่ผ่านแต่ละขั้นตอน" จาก scan_logs จริง
-function PartProgressModal({ release, onClose }) {
+function PartProgressModal({ release, user, onClose }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [opCounts, setOpCounts] = useState({}); // ชื่อขั้นตอน -> จำนวนชิ้นที่ผ่านแล้ว
@@ -1222,9 +1222,33 @@ function PartProgressModal({ release, onClose }) {
   const [finished, setFinished] = useState(0);
   const [totalUnits, setTotalUnits] = useState(release.qty || 0);
 
-  const routing = release.part_master?.routing || [];
+  // ── Routing (ตั้ง/แก้ได้ในหน้านี้เลย — เฉพาะ Admin) ──────────────────────────
+  const [routing, setRouting] = useState(release.part_master?.routing || []);
+  const [operations, setOperations] = useState([]);
+  const [editRouting, setEditRouting] = useState((release.part_master?.routing || []).length === 0);
+  const [savingRouting, setSavingRouting] = useState(false);
+  const [routingErr, setRoutingErr] = useState("");
+  const canEditRouting = isAdmin(user);
   const partNo = release.part_master?.part_no || "-";
   const partName = release.part_master?.part_name || "";
+
+  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
+
+  function toggleRoutingOp(name) {
+    setRouting((rt) => (rt.includes(name) ? rt.filter((x) => x !== name) : [...rt, name]));
+  }
+  async function saveRouting() {
+    if (!release.part_master_id) { setRoutingErr("ไม่พบรหัส Part (part_master_id)"); return; }
+    setSavingRouting(true); setRoutingErr("");
+    try {
+      await updateRow("part_master", release.part_master_id, { routing });
+      if (release.part_master) release.part_master.routing = routing; // อัปเดตในหน่วยความจำ เผื่อเปิดซ้ำ
+      setEditRouting(false);
+    } catch (e) {
+      setRoutingErr("บันทึก Routing ไม่สำเร็จ: " + (e.message || "") + " (ต้องเป็นสิทธิ์ Admin)");
+    }
+    setSavingRouting(false);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -1288,12 +1312,47 @@ function PartProgressModal({ release, onClose }) {
         <div style={{ color: "var(--muted)", fontSize: 13, padding: "12px 2px" }}>กำลังโหลด...</div>
       ) : err ? (
         <div style={{ color: "var(--danger-hi)", fontSize: 13 }}>{err}</div>
-      ) : stages.length === 0 ? (
-        <div style={{ color: "var(--warning)", fontSize: 13, lineHeight: 1.6 }}>
-          Part นี้ยังไม่ได้ตั้ง Routing — จึงยังไม่มีลำดับขั้นตอนให้ติดตาม ตั้งได้ที่ Setup &gt; Part Master
-        </div>
       ) : (
         <>
+          {/* ── ตัวตั้ง/แก้ Routing (เฉพาะ Admin) ─────────────────────────── */}
+          {canEditRouting && (editRouting || routing.length === 0) ? (
+            <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+              <div className="label-el" style={{ marginBottom: 8 }}>ตั้ง/แก้ Routing — เลือกขั้นตอนที่ Part นี้ต้องผ่าน ตามลำดับ</div>
+              <div className="chip-row" style={{ marginBottom: 8 }}>
+                {operations.map((o) => {
+                  const active = routing.includes(o.name);
+                  return (
+                    <span key={o.id} onClick={() => toggleRoutingOp(o.name)} className={`chip ${active ? "active" : ""}`}>
+                      {o.name}{active ? ` (${routing.indexOf(o.name) + 1})` : ""}
+                    </span>
+                  );
+                })}
+                {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — เพิ่มที่ Setup &gt; ขั้นตอนงาน ก่อน</span>}
+              </div>
+              {routingErr && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 6 }}>{routingErr}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="accent" size="sm" onClick={saveRouting} disabled={savingRouting || routing.length === 0}>
+                  {savingRouting ? "กำลังบันทึก..." : "บันทึก Routing"}
+                </Btn>
+                {(release.part_master?.routing || []).length > 0 && (
+                  <Btn variant="ghost" size="sm" onClick={() => { setRouting(release.part_master.routing); setEditRouting(false); setRoutingErr(""); }}>ยกเลิก</Btn>
+                )}
+              </div>
+            </div>
+          ) : canEditRouting ? (
+            <div style={{ marginBottom: 12 }}>
+              <Btn variant="ghost" size="sm" onClick={() => setEditRouting(true)}><Icon name="settings" size={13} /> แก้ Routing</Btn>
+            </div>
+          ) : null}
+
+          {stages.length === 0 ? (
+            <div style={{ color: "var(--warning)", fontSize: 13, lineHeight: 1.6 }}>
+              {canEditRouting
+                ? 'เลือกขั้นตอนด้านบนแล้วกด "บันทึก Routing" เพื่อเริ่มติดตามความคืบหน้า'
+                : "Part นี้ยังไม่ได้ตั้ง Routing — แจ้ง Admin ให้ตั้งที่ Setup > Part Master"}
+            </div>
+          ) : (
+          <>
           <div className="stage-list">
             {stages.map((op, i) => {
               const done = opCounts[op] || 0;
@@ -1327,6 +1386,8 @@ function PartProgressModal({ release, onClose }) {
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.5 }}>
             "ทำแล้ว" = จำนวนชิ้นที่สแกนผ่านขั้นตอนนั้นแล้ว · "เหลือ" = ยังไม่ผ่านขั้นตอนนั้น (เทียบกับทั้งล็อต {fmtNum(totalUnits)} ชิ้น)
           </div>
+          </>
+          )}
         </>
       )}
 
@@ -1337,7 +1398,7 @@ function PartProgressModal({ release, onClose }) {
   );
 }
 
-function ReleaseGroupDetail({ group, onBack, goTo, onHome }) {
+function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
   const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
   const [unitStats, setUnitStats] = useState({});
   const [statsLoading, setStatsLoading] = useState(true);
@@ -1477,7 +1538,7 @@ function ReleaseGroupDetail({ group, onBack, goTo, onHome }) {
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...group.notes].join(" · ")}</div>
       )}
 
-      {viewPart && <PartProgressModal release={viewPart} onClose={() => setViewPart(null)} />}
+      {viewPart && <PartProgressModal release={viewPart} user={user} onClose={() => setViewPart(null)} />}
     </div>
   );
 }
@@ -1533,7 +1594,7 @@ function ReleasePage({ user, goTo }) {
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
 
   if (viewGroup) {
-    return <ReleaseGroupDetail group={viewGroup} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} />;
+    return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} />;
   }
 
   return (
