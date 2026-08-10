@@ -5,10 +5,13 @@ import {
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, getUnitStatsByReleaseIds, supabase,
+  recordScan, createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
+  logoutSession, setEmployeeActive,
 } from "./supabase.js";
-import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, hashPassword } from "./auth.js";
+import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
-import { parseReleaseExcel } from "./excelImport.js";
+// parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
+// เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
   processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix,
 } from "./metrics.js";
@@ -255,13 +258,14 @@ function Login({ onLogin }) {
 // ══════════════════════════════════════════════════════════════════════════
 // SHELL — responsive nav: sidebar (desktop) / topbar+drawer+bottom nav (mobile)
 // ══════════════════════════════════════════════════════════════════════════
+// can: ฟังก์ชันเช็คสิทธิ์ต่อเมนู (undefined = ทุก role เข้าได้)
 const MENU = [
   { group: "การผลิต", items: [
     { key: "release", label: "Release Production", icon: "box" },
     { key: "detail", label: "สแกนหน้าเครื่อง", icon: "scan" },
     { key: "finished", label: "Finished Part", icon: "check" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
-    { key: "manageReleases", label: "จัดการ Release", icon: "grid" },
+    { key: "manageReleases", label: "จัดการ Release", icon: "grid", can: canManage },
   ] },
   { group: "รายงาน", items: [
     { key: "report", label: "Report", icon: "chart" },
@@ -270,9 +274,18 @@ const MENU = [
     { key: "parts", label: "Parts Summary", icon: "grid" },
   ] },
   { group: "ระบบ", items: [
-    { key: "setup", label: "Setup", icon: "settings" },
+    { key: "setup", label: "Setup", icon: "settings", can: isAdmin },
   ] },
 ];
+// เมนูที่ user คนนี้เข้าถึงได้จริง (ตามสิทธิ์) — ใช้ทั้งเรนเดอร์เมนูและกันการเปิดแท็บ
+function menuForUser(user) {
+  return MENU
+    .map((g) => ({ ...g, items: g.items.filter((it) => !it.can || it.can(user)) }))
+    .filter((g) => g.items.length > 0);
+}
+function canOpenTab(user, key) {
+  return MENU.flatMap((g) => g.items).some((it) => it.key === key && (!it.can || it.can(user)));
+}
 const BOTTOM_LEFT = { key: "release", label: "Release", icon: "box" };
 const BOTTOM_LEFT2 = { key: "finished", label: "เสร็จแล้ว", icon: "check" };
 const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart" };
@@ -282,9 +295,11 @@ function Shell({ user, onLogout }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
 
+  const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
 
   function go(key, opts) {
+    if (!canOpenTab(user, key)) return; // กันเปิดแท็บที่ไม่มีสิทธิ์ (เช่น ยิงจากปุ่มลึกๆ)
     setTab(key);
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
@@ -307,7 +322,7 @@ function Shell({ user, onLogout }) {
             <div className="brand-sub">ระบบบันทึกการทำงานเครื่องจักร</div>
           </div>
         </div>
-        {MENU.map((g) => (
+        {menu.map((g) => (
           <div className="nav-group" key={g.group}>
             <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
@@ -354,7 +369,7 @@ function Shell({ user, onLogout }) {
             <div className="brand-sub">{user.name} · {ROLE_LABELS[user.role] || user.role}</div>
           </div>
         </div>
-        {MENU.map((g) => (
+        {menu.map((g) => (
           <div className="nav-group" key={g.group}>
             <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
@@ -376,12 +391,12 @@ function Shell({ user, onLogout }) {
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
-          {tab === "manageReleases" && <ReleaseManagePage />}
+          {tab === "manageReleases" && canManage(user) && <ReleaseManagePage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsSummaryPage />}
           {tab === "parts" && <PartsSummaryPage />}
-          {tab === "setup" && <SetupPage />}
+          {tab === "setup" && isAdmin(user) && <SetupPage />}
         </div>
       </div>
 
@@ -746,55 +761,27 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
     if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code และจำนวน Qty)"); return; }
 
-    setBusy(true); setErr("");
-    const iso = dateToIso(date);
-    let releasesCreated = 0, partsCreated = 0, unitsCreated = 0;
+    setBusy(true); setErr(""); setProgress("กำลังบันทึกทั้งใบ...");
     try {
-      // ทำทีละแถวตามลำดับ (ไม่ Promise.all) กันสร้าง Part ซ้ำแข่งกันเอง
-      for (let i = 0; i < validRows.length; i++) {
-        const row = validRows[i];
-        setProgress(`กำลังบันทึก ${i + 1} / ${validRows.length} — ${row.code}`);
-        const qty = gnum(row.qty);
-        const weightPcs = rowWeightPcs(row);
-        const lengthMm = gnum(row.length_mm);
-
-        let part = partsInProject.find(
-          (p) => p.part_no.trim().toLowerCase() === row.code.trim().toLowerCase()
-        );
-        if (!part) {
-          part = await insertRow("part_master", {
-            project_id: projectId, part_no: row.code.trim(), part_name: row.code.trim(),
-            material: row.material?.trim() || null,
-            unit_weight: weightPcs ?? 0, default_length_mm: lengthMm,
-            routing: row.routing || [],
-          });
-          partsCreated += 1;
-        }
-
-        const release = await insertRow("releases", {
-          part_master_id: part.id, qty, unit_weight: weightPcs, length_mm: lengthMm,
-          released_by: user.id, note: row.remark?.trim() || null,
-          release_order: ro, release_date: iso,
-        });
-        releasesCreated += 1;
-
-        if (makeQr) {
-          const suffix = release.id.slice(0, 6).toUpperCase();
-          const units = Array.from({ length: qty }, (_, u) => ({
-            release_id: release.id, part_master_id: part.id, unit_no: u + 1,
-            qr_code: `${part.part_no}-${suffix}-${String(u + 1).padStart(4, "0")}`,
-            status: "released", weight: weightPcs, length_mm: lengthMm,
-          }));
-          const created = await insertRows("part_units", units);
-          unitsCreated += created.length;
-        }
-      }
-      onSaved({ releaseOrder: ro, releasesCreated, partsCreated, unitsCreated });
+      // ส่งทั้งใบไปให้ DB ทำใน transaction เดียว (atomic) — สร้าง Part/Release/QR ครบ
+      // ถ้าพังกลางคัน DB จะ rollback ทั้งใบ ไม่มีข้อมูลค้างครึ่งๆ (แก้ H2) และ Part
+      // รหัสซ้ำในใบเดียวจะถูก find-or-create ให้ถูกต้อง ไม่ชนกันเอง (แก้ M2)
+      const rows = validRows.map((r) => ({
+        code: r.code.trim(),
+        qty: gnum(r.qty),
+        unit_weight: rowWeightPcs(r),
+        length_mm: gnum(r.length_mm),
+        material: r.material?.trim() || null,
+        remark: r.remark?.trim() || null,
+        routing: r.routing || [],
+      }));
+      const res = await createReleaseBatch({
+        projectId, releaseOrder: ro, releaseDate: dateToIso(date),
+        releasedBy: user.id, makeQr, rows,
+      });
+      onSaved({ releaseOrder: ro, ...res });
     } catch (e2) {
-      setErr(
-        "เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message +
-        (releasesCreated ? ` (บันทึกสำเร็จไปแล้ว ${releasesCreated} รายการก่อนพัง)` : "")
-      );
+      setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ระบบยกเลิกทั้งใบอัตโนมัติ ไม่มีข้อมูลค้าง");
     }
     setBusy(false); setProgress("");
   }
@@ -1013,6 +1000,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
     if (!f) return;
     setFile(f); setErr(""); setParsed(null);
     try {
+      const { parseReleaseExcel } = await import("./excelImport.js"); // โหลด xlsx เฉพาะตอนใช้จริง
       const result = await parseReleaseExcel(f);
       setParsed(result);
       const matchedProject = projects.find(
@@ -1034,58 +1022,27 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
 
   async function doImport() {
     if (!parsed || !projectId) return;
-    setBusy(true); setErr("");
-    const allUnits = [];
-    let releasesCreated = 0;
-    let partsCreated = 0;
+    setBusy(true); setErr(""); setProgress("กำลังนำเข้าทั้งใบ...");
     try {
-      // ทำทีละแถวตามลำดับ (ไม่ Promise.all) เพื่อกันสร้าง Part ซ้ำแข่งกันเอง
-      for (let i = 0; i < rowsPreview.length; i++) {
-        const row = rowsPreview[i];
-        setProgress(`กำลังนำเข้า ${i + 1} / ${rowsPreview.length} — ${row.code}`);
-
-        let part = row.existingPart;
-        if (!part) {
-          part = await insertRow("part_master", {
-            project_id: projectId,
-            part_no: row.code,
-            part_name: row.code,
-            material: row.material,
-            unit_weight: row.unit_weight ?? 0,
-            default_length_mm: row.length_mm,
-            routing: [],
-          });
-          partsCreated += 1;
-        }
-
-        const release = await insertRow("releases", {
-          part_master_id: part.id,
-          qty: row.qty,
-          unit_weight: row.unit_weight,
-          length_mm: row.length_mm,
-          released_by: user.id,
-          note: row.remark,
-          release_order: parsed.releaseOrder || null,
-        });
-        releasesCreated += 1;
-
-        const suffix = release.id.slice(0, 6).toUpperCase();
-        const units = Array.from({ length: row.qty }, (_, u) => ({
-          release_id: release.id,
-          part_master_id: part.id,
-          unit_no: u + 1,
-          qr_code: `${part.part_no}-${suffix}-${String(u + 1).padStart(4, "0")}`,
-          status: "released",
-          weight: release.unit_weight,
-          length_mm: release.length_mm,
-        }));
-        const created = await insertRows("part_units", units);
-        allUnits.push(...created);
-      }
-      onImported({ units: allUnits, releaseOrder: parsed.releaseOrder, releasesCreated, partsCreated });
+      // นำเข้าทั้งใบใน transaction เดียว (atomic) — พังกลางคัน = rollback ทั้งใบ (แก้ H2)
+      // Part ใหม่จาก Excel จะยังไม่มี routing → เตือนผู้ใช้ให้ไปตั้งที่ Setup (แก้ M3)
+      const rows = rowsPreview.map((r) => ({
+        code: r.code,
+        qty: r.qty,
+        unit_weight: r.unit_weight,
+        length_mm: r.length_mm,
+        material: r.material,
+        remark: r.remark,
+        routing: [],
+      }));
+      const res = await createReleaseBatch({
+        projectId, releaseOrder: parsed.releaseOrder, releaseDate: null,
+        releasedBy: user.id, makeQr: true, rows,
+      });
+      onImported({ releaseOrder: parsed.releaseOrder, ...res });
       onClose();
     } catch (e2) {
-      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + (allUnits.length ? ` (สร้างสำเร็จไปแล้ว ${releasesCreated} release ก่อนพัง — ตรวจสอบประวัติ Release ด้านล่างได้)` : ""));
+      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + " — ระบบยกเลิกทั้งใบอัตโนมัติ ไม่มีข้อมูลค้าง");
     }
     setBusy(false); setProgress("");
   }
@@ -1131,6 +1088,12 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
             พบ {rowsPreview.length} รายการ Part · รวม {fmtNum(totalUnits)} ชิ้น
             {newPartCount > 0 && <> · <b style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</b></>}
           </div>
+          {newPartCount > 0 && (
+            <div style={{ fontSize: 11.5, color: "var(--warning)", marginBottom: 10, lineHeight: 1.5, display: "flex", gap: 6 }}>
+              <Icon name="bolt" size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>Part ใหม่จากไฟล์จะยังไม่มี Routing — หลังนำเข้าให้ไปตั้งขั้นตอนที่ <b>Setup &gt; Part Master</b> ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"</span>
+            </div>
+          )}
 
           <div className="table-wrap" style={{ maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
             <table className="data-table">
@@ -1173,7 +1136,10 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
 function groupReleases(list) {
   const map = new Map();
   for (const r of list) {
-    const key = r.release_order ? `RO:${r.release_order}` : `S:${r.id}`;
+    // จับกลุ่มด้วย (โปรเจค + Release Order) — release_order ไม่ unique และคนละโปรเจค
+    // อาจใช้เลขซ้ำกันได้ (มาจากคนละไฟล์ Excel) จึงต้องแยกตามโปรเจคด้วย ไม่งั้นยอดรวมเพี้ยน
+    const pid = r.part_master?.project_id || r.part_master?.projects?.code || "?";
+    const key = r.release_order ? `RO:${pid}:${r.release_order}` : `S:${r.id}`;
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -1645,11 +1611,13 @@ function ReleasePage({ user, goTo }) {
           projects={projects}
           parts={parts}
           onClose={() => setShowImport(false)}
-          onImported={async ({ units, releasesCreated, partsCreated }) => {
+          onImported={async ({ unitsCreated, releasesCreated, partsCreated }) => {
             await load();
             alert(
-              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${units.length} QR)` +
-              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : "")
+              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${unitsCreated} QR)` +
+              (partsCreated > 0
+                ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ\n\n⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
+                : "")
             );
           }}
         />
@@ -1988,61 +1956,41 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 
   // ── core save logic — shared between both modes ────────────────────────
   // คืนค่า { ok, msg, tone } เพื่อให้ caller ตัดสินใจจะแสดงผลยังไง (toast vs sheet-msg)
-  async function doSave(u, h) {
+  async function doSave(u /* , h */) {
     if (!u || !machine || !operation) return { ok: false, msg: "ข้อมูลไม่ครบ", tone: "danger" };
-    const routing = u.part_master?.routing || [];
-    const doneOps = h.map((x) => x.operation?.name).filter(Boolean);
 
-    // 1) กันสแกนขั้นตอนซ้ำ
-    if (doneOps.includes(operation.name)) {
-      return { ok: false, msg: `ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`, tone: "warning" };
+    // บันทึกผ่าน RPC ที่ทำทุกอย่างใน transaction เดียวฝั่ง DB (แก้ H4 race condition):
+    // ตรวจความสามารถเครื่อง → กันสแกนซ้ำ (unique constraint) → insert → คำนวณ status/steps_done
+    const res = await recordScan({
+      unitId: u.id, machineId: machine.id, operationId: operation.id, employeeId: user.id,
+    });
+
+    if (!res.ok) {
+      const reasonMsg = {
+        not_found: "ไม่พบชิ้นงานนี้ในระบบ",
+        machine_cannot: `เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}"`,
+        duplicate: `ผ่านขั้นตอน "${operation.name}" ไปแล้ว — ไม่บันทึกซ้ำ`,
+        error: "บันทึกไม่สำเร็จ" + (res.message ? ": " + res.message : ""),
+      };
+      return {
+        ok: false,
+        msg: reasonMsg[res.reason] || "บันทึกไม่สำเร็จ",
+        tone: res.reason === "duplicate" ? "warning" : "danger",
+      };
     }
-    // 2) ตรวจความสามารถของเครื่อง (backward compatible: ถ้าไม่เคยตั้งค่า = ไม่บล็อก)
-    try {
-      const caps = await listRows("machine_operations", { filters: { machine_id: machine.id } });
-      if (caps.length > 0 && !caps.some((c) => c.operation_id === operation.id)) {
-        return {
-          ok: false,
-          msg: `เครื่อง ${machine.code} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation.name}"`,
-          tone: "danger",
-        };
-      }
-    } catch (_) { /* ตารางยังไม่ถูกสร้าง */ }
 
-    // 3) ตรวจลำดับ routing (เตือนถ้าไม่ได้ทำตามลำดับ — แต่ยังบันทึกได้)
-    const next = nextOpFor(routing, doneOps);
-    const outOfOrder = next && next !== operation.name;
-
-    await insertRow("scan_logs", {
-      part_unit_id: u.id, machine_id: machine.id, operation_id: operation.id,
-      employee_id: user.id, weight: u.weight ?? null,
-    });
-    const newDone = new Set([...doneOps, operation.name]);
-    const finished = routing.length > 0 && routing.every((r) => newDone.has(r));
-    const stepsDone = routing.length > 0
-      ? routing.filter((r) => newDone.has(r)).length
-      : newDone.size;
-    await updateRow("part_units", u.id, {
-      status: finished ? "finished" : "in_progress",
-      steps_done: stepsDone,
-    });
-
-    const doneStep = routing.indexOf(operation.name) + 1; // ขั้นที่เท่าไหร่ใน routing (1-based)
-    const totalSteps = routing.length;
+    const total = res.total || 0;
+    const step = res.step || 0;
     let msg, tone;
-    if (finished) {
-      msg = `✓ ครบทุกขั้นตอนแล้ว!`;
-      tone = "success";
-    } else if (outOfOrder) {
-      msg = `⚠ บันทึกแล้ว (ขั้นตอน "${operation.name}" — ลำดับไม่ตรง routing)`;
-      tone = "warning";
+    if (res.finished) {
+      msg = "✓ ครบทุกขั้นตอนแล้ว!"; tone = "success";
+    } else if (res.out_of_order) {
+      msg = `⚠ บันทึกแล้ว (ขั้นตอน "${operation.name}" — ลำดับไม่ตรง routing)`; tone = "warning";
     } else {
-      msg = totalSteps > 0
-        ? `✓ บันทึกแล้ว — ขั้น ${doneStep}/${totalSteps}`
-        : `✓ บันทึกการสแกนเรียบร้อย`;
+      msg = total > 0 ? `✓ บันทึกแล้ว — ขั้น ${step}/${total}` : "✓ บันทึกการสแกนเรียบร้อย";
       tone = "success";
     }
-    return { ok: true, msg, tone, finished };
+    return { ok: true, msg, tone, finished: res.finished };
   }
 
   async function lookup(code) {
@@ -2960,27 +2908,9 @@ function MachinesSummaryPage() {
 // 7) PROJECTS SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function ProjectsSummaryPage() {
-  const [units, setUnits] = useState([]);
-  const [projects, setProjects] = useState([]);
-  useEffect(() => {
-    getAllUnitsFull().then(setUnits);
-    listRows("projects", { order: "code" }).then(setProjects);
-  }, []);
-  // นับสถิติแยกตาม project_id ก่อน แล้วค่อย "left join" กับรายชื่อโปรเจคทั้งหมด
-  // เพื่อให้โปรเจคที่ยังไม่เคย Release เลยก็ยังขึ้นแถวในตาราง (แถวละ 0)
-  const byProjectId = {};
-  units.forEach((u) => {
-    const pid = u.part_master?.project_id;
-    if (!pid) return;
-    byProjectId[pid] = byProjectId[pid] || { total: 0, finished: 0, weight: 0 };
-    byProjectId[pid].total += 1;
-    if (u.status === "finished") byProjectId[pid].finished += 1;
-    byProjectId[pid].weight += Number(u.weight || u.part_master?.unit_weight || 0);
-  });
-  const rows = projects.map((p) => ({
-    id: p.id, code: p.code, name: p.name,
-    ...(byProjectId[p.id] || { total: 0, finished: 0, weight: 0 }),
-  }));
+  // รวมยอดฝั่ง DB ผ่าน RPC — ไม่ต้องโหลด part_units ทุกแถวมาคำนวณใน browser (แก้ H6)
+  const [rows, setRows] = useState([]);
+  useEffect(() => { getProjectSummary().then(setRows); }, []);
   return (
     <div>
       <div className="page-head"><div className="page-title">Projects Summary</div></div>
@@ -3018,27 +2948,9 @@ function ProjectsSummaryPage() {
 // 8) PARTS SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function PartsSummaryPage() {
-  const [units, setUnits] = useState([]);
-  const [parts, setParts] = useState([]);
-  useEffect(() => {
-    getAllUnitsFull().then(setUnits);
-    listRows("part_master", { order: "part_no" }).then(setParts);
-  }, []);
-  const byPartId = {};
-  units.forEach((u) => {
-    const pid = u.part_master_id;
-    if (!pid) return;
-    byPartId[pid] = byPartId[pid] || { total: 0, finished: 0, weight: 0 };
-    byPartId[pid].total += 1;
-    if (u.status === "finished") byPartId[pid].finished += 1;
-    byPartId[pid].weight += Number(u.weight || u.part_master?.unit_weight || 0);
-  });
-  const rows = parts
-    .map((p) => ({
-      part: p.part_no, name: p.part_name,
-      ...(byPartId[p.id] || { total: 0, finished: 0, weight: 0 }),
-    }))
-    .sort((a, b) => b.total - a.total);
+  // รวมยอดฝั่ง DB ผ่าน RPC (เรียงตามจำนวนมาก→น้อยมาจาก DB แล้ว) — แก้ H6
+  const [rows, setRows] = useState([]);
+  useEffect(() => { getPartSummary().then(setRows); }, []);
   return (
     <div>
       <div className="page-head"><div className="page-title">Parts Summary</div></div>
@@ -3048,7 +2960,7 @@ function PartsSummaryPage() {
             <thead><tr><th>Part No.</th><th>ชื่อ Part</th><th>ปล่อยงาน</th><th>เสร็จแล้ว</th><th>น้ำหนักวัสดุ (กก.)</th></tr></thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.part}><td>{r.part}</td><td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td><td>{fmtNum(r.weight)}</td></tr>
+                <tr key={r.id}><td>{r.part_no}</td><td>{r.part_name}</td><td>{r.total}</td><td>{r.finished}</td><td>{fmtNum(r.weight)}</td></tr>
               ))}
             </tbody>
           </table>
@@ -3406,6 +3318,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, onClos
     role: employee.role,
     machine_id: employee.machine_id || "",
     operation_id: employee.operation_id || "",
+    password: "", // เว้นว่าง = ไม่เปลี่ยนรหัสผ่าน
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -3414,12 +3327,17 @@ function EmployeeEditModal({ employee, departments, machines, operations, onClos
     if (!form.name.trim()) { setErr("กรอกชื่อให้ครบ"); return; }
     setBusy(true); setErr("");
     try {
-      await updateRow("employees", employee.id, {
+      // บันทึกผ่าน RPC — DB จัดการ bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
+      await upsertEmployee({
+        id: employee.id,
+        code: employee.code,
         name: form.name.trim(),
-        department_id: form.department_id || null,
+        password: form.password, // "" = ไม่เปลี่ยน
         role: form.role,
+        department_id: form.department_id || null,
         machine_id: form.machine_id || null,
         operation_id: form.operation_id || null,
+        active: employee.active,
       });
       onSaved();
     } catch (e) {
@@ -3442,6 +3360,10 @@ function EmployeeEditModal({ employee, departments, machines, operations, onClos
         <Field label="ขั้นตอนประจำ *"><Select value={form.operation_id} onChange={(e) => setForm({ ...form, operation_id: e.target.value })}
           options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
       </div>
+      <Field label="ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)">
+        <Input type="password" value={form.password} autoComplete="new-password"
+          onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
+      </Field>
       {(!form.machine_id || !form.operation_id) && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
           * ถ้าไม่ตั้งเครื่องจักร/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้
@@ -3464,7 +3386,7 @@ function EmployeeCrud() {
   const [form, setForm] = useState({ role: "operator" });
   const [editing, setEditing] = useState(null);
   const load = useCallback(async () => {
-    setRows(await listRows("employees", { order: "code" }));
+    setRows(await getEmployees());
     setDepartments(await listRows("departments", { order: "name" }));
     setMachines(await listRows("machines", { order: "code" }));
     setOperations(await listRows("operations", { order: "seq" }));
@@ -3473,15 +3395,22 @@ function EmployeeCrud() {
 
   async function add() {
     if (!form.code || !form.name || !form.password) { alert("กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ"); return; }
-    const password_hash = await hashPassword(form.password);
-    await insertRow("employees", {
-      code: form.code, name: form.name, department_id: form.department_id || null,
-      role: form.role, password_hash,
-      machine_id: form.machine_id || null, operation_id: form.operation_id || null,
-    });
-    setForm({ role: "operator" }); load();
+    try {
+      // สร้างผ่าน RPC — DB hash ด้วย bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
+      await upsertEmployee({
+        code: form.code, name: form.name, password: form.password, role: form.role,
+        department_id: form.department_id || null,
+        machine_id: form.machine_id || null, operation_id: form.operation_id || null,
+      });
+      setForm({ role: "operator" }); load();
+    } catch (e) {
+      alert(isDuplicateError(e) ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว` : "เพิ่มพนักงานไม่สำเร็จ: " + e.message);
+    }
   }
-  async function toggle(r) { await updateRow("employees", r.id, { active: !r.active }); load(); }
+  async function toggle(r) {
+    try { await setEmployeeActive(r.id, !r.active); load(); }
+    catch (e) { alert("เปลี่ยนสถานะไม่สำเร็จ: " + e.message); }
+  }
 
   return (
     <Card title="เพิ่มพนักงานใหม่">
@@ -3615,7 +3544,11 @@ function PartMasterCrud() {
 // ══════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [user, setUser] = useState(getSession());
-  function logout() { clearSession(); setUser(null); }
+  async function logout() {
+    try { await logoutSession(); } catch (_) { /* ignore */ } // ยกเลิก token ฝั่ง DB
+    clearSession();
+    setUser(null);
+  }
   if (!user) return <Login onLogin={setUser} />;
   return <Shell user={user} onLogout={logout} />;
 }
