@@ -221,21 +221,58 @@ export async function getEmployees() {
 
 // ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
 
-// บันทึกการสแกน 1 ครั้งแบบ atomic (กัน race + ตรวจความสามารถ + กันซ้ำ + อัปเดตสถานะ)
-// คืน { ok, reason?, finished?, out_of_order?, step?, total?, op? }
-export async function recordScan({ unitId, machineId, operationId, employeeId }) {
-  const { data, error } = await supabase.rpc("record_scan", {
-    p_token: authToken(),
-    p_unit_id: unitId,
-    p_machine_id: machineId,
-    p_operation_id: operationId,
-    p_employee_id: employeeId,
-  });
+// บันทึกการสแกน 1 ครั้งแบบ atomic — เครื่อง/ขั้นตอน/พนักงาน ดึงจาก session token ฝั่ง DB
+// (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
+export async function recordScan({ unitId }) {
+  const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
+  if (error) { console.warn("record_scan error", error); return { ok: false, reason: "error", message: error.message }; }
+  return data || { ok: false, reason: "error" };
+}
+
+// ── Offline scan queue (localStorage) — โหมดหน้าเครื่องกันสแกนหายเมื่อเน็ตสะดุด ────
+const SCAN_Q_KEY = "mls-scan-queue";
+const scanQListeners = new Set();
+function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || []; } catch { return []; } }
+function qWrite(a) { localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a)); scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
+export function scanQueueCount() { return qRead().length; }
+export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
+function isNetworkErr(error) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
+}
+
+// สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
+export async function recordScanByQr(qr, { allowQueue = true } = {}) {
+  const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
   if (error) {
-    console.warn("record_scan error", error);
+    if (allowQueue && isNetworkErr(error)) {
+      const a = qRead(); a.push({ qr, ts: Date.now() }); qWrite(a);
+      return { ok: true, queued: true };
+    }
+    console.warn("record_scan_by_qr error", error);
     return { ok: false, reason: "error", message: error.message };
   }
   return data || { ok: false, reason: "error" };
+}
+
+// พยายามส่งคิวที่ค้างขึ้น server (เรียกตอนเน็ตกลับ/เป็นระยะ)
+export async function flushScanQueue() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  const a = qRead();
+  if (a.length === 0) return;
+  const remaining = [];
+  for (const item of a) {
+    const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr });
+    if (error) { remaining.push(item); continue; }               // เน็ต/DB ยังมีปัญหา เก็บไว้
+    if (data && data.ok === false && data.reason === "unauthorized") { remaining.push(item); continue; } // token หมดอายุ รอ login ใหม่
+    // อื่นๆ (ok / duplicate / not_found / machine_cannot / no_station) = จบ ไม่ต้อง retry
+  }
+  qWrite(remaining);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { flushScanQueue(); });
+  setInterval(() => { if (qRead().length) flushScanQueue(); }, 15000);
 }
 
 // สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
