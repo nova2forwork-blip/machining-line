@@ -136,17 +136,22 @@ export async function getUnitHistory(partUnitId) {
 
 // part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
 export async function getAllUnitsFull(statusFilter) {
-  let q = supabase
-    .from("part_units")
-    .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
-    .order("created_at", { ascending: false });
-  if (statusFilter) q = q.eq("status", statusFilter);
-  const { data, error } = await q;
-  if (error) {
-    console.warn("getAllUnitsFull error", error);
-    return [];
+  // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    let q = supabase
+      .from("part_units")
+      .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (statusFilter) q = q.eq("status", statusFilter);
+    const { data, error } = await q;
+    if (error) { console.warn("getAllUnitsFull error", error); break; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
   }
-  return data || [];
+  return all;
 }
 
 // ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
@@ -193,17 +198,16 @@ export async function getReleasesFull() {
 // ใช้ในหน้า Release Detail แสดงความคืบหน้าต่อ Part
 export async function getUnitStatsByReleaseIds(releaseIds) {
   if (!releaseIds || releaseIds.length === 0) return {};
-  const { data, error } = await supabase
-    .from("part_units")
-    .select("release_id, status")
-    .in("release_id", releaseIds);
-  if (error) { console.warn("getUnitStatsByReleaseIds error", error); return {}; }
+  // นับที่ฝั่ง DB (group by) — ไม่ติดเพดาน 1,000 แถวเหมือนการดึงมานับใน browser
+  const { data, error } = await supabase.rpc("release_unit_stats", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_unit_stats error", error); return {}; }
   const stats = {};
-  for (const u of data || []) {
-    if (!stats[u.release_id]) stats[u.release_id] = { total: 0, finished: 0, inProgress: 0 };
-    stats[u.release_id].total += 1;
-    if (u.status === "finished") stats[u.release_id].finished += 1;
-    else if (u.status === "in_progress") stats[u.release_id].inProgress += 1;
+  for (const r of data || []) {
+    stats[r.release_id] = {
+      total: Number(r.total) || 0,
+      finished: Number(r.finished) || 0,
+      inProgress: Number(r.in_progress) || 0,
+    };
   }
   return stats;
 }
@@ -338,15 +342,21 @@ export async function getPartSummary() {
 
 // scan log ทั้งหมดในช่วงเวลา พร้อม join ที่ใช้ทำรายงาน
 export async function getScanLogsBetween(fromIso, toIso) {
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name), part_unit:part_units(unit_no, part_master_id, weight, length_mm, part_master(part_no, part_name, project_id, unit_weight, default_length_mm, routing, projects(name)))")
-    .gte("scanned_at", fromIso)
-    .lte("scanned_at", toIso)
-    .order("scanned_at", { ascending: false });
-  if (error) {
-    console.warn("getScanLogsBetween error", error);
-    return [];
+  // ดึงแบบแบ่งหน้า (page 1000) — ช่วงเวลาที่มีการสแกนเยอะจะไม่ถูกตัดที่ 1,000 แถว
+  const sel = "*, machine:machines(name,code), operation:operations(name), employee:employees(name), part_unit:part_units(unit_no, part_master_id, weight, length_mm, part_master(part_no, part_name, project_id, unit_weight, default_length_mm, routing, projects(name)))";
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    const { data, error } = await supabase
+      .from("scan_logs")
+      .select(sel)
+      .gte("scanned_at", fromIso)
+      .lte("scanned_at", toIso)
+      .order("scanned_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) { console.warn("getScanLogsBetween error", error); break; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
   }
-  return data || [];
+  return all;
 }
