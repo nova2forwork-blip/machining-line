@@ -1408,11 +1408,12 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
   const [statsLoading, setStatsLoading] = useState(true);
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
 
-  useEffect(() => {
+  const loadStats = useCallback(() => {
     const ids = group.releases.map((r) => r.id);
     setStatsLoading(true);
     getUnitStatsByReleaseIds(ids).then((s) => { setUnitStats(s); setStatsLoading(false); });
   }, [group]);
+  useEffect(() => { loadStats(); }, [loadStats]);
 
   // รวมทุก Part ใน Release Order นี้
   const totalFinished = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
@@ -1426,6 +1427,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
           <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <Btn variant="ghost" size="sm" onClick={onBack}>
               <Icon name="arrowLeft" size={14} /> กลับไปหน้า Release
+            </Btn>
+            <Btn variant="ghost" size="sm" onClick={loadStats} title="โหลดความคืบหน้าล่าสุด">
+              <Icon name="refresh" size={14} /> รีเฟรช
             </Btn>
             <Btn variant="ghost" size="sm" onClick={() => (onHome ? onHome() : onBack())} title="กลับหน้าแรก">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: "-2px" }}>
@@ -1542,7 +1546,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...group.notes].join(" · ")}</div>
       )}
 
-      {viewPart && <PartProgressModal release={viewPart} user={user} onClose={() => setViewPart(null)} />}
+      {viewPart && <PartProgressModal release={viewPart} user={user} onClose={() => { setViewPart(null); loadStats(); }} />}
     </div>
   );
 }
