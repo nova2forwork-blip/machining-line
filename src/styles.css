@@ -399,7 +399,7 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
    so the โปรเจค box lines up with Release Order and วันที่ (ไม่ถูกปุ่ม + บีบให้แคบ) */
 .release-header-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: 0.8fr 1fr 1fr 1fr auto;
   gap: 12px;
   align-items: end;
 }
