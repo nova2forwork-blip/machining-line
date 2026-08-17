@@ -132,18 +132,20 @@ function MachineStation({ user, onLogout }) {
   }
 
   // ── RECORD ────────────────────────────────────────────────────────────
+  const prevStepRef = useRef(STEP.REC);
   function onRecord() {
     if (step === STEP.IDLE) {
       startTimer();
       setStep(STEP.REC);
-    } else {
-      // pressing RECORD again while active → ask to cancel
+    } else if (step !== STEP.CANCEL) {
+      // pressing RECORD again while active → ask to cancel (จำ step เดิมไว้กลับ)
+      prevStepRef.current = step;
       setStep(STEP.CANCEL);
     }
   }
   function confirmCancel(yes) {
     if (yes) resetAll();
-    else setStep(unit ? (qty > 0 && status ? STEP.READY : STEP.PART) : STEP.REC);
+    else setStep(prevStepRef.current || STEP.REC);
   }
 
   // ── SCAN ──────────────────────────────────────────────────────────────
@@ -162,16 +164,17 @@ function MachineStation({ user, onLogout }) {
     setStep(STEP.PART);
   }
 
+  // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
   function confirmPart() {
     if (!status) { flash("เลือกสถานะ FINISHED หรือ INPROCESS", "warn"); return; }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
-    setStep(STEP.READY);
+    doSave();
   }
 
-  // ── SAVE ──────────────────────────────────────────────────────────────
+  // ── SAVE (ปุ่มสำรอง — คงไว้ตามเลย์เอาต์ PDF; กด OK บันทึกให้แล้ว) ─────────
   function onSave() {
-    if (!unit || qty <= 0 || !status) { flash("สแกนและระบุจำนวน/สถานะก่อน SAVE", "warn"); return; }
-    setStep(STEP.SAVE);
+    if (!unit || qty <= 0 || !status) { flash("สแกน แล้วกด OK เพื่อบันทึกได้เลย", "warn"); return; }
+    doSave();
   }
   async function doSave() {
     setBusy(true);
@@ -185,7 +188,7 @@ function MachineStation({ user, onLogout }) {
     setBusy(false);
     if (!res || res.ok === false) {
       flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
-      setStep(STEP.READY);
+      setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
       return;
     }
     if (res.queued) {
@@ -213,7 +216,7 @@ function MachineStation({ user, onLogout }) {
 
   const recording = step !== STEP.IDLE;
   const scanArmed = qty > 0 && !!unit;
-  const saveArmed = !!unit && qty > 0 && !!status && (step === STEP.READY || step === STEP.SAVE);
+  const saveArmed = !!unit && qty > 0 && !!status && step === STEP.PART;
 
   return (
     <div className="stn-shell">
@@ -231,14 +234,14 @@ function MachineStation({ user, onLogout }) {
             <thead>
               <tr>
                 <th>ITEM</th><th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
-                <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BAL</th>
+                <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th>
                 <th>LENGHT<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
                 <th>INVENTORY<br />CODE</th><th>PROCESS<br />TIME</th><th>STATUS</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={15}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
+                <tr className="stn-empty-row"><td colSpan={14}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
               )}
               {rows.map((r, i) => {
                 const fin = String(r.status).toLowerCase() === "finished";
@@ -254,7 +257,6 @@ function MachineStation({ user, onLogout }) {
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
                       ? `${String(r.process_cum).padStart(4, "0")}/${String(r.req).padStart(4, "0")}` : "-"}</td>
-                    <td>{r.balance != null ? (r.balance > 0 ? "+" : "") + r.balance : "-"}</td>
                     <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
                     <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
                     <td>{r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
@@ -385,30 +387,7 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
           <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>INPROCESS</button>
         </div>
         <div className="stn-row-btns">
-          <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0}>OK</button>
-        </div>
-      </div>
-    );
-  }
-  if (step === STEP.READY) {
-    const p = unit?.part_master || {};
-    return (
-      <div className="stn-hint">
-        <div style={{ fontSize: 15, color: "#22262b", fontWeight: 600, marginBottom: 6 }}>พร้อมบันทึก</div>
-        {p.part_no} · จำนวน <b>{qty} ชิ้น</b> · สถานะ <b>{status === "finished" ? "FINISHED" : "INPROCESS"}</b> · เวลา <b>{hms(elapsed)}</b><br />
-        กด <b>SAVE</b> เพื่อบันทึกงานนี้
-      </div>
-    );
-  }
-  if (step === STEP.SAVE) {
-    const p = unit?.part_master || {};
-    return (
-      <div className="stn-confirm">
-        <h3>บันทึกงานนี้?</h3>
-        <p>{p.part_no} · {qty} ชิ้น · {status === "finished" ? "FINISHED" : "INPROCESS"} · เวลา {hms(elapsed)}</p>
-        <div className="stn-row-btns">
-          <button className="stn-pill yes" onClick={doSave} disabled={busy}>{busy ? "..." : "YES"}</button>
-          <button className="stn-pill no" onClick={() => confirmPart()} disabled={busy}>NO</button>
+          <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
     );
