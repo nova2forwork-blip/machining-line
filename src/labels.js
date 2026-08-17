@@ -39,7 +39,6 @@ export function printLabels(units, opts = {}) {
   const labelCells = units.map((u) => {
     const svg = collectQrSvg(u.id);
     const L = u._label || {};
-    const wl = [L.weightText, L.lengthText].filter(Boolean).join(" · ");
     return `<div class="lbl">
       <div class="qr">${svg}</div>
       <div class="body">
@@ -52,7 +51,6 @@ export function printLabels(units, opts = {}) {
           <div class="c">${escapeHtml(L.mdfNo != null ? `MDF NO. ${L.mdfNo || "-"}` : "")}</div>
           <div class="c">${escapeHtml(L.relNo ? `REL NO. ${L.relNo}` : "")}</div>
           <div class="c qty">${escapeHtml(L.qtyText || "")}</div>
-          <div class="c wl">${escapeHtml(wl)}</div>
         </div>
       </div>
     </div>`;
