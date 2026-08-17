@@ -131,6 +131,14 @@ function MachineStation({ user, onLogout }) {
     setStatus(null); setStep(STEP.IDLE);
   }
 
+  // เต็มจอ (ซ่อนแถบบราวเซอร์) — แตะครั้งเดียว
+  function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    } catch { /* ignore */ }
+  }
+
   // ── RECORD ────────────────────────────────────────────────────────────
   const prevStepRef = useRef(STEP.REC);
   function onRecord() {
@@ -225,6 +233,7 @@ function MachineStation({ user, onLogout }) {
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
           <button className="stn-logout" onClick={onLogout}>ออก</button>
+          <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
           {machine ? machine.code : "— ไม่มีเครื่อง —"}
         </div>
 
@@ -308,7 +317,7 @@ function MachineStation({ user, onLogout }) {
               />
             </div>
             <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord} disabled={busy}>
-              <span>RECORD</span><span className="stn-rec-dot" />
+              <span>{recording ? "STOP" : "RECORD"}</span><span className="stn-rec-dot" />
             </button>
             <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
               <div className="row1">
