@@ -193,16 +193,17 @@ function MachineStation({ user, onLogout }) {
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
+  // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
   async function onDecoded(qr) {
-    if (!qr) return;
+    if (!qr) return false;
     setBusy(true);
     const u = await findUnitByQr(qr);
     setBusy(false);
-    if (!u) { errorBeep(); flash("ไม่พบ QR นี้ในระบบ — สแกนใหม่", "warn"); return; }  // ผิด = ติ๊ดเตือนครั้งเดียว
-    beep(950, 110); vibrate(60);    // ติ๊ด! อ่านสำเร็จ (ครั้งเดียว)
+    if (!u) { errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
+    return true;
   }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
@@ -590,7 +591,8 @@ function CameraScan({ onDecoded, busy, onClose }) {
             const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
             if (code && code.data) {
               doneRef.current = true;
-              onDecoded(code.data.trim());
+              // ถ้าไม่พบ → เตือนแล้วกลับมาสแกนต่อได้ (กันสแกนซ้ำเฟรมเดิมด้วยหน่วงสั้น ๆ)
+              onDecoded(code.data.trim()).then((ok) => { if (!ok) setTimeout(() => { doneRef.current = false; }, 1000); });
               return;
             }
           }
@@ -611,9 +613,9 @@ function CameraScan({ onDecoded, busy, onClose }) {
 
   function submitManual(e) {
     e.preventDefault();
-    if (!manual.trim() || doneRef.current) return;
-    doneRef.current = true;
-    onDecoded(manual.trim());   // เสียงติ๊ด/เตือนอยู่ใน onDecoded (ตามผลสแกน)
+    if (!manual.trim()) return;
+    // กดตกลงได้ทุกครั้ง: ถ้า QR ผิด จะเตือนซ้ำทุกครั้ง; ถ้าถูกค่อยหยุดสแกน
+    onDecoded(manual.trim()).then((ok) => { if (ok) doneRef.current = true; });
   }
 
   return (
