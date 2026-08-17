@@ -1,0 +1,97 @@
+// ─── Offline support for the machine station (หน้าเครื่อง) ────────────────
+// เป้าหมาย: ใช้งานได้แม้เน็ตหลุดยาว (หลายวัน)
+//   1) แคชข้อมูลชิ้นงาน (part_units) ลง IndexedDB → สแกน QR ออฟไลน์แล้วเจอข้อมูล
+//   2) เก็บ snapshot ความคืบหน้าต่อ release → running number ออฟไลน์ยังทำงาน
+//   3) client_id (UUID) ต่อการบันทึก → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
+// ทุกฟังก์ชัน fail-safe: ถ้า IndexedDB มีปัญหา จะคืน null/ไม่พังแอป (ตกไปใช้ออนไลน์)
+
+const DB_NAME = "mls-offline";
+const DB_VER = 1;
+const ST_UNITS = "units";       // key = qr_code → object (รูปเดียวกับ findUnitByQr)
+const ST_KV = "kv";             // key/value ทั่วไป (snapshot ความคืบหน้า ฯลฯ)
+
+let _dbPromise = null;
+function db() {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === "undefined") return resolve(null);
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains(ST_UNITS)) d.createObjectStore(ST_UNITS, { keyPath: "qr_code" });
+        if (!d.objectStoreNames.contains(ST_KV)) d.createObjectStore(ST_KV);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return _dbPromise;
+}
+
+function tx(store, mode, fn) {
+  return db().then((d) => new Promise((resolve) => {
+    if (!d) return resolve(null);
+    try {
+      const t = d.transaction(store, mode);
+      const s = t.objectStore(store);
+      let out = null;
+      const r = fn(s);
+      if (r) r.onsuccess = () => { out = r.result; };
+      t.oncomplete = () => resolve(out);
+      t.onerror = () => resolve(null);
+      t.onabort = () => resolve(null);
+    } catch { resolve(null); }
+  }));
+}
+
+// ── UUID (idempotency key) ────────────────────────────────────────────────
+export function newClientId() {
+  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch { /* ignore */ }
+  // fallback แบบง่าย (พอสำหรับ dedup) — ไม่ต้องเข้ารหัสแรง
+  return "cid-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
+
+// ── Unit cache (part_units) ───────────────────────────────────────────────
+export function cacheUnit(unit) {
+  if (!unit || !unit.qr_code) return Promise.resolve();
+  return tx(ST_UNITS, "readwrite", (s) => s.put(unit));
+}
+export function cacheUnitsBulk(units) {
+  return db().then((d) => new Promise((resolve) => {
+    if (!d || !Array.isArray(units) || !units.length) return resolve();
+    try {
+      const t = d.transaction(ST_UNITS, "readwrite");
+      const s = t.objectStore(ST_UNITS);
+      for (const u of units) { if (u && u.qr_code) s.put(u); }
+      t.oncomplete = () => resolve();
+      t.onerror = () => resolve();
+      t.onabort = () => resolve();
+    } catch { resolve(); }
+  }));
+}
+export function getCachedUnit(qr) {
+  if (!qr) return Promise.resolve(null);
+  return tx(ST_UNITS, "readonly", (s) => s.get(String(qr).trim()));
+}
+export function cachedUnitCount() {
+  return tx(ST_UNITS, "readonly", (s) => s.count());
+}
+
+// ── Release progress snapshot (สำหรับ running number ออฟไลน์) ──────────────
+export function setCachedProgress(releaseId, done) {
+  if (!releaseId) return Promise.resolve();
+  return tx(ST_KV, "readwrite", (s) => s.put({ done: Number(done) || 0, ts: Date.now() }, "prog:" + releaseId));
+}
+export function getCachedProgress(releaseId) {
+  if (!releaseId) return Promise.resolve(0);
+  return tx(ST_KV, "readonly", (s) => s.get("prog:" + releaseId)).then((v) => (v ? Number(v.done) || 0 : 0));
+}
+
+// ── Machine-day snapshot (สำหรับตาราง/ยอดวันออฟไลน์) ───────────────────────
+export function setDaySnapshot(snap) {
+  return tx(ST_KV, "readwrite", (s) => s.put({ snap, ts: Date.now() }, "machineDay"));
+}
+export function getDaySnapshot() {
+  return tx(ST_KV, "readonly", (s) => s.get("machineDay")).then((v) => (v ? v.snap : null));
+}
