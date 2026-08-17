@@ -1,4 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
+  setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
+} from "./offline.js";
 
 // ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
 const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL || "";
@@ -106,30 +110,65 @@ export async function deleteCap(machineId, operationId) {
   if (error) { console.warn("deleteCap error", error); throw error; }
 }
 
+const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
+
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
+// ออนไลน์ = ถามฐานข้อมูล + เก็บลงแคชไว้ใช้ออฟไลน์ · ออฟไลน์/เน็ตมีปัญหา = อ่านจากแคช
 export async function findUnitByQr(qrCode) {
+  const qr = String(qrCode || "").trim();
+  if (!qr) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return await getCachedUnit(qr);                       // ออฟไลน์ → แคชอย่างเดียว
+  }
   const { data, error } = await supabase
-    .from("part_units")
-    .select("*, part_master(*, projects(code, name)), release:releases(*)")
-    .eq("qr_code", qrCode.trim())
-    .maybeSingle();
+    .from("part_units").select(UNIT_SELECT).eq("qr_code", qr).maybeSingle();
   if (error) {
     console.warn("findUnitByQr error", error);
-    return null;
+    return (await getCachedUnit(qr)) || null;             // เน็ตสะดุด → ลองแคช
   }
+  if (data) cacheUnit(data);                              // เก็บไว้ใช้ตอนเน็ตหลุด
   return data;
+}
+
+// โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
+// จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
+export async function prefetchUnitsForOffline(limit = 4000) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  const pageSize = 1000; let from = 0; let total = 0;
+  for (; from < limit;) {
+    const { data, error } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .order("created_at", { ascending: false })
+      .range(from, Math.min(from + pageSize, limit) - 1);
+    if (error) { console.warn("prefetchUnits error", error); break; }
+    if (!data || !data.length) break;
+    await cacheUnitsBulk(data);
+    total += data.length;
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return total;
 }
 
 // จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
 // ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
+//   ออนไลน์ = ยอดจริงจาก DB + งานที่ยังค้างคิว (ยังไม่ซิงค์) แล้ว snapshot ไว้
+//   ออฟไลน์ = snapshot ล่าสุด + งานที่ค้างคิว
 export async function getReleaseProgress(releaseId) {
   if (!releaseId) return 0;
+  const queued = queuedQtyForRelease(releaseId);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return (await getCachedProgress(releaseId)) + queued;
+  }
   const { data, error } = await supabase
-    .from("machine_records")
-    .select("quantity")
-    .eq("release_id", releaseId);
-  if (error) { console.warn("getReleaseProgress error", error); return 0; }
-  return (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+    .from("machine_records").select("quantity").eq("release_id", releaseId);
+  if (error) {
+    console.warn("getReleaseProgress error", error);
+    return (await getCachedProgress(releaseId)) + queued;
+  }
+  const done = (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+  setCachedProgress(releaseId, done);                     // snapshot ไว้ใช้ออฟไลน์
+  return done + queued;
 }
 
 // ประวัติการสแกนทั้งหมดของชิ้นเดียว
@@ -252,6 +291,12 @@ function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || 
 function qWrite(a) { localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a)); scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
 export function scanQueueCount() { return qRead().length; }
 export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
+// รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
+function queuedQtyForRelease(releaseId) {
+  if (!releaseId) return 0;
+  return qRead().reduce((s, it) =>
+    s + (it.release_id === releaseId ? (Number(it.machineWork?.p_quantity) || 0) : 0), 0);
+}
 function isNetworkErr(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
   return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
@@ -373,14 +418,48 @@ export async function getScanLogsBetween(fromIso, toIso) {
 // คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
 // (เครื่อง/พนักงานดึงจาก session token ฝั่ง DB — client ปลอมไม่ได้)
 export async function getMachineDay() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return offlineMachineDay();                           // ออฟไลน์ → snapshot + งานค้างคิว
+  }
   const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
-  if (error) { console.warn("machine_day error", error); return { ok: false, message: error.message }; }
+  if (error) {
+    console.warn("machine_day error", error);
+    return offlineMachineDay();                           // เน็ตสะดุด → ใช้ snapshot แทนจอเปล่า
+  }
+  if (data && data.ok !== false) setDaySnapshot(data);    // เก็บ snapshot ล่าสุดไว้ใช้ออฟไลน์
   return data || { ok: false };
 }
 
+// สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
+async function offlineMachineDay() {
+  const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
+  const q = qRead().filter((it) => it.machineWork);
+  if (!q.length) return { ...snap, offline: true };
+  const daily = { ...(snap.daily || { quantity: 0, weight: 0, process_seconds: 0 }) };
+  const records = Array.isArray(snap.records) ? [...snap.records] : [];
+  let item = records.length;
+  for (const it of q) {
+    const mw = it.machineWork;
+    daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
+    daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
+    records.push({
+      id: "q-" + (it.ts || item), item: ++item,
+      qty: Number(mw.p_quantity) || 0, status: mw.p_status,
+      process_seconds: Number(mw.p_process_seconds) || 0,
+      materials_length: mw.p_material_length, pending: true,   // ธง = ยังไม่ซิงค์
+    });
+  }
+  return { ok: true, daily, records, offline: true };
+}
+
 // บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
+// • p_client_id = UUID ต่อการบันทึก (สร้างครั้งเดียว) → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
+// • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
 // คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
-export async function recordMachineWork({ qr, quantity, materialLengthMm, processSeconds, status }, { allowQueue = true } = {}) {
+export async function recordMachineWork(
+  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt },
+  { allowQueue = true } = {}
+) {
   const payload = {
     p_token: authToken(),
     p_qr: String(qr || "").trim(),
@@ -388,11 +467,14 @@ export async function recordMachineWork({ qr, quantity, materialLengthMm, proces
     p_material_length: materialLengthMm == null || materialLengthMm === "" ? null : Number(materialLengthMm),
     p_process_seconds: Number(processSeconds) || 0,
     p_status: status || "inprocess",
+    p_client_id: clientId || newClientId(),               // idempotency key (คงเดิมทุกครั้งที่ลองซิงค์)
+    p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
   };
   const { data, error } = await supabase.rpc("record_machine_work", payload);
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ machineWork: payload, ts: Date.now() }); qWrite(a);
+      // เก็บ release_id ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number ออฟไลน์
+      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, ts: Date.now() }); qWrite(a);
       return { ok: true, queued: true };
     }
     console.warn("record_machine_work error", error);
