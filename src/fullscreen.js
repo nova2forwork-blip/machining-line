@@ -13,13 +13,22 @@ export function isStandalone() {
   } catch { return false; }
 }
 
+export function lockLandscape() {
+  try {
+    const p = screen.orientation?.lock?.("landscape");
+    if (p && p.catch) p.catch(() => { /* iOS/desktop ไม่รองรับ — ใช้ CSS หมุนแทน */ });
+  } catch { /* ignore */ }
+}
+
 export function enterFullscreen() {
   try {
-    if (isStandalone()) return;                 // เป็น PWA เต็มจออยู่แล้ว
-    if (document.fullscreenElement) return;      // เต็มจออยู่แล้ว
+    if (isStandalone()) { lockLandscape(); return; }   // เป็น PWA เต็มจออยู่แล้ว
+    if (document.fullscreenElement) { lockLandscape(); return; }
     const el = document.documentElement;
     const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-    fn?.call(el);
+    const p = fn?.call(el);
+    if (p && p.then) p.then(lockLandscape).catch(lockLandscape);   // ล็อกแนวนอนหลังเข้าเต็มจอ
+    else lockLandscape();
   } catch { /* ignore — บางเบราว์เซอร์/บริบทไม่อนุญาต */ }
 }
 
