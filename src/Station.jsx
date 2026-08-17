@@ -193,6 +193,8 @@ function MachineStation({ user, onLogout }) {
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
+  // Cancel หลังสแกน → เวลาเดินต่อ แล้วกลับไปสแกนใหม่
+  function rescan() { setUnit(null); setQty(0); setStatus(null); startTimer(); setStep(STEP.SCAN); }
   // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
   async function onDecoded(qr) {
     if (!qr) return false;
@@ -200,6 +202,7 @@ function MachineStation({ user, onLogout }) {
     const u = await findUnitByQr(qr);
     setBusy(false);
     if (!u) { errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
+    stopTimer();              // สแกนเสร็จ → หยุดจับเวลา (เวลาที่ใช้ = START จนถึงสแกนเสร็จ)
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -262,7 +265,6 @@ function MachineStation({ user, onLogout }) {
       <div className="stn-screen">
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
-          <button className="stn-logout" onClick={onLogout}>ออก</button>
           {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
           {!isStandalone() && (
             <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
@@ -316,15 +318,19 @@ function MachineStation({ user, onLogout }) {
 
         {/* bottom-left: daily report */}
         <div className="stn-daily">
-          <h2>DAILY REPORT</h2>
-          <div className="stn-date">{todayISOdate()}</div>
-          <div className="stn-kpi"><div className="lbl">Daily Quantity</div>
-            <div className="val">{fmt(daily.quantity)} pcs</div></div>
-          <div className="stn-kpi"><div className="lbl">Daily Weight</div>
-            <div className="val">{fmt(daily.weight)} kg</div></div>
-          <div className="stn-kpi"><div className="lbl">Daily Process Time</div>
-            <div className="val mono">{hms(daily.process_seconds)}</div></div>
-          {loadErr && <div className="stn-err" style={{ marginTop: 12 }}>{loadErr}</div>}
+          <div className="stn-daily-head">
+            <h2>DAILY REPORT</h2>
+            <div className="stn-date">{todayISOdate()}</div>
+          </div>
+          <div className="stn-kpis">
+            <div className="stn-kpi"><div className="lbl">Daily Quantity</div>
+              <div className="val">{fmt(daily.quantity)} pcs</div></div>
+            <div className="stn-kpi"><div className="lbl">Daily Weight</div>
+              <div className="val">{fmt(daily.weight)} kg</div></div>
+            <div className="stn-kpi"><div className="lbl">Daily Process Time</div>
+              <div className="val mono">{hms(daily.process_seconds)}</div></div>
+          </div>
+          {loadErr && <div className="stn-err">{loadErr}</div>}
         </div>
 
         {/* bottom-right: work area + control */}
@@ -334,31 +340,37 @@ function MachineStation({ user, onLogout }) {
               step={step} elapsed={elapsed} unit={unit} qty={qty} setQty={setQty}
               status={status} setStatus={setStatus} busy={busy}
               onDecoded={onDecoded} confirmCancel={confirmCancel} confirmPart={confirmPart}
-              closeScan={closeScan}
+              closeScan={closeScan} rescan={rescan}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
 
           <div className="stn-control">
-            <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
-            <div className={`stn-mat${recording ? " live" : ""}`}>
-              <div className="lbl">Material Lenght</div>
-              <input
-                inputMode="numeric" disabled={recording}
-                value={materialLen} placeholder="0"
-                onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
-              />
-            </div>
-            <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
-              disabled={busy || (step === STEP.IDLE && !matReady)}>
-              <span>{recording ? "STOP" : "START"}</span><span className="stn-rec-dot" />
-            </button>
-            <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
-              <div className="row1">
-                <span>SCAN</span>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
+            <div className="stn-ctl-main">
+              <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
+              <div className={`stn-mat${recording ? " live" : ""}`}>
+                <div className="lbl">Material Lenght</div>
+                <input
+                  inputMode="numeric" disabled={recording}
+                  value={materialLen} placeholder="0"
+                  onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
+                />
               </div>
-              <div className="qty">Quantity <b>{qty}</b> piece</div>
+              <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
+                disabled={busy || (step === STEP.IDLE && !matReady)}>
+                <span>{recording ? "STOP" : "START"}</span><span className="stn-rec-dot" />
+              </button>
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
+                <div className="row1">
+                  <span>SCAN</span>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
+                </div>
+                <div className="qty">Quantity <b>{qty}</b> piece</div>
+              </button>
+            </div>
+            <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
+              <span>ออกจากระบบ</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9" /></svg>
             </button>
           </div>
         </div>
@@ -462,7 +474,7 @@ function StationAnim() {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan }) {
+function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan }) {
   if (step === STEP.IDLE) {
     return (
       <div className="stn-hint">
@@ -526,6 +538,7 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
           <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>INPROCESS</button>
         </div>
         <div className="stn-row-btns">
+          <button className="stn-pill no" onClick={rescan} disabled={busy}>Cancel</button>
           <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
@@ -649,9 +662,12 @@ function CameraScan({ onDecoded, busy, onClose }) {
 export default function StationApp() {
   const [user, setUser] = useState(getSession());
   async function logout() {
+    if (!window.confirm("ออกจากระบบและปิดแอป?")) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await logoutSession(); } catch { /* ignore */ }
     clearSession();
+    try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch { /* ignore */ }
     setUser(null);
+    try { window.close(); } catch { /* ignore */ }   // พยายามปิดแอป/แท็บ (ได้ผลบน PWA/บางเบราว์เซอร์)
   }
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
