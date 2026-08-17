@@ -42,6 +42,27 @@ export function toggleFullscreen() {
   } catch { /* ignore */ }
 }
 
+// ── ขออนุญาตกล้อง "ครั้งเดียว" ล่วงหน้า ───────────────────────────────────
+// เบราว์เซอร์บน https จะจำสิทธิ์กล้องต่อโดเมนอยู่แล้ว — ฟังก์ชันนี้ทริกให้ถามครั้งแรก
+// ตั้งแต่ตอนล็อกอิน/แตะจอ แล้วครั้งต่อๆ ไป (รวมตอนกด SCAN) จะเข้ากล้องได้เลยไม่ถามซ้ำ
+// ถ้าได้สิทธิ์แล้ว (granted) จะข้ามไป ไม่เปิดกล้องโดยไม่จำเป็น
+let _camWarmed = false;
+export async function warmCameraPermission() {
+  if (_camWarmed) return;
+  try {
+    if (navigator.permissions?.query) {
+      try {
+        const st = await navigator.permissions.query({ name: "camera" });
+        if (st.state === "granted") { _camWarmed = true; return; }   // ให้สิทธิ์แล้ว ไม่ต้องเปิด
+        if (st.state === "denied") return;                            // ถูกปฏิเสธถาวร — ไปแก้ที่ตั้งค่าเบราว์เซอร์
+      } catch { /* Permissions API ไม่รองรับ name:camera — ลอง getUserMedia ต่อ */ }
+    }
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    s.getTracks().forEach((t) => t.stop());                          // ปิดกล้องทันที เก็บแค่สิทธิ์
+    _camWarmed = true;
+  } catch { /* ผู้ใช้ยังไม่กดอนุญาต/ปฏิเสธ → จะถูกถามอีกครั้งตอนกด SCAN */ }
+}
+
 // เรียกเต็มจอตอนผู้ใช้แตะจอครั้งแรก (fallback สำหรับคนที่ล็อกอินค้างไว้ ไม่มี gesture ตอนโหลด)
 // คืนฟังก์ชัน cleanup
 export function armFullscreenOnFirstTap() {
