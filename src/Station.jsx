@@ -341,6 +341,8 @@ function MachineStation({ user, onLogout, onKicked }) {
       <div className="stn-screen">
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
+          {/* ปุ่มออกจากระบบมุมบนซ้าย — โผล่เฉพาะมือถือจอเล็ก (แท็บเล็ตใช้ปุ่มใหญ่ด้านล่าง) */}
+          <button className="stn-logout stn-toplogout" onClick={onLogout} title="ออกจากระบบ" aria-label="ออกจากระบบ">⏻ ออก</button>
           {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
           {!isStandalone() && (
             <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
