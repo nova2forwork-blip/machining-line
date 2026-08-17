@@ -1,13 +1,15 @@
-// ─── QR label printing engine ────────────────────────────────────────────
-// Renders labels at true physical size (mm), independent of screen DPI,
-// using @page + CSS mm units so what prints matches the stated size
-// exactly (default 2cm x 2cm) regardless of printer resolution.
+// ─── QR / Part label printing engine ──────────────────────────────────────
+// Renders "PART LABEL" at true physical size (mm) using @page + CSS mm units,
+// so the print matches the stated size exactly regardless of printer DPI.
+// Layout ตามสเปก: ป้าย 76 × 12 มม., QR 10 มม. ทางซ้าย, ข้อความ Arial (2/3 มม.)
+//   [QR] | PROJECT NUMBER      MDF NO. -
+//        | PROJECT NAME        REL NO. P-001 (L01-L04)
+//        | PART NUMBER (ใหญ่)              1 OF 100
 
 export const LABEL_PRESETS = [
-  { value: "20x20", label: "2 × 2 ซม. (มาตรฐาน)", w: 20, h: 20 },
-  { value: "25x15", label: "2.5 × 1.5 ซม.", w: 25, h: 15 },
-  { value: "30x20", label: "3 × 2 ซม.", w: 30, h: 20 },
-  { value: "40x30", label: "4 × 3 ซม.", w: 40, h: 30 },
+  { value: "76x12", label: "7.6 × 1.2 ซม. (Part Label)", w: 76, h: 12 },
+  { value: "60x10", label: "6 × 1 ซม.", w: 60, h: 10 },
+  { value: "90x15", label: "9 × 1.5 ซม.", w: 90, h: 15 },
   { value: "custom", label: "กำหนดเอง (มม.)", w: null, h: null },
 ];
 
@@ -20,51 +22,68 @@ function collectQrSvg(unitId) {
 
 export function printLabels(units, opts = {}) {
   const {
-    widthMm = 20,
-    heightMm = 20,
-    showCode = false,
+    widthMm = 76,
+    heightMm = 12,
     mode = "sheet", // "sheet" (A4 grid) | "roll" (one label per page — thermal printers)
-    title = "QR Labels",
+    title = "Part Labels",
   } = opts;
 
   if (!units || units.length === 0) return;
 
+  // ขนาดสัมพัทธ์กับความสูงป้าย เพื่อให้ย่อ/ขยายป้ายแล้วสัดส่วนคงเดิม
+  const qrMm = Math.max(6, Math.min(heightMm - 2, heightMm * 0.84));
+  const fSmall = (heightMm * 0.17).toFixed(2);   // ≈ Arial 2 มม. ที่ป้าย 12 มม.
+  const fBig = (heightMm * 0.26).toFixed(2);      // ≈ Arial 3 มม.
+  const radius = (heightMm * 0.16).toFixed(2);
+
   const labelCells = units.map((u) => {
     const svg = collectQrSvg(u.id);
+    const L = u._label || {};
     return `<div class="lbl">
-      <div class="qrbox">${svg}</div>
-      ${showCode ? `<div class="code">${escapeHtml(u.qr_code)}</div>` : ""}
+      <div class="qr">${svg}</div>
+      <div class="body">
+        <div class="c num">${escapeHtml(L.projectNumber || "")}</div>
+        <div class="c r">${escapeHtml(L.mdfNo != null ? `MDF NO. ${L.mdfNo || "-"}` : "")}</div>
+        <div class="c name">${escapeHtml(L.projectName || "")}</div>
+        <div class="c r">${escapeHtml(L.relNo ? `REL NO. ${L.relNo}` : "")}</div>
+        <div class="c part">${escapeHtml(L.partNo || "")}</div>
+        <div class="c r qty">${escapeHtml(L.qtyText || "")}</div>
+      </div>
     </div>`;
   }).join("");
 
-  const sheetCss = `
-    @page { size: A4; margin: 10mm; }
-    body { margin: 0; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, ${widthMm}mm);
-      gap: 3mm;
-      justify-content: start;
-    }
+  const labelCss = `
     .lbl {
       width: ${widthMm}mm; height: ${heightMm}mm;
-      border: 1px dashed #bbb;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      overflow: hidden; page-break-inside: avoid;
-      padding: 1mm; box-sizing: border-box;
+      border: 0.3mm solid #111; border-radius: ${radius}mm;
+      display: flex; align-items: center; gap: 1.5mm;
+      padding: 1mm 1.6mm; box-sizing: border-box; overflow: hidden;
+      font-family: Arial, 'Helvetica Neue', sans-serif; color: #111;
+      page-break-inside: avoid;
     }
+    .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
+    .qr svg { width: 100%; height: 100%; display: block; }
+    .body {
+      flex: 1; height: 100%; display: grid;
+      grid-template-columns: 1fr auto; grid-template-rows: auto auto 1fr;
+      column-gap: 2.5mm; align-content: center; min-width: 0;
+    }
+    .c { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .c.r { text-align: right; }
+    .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; align-self: end; }
+    .c.qty { align-self: end; }
   `;
 
+  const sheetCss = `
+    @page { size: A4; margin: 8mm; }
+    body { margin: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, ${widthMm}mm); gap: 3mm; justify-content: start; }
+  `;
   const rollCss = `
     @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
     body { margin: 0; }
     .grid { display: block; }
-    .lbl {
-      width: ${widthMm}mm; height: ${heightMm}mm;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      overflow: hidden; page-break-after: always;
-      box-sizing: border-box; padding: 0.5mm;
-    }
+    .lbl { page-break-after: always; border-radius: 0; border: none; }
     .lbl:last-child { page-break-after: auto; }
   `;
 
@@ -73,18 +92,16 @@ export function printLabels(units, opts = {}) {
 <title>${escapeHtml(title)}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: 'IBM Plex Mono', monospace; background:#fff; }
+  body { background: #fff; }
+  ${labelCss}
   ${mode === "roll" ? rollCss : sheetCss}
-  .qrbox { width: 100%; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
-  .qrbox svg { width: 92%; height: 92%; display: block; }
-  .code { font-size: 6.4pt; color: #111; text-align: center; line-height: 1.15; word-break: break-all; padding-top: 0.4mm; }
 </style>
 </head><body>
 <div class="grid">${labelCells}</div>
 <script>window.onload = () => { window.print(); };</script>
 </body></html>`;
 
-  const w = window.open("", "_blank", "width=900,height=700");
+  const w = window.open("", "_blank", "width=1000,height=700");
   if (!w) { alert("เบราว์เซอร์บล็อกหน้าต่างพิมพ์ — กรุณาอนุญาต popup แล้วลองใหม่"); return; }
   w.document.write(html);
   w.document.close();
