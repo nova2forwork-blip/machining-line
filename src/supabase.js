@@ -359,25 +359,13 @@ export async function getPartSummary() {
   return data || [];
 }
 
-// scan log ทั้งหมดในช่วงเวลา พร้อม join ที่ใช้ทำรายงาน
+// scan log ทั้งหมดในช่วงเวลา สำหรับรายงาน — รวม scan_logs (สำนักงาน) +
+// machine_records (หน้าเครื่อง) ผ่าน RPC report_logs (ดู migration-station-report-merge.sql)
+// คืน array รูปทรงเดียวกับ scan_logs เดิม (machine/operation/employee/part_unit ซ้อน) → metrics.js ใช้ต่อได้เลย
 export async function getScanLogsBetween(fromIso, toIso) {
-  // ดึงแบบแบ่งหน้า (page 1000) — ช่วงเวลาที่มีการสแกนเยอะจะไม่ถูกตัดที่ 1,000 แถว
-  const sel = "*, machine:machines(name,code), operation:operations(name), employee:employees(name), part_unit:part_units(unit_no, part_master_id, weight, length_mm, part_master(part_no, part_name, project_id, unit_weight, default_length_mm, routing, projects(name)))";
-  const pageSize = 1000; let from = 0; let all = [];
-  for (;;) {
-    const { data, error } = await supabase
-      .from("scan_logs")
-      .select(sel)
-      .gte("scanned_at", fromIso)
-      .lte("scanned_at", toIso)
-      .order("scanned_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (error) { console.warn("getScanLogsBetween error", error); break; }
-    all = all.concat(data || []);
-    if (!data || data.length < pageSize) break;
-    from += pageSize;
-  }
-  return all;
+  const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("report_logs error", error); return []; }
+  return data || [];
 }
 
 // ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
