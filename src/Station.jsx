@@ -22,6 +22,36 @@ function todayISOdate() {
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
 
+// ─── เสียง "ติ๊ด" ตอนสแกน (Web Audio) + สั่น ───────────────────────────────
+let _audioCtx = null;
+function audioCtx() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!_audioCtx) _audioCtx = new AC();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    return _audioCtx;
+  } catch { return null; }
+}
+// เรียกจาก user gesture (กด SCAN) เพื่อปลดล็อกเสียงบนมือถือ
+function warmAudio() { audioCtx(); }
+function beep(freq = 950, ms = 110, vol = 0.25) {
+  const ctx = audioCtx();
+  if (!ctx) return;
+  try {
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "square"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t); o.stop(t + ms / 1000 + 0.02);
+  } catch { /* ignore */ }
+}
+function vibrate(pattern) { try { navigator.vibrate?.(pattern); } catch { /* ignore */ } }
+
 // ══════════════════════════════════════════════════════════════════════════
 // STATION LOGIN — same credentials as the main app; intended for the
 // machine's own account (an employee whose machine_id is set).
@@ -156,15 +186,17 @@ function MachineStation({ user, onLogout }) {
   // ── SCAN ──────────────────────────────────────────────────────────────
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
+    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture)
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   async function onDecoded(qr) {
     if (!qr) return;
+    beep(950, 110); vibrate(60);   // ติ๊ด! ทันทีที่อ่าน QR ได้
     setBusy(true);
     const u = await findUnitByQr(qr);
     setBusy(false);
-    if (!u) { flash("ไม่พบ QR นี้ในระบบ", "warn"); return; }
+    if (!u) { beep(300, 200, 0.3); vibrate([70, 50, 70]); flash("ไม่พบ QR นี้ในระบบ", "warn"); return; }
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -340,20 +372,33 @@ function StationAnim() {
         </linearGradient>
       </defs>
       {/* ground */}
-      <line x1="0" y1="171" x2="420" y2="171" stroke="#dfe3e8" strokeWidth="2" />
+      <line x1="0" y1="171" x2="440" y2="171" stroke="#dfe3e8" strokeWidth="2" />
       {/* เครื่องตัด (ขวา) */}
       <g>
-        <rect x="300" y="150" width="104" height="12" rx="2" fill="#1c1f24" />
-        <rect x="312" y="162" width="8" height="15" fill="#1c1f24" />
-        <rect x="384" y="162" width="8" height="15" fill="#1c1f24" />
-        <rect x="336" y="120" width="30" height="34" rx="3" fill="#2a2f36" />
+        <rect x="298" y="150" width="112" height="12" rx="2" fill="#1c1f24" />
+        <rect x="310" y="162" width="8" height="15" fill="#1c1f24" />
+        <rect x="392" y="162" width="8" height="15" fill="#1c1f24" />
+        {/* rollers บนโต๊ะ (ที่วางอลูมิเนียม) */}
+        <circle cx="316" cy="150" r="4.5" fill="#5b626b" />
+        <circle cx="340" cy="150" r="4.5" fill="#5b626b" />
+        <circle cx="388" cy="150" r="4.5" fill="#5b626b" />
+        <rect x="356" y="116" width="30" height="38" rx="3" fill="#2a2f36" />
         <g className="stn-saw">
-          <circle cx="330" cy="150" r="16" fill="#c7ccd3" stroke="#1c1f24" strokeWidth="2" />
-          <circle cx="330" cy="150" r="16" fill="none" stroke="#1c1f24" strokeWidth="3" strokeDasharray="3 5" />
-          <circle cx="330" cy="150" r="4" fill="#e11d1d" />
+          <circle cx="371" cy="150" r="17" fill="#c7ccd3" stroke="#1c1f24" strokeWidth="2" />
+          <circle cx="371" cy="150" r="17" fill="none" stroke="#1c1f24" strokeWidth="3" strokeDasharray="3 5" />
+          <circle cx="371" cy="150" r="4" fill="#e11d1d" />
+        </g>
+        {/* ประกายไฟตอนตัด */}
+        <g className="stn-spark">
+          <path d="M371 132 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3 z" fill="#ff8a1e" />
         </g>
       </g>
-      {/* คนเดินแบกอลูมิเนียม (เลื่อนซ้าย→ขวา) */}
+      {/* อลูมิเนียม (เดินมากับคน แล้ววางลงบนเครื่อง) — เลเยอร์แยก */}
+      <g className="stn-carry">
+        <rect x="86" y="106" width="150" height="10" rx="5" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
+        <rect x="90" y="108" width="120" height="2.4" rx="1.2" fill="#ffffff" opacity="0.7" />
+      </g>
+      {/* คนเดิน (เลื่อนซ้าย→ขวา แล้วถอยออก) */}
       <g className="stn-walker">
         <ellipse cx="60" cy="172" rx="26" ry="4" fill="rgba(0,0,0,.12)" />
         <rect className="stn-leg1" x="56" y="137" width="7" height="33" rx="3.5" fill="#1c1f24" />
@@ -361,8 +406,6 @@ function StationAnim() {
         <rect x="53" y="104" width="13" height="38" rx="6" fill="#1c1f24" />
         <circle cx="59" cy="95" r="11" fill="#1c1f24" />
         <rect x="58" y="110" width="46" height="7" rx="3.5" fill="#33383e" />
-        <rect x="86" y="106" width="150" height="10" rx="5" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
-        <rect x="90" y="108" width="120" height="2.4" rx="1.2" fill="#ffffff" opacity="0.7" />
         <circle cx="100" cy="113" r="5" fill="#1c1f24" />
       </g>
     </svg>
@@ -373,11 +416,11 @@ function StationAnim() {
 function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan }) {
   if (step === STEP.IDLE) {
     return (
-      <div>
-        <StationAnim />
-        <div className="stn-hint">
-          พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
+      <div className="stn-hint">
+        <div style={{ marginBottom: 8 }}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
         </div>
+        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
       </div>
     );
   }
