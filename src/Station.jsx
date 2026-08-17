@@ -214,8 +214,9 @@ function MachineStation({ user, onLogout }) {
     // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
     // done = จำนวนที่บันทึกไปแล้วของล็อ/รีลีสนี้, total = จำนวนที่ต้องการทั้งใบ
     const done = await getReleaseProgress(u.release_id);
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     setBusy(false);
-    setProgress({ done, total: u.release?.qty ?? null });
+    setProgress({ done, total: u.release?.qty ?? null, offline });
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -554,7 +555,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
               <div className="stn-lbl-line">MDF NO. {p.mdf_no || "-"}</div>
               <div className="stn-lbl-line">REL NO. {rel.release_order || "-"}</div>
               {p.rev ? <div className="stn-lbl-line">REV. {p.rev}</div> : null}
-              <div className="stn-lbl-of">{ofText}</div>
+              <div className="stn-lbl-of">{progress?.offline ? `~${ofText}` : ofText}</div>
+              {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
             </div>
           </div>
         </div>
