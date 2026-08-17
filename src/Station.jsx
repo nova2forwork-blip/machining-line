@@ -233,7 +233,7 @@ function MachineStation({ user, onLogout }) {
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
   function confirmPart() {
-    if (!status) { flash("เลือกสถานะ FINISHED หรือ INPROCESS", "warn"); return; }
+    if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
     doSave();
   }
@@ -337,7 +337,7 @@ function MachineStation({ user, onLogout }) {
                     <td className="l">{r.inventory_code || "-"}</td>
                     <td>{hms(r.process_seconds)}</td>
                     <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
-                      {fin ? "FINISHED" : "INPROCESS"}{r.status_seq ? ` ${r.status_seq}` : ""}
+                      {fin ? "Finished" : "In Process"}
                     </td>
                   </tr>
                 );
@@ -585,8 +585,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <button onClick={() => setQty(qty + 1)}>+</button>
         </div>
         <div className="stn-row-btns" style={{ marginBottom: 14 }}>
-          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>FINISHED</button>
-          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>INPROCESS</button>
+          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>In Process</button>
+          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>Finished</button>
         </div>
         <div className="stn-row-btns">
           <button className="stn-pill no" onClick={rescan} disabled={busy}>Cancel</button>
