@@ -47,9 +47,12 @@ export function printLabels(units, opts = {}) {
           <div class="c name">${escapeHtml(L.projectName || "")}</div>
           <div class="c part">${escapeHtml(L.partNo || "")}</div>
         </div>
+        <div class="vline"></div>
         <div class="col right">
-          <div class="c">${escapeHtml(L.mdfNo != null ? `MDF NO. ${L.mdfNo || "-"}` : "")}</div>
-          <div class="c">${escapeHtml(L.relNo ? `REL NO. ${L.relNo}` : "")}</div>
+          <div class="kv">
+            <span class="k">MDF NO.</span><span class="v">${escapeHtml(L.mdfNo || "-")}</span>
+            <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>
+          </div>
           <div class="c qty">${escapeHtml(L.qtyText || "")}</div>
         </div>
       </div>
@@ -68,14 +71,23 @@ export function printLabels(units, opts = {}) {
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
     .qr svg { width: 100%; height: 100%; display: block; }
     .body {
-      flex: 1; height: 100%; display: flex; justify-content: space-between;
-      gap: 2.5mm; align-items: center; min-width: 0;
+      flex: 1; height: 100%; display: flex;
+      gap: 2mm; align-items: center; min-width: 0;
     }
-    .body .col { display: flex; flex-direction: column; justify-content: center; min-width: 0; gap: 0.3mm; }
-    .body .col.right { text-align: right; align-items: flex-end; flex-shrink: 0; }
-    .c { font-size: ${fSmall}mm; line-height: 1.16; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; margin-top: 0.3mm; }
-    .c.wl { font-size: ${(heightMm * 0.15).toFixed(2)}mm; color: #333; }
+    .body .col { display: flex; flex-direction: column; justify-content: center; min-width: 0; gap: 0.35mm; }
+    .body .col.left { flex: 1; }
+    .body .col.right { text-align: left; align-items: flex-end; flex-shrink: 0; }
+    /* เส้นแบ่งกลางระหว่างข้อมูลโปรเจค (ซ้าย) กับ MDF/REL (ขวา) */
+    .vline { width: 0.2mm; align-self: stretch; margin: 1.4mm 0; background: #c8c8c8; flex-shrink: 0; }
+    .c { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .c.num { color: #666; letter-spacing: .01em; }
+    .c.name { color: #222; }
+    .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; margin-top: 0.5mm; }
+    /* ตาราง MDF/REL: คอลัมน์ชื่อ (M,R) ตรงกัน · คอลัมน์ค่าตรงกัน */
+    .kv { display: grid; grid-template-columns: auto auto; column-gap: 1mm; row-gap: 0.3mm; align-items: baseline; }
+    .kv .k { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; color: #666; }
+    .kv .v { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+    .c.qty { margin-top: 0.6mm; padding-top: 0.5mm; border-top: 0.15mm solid #ddd; font-weight: 700; align-self: stretch; text-align: right; }
   `;
 
   const sheetCss = `
