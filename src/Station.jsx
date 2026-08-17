@@ -327,23 +327,68 @@ function MachineStation({ user, onLogout }) {
   );
 }
 
+// ── Ambient animation: คนแบกอลูมิเนียมเดินไปวางบนเครื่องตัด (ซ้าย→ขวา) ────────
+function StationAnim() {
+  return (
+    <svg className="stn-scene" viewBox="0 0 420 190" role="img"
+      aria-label="พนักงานยกอลูมิเนียมไปวางบนเครื่องตัด">
+      <defs>
+        <linearGradient id="stnAlu" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#eef1f4" />
+          <stop offset="0.5" stopColor="#c7ccd3" />
+          <stop offset="1" stopColor="#aab0b8" />
+        </linearGradient>
+      </defs>
+      {/* ground */}
+      <line x1="0" y1="171" x2="420" y2="171" stroke="#dfe3e8" strokeWidth="2" />
+      {/* เครื่องตัด (ขวา) */}
+      <g>
+        <rect x="300" y="150" width="104" height="12" rx="2" fill="#1c1f24" />
+        <rect x="312" y="162" width="8" height="15" fill="#1c1f24" />
+        <rect x="384" y="162" width="8" height="15" fill="#1c1f24" />
+        <rect x="336" y="120" width="30" height="34" rx="3" fill="#2a2f36" />
+        <g className="stn-saw">
+          <circle cx="330" cy="150" r="16" fill="#c7ccd3" stroke="#1c1f24" strokeWidth="2" />
+          <circle cx="330" cy="150" r="16" fill="none" stroke="#1c1f24" strokeWidth="3" strokeDasharray="3 5" />
+          <circle cx="330" cy="150" r="4" fill="#e11d1d" />
+        </g>
+      </g>
+      {/* คนเดินแบกอลูมิเนียม (เลื่อนซ้าย→ขวา) */}
+      <g className="stn-walker">
+        <ellipse cx="60" cy="172" rx="26" ry="4" fill="rgba(0,0,0,.12)" />
+        <rect className="stn-leg1" x="56" y="137" width="7" height="33" rx="3.5" fill="#1c1f24" />
+        <rect className="stn-leg2" x="56" y="137" width="7" height="33" rx="3.5" fill="#33383e" />
+        <rect x="53" y="104" width="13" height="38" rx="6" fill="#1c1f24" />
+        <circle cx="59" cy="95" r="11" fill="#1c1f24" />
+        <rect x="58" y="110" width="46" height="7" rx="3.5" fill="#33383e" />
+        <rect x="86" y="106" width="150" height="10" rx="5" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
+        <rect x="90" y="108" width="120" height="2.4" rx="1.2" fill="#ffffff" opacity="0.7" />
+        <circle cx="100" cy="113" r="5" fill="#1c1f24" />
+      </g>
+    </svg>
+  );
+}
+
 // ── the changing middle panel ─────────────────────────────────────────────
 function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan }) {
   if (step === STEP.IDLE) {
     return (
-      <div className="stn-hint">
-        <div style={{ marginBottom: 8 }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
+      <div>
+        <StationAnim />
+        <div className="stn-hint">
+          พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
         </div>
-        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
       </div>
     );
   }
   if (step === STEP.REC) {
     return (
-      <div className="stn-hint">
-        <div className="big">● กำลังบันทึกเวลา</div>
-        กด <b>SCAN</b> เพื่อสแกน QR ล็อต/งานที่กำลังทำ
+      <div>
+        <StationAnim />
+        <div className="stn-hint">
+          <div className="big">● กำลังบันทึกเวลา</div>
+          กด <b>SCAN</b> เพื่อสแกน QR ล็อต/งานที่กำลังทำ
+        </div>
       </div>
     );
   }
