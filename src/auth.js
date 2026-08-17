@@ -59,8 +59,13 @@ export async function verifyLogin(code, password) {
 // (ไม่ใช่ bcrypt แต่ hash+salt ในเครื่อง — และตัว token เองก็เก็บในเครื่องอยู่แล้ว)
 const LOGIN_CACHE_KEY = "mls-login-cache";
 async function sha256Hex(s) {
-  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+  // crypto.subtle มีเฉพาะ secure context (https/PWA) — ถ้าไม่มี (http บน LAN) คืน null
+  // แล้ว offline login จะข้ามไป (ยังล็อกอินออนไลน์ได้ปกติ) แทนที่จะ throw ทำแอปพัง
+  try {
+    if (typeof crypto === "undefined" || !crypto.subtle) return null;
+    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+  } catch { return null; }
 }
 function randSalt() {
   const a = new Uint8Array(16);
@@ -73,6 +78,7 @@ async function cacheCredential(code, password, user) {
   try {
     const salt = randSalt();
     const hash = await sha256Hex(salt + ":" + password);
+    if (!hash) return;   // ไม่มี crypto.subtle (http) → ไม่เก็บ (จะได้ไม่มีทาง match แบบ null===null)
     const m = readLoginCache();
     m[code.trim().toLowerCase()] = { salt, hash, user, ts: Date.now() };
     writeLoginCache(m);
@@ -98,7 +104,7 @@ export async function stationLogin(code, password) {
   const e = readLoginCache()[key];
   if (!e) return { error: isOffline ? "offline_first" : "bad" };
   const hash = await sha256Hex(e.salt + ":" + password);
-  if (hash !== e.hash) return { error: "bad" };
+  if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };   // null ไม่ถือว่า match
   return { user: e.user, offline: true };
 }
 
