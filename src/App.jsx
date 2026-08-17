@@ -3455,6 +3455,10 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [rels, setRels] = useState(null);   // รายการ Release ในโปรเจคนี้
+  useEffect(() => {
+    getReleasesFull().then((all) => setRels(all.filter((r) => r.part_master?.project_id === project.id)));
+  }, [project.id]);
 
   async function save() {
     const c = code.trim(), n = name.trim();
@@ -3503,6 +3507,34 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
         {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
+      </div>
+
+      {/* รายการ Release ในโปรเจคนี้ */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
+          Release ในโปรเจคนี้{rels ? ` (${rels.length})` : ""}
+        </div>
+        {rels === null ? (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>กำลังโหลด...</div>
+        ) : rels.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มี Release</div>
+        ) : (
+          <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <table className="data-table" style={{ fontSize: 12.5 }}>
+              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th></tr></thead>
+              <tbody>
+                {rels.map((r) => (
+                  <tr key={r.id}>
+                    <td>{fmtDT(r.release_date)}</td>
+                    <td>{r.release_order || "-"}</td>
+                    <td>{r.part_master?.part_no || "-"}</td>
+                    <td>{fmtNum(r.qty)} ชิ้น</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
