@@ -8,6 +8,7 @@ import {
   findUnitByQr, getMachineDay, recordMachineWork,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession,
 } from "./supabase.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap } from "./fullscreen.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -38,6 +39,7 @@ function StationLogin({ onLogin }) {
     setBusy(false);
     if (!user) { setErr("รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง"); return; }
     setSession(user);
+    enterFullscreen();   // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
     onLogin(user);
   }
 
@@ -131,18 +133,13 @@ function MachineStation({ user, onLogout }) {
     setStatus(null); setStep(STEP.IDLE);
   }
 
-  // เต็มจอ (ซ่อนแถบบราวเซอร์) — แตะครั้งเดียว
-  function toggleFullscreen() {
-    try {
-      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-      else document.exitFullscreen?.();
-    } catch { /* ignore */ }
-  }
-
-  // ── RECORD ────────────────────────────────────────────────────────────
+  // ── START / STOP (RECORD) ───────────────────────────────────────────────
+  // ต้องกรอกความยาววัสดุก่อน ถึงจะกด Start ได้
+  const matReady = materialLen !== "" && Number(materialLen) > 0;
   const prevStepRef = useRef(STEP.REC);
   function onRecord() {
     if (step === STEP.IDLE) {
+      if (!matReady) { flash("กรอกความยาววัสดุ (Material Lenght) ก่อน", "warn"); return; }
       startTimer();
       setStep(STEP.REC);
     } else if (step !== STEP.CANCEL) {
@@ -158,9 +155,10 @@ function MachineStation({ user, onLogout }) {
 
   // ── SCAN ──────────────────────────────────────────────────────────────
   function onScan() {
-    if (step === STEP.IDLE) { flash("กด RECORD ก่อนเริ่มสแกน", "warn"); return; }
+    if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
     setStep(STEP.SCAN);
   }
+  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   async function onDecoded(qr) {
     if (!qr) return;
     setBusy(true);
@@ -179,11 +177,7 @@ function MachineStation({ user, onLogout }) {
     doSave();
   }
 
-  // ── SAVE (ปุ่มสำรอง — คงไว้ตามเลย์เอาต์ PDF; กด OK บันทึกให้แล้ว) ─────────
-  function onSave() {
-    if (!unit || qty <= 0 || !status) { flash("สแกน แล้วกด OK เพื่อบันทึกได้เลย", "warn"); return; }
-    doSave();
-  }
+  // ── บันทึก (เรียกจากปุ่ม OK) ─────────────────────────────────────────────
   async function doSave() {
     setBusy(true);
     const res = await recordMachineWork({
@@ -224,7 +218,6 @@ function MachineStation({ user, onLogout }) {
 
   const recording = step !== STEP.IDLE;
   const scanArmed = qty > 0 && !!unit;
-  const saveArmed = !!unit && qty > 0 && !!status && step === STEP.PART;
 
   return (
     <div className="stn-shell">
@@ -301,7 +294,7 @@ function MachineStation({ user, onLogout }) {
               step={step} elapsed={elapsed} unit={unit} qty={qty} setQty={setQty}
               status={status} setStatus={setStatus} busy={busy}
               onDecoded={onDecoded} confirmCancel={confirmCancel} confirmPart={confirmPart}
-              doSave={doSave}
+              closeScan={closeScan}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
@@ -316,8 +309,9 @@ function MachineStation({ user, onLogout }) {
                 onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
               />
             </div>
-            <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord} disabled={busy}>
-              <span>{recording ? "STOP" : "RECORD"}</span><span className="stn-rec-dot" />
+            <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
+              disabled={busy || (step === STEP.IDLE && !matReady)}>
+              <span>{recording ? "STOP" : "START"}</span><span className="stn-rec-dot" />
             </button>
             <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
               <div className="row1">
@@ -326,7 +320,6 @@ function MachineStation({ user, onLogout }) {
               </div>
               <div className="qty">Quantity <b>{qty}</b> piece</div>
             </button>
-            <button className={`stn-ctl-btn stn-save-btn${saveArmed ? " armed" : ""}`} onClick={onSave} disabled={busy}>SAVE</button>
           </div>
         </div>
       </div>
@@ -335,14 +328,14 @@ function MachineStation({ user, onLogout }) {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, doSave }) {
+function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan }) {
   if (step === STEP.IDLE) {
     return (
       <div className="stn-hint">
         <div style={{ marginBottom: 8 }}>
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
         </div>
-        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>RECORD</b> เพื่อเริ่มจับเวลา
+        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
       </div>
     );
   }
@@ -367,7 +360,7 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
     );
   }
   if (step === STEP.SCAN) {
-    return <CameraScan onDecoded={onDecoded} busy={busy} />;
+    return <CameraScan onDecoded={onDecoded} busy={busy} onClose={closeScan} />;
   }
   if (step === STEP.PART) {
     const p = unit?.part_master || {};
@@ -405,7 +398,7 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
 }
 
 // ── Camera QR scanner (rear camera + jsQR) with manual fallback ────────────
-function CameraScan({ onDecoded, busy }) {
+function CameraScan({ onDecoded, busy, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -497,6 +490,7 @@ function CameraScan({ onDecoded, busy }) {
         <canvas ref={canvasRef} style={{ display: "none" }} />
         <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
         <div className="laser" />
+        <button type="button" className="stn-cam-close" onClick={onClose} aria-label="ปิดกล้อง">✕</button>
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
       <form className="stn-cam-manual" onSubmit={submitManual}>
@@ -504,6 +498,9 @@ function CameraScan({ onDecoded, busy }) {
           onChange={(e) => setManual(e.target.value)} />
         <button className="stn-pill" type="submit" disabled={busy}>ตกลง</button>
       </form>
+      <div style={{ marginTop: 10 }}>
+        <button type="button" className="stn-pill" onClick={onClose}>✕ ปิดกล้อง / ยกเลิก</button>
+      </div>
     </div>
   );
 }
@@ -519,6 +516,8 @@ export default function StationApp() {
     setUser(null);
   }
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
+  // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
+  useEffect(() => armFullscreenOnFirstTap(), []);
 
   if (!user) return <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={setUser} /></div>;
 
