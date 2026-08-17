@@ -2526,6 +2526,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [customH, setCustomH] = useState(20);
   const [showCode, setShowCode] = useState(false);
   const [printMode, setPrintMode] = useState("sheet");
+  // ชนิดป้าย: 'unit' = ป้ายรายชิ้น (ติดทุกชิ้น — ชิ้นใหญ่) | 'lot' = ป้ายรวมล็อต 1 ใบ (ชิ้นเล็ก สแกนแล้วกรอกจำนวน)
+  const [labelScope, setLabelScope] = useState("unit");
 
   useEffect(() => {
     (async () => {
@@ -2549,10 +2551,16 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     setLoading(true);
     listRows("part_units", { order: "unit_no", filters: { release_id: releaseId } }).then((rows) => {
       setUnits(rows);
-      setSelected(new Set(rows.map((r) => r.id)));
       setLoading(false);
     });
   }, [releaseId]);
+
+  // เลือกป้ายตามชนิด: รายชิ้น = เลือกทุกชิ้น · รวมล็อต = เลือกชิ้นแรกใบเดียว
+  useEffect(() => {
+    if (!units.length) { setSelected(new Set()); return; }
+    if (labelScope === "lot") setSelected(new Set([units[0].id]));
+    else setSelected(new Set(units.map((u) => u.id)));
+  }, [labelScope, units]);
 
   function toggle(id) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -2585,9 +2593,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           partNo: part.part_no || "",
           mdfNo: part.mdf_no ?? "-",
           relNo: rel?.release_order || "",
-          qtyText: (u.unit_no != null && total != null)
-            ? `${u.unit_no} OF ${total}`
-            : (u.unit_no != null ? String(u.unit_no) : ""),
+          qtyText: labelScope === "lot"
+            ? (total != null ? `รวม ${total} ชิ้น` : "")   // ป้ายรวมล็อต: โชว์จำนวนทั้งล็อต
+            : ((u.unit_no != null && total != null)          // ป้ายรายชิ้น: X OF Y
+                ? `${u.unit_no} OF ${total}`
+                : (u.unit_no != null ? String(u.unit_no) : "")),
         },
       };
     });
@@ -2614,17 +2624,40 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       {!loading && units.length > 0 && (
         <Card title={`ชิ้นงานในล็อตนี้ (${units.length})`} right={
-          <Btn size="sm" onClick={toggleAll}>{selected.size === units.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
+          labelScope === "unit"
+            ? <Btn size="sm" onClick={toggleAll}>{selected.size === units.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
+            : null
         }>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 18 }}>
-            {units.map((u) => (
-              <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`}>
-                <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)" }} />
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{u.qr_code}</span>
-                <span style={{ display: "none" }}><QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={90} /></span>
-              </label>
-            ))}
+          <Field label="ชนิดป้าย">
+            <div className="chip-row">
+              <span className={`chip ${labelScope === "unit" ? "active" : ""}`} onClick={() => setLabelScope("unit")}>ป้ายรายชิ้น · ติดทุกชิ้น (ชิ้นใหญ่)</span>
+              <span className={`chip ${labelScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบ (ชิ้นเล็ก สแกนกรอกจำนวน)</span>
+            </div>
+          </Field>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 14px", lineHeight: 1.6 }}>
+            {labelScope === "unit"
+              ? "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น — ติดสติกเกอร์รายชิ้น สแกนทีละชิ้น (จำนวน = 1)"
+              : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ"}
           </div>
+
+          {labelScope === "unit" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 18 }}>
+              {units.map((u) => (
+                <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`}>
+                  <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)" }} />
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{u.qr_code}</span>
+                  <span style={{ display: "none" }}><QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={90} /></span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div style={{ marginBottom: 18 }}>
+              <label className="unit-check checked" style={{ maxWidth: 240 }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{units[0]?.qr_code}</span>
+                <span style={{ display: "none" }}><QRCodeSVG id={`pq-${units[0]?.id}`} value={units[0]?.qr_code || ""} size={90} /></span>
+              </label>
+            </div>
+          )}
 
           <hr className="section-divider" />
 
