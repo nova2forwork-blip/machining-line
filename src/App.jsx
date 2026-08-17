@@ -2438,12 +2438,13 @@ function FinishedPartPage() {
 function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [releases, setReleases] = useState([]);
   const [parts, setParts] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [releaseId, setReleaseId] = useState("");
   const [units, setUnits] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
 
-  const [labelPreset, setLabelPreset] = useState("20x20");
+  const [labelPreset, setLabelPreset] = useState("76x12");
   const [customW, setCustomW] = useState(20);
   const [customH, setCustomH] = useState(20);
   const [showCode, setShowCode] = useState(false);
@@ -2453,6 +2454,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     (async () => {
       setReleases(await listRows("releases", { order: "release_date", ascending: false }));
       setParts(await listRows("part_master", { order: "part_no" }));
+      setProjects(await listRows("projects", { order: "code" }));
     })();
   }, []);
 
@@ -2489,10 +2491,30 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     return { w: p.w, h: p.h };
   }
   function doPrint() {
-    const chosen = units.filter((u) => selected.has(u.id));
-    if (!chosen.length) { alert("กรุณาเลือกอย่างน้อย 1 ชิ้น"); return; }
+    const picked = units.filter((u) => selected.has(u.id));
+    if (!picked.length) { alert("กรุณาเลือกอย่างน้อย 1 ชิ้น"); return; }
     const { w, h } = currentSize();
-    printLabels(chosen, { widthMm: w, heightMm: h, showCode, mode: printMode, title: "QR labels" });
+    const rel = releases.find((r) => r.id === releaseId);
+    const total = rel?.qty;
+    // เติมข้อมูลลงแต่ละป้าย: โปรเจค / Part / MDF / REL / จำนวน (X OF Y)
+    const chosen = picked.map((u) => {
+      const part = parts.find((p) => p.id === u.part_master_id) || {};
+      const proj = projects.find((p) => p.id === part.project_id) || {};
+      return {
+        ...u,
+        _label: {
+          projectNumber: proj.code || "",
+          projectName: proj.name || "",
+          partNo: part.part_no || "",
+          mdfNo: part.mdf_no ?? "-",
+          relNo: rel?.release_order || "",
+          qtyText: (u.unit_no != null && total != null)
+            ? `${u.unit_no} OF ${total}`
+            : (u.unit_no != null ? String(u.unit_no) : ""),
+        },
+      };
+    });
+    printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
   }
 
   return (
