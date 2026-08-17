@@ -15,7 +15,7 @@ import { printLabels, LABEL_PRESETS } from "./labels.js";
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
-  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix,
+  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
 import {
@@ -2974,7 +2974,7 @@ function ReportPage({ goTo }) {
   filteredLogs.forEach((l) => {
     const name = l.operation?.name || "ไม่ระบุ";
     byOp[name] = byOp[name] || { name, count: 0, weight: 0 };
-    byOp[name].count += 1;
+    byOp[name].count += Number(l.quantity ?? 1) || 0;   // นับจำนวนชิ้น (งานหน้าเครื่อง = quantity)
     byOp[name].weight += Number(l.weight ?? l.part_unit?.part_master?.unit_weight ?? 0);
   });
   const chartData = Object.values(byOp);
@@ -3041,8 +3041,8 @@ function ReportPage({ goTo }) {
       </Card>
 
       <div className="stat-row">
-        <StatCard label="จำนวนการสแกน" value={filteredLogs.length.toLocaleString()} icon="scan" />
-        <StatCard label="ชิ้นงานที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
+        <StatCard label="จำนวนชิ้นที่ทำ · รวมทุกขั้นตอน" value={totalPieces(filteredLogs).toLocaleString()} icon="scan" />
+        <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
         <StatCard label="น้ำหนักวัสดุ · นับต่อชิ้น (กก.)" value={fmtNum(material)} icon="weight" />
         <StatCard label="ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)" value={fmtNum(processed)} icon="bolt" />
       </div>
@@ -3058,7 +3058,7 @@ function ReportPage({ goTo }) {
               <XAxis dataKey="name" stroke={CHART.muted} fontSize={12} />
               <YAxis stroke={CHART.muted} fontSize={12} />
               <Tooltip contentStyle={{ background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}`, color: CHART.text, borderRadius: 10 }} />
-              <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={CHART.accent} radius={[5, 5, 0, 0]} />
+              <Bar dataKey="count" name="จำนวนชิ้น" fill={CHART.accent} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -3086,13 +3086,13 @@ function ReportPage({ goTo }) {
                       return (
                         <td key={op}>
                           {cell
-                            ? <span>{cell.count} ครั้ง{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                            ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
                             : <span style={{ color: "var(--surface-3)" }}>—</span>}
                         </td>
                       );
                     })}
                     <td style={{ fontWeight: 600 }}>
-                      {m.total.count} ครั้ง{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
+                      {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
                     </td>
                   </tr>
                 ))}
@@ -3105,9 +3105,9 @@ function ReportPage({ goTo }) {
         </div>
       </Card>
 
-      <Card title="Part No. × ขั้นตอน (จำนวนครั้งที่สแกน)">
+      <Card title="Part No. × ขั้นตอน (จำนวนชิ้น)">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          แต่ละแถวคือเบอร์ Part — คอลัมน์คือขั้นตอนการทำงาน — ตัวเลขในช่องคือจำนวนครั้งที่สแกน (นับต่อการสแกน ไม่ใช่ต่อชิ้น)
+          แต่ละแถวคือเบอร์ Part — คอลัมน์คือขั้นตอนการทำงาน — ตัวเลขในช่องคือจำนวนชิ้นที่ผ่านขั้นตอนนั้น (งานหน้าเครื่องนับตามจำนวนที่กรอก)
         </div>
         {partMatrix.parts.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
@@ -3133,7 +3133,7 @@ function ReportPage({ goTo }) {
                         <td key={op}>
                           {cell ? (
                             <span>
-                              {cell.count.toLocaleString()} ครั้ง
+                              {cell.count.toLocaleString()} ชิ้น
                               {cell.weight > 0 && (
                                 <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtNum(cell.weight)} กก.</span>
                               )}
@@ -3145,7 +3145,7 @@ function ReportPage({ goTo }) {
                       );
                     })}
                     <td style={{ fontWeight: 600 }}>
-                      {p.total.count.toLocaleString()} ครั้ง
+                      {p.total.count.toLocaleString()} ชิ้น
                       {p.total.weight > 0 && (
                         <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(p.total.weight)} กก.</span>
                       )}
@@ -3194,7 +3194,7 @@ function MachinesSummaryPage() {
       </div>
       <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          นับต่อการสแกน (per-scan) — สะท้อนภาระงานของเครื่อง ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ ไม่ใช่จำนวนวัสดุ
+          นับตามจำนวนชิ้นที่ทำในแต่ละขั้นตอน — ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ (งานหน้าเครื่องนับตามจำนวนที่กรอก)
         </div>
         <div style={{ height: 240, marginBottom: 16 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -3203,7 +3203,7 @@ function MachinesSummaryPage() {
               <XAxis dataKey="name" stroke={CHART.muted} fontSize={12} />
               <YAxis stroke={CHART.muted} fontSize={12} />
               <Tooltip contentStyle={{ background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}`, color: CHART.text, borderRadius: 10 }} />
-              <Bar dataKey="count" name="จำนวนครั้งที่สแกน" fill={CHART.success} radius={[5, 5, 0, 0]} />
+              <Bar dataKey="count" name="จำนวนชิ้น" fill={CHART.success} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -3225,13 +3225,13 @@ function MachinesSummaryPage() {
                     return (
                       <td key={op}>
                         {cell
-                          ? <span>{cell.count} ครั้ง{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                          ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
                           : <span style={{ color: "var(--surface-3)" }}>—</span>}
                       </td>
                     );
                   })}
                   <td style={{ fontWeight: 600 }}>
-                    {m.total.count} ครั้ง{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
+                    {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
                   </td>
                 </tr>
               ))}
