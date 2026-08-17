@@ -2631,22 +2631,20 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
         <div className="grid-2" style={{ gap: 12, marginBottom: 12, alignItems: "end" }}>
-          <Field label="กรองตามโปรเจค">
+          <Field label="Projects">
             <Select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
               options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
           </Field>
-          <Field label="ค้นหา (Part No. / Release Order / โปรเจค)">
+          <Field label="Release">
             <div style={{ display: "flex", gap: 8 }}>
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="พิมพ์คำค้น..." style={{ flex: 1 }} />
-              {hasFilter && (
-                <Btn variant="ghost" onClick={clearSearch} title="ล้างการค้นหา">
-                  <Icon name="close" size={14} /> ล้าง
-                </Btn>
-              )}
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา Release Order / Part No. / โปรเจค..." style={{ flex: 1 }} />
+              <Btn variant="ghost" onClick={clearSearch} title="ล้างการค้นหา" disabled={!hasFilter}>
+                <Icon name="close" size={14} /> ล้าง
+              </Btn>
             </div>
           </Field>
         </div>
-        <Field label={`ล็อต Release${hasFilter ? ` (พบ ${filteredReleases.length} ล็อต)` : ""}`}>
+        <Field label={`Part${hasFilter ? ` (พบ ${filteredReleases.length} ล็อต)` : ""}`}>
           <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
             options={filteredReleases.map((r) => ({ value: r.id, label: `${fmtDT(r.release_date)} — ${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
         </Field>
