@@ -649,7 +649,7 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
 // ตาราง Part: วาง (paste) จาก Excel ได้ทั้งบล็อก — คอลัมน์ตรงตามฟอร์ม Production
 // Release Report (Code, Qty, Length, Weight/M, Material, Total Kg, Remark)
 // แต่ละแถว = 1 release + สร้าง QR ต่อชิ้นให้ครบตาม Qty (เหมือนการนำเข้า Excel)
-const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
+const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", mdf: "", rev: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
 
 function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
@@ -810,6 +810,18 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
         releasedBy: user.id, makeQr, rows,
       });
+      // เก็บ Modify (MDF) / REV. ลง part_master — เว้นว่าง = "0"
+      // (ต้องมีคอลัมน์ mdf_no / rev จาก migration-station.sql; ถ้ายังไม่มีจะข้ามเงียบๆ)
+      for (const r of validRows) {
+        const code = r.code.trim();
+        if (!code) continue;
+        try {
+          await updateRows("part_master", { project_id: projectId, part_no: code }, {
+            mdf_no: (r.mdf ?? "").toString().trim() || "0",
+            rev: (r.rev ?? "").toString().trim() || "0",
+          });
+        } catch (_) { /* คอลัมน์อาจยังไม่มี — ไม่ให้ล้มทั้งใบ */ }
+      }
       onSaved({ releaseOrder: ro, ...res });
     } catch (e2) {
       setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ระบบยกเลิกทั้งใบอัตโนมัติ ไม่มีข้อมูลค้าง");
@@ -887,6 +899,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
             <tr>
               <th style={{ width: 34 }}>#</th>
               <th style={{ minWidth: 130 }}>Code *</th>
+              <th style={{ width: 78 }}>Modify</th>
+              <th style={{ width: 60 }}>REV.</th>
               <th style={{ width: 78 }}>จำนวน *</th>
               <th style={{ width: 90 }}>Length (มม.)</th>
               <th style={{ width: 90 }}>Weight/M</th>
@@ -908,6 +922,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                 <tr key={r.id}>
                   <td className="pgrid-idx">{i + 1}</td>
                   <td><input value={r.code} onChange={(e) => setCell(r.id, "code", e.target.value)} onPaste={(e) => handlePaste(e, i, "code")} placeholder="AN04-001-01" /></td>
+                  <td><input value={r.mdf} onChange={(e) => setCell(r.id, "mdf", e.target.value)} placeholder="0" /></td>
+                  <td><input value={r.rev} onChange={(e) => setCell(r.id, "rev", e.target.value)} placeholder="0" /></td>
                   <td><input value={r.qty} onChange={(e) => setCell(r.id, "qty", e.target.value)} onPaste={(e) => handlePaste(e, i, "qty")} inputMode="numeric" /></td>
                   <td><input value={r.length_mm} onChange={(e) => setCell(r.id, "length_mm", e.target.value)} onPaste={(e) => handlePaste(e, i, "length_mm")} inputMode="decimal" /></td>
                   <td><input value={r.weight_per_m} onChange={(e) => setCell(r.id, "weight_per_m", e.target.value)} onPaste={(e) => handlePaste(e, i, "weight_per_m")} inputMode="decimal" /></td>
