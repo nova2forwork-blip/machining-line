@@ -18,7 +18,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // อ่าน session token (ออกโดย verify_login, เก็บโดย auth.setSession) — แนบไปกับทุก
 // การเขียน เพื่อให้ DB ตรวจ token + role ก่อนอนุญาต (ดู migration-2-rls-lockdown.sql)
 function authToken() {
-  try { return JSON.parse(sessionStorage.getItem("mls-session"))?.token || null; }
+  try { return JSON.parse(localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session"))?.token || null; }
   catch { return null; }
 }
 
