@@ -551,10 +551,13 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
               <div className="stn-lbl-part">{p.part_no || "-"}</div>
               {p.material ? <div className="stn-lbl-mat">{p.material}</div> : null}
             </div>
+            <div className="stn-lbl-vline" />
             <div className="stn-lbl-col right">
-              <div className="stn-lbl-line">MDF NO. {p.mdf_no || "-"}</div>
-              <div className="stn-lbl-line">REL NO. {rel.release_order || "-"}</div>
-              {p.rev ? <div className="stn-lbl-line">REV. {p.rev}</div> : null}
+              <div className="stn-lbl-kv">
+                <span className="k">MDF NO.</span><span className="v">{p.mdf_no || "-"}</span>
+                <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
+                {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
+              </div>
               <div className="stn-lbl-of">{progress?.offline ? `~${ofText}` : ofText}</div>
               {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
             </div>
@@ -585,6 +588,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 function CameraScan({ onDecoded, busy, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const overlayRef = useRef(null);   // แคนวาสวาดกรอบขาวทับ QR ที่เจอ
   const streamRef = useRef(null);
   const rafRef = useRef(null);
   const doneRef = useRef(false);
@@ -622,6 +626,26 @@ function CameraScan({ onDecoded, busy, onClose }) {
       try { await v.play(); } catch { /* ignore */ }
       loop();
     }
+    // วาดกรอบขาวรอบ QR ที่เจอ (ตามพิกัดมุมจาก jsQR) — พิกัดตรงกับภาพกล้องเพราะ
+    // overlay ใช้ object-fit: cover เหมือน <video> (ดู .stn-cam-overlay ใน CSS)
+    function drawBox(loc, w, h) {
+      const oc = overlayRef.current; if (!oc) return;
+      if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
+      const g = oc.getContext("2d");
+      g.clearRect(0, 0, w, h);
+      if (!loc) return;
+      const p = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner];
+      g.lineJoin = "round"; g.lineCap = "round";
+      g.lineWidth = Math.max(5, Math.round(w * 0.009));
+      g.strokeStyle = "#fff";
+      g.shadowColor = "rgba(0,0,0,.55)"; g.shadowBlur = 8;
+      g.beginPath();
+      g.moveTo(p[0].x, p[0].y);
+      for (let i = 1; i < 4; i++) g.lineTo(p[i].x, p[i].y);
+      g.closePath(); g.stroke();
+    }
+    function clearBox() { const oc = overlayRef.current; if (oc) { const g = oc.getContext("2d"); g && g.clearRect(0, 0, oc.width, oc.height); } }
+
     async function loop() {
       const mod = await import("jsqr");
       const jsQR = mod.default || mod;
@@ -639,12 +663,14 @@ function CameraScan({ onDecoded, busy, onClose }) {
             cv.width = w; cv.height = h;
             ctx.drawImage(v, 0, 0, w, h);
             const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
-            if (code && code.data) {
+            if (code && code.data && code.location) {
+              drawBox(code.location, w, h);        // กรอบขาวเกาะรอบ QR ตัวที่กำลังอ่าน
               doneRef.current = true;
-              // ถ้าไม่พบ → เตือนแล้วกลับมาสแกนต่อได้ (กันสแกนซ้ำเฟรมเดิมด้วยหน่วงสั้น ๆ)
-              onDecoded(code.data.trim()).then((ok) => { if (!ok) setTimeout(() => { doneRef.current = false; }, 1000); });
+              // ถ้าไม่พบในระบบ → เตือนแล้วกลับมาสแกนต่อ (ล้างกรอบด้วย)
+              onDecoded(code.data.trim()).then((ok) => { if (!ok) { clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); } });
               return;
             }
+            clearBox();                            // ไม่เจอ QR ในเฟรมนี้ → ล้างกรอบ
           }
         }
         rafRef.current = requestAnimationFrame(tick);
@@ -673,8 +699,7 @@ function CameraScan({ onDecoded, busy, onClose }) {
       <div className="stn-cam">
         <video ref={videoRef} playsInline muted />
         <canvas ref={canvasRef} style={{ display: "none" }} />
-        <div className="stn-scan-frame" />
-        <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
+        <canvas ref={overlayRef} className="stn-cam-overlay" />
         <button type="button" className="stn-cam-close" onClick={onClose} aria-label="ปิดกล้อง">✕</button>
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
