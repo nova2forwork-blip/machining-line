@@ -266,7 +266,14 @@ export async function flushScanQueue() {
   if (a.length === 0) return;
   const remaining = [];
   for (const item of a) {
-    const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr });
+    // คิวมี 2 ชนิด: สแกนต่อชิ้น (item.qr) และงานหน้าเครื่อง (item.machineWork)
+    let data, error;
+    if (item.machineWork) {
+      // ใช้ token ปัจจุบันแทน token ที่บันทึกไว้ตอนออฟไลน์ (กัน token หมดอายุ)
+      ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
+    } else {
+      ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
+    }
     if (error) { remaining.push(item); continue; }               // เน็ต/DB ยังมีปัญหา เก็บไว้
     if (data && data.ok === false && data.reason === "unauthorized") { remaining.push(item); continue; } // token หมดอายุ รอ login ใหม่
     // อื่นๆ (ok / duplicate / not_found / machine_cannot / no_station) = จบ ไม่ต้อง retry
@@ -359,4 +366,37 @@ export async function getScanLogsBetween(fromIso, toIso) {
     from += pageSize;
   }
   return all;
+}
+
+// ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
+// ดึงบันทึกงานของ "เครื่องของ token นี้" เฉพาะวันนี้ + ยอดรวมประจำวัน (จาก DB)
+// คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
+// (เครื่อง/พนักงานดึงจาก session token ฝั่ง DB — client ปลอมไม่ได้)
+export async function getMachineDay() {
+  const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
+  if (error) { console.warn("machine_day error", error); return { ok: false, message: error.message }; }
+  return data || { ok: false };
+}
+
+// บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
+// คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
+export async function recordMachineWork({ qr, quantity, materialLengthMm, processSeconds, status }, { allowQueue = true } = {}) {
+  const payload = {
+    p_token: authToken(),
+    p_qr: String(qr || "").trim(),
+    p_quantity: Number(quantity) || 0,
+    p_material_length: materialLengthMm == null || materialLengthMm === "" ? null : Number(materialLengthMm),
+    p_process_seconds: Number(processSeconds) || 0,
+    p_status: status || "inprocess",
+  };
+  const { data, error } = await supabase.rpc("record_machine_work", payload);
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) {
+      const a = qRead(); a.push({ machineWork: payload, ts: Date.now() }); qWrite(a);
+      return { ok: true, queued: true };
+    }
+    console.warn("record_machine_work error", error);
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
 }
