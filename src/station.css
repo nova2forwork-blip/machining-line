@@ -137,9 +137,12 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 
 /* ── Daily report ────────────────────────────────────────────── */
 .stn-daily { border-right: 2px solid var(--st-line); padding: 18px 16px; display: flex; flex-direction: column; }
+.stn-daily-head { flex-shrink: 0; }
 .stn-daily h2 { font-size: 15px; font-weight: 600; margin: 0; }
-.stn-daily .stn-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #333; margin-bottom: 12px; }
-.stn-kpi { margin-top: 12px; text-align: center; }
+.stn-daily .stn-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--st-muted); }
+/* กระจาย KPI เต็มความสูงคอลัมน์ให้สมดุล (ไม่กระจุกด้านบน) */
+.stn-kpis { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
+.stn-kpi { text-align: center; }
 .stn-kpi .lbl { font-size: 11.5px; letter-spacing: .05em; color: #2a2d31; text-transform: uppercase; }
 .stn-kpi .val { font-weight: 600; color: var(--st-red); line-height: 1.05; margin-top: 2px; font-size: clamp(20px, 2.6vw, 32px); }
 .stn-kpi .val.mono { font-family: 'IBM Plex Mono', monospace; }
@@ -152,6 +155,8 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   display: flex; align-items: center; justify-content: center; text-align: center; min-width: 0; min-height: 0;
 }
 .stn-control { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+/* กระจายปุ่มควบคุมเต็มความสูง (ปุ่มออกอยู่ล่างสุด) */
+.stn-ctl-main { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; gap: 12px; }
 .stn-clock { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: clamp(24px, 3vw, 38px); text-align: right; letter-spacing: .02em; }
 .stn-clock.live { color: var(--st-red); }
 
