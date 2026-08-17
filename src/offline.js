@@ -46,10 +46,17 @@ function tx(store, mode, fn) {
 }
 
 // ── UUID (idempotency key) ────────────────────────────────────────────────
+// ต้องเป็นรูปแบบ UUID เสมอ เพราะฝั่ง DB คอลัมน์ client_id เป็น type uuid
+// (ถ้าคืน string อื่น เช่นตอนเสิร์ฟผ่าน http ที่ crypto.randomUUID ไม่มี → insert พังทั้งหมด)
 export function newClientId() {
-  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch { /* ignore */ }
-  // fallback แบบง่าย (พอสำหรับ dedup) — ไม่ต้องเข้ารหัสแรง
-  return "cid-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  try { if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID(); } catch { /* ignore */ }
+  const b = new Uint8Array(16);
+  try { crypto.getRandomValues(b); }        // มีใน insecure context (http) ด้วย
+  catch { for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256); }
+  b[6] = (b[6] & 0x0f) | 0x40;              // version 4
+  b[8] = (b[8] & 0x3f) | 0x80;              // variant
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0"));
+  return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
 }
 
 // ── Unit cache (part_units) ───────────────────────────────────────────────
