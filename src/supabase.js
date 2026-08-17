@@ -120,6 +120,18 @@ export async function findUnitByQr(qrCode) {
   return data;
 }
 
+// จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
+// ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
+export async function getReleaseProgress(releaseId) {
+  if (!releaseId) return 0;
+  const { data, error } = await supabase
+    .from("machine_records")
+    .select("quantity")
+    .eq("release_id", releaseId);
+  if (error) { console.warn("getReleaseProgress error", error); return 0; }
+  return (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+}
+
 // ประวัติการสแกนทั้งหมดของชิ้นเดียว
 export async function getUnitHistory(partUnitId) {
   const { data, error } = await supabase
