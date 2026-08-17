@@ -2527,8 +2527,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [printMode, setPrintMode] = useState("roll");   // ค่าเริ่มต้น: 1 ป้าย/หน้า ขนาดเท่าจริง
   // ชนิดป้าย: 'unit' = ป้ายรายชิ้น (ติดทุกชิ้น — ชิ้นใหญ่) | 'lot' = ป้ายรวมล็อต 1 ใบ (ชิ้นเล็ก สแกนแล้วกรอกจำนวน)
   const [labelScope, setLabelScope] = useState("unit");
-  // ค้นหาล็อต: กรองตามโปรเจค + คำค้น (Part No./Release Order/ชื่อโปรเจค/วันที่)
+  // กรองล็อตแบบดรอปดาวลูกโซ่: Projects → Release (Release Order) → Part (ล็อต) + ช่องค้นหาอิสระ
   const [projectFilter, setProjectFilter] = useState("");
+  const [releaseOrder, setReleaseOrder] = useState("");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -2606,19 +2607,22 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
   }
 
-  // กรองรายการล็อตตามโปรเจค + คำค้น
+  // ── ตัวกรองลูกโซ่ + ช่องค้นหาอิสระ ──────────────────────────────────────
   const q = search.trim().toLowerCase();
-  const filteredReleases = releases.filter((r) => {
+  const relHay = (r) => {
     const part = partOf(r);
-    if (projectFilter && part?.project_id !== projectFilter) return false;
-    if (!q) return true;
     const proj = projects.find((p) => p.id === part?.project_id);
-    const hay = [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name]
+    return [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name]
       .filter(Boolean).join(" ").toLowerCase();
-    return hay.includes(q);
-  });
-  const hasFilter = !!(projectFilter || q);
-  function clearSearch() { setProjectFilter(""); setSearch(""); }
+  };
+  const matchSearch = (r) => !q || relHay(r).includes(q);
+  // releases ในโปรเจคที่เลือก (ใช้สร้างตัวเลือก Release Order)
+  const relsInProject = releases.filter((r) => (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
+  const releaseOrders = Array.from(new Set(relsInProject.map((r) => r.release_order).filter(Boolean))).sort();
+  // Part options = กรองด้วย Release Order ที่เลือกด้วย
+  const filteredReleases = relsInProject.filter((r) => !releaseOrder || r.release_order === releaseOrder);
+  const hasFilter = !!(projectFilter || releaseOrder || q || releaseId);
+  function clearSearch() { setProjectFilter(""); setReleaseOrder(""); setSearch(""); setReleaseId(""); }   // ล้างทั้งหมด
 
   return (
     <div>
@@ -2630,26 +2634,37 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       </div>
 
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
-        <div className="grid-2" style={{ gap: 12, marginBottom: 12, alignItems: "end" }}>
+        {/* ช่องค้นหาอิสระ — ค้นได้ทุกอย่าง พร้อมปุ่มล้างทั้งหมด */}
+        <div className={`lot-search ${hasFilter ? "has" : ""}`}>
+          <svg className="lot-search-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input className="lot-search-in" value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="ค้นหา Part No. / Release Order / โปรเจค / วันที่..." />
+          <button type="button" className="lot-search-clear" onClick={clearSearch} disabled={!hasFilter} title="ล้างทั้งหมด">
+            <Icon name="close" size={14} /> ล้าง
+          </button>
+        </div>
+
+        {/* ดรอปดาวลูกโซ่: เลือกโปรเจค → รายการ Release แคบลง → เลือก Part */}
+        <div className="grid-3" style={{ gap: 12, marginTop: 14 }}>
           <Field label="Projects">
-            <Select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+            <Select value={projectFilter}
+              onChange={(e) => { setProjectFilter(e.target.value); setReleaseOrder(""); setReleaseId(""); }}
               options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
           </Field>
-          <Field label="Release">
-            <div style={{ display: "flex", gap: 8 }}>
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา Release Order / Part No. / โปรเจค..." style={{ flex: 1 }} />
-              <Btn variant="ghost" onClick={clearSearch} title="ล้างการค้นหา" disabled={!hasFilter}>
-                <Icon name="close" size={14} /> ล้าง
-              </Btn>
-            </div>
+          <Field label={`Release${releaseOrders.length ? ` (${releaseOrders.length})` : ""}`}>
+            <Select value={releaseOrder}
+              onChange={(e) => { setReleaseOrder(e.target.value); setReleaseId(""); }}
+              options={releaseOrders.map((ro) => ({ value: ro, label: ro }))} />
+          </Field>
+          <Field label={`Part${hasFilter ? ` (${filteredReleases.length})` : ""}`}>
+            <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
+              options={filteredReleases.map((r) => ({ value: r.id, label: `${fmtDT(r.release_date)} — ${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
           </Field>
         </div>
-        <Field label={`Part${hasFilter ? ` (พบ ${filteredReleases.length} ล็อต)` : ""}`}>
-          <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
-            options={filteredReleases.map((r) => ({ value: r.id, label: `${fmtDT(r.release_date)} — ${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
-        </Field>
         {hasFilter && filteredReleases.length === 0 && (
-          <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 8 }}>ไม่พบล็อตที่ตรงกับการค้นหา — ลองล้างตัวกรอง</div>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด</div>
         )}
       </Card>
 
