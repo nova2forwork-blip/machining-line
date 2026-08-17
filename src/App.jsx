@@ -2525,7 +2525,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [customW, setCustomW] = useState(20);
   const [customH, setCustomH] = useState(20);
   const [showCode, setShowCode] = useState(false);
-  const [printMode, setPrintMode] = useState("sheet");
+  const [printMode, setPrintMode] = useState("roll");   // ค่าเริ่มต้น: 1 ป้าย/หน้า ขนาดเท่าจริง
   // ชนิดป้าย: 'unit' = ป้ายรายชิ้น (ติดทุกชิ้น — ชิ้นใหญ่) | 'lot' = ป้ายรวมล็อต 1 ใบ (ชิ้นเล็ก สแกนแล้วกรอกจำนวน)
   const [labelScope, setLabelScope] = useState("unit");
 
@@ -2672,10 +2672,10 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 80 }} /></Field>
               </>
             )}
-            <Field label="รูปแบบ">
+            <Field label="รูปแบบการพิมพ์">
               <div className="chip-row">
-                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>แผ่น A4</span>
-                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>ม้วนป้าย</span>
+                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>1 ป้าย/หน้า · เท่าจริง</span>
+                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>หลายป้าย/แผ่น A4</span>
               </div>
             </Field>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 10 }}>
