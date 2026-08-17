@@ -1375,6 +1375,28 @@ function PartProgressModal({ release, user, onClose }) {
         <div style={{ color: "var(--danger-hi)", fontSize: 13 }}>{err}</div>
       ) : (
         <>
+          {/* ── น้ำหนัก / ความยาว ของ Part นี้ ───────────────────────────── */}
+          {(() => {
+            const uw = release.unit_weight ?? release.part_master?.unit_weight;
+            const len = release.length_mm ?? release.part_master?.default_length_mm;
+            return (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>น้ำหนัก/ชิ้น</div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{uw != null ? `${fmtNum(uw)} กก.` : "-"}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>ความยาว/ชิ้น</div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{len != null ? `${fmtNum(len)} มม.` : "-"}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>น้ำหนักรวม</div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{uw != null ? `${fmtNum(totalUnits * uw)} กก.` : "-"}</div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── ตัวตั้ง/แก้ Routing (เฉพาะ Admin) ─────────────────────────── */}
           {canEditRouting && (editRouting || routing.length === 0) ? (
             <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
@@ -2555,8 +2577,6 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     const chosen = picked.map((u) => {
       const part = parts.find((p) => p.id === u.part_master_id) || {};
       const proj = projects.find((p) => p.id === part.project_id) || {};
-      const wKg = u.weight ?? part.unit_weight;               // น้ำหนัก/ชิ้น (กก.)
-      const lMm = u.length_mm ?? part.default_length_mm;      // ความยาว/ชิ้น (มม.)
       return {
         ...u,
         _label: {
@@ -2568,8 +2588,6 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           qtyText: (u.unit_no != null && total != null)
             ? `${u.unit_no} OF ${total}`
             : (u.unit_no != null ? String(u.unit_no) : ""),
-          weightText: wKg != null ? `${fmtNum(wKg)} kg` : "",
-          lengthText: lMm != null ? `${fmtNum(lMm)} mm` : "",
         },
       };
     });
