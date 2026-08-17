@@ -95,14 +95,17 @@ export function printLabels(units, opts = {}) {
     body { margin: 0; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, ${widthMm}mm); gap: 3mm; justify-content: start; }
   `;
-  // 1 ป้าย/หน้า · หน้ากระดาษ = ขนาดป้ายจริง (พื้นขาว = กรอบพอดี ไม่มีขอบขาวรอบ)
-  // ป้ายถัดไปขึ้นหน้าใหม่ · ต้องตั้ง Scale=100% + Margins=None ในกล่องพิมพ์
+  // 1 ป้าย/หน้า · ขนาดป้ายจริง + เผื่อขอบ 1 มม. รอบด้าน (กันกรอบ/มุมมนโดนตัดตอนพิมพ์)
+  // ป้ายถัดไปขึ้นหน้าใหม่ · ตั้ง Scale=100% + Margins=None ในกล่องพิมพ์
+  const pad = 1;                                  // มม. เผื่อขอบกันโดนตัด
+  const pageW = (widthMm + pad * 2).toFixed(2);
+  const pageH = (heightMm + pad * 2).toFixed(2);
   const rollCss = `
-    @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
-    html, body { margin: 0 !important; padding: 0 !important; width: ${widthMm}mm; background: #fff; }
-    .grid { display: block; margin: 0; padding: 0; width: ${widthMm}mm; }
+    @page { size: ${pageW}mm ${pageH}mm; margin: 0; }
+    html, body { margin: 0 !important; padding: 0 !important; width: ${pageW}mm; background: #fff; }
+    .grid { display: block; margin: 0; padding: 0; width: ${pageW}mm; }
     .lbl {
-      width: ${widthMm}mm; height: ${heightMm}mm; margin: 0;
+      width: ${widthMm}mm; height: ${heightMm}mm; margin: ${pad}mm auto;
       page-break-after: always; break-after: page; page-break-inside: avoid;
     }
     .lbl:last-child { page-break-after: auto; break-after: auto; }
