@@ -39,15 +39,21 @@ export function printLabels(units, opts = {}) {
   const labelCells = units.map((u) => {
     const svg = collectQrSvg(u.id);
     const L = u._label || {};
+    const wl = [L.weightText, L.lengthText].filter(Boolean).join(" · ");
     return `<div class="lbl">
       <div class="qr">${svg}</div>
       <div class="body">
-        <div class="c num">${escapeHtml(L.projectNumber || "")}</div>
-        <div class="c r">${escapeHtml(L.mdfNo != null ? `MDF NO. ${L.mdfNo || "-"}` : "")}</div>
-        <div class="c name">${escapeHtml(L.projectName || "")}</div>
-        <div class="c r">${escapeHtml(L.relNo ? `REL NO. ${L.relNo}` : "")}</div>
-        <div class="c part">${escapeHtml(L.partNo || "")}</div>
-        <div class="c r qty">${escapeHtml(L.qtyText || "")}</div>
+        <div class="col left">
+          <div class="c num">${escapeHtml(L.projectNumber || "")}</div>
+          <div class="c name">${escapeHtml(L.projectName || "")}</div>
+          <div class="c part">${escapeHtml(L.partNo || "")}</div>
+        </div>
+        <div class="col right">
+          <div class="c">${escapeHtml(L.mdfNo != null ? `MDF NO. ${L.mdfNo || "-"}` : "")}</div>
+          <div class="c">${escapeHtml(L.relNo ? `REL NO. ${L.relNo}` : "")}</div>
+          <div class="c qty">${escapeHtml(L.qtyText || "")}</div>
+          <div class="c wl">${escapeHtml(wl)}</div>
+        </div>
       </div>
     </div>`;
   }).join("");
@@ -64,14 +70,14 @@ export function printLabels(units, opts = {}) {
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
     .qr svg { width: 100%; height: 100%; display: block; }
     .body {
-      flex: 1; height: 100%; display: grid;
-      grid-template-columns: 1fr auto; grid-template-rows: auto auto 1fr;
-      column-gap: 2.5mm; align-content: center; min-width: 0;
+      flex: 1; height: 100%; display: flex; justify-content: space-between;
+      gap: 2.5mm; align-items: center; min-width: 0;
     }
-    .c { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .c.r { text-align: right; }
-    .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; align-self: end; }
-    .c.qty { align-self: end; }
+    .body .col { display: flex; flex-direction: column; justify-content: center; min-width: 0; gap: 0.3mm; }
+    .body .col.right { text-align: right; align-items: flex-end; flex-shrink: 0; }
+    .c { font-size: ${fSmall}mm; line-height: 1.16; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; margin-top: 0.3mm; }
+    .c.wl { font-size: ${(heightMm * 0.15).toFixed(2)}mm; color: #333; }
   `;
 
   const sheetCss = `
