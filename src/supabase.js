@@ -1,141 +1,539 @@
-import { supabase } from "./supabase.js";
+import { createClient } from "@supabase/supabase-js";
+import {
+  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
+  setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
+} from "./offline.js";
 
-// ─── Password hashing (client-side) — DEPRECATED for login ───────────────────
-// เดิมใช้ hash รหัสผ่านฝั่ง client แล้วเทียบใน browser ซึ่งไม่ปลอดภัย (ดึง hash ของ
-// พนักงานทุกคนลงมาได้). ตอนนี้ย้ายการตรวจไปทำใน DB (verify_login RPC) แล้ว และการ
-// สร้าง/ตั้งรหัสพนักงานก็ทำผ่าน upsert_employee RPC (DB hash ด้วย bcrypt เอง)
-// จึงไม่ควรเรียกฟังก์ชันนี้อีก — คงไว้เพื่อ backward-compat เท่านั้น
-export async function hashPassword(pw) {
-  const enc = new TextEncoder().encode(pw);
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+// ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+
+if (!SUPABASE_URL || !SUPABASE_ANON) {
+  console.error(
+    "❌  ยังไม่ได้ตั้งค่า Supabase!\n" +
+    "    สร้างไฟล์ .env.local แล้วใส่:\n" +
+    "    VITE_SUPABASE_URL=...\n" +
+    "    VITE_SUPABASE_ANON_KEY=..."
+  );
 }
 
-export const ROLES = ["admin", "supervisor", "operator"];
-export const ROLE_LABELS = {
-  admin: "ผู้ดูแลระบบ (Admin)",
-  supervisor: "หัวหน้างาน",
-  operator: "พนักงานหน้าเครื่อง",
-};
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// ─── Role helpers (ใช้กัน UI ตามสิทธิ์ — ดู RBAC ใน App.jsx) ──────────────────
-// admin      = ทำได้ทุกอย่าง (Setup, จัดการ Release, ลบ)
-// supervisor = ดูรายงาน + จัดการ Release ได้ แต่แก้ Setup ระบบ (พนักงาน/เครื่อง) ไม่ได้
-// operator   = ปล่อยงาน/สแกน/พิมพ์ป้าย/ดูรายงานเท่านั้น
-export function isAdmin(user)      { return user?.role === "admin"; }
-export function canManage(user)    { return user?.role === "admin" || user?.role === "supervisor"; }
+// อ่าน session token (ออกโดย verify_login, เก็บโดย auth.setSession) — แนบไปกับทุก
+// การเขียน เพื่อให้ DB ตรวจ token + role ก่อนอนุญาต (ดู migration-2-rls-lockdown.sql)
+function authToken() {
+  try { return JSON.parse(localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session"))?.token || null; }
+  catch { return null; }
+}
 
-function mapLoginRow(row) {
+// ── Generic table helpers ───────────────────────────────────────────────────
+// อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
+// (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
+
+export async function listRows(table, { order, ascending = true, filters } = {}) {
+  let q = supabase.from(table).select("*");
+  if (filters) {
+    for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
+  }
+  if (order) q = q.order(order, { ascending });
+  const { data, error } = await q;
+  if (error) {
+    console.warn("listRows error", table, error);
+    return [];
+  }
+  return data || [];
+}
+
+export async function insertRow(table, row) {
+  const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
+  if (error) { console.warn("insertRow error", table, error); throw error; }
+  return data;
+}
+
+export async function insertRows(table, rows) {
+  const { data, error } = await supabase.rpc("authz_insert_many", { p_token: authToken(), p_tbl: table, p_payload: rows });
+  if (error) { console.warn("insertRows error", table, error); throw error; }
+  return data || [];
+}
+
+export async function updateRow(table, id, patch) {
+  const { data, error } = await supabase.rpc("authz_update", { p_token: authToken(), p_tbl: table, p_id: id, p_payload: patch });
+  if (error) { console.warn("updateRow error", table, error); throw error; }
+  return data;
+}
+
+// Bulk update: apply the same patch to every row matching the given filters.
+// Used e.g. to propagate a release's edited weight/length down to all its part_units.
+export async function updateRows(table, filters, patch) {
+  const { data, error } = await supabase.rpc("authz_update_where", { p_token: authToken(), p_tbl: table, p_filters: filters, p_payload: patch });
+  if (error) { console.warn("updateRows error", table, error); throw error; }
+  return data || 0; // จำนวนแถวที่อัปเดต
+}
+
+export async function deleteRow(table, id) {
+  const { error } = await supabase.rpc("authz_delete", { p_token: authToken(), p_tbl: table, p_id: id });
+  if (error) { console.warn("deleteRow error", table, error); throw error; }
+}
+
+// Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
+export async function deleteRows(table, ids) {
+  if (!ids || ids.length === 0) return;
+  const { error } = await supabase.rpc("authz_delete_many", { p_token: authToken(), p_tbl: table, p_ids: ids });
+  if (error) { console.warn("deleteRows error", table, error); throw error; }
+}
+
+// ออกจากระบบ — ยกเลิก token ฝั่ง DB (เรียกก่อน clearSession)
+export async function logoutSession() {
+  const t = authToken();
+  if (t) { try { await supabase.rpc("logout", { p_token: t }); } catch (_) { /* ignore */ } }
+}
+
+// เปิด/ปิดการใช้งานพนักงาน (admin เท่านั้น) — ผ่าน RPC
+export async function setEmployeeActive(id, active) {
+  const { error } = await supabase.rpc("set_employee_active", { p_token: authToken(), p_id: id, p_active: active });
+  if (error) { console.warn("set_employee_active error", error); throw error; }
+}
+
+// Delete a release entirely, along with every part_unit it created and any
+// scan_logs recorded against those units (FK constraints require deleting
+// children before parents). Caller is responsible for warning the user first
+// if any of those units have already been scanned — this does not check.
+export async function deleteReleaseCascade(releaseId) {
+  // cascade (scan_logs → part_units → releases) ทำใน RPC เดียว = atomic + ตรวจสิทธิ์
+  const { error } = await supabase.rpc("authz_delete_release", { p_token: authToken(), p_release_id: releaseId });
+  if (error) { console.warn("deleteReleaseCascade error", error); throw error; }
+}
+
+// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
+export async function deleteCap(machineId, operationId) {
+  const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
+  if (error) { console.warn("deleteCap error", error); throw error; }
+}
+
+const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
+
+// หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
+// ออนไลน์ = ถามฐานข้อมูล + เก็บลงแคชไว้ใช้ออฟไลน์ · ออฟไลน์/เน็ตมีปัญหา = อ่านจากแคช
+export async function findUnitByQr(qrCode) {
+  const qr = String(qrCode || "").trim();
+  if (!qr) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return await getCachedUnit(qr);                       // ออฟไลน์ → แคชอย่างเดียว
+  }
+  const { data, error } = await supabase
+    .from("part_units").select(UNIT_SELECT).eq("qr_code", qr).maybeSingle();
+  if (error) {
+    console.warn("findUnitByQr error", error);
+    return (await getCachedUnit(qr)) || null;             // เน็ตสะดุด → ลองแคช
+  }
+  if (data) cacheUnit(data);                              // เก็บไว้ใช้ตอนเน็ตหลุด
+  return data;
+}
+
+// โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
+// จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
+export async function prefetchUnitsForOffline(limit = 4000) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  const pageSize = 1000; let from = 0; let total = 0;
+  for (; from < limit;) {
+    const { data, error } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .order("created_at", { ascending: false })
+      .range(from, Math.min(from + pageSize, limit) - 1);
+    if (error) { console.warn("prefetchUnits error", error); break; }
+    if (!data || !data.length) break;
+    await cacheUnitsBulk(data);
+    total += data.length;
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return total;
+}
+
+// จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
+// ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
+//   ออนไลน์ = ยอดจริงจาก DB + งานที่ยังค้างคิว (ยังไม่ซิงค์) แล้ว snapshot ไว้
+//   ออฟไลน์ = snapshot ล่าสุด + งานที่ค้างคิว
+export async function getReleaseProgress(releaseId) {
+  if (!releaseId) return 0;
+  const queued = queuedQtyForRelease(releaseId);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return (await getCachedProgress(releaseId)) + queued;
+  }
+  const { data, error } = await supabase
+    .from("machine_records").select("quantity").eq("release_id", releaseId);
+  if (error) {
+    console.warn("getReleaseProgress error", error);
+    return (await getCachedProgress(releaseId)) + queued;
+  }
+  const done = (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+  setCachedProgress(releaseId, done);                     // snapshot ไว้ใช้ออฟไลน์
+  return done + queued;
+}
+
+// ประวัติการสแกนทั้งหมดของชิ้นเดียว
+export async function getUnitHistory(partUnitId) {
+  const { data, error } = await supabase
+    .from("scan_logs")
+    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name,code)")
+    .eq("part_unit_id", partUnitId)
+    .order("scanned_at", { ascending: true });
+  if (error) {
+    console.warn("getUnitHistory error", error);
+    return [];
+  }
+  return data || [];
+}
+
+// part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
+export async function getAllUnitsFull(statusFilter) {
+  // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    let q = supabase
+      .from("part_units")
+      .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (statusFilter) q = q.eq("status", statusFilter);
+    const { data, error } = await q;
+    if (error) { console.warn("getAllUnitsFull error", error); break; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+// ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
+// (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
+// Caller ต้องแจ้งเตือนผู้ใช้ก่อนเสมอ — ฟังก์ชันนี้ไม่เช็คว่ามีการสแกนไปแล้วหรือยัง
+export async function deleteProjectCascade(projectId) {
+  // cascade (scan_logs → part_units → releases → part_master → projects) ใน RPC เดียว
+  const { error } = await supabase.rpc("authz_delete_project", { p_token: authToken(), p_project_id: projectId });
+  if (error) { console.warn("deleteProjectCascade error", error); throw error; }
+}
+
+// ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
+export async function getProjectImpact(projectId) {
+  const { data: pm } = await supabase.from("part_master").select("id").eq("project_id", projectId);
+  const partIds = (pm || []).map((p) => p.id);
+  if (partIds.length === 0) return { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  const { data: rel } = await supabase.from("releases").select("id").in("part_master_id", partIds);
+  const releaseIds = (rel || []).map((r) => r.id);
+  if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  const { data: units } = await supabase.from("part_units").select("status").in("release_id", releaseIds);
+  const unitList = units || [];
   return {
-    token: row.token,        // session token — แนบไปกับทุกการเขียนผ่าน supabase.js
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    role: row.role,
-    department: row.department_name || "-",
-    machine: row.machine_id ? { id: row.machine_id, code: row.machine_code, name: row.machine_name } : null,
-    operation: row.operation_id ? { id: row.operation_id, name: row.operation_name } : null,
+    partCount: partIds.length,
+    releaseCount: releaseIds.length,
+    unitCount: unitList.length,
+    scannedCount: unitList.filter((u) => u.status !== "released").length,
   };
 }
+export async function getReleasesFull() {
+  const { data, error } = await supabase
+    .from("releases")
+    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name)), employee:employees(name, code)")
+    .order("release_date", { ascending: false });
+  if (error) {
+    console.warn("getReleasesFull error", error);
+    return [];
+  }
+  return data || [];
+}
 
-// ─── Login (ตรวจฝั่ง DB ผ่าน RPC — client ไม่เห็น password_hash อีกต่อไป) ──────
-export async function verifyLogin(code, password) {
-  const { data, error } = await supabase.rpc("verify_login", {
-    p_code: code.trim(),
-    p_password: password,
+// สถิติ part_units (total / finished / in_progress) จัดกลุ่มตาม release_id
+// ใช้ในหน้า Release Detail แสดงความคืบหน้าต่อ Part
+export async function getUnitStatsByReleaseIds(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  // นับที่ฝั่ง DB (group by) — ไม่ติดเพดาน 1,000 แถวเหมือนการดึงมานับใน browser
+  const { data, error } = await supabase.rpc("release_unit_stats", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_unit_stats error", error); return {}; }
+  const stats = {};
+  for (const r of data || []) {
+    stats[r.release_id] = {
+      total: Number(r.total) || 0,
+      finished: Number(r.finished) || 0,
+      inProgress: Number(r.in_progress) || 0,
+    };
+  }
+  return stats;
+}
+
+// ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
+// จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
+export async function getEmployees() {
+  const { data, error } = await supabase
+    .from("employees")
+    .select("id, code, name, role, active, department_id, machine_id, operation_id, created_at")
+    .order("code", { ascending: true });
+  if (error) { console.warn("getEmployees error", error); return []; }
+  return data || [];
+}
+
+// ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
+
+// บันทึกการสแกน 1 ครั้งแบบ atomic — เครื่อง/ขั้นตอน/พนักงาน ดึงจาก session token ฝั่ง DB
+// (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
+export async function recordScan({ unitId }) {
+  const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
+  if (error) { console.warn("record_scan error", error); return { ok: false, reason: "error", message: error.message }; }
+  return data || { ok: false, reason: "error" };
+}
+
+// ── Offline scan queue (localStorage) — โหมดหน้าเครื่องกันสแกนหายเมื่อเน็ตสะดุด ────
+const SCAN_Q_KEY = "mls-scan-queue";
+const scanQListeners = new Set();
+function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || []; } catch { return []; } }
+function qWrite(a) { localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a)); scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
+export function scanQueueCount() { return qRead().length; }
+export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
+// รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
+function queuedQtyForRelease(releaseId) {
+  if (!releaseId) return 0;
+  return qRead().reduce((s, it) =>
+    s + (it.release_id === releaseId ? (Number(it.machineWork?.p_quantity) || 0) : 0), 0);
+}
+function isNetworkErr(error) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
+}
+
+// ── คิว "ซิงค์ไม่สำเร็จถาวร" — งานที่ทำออฟไลน์แล้วพอจะซิงค์ กลับเจอว่า QR/ล็อตถูกลบ
+//    หรือถูกแก้ฝั่งออฟฟิศ (not_found ฯลฯ) → ไม่ทิ้งเงียบ เก็บไว้ให้แจ้ง/ลองใหม่ได้
+const REJECT_Q_KEY = "mls-scan-rejected";
+const rejectListeners = new Set();
+function rjRead() { try { return JSON.parse(localStorage.getItem(REJECT_Q_KEY)) || []; } catch { return []; } }
+function rjWrite(a) { localStorage.setItem(REJECT_Q_KEY, JSON.stringify(a)); rejectListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
+function pushRejected(item, reason) {
+  const a = rjRead();
+  if (item.qid && a.some((r) => r.qid === item.qid)) return;   // กันซ้ำในคิว rejected (bug: overlapping flush)
+  a.push({ ...item, reason, rejectedAt: Date.now() }); rjWrite(a);
+}
+export function rejectedQueueCount() { return rjRead().length; }
+export function onRejectedQueue(cb) { rejectListeners.add(cb); return () => rejectListeners.delete(cb); }
+export function listRejected() { return rjRead(); }
+// เอากลับเข้าคิวลองซิงค์ใหม่ (เช่นหลังออฟฟิศกู้ล็อตคืน)
+export function retryRejected() {
+  const rj = rjRead(); if (!rj.length) return;
+  const q = qRead();
+  for (const it of rj) { const { reason, rejectedAt, ...orig } = it; q.push(orig); }
+  qWrite(q); rjWrite([]); flushScanQueue();
+}
+export function clearRejected() { rjWrite([]); }
+
+// สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
+export async function recordScanByQr(qr, { allowQueue = true } = {}) {
+  const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) {
+      const a = qRead(); a.push({ qr, qid: newClientId(), ts: Date.now() }); qWrite(a);
+      return { ok: true, queued: true };
+    }
+    console.warn("record_scan_by_qr error", error);
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+
+// พยายามส่งคิวที่ค้างขึ้น server (เรียกตอนเน็ตกลับ/เป็นระยะ)
+// ⚠️ ปลอดภัยต่อการเรียกซ้อน: มี guard กันรันพร้อมกัน + เอาออกจากคิวตาม "qid" (ไม่ทับของ
+//    ที่ถูก enqueue ระหว่างซิงค์) — กันงานออฟไลน์หายจากการเขียนทับคิว
+let _flushing = false;
+export async function flushScanQueue() {
+  if (_flushing) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  // ให้ทุก item มี qid (migrate ของเก่าที่ยังไม่มี) เพื่อเอาออกแบบเจาะจงตอนจบ
+  let a = qRead();
+  if (a.length === 0) return;
+  let migrated = false;
+  a = a.map((it) => (it.qid ? it : (migrated = true, { ...it, qid: newClientId() })));
+  if (migrated) qWrite(a);
+
+  _flushing = true;
+  const done = new Set();          // qid ที่จัดการเสร็จแล้ว (สำเร็จ/ถูก reject) → เอาออกจากคิว
+  const rejects = [];
+  try {
+    for (const item of a) {
+      let data, error;
+      if (item.machineWork) {
+        ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
+      } else {
+        ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
+      }
+      if (error) continue;                                        // เน็ต/DB มีปัญหา → คงไว้ retry
+      if (data && data.ok === false) {
+        if (data.reason === "unauthorized") continue;             // token หมดอายุ → คงไว้รอ login
+        if (item.machineWork) rejects.push({ item, reason: data.reason }); // ลบ/แก้ฝั่งออฟฟิศ → rejected
+        done.add(item.qid);
+        continue;
+      }
+      done.add(item.qid);                                         // ok / deduped = สำเร็จ
+    }
+  } finally {
+    // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
+    const cur = qRead();
+    qWrite(cur.filter((it) => !done.has(it.qid)));
+    for (const r of rejects) pushRejected(r.item, r.reason);      // pushRejected กันซ้ำด้วย qid แล้ว
+    _flushing = false;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { flushScanQueue(); });
+  setInterval(() => { if (qRead().length) flushScanQueue(); }, 15000);
+}
+
+// สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
+// rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
+// คืน { releasesCreated, partsCreated, unitsCreated }
+export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows }) {
+  const { data, error } = await supabase.rpc("create_release_batch", {
+    p_token: authToken(),
+    p_project_id: projectId,
+    p_release_order: releaseOrder || null,
+    p_release_date: releaseDate || null,
+    p_released_by: releasedBy || null,
+    p_make_qr: !!makeQr,
+    p_rows: rows,
   });
   if (error) {
-    console.warn("verify_login error", error);
-    return null;
+    console.warn("create_release_batch error", error);
+    throw error;
   }
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) return null;
-  return mapLoginRow(row);
+  return data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
 }
 
-// ─── Offline login (หน้าเครื่อง) ──────────────────────────────────────────
-// เก็บ credential ที่ล็อกอินสำเร็จ "ตอนออนไลน์" ไว้ในเครื่อง (salt + SHA-256 ของรหัสผ่าน)
-// เพื่อให้ล็อกอินซ้ำได้แม้ไม่มีเน็ต · ปลอดภัยพอสำหรับจอหน้าเครื่องที่เป็นอุปกรณ์เฉพาะ
-// (ไม่ใช่ bcrypt แต่ hash+salt ในเครื่อง — และตัว token เองก็เก็บในเครื่องอยู่แล้ว)
-const LOGIN_CACHE_KEY = "mls-login-cache";
-async function sha256Hex(s) {
-  // crypto.subtle มีเฉพาะ secure context (https/PWA) — ถ้าไม่มี (http บน LAN) คืน null
-  // แล้ว offline login จะข้ามไป (ยังล็อกอินออนไลน์ได้ปกติ) แทนที่จะ throw ทำแอปพัง
+// สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
+// ส่ง id=null เพื่อสร้างใหม่, password="" เพื่อไม่เปลี่ยนรหัสตอนแก้ไข
+export async function upsertEmployee(emp) {
+  const { data, error } = await supabase.rpc("upsert_employee", {
+    p_token: authToken(),
+    p_id: emp.id || null,
+    p_code: emp.code,
+    p_name: emp.name,
+    p_password: emp.password || "",
+    p_role: emp.role || "operator",
+    p_department_id: emp.department_id || null,
+    p_machine_id: emp.machine_id || null,
+    p_operation_id: emp.operation_id || null,
+    p_active: emp.active ?? true,
+  });
+  if (error) {
+    console.warn("upsert_employee error", error);
+    throw error;
+  }
+  return data; // uuid
+}
+
+// คำนวณสถานะชิ้นงานย้อนหลังของ Part หนึ่ง (หลังตั้ง/แก้ Routing) — คืน { updated, finished }
+export async function recalcPartStatus(partMasterId) {
+  const { data, error } = await supabase.rpc("recalc_part_status", { p_token: authToken(), p_part_master_id: partMasterId });
+  if (error) { console.warn("recalc_part_status error", error); throw error; }
+  return data || { updated: 0, finished: 0 };
+}
+
+// รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
+export async function getProjectSummary() {
+  const { data, error } = await supabase.rpc("project_summary");
+  if (error) { console.warn("project_summary error", error); return []; }
+  return data || [];
+}
+export async function getPartSummary() {
+  const { data, error } = await supabase.rpc("part_summary");
+  if (error) { console.warn("part_summary error", error); return []; }
+  return data || [];
+}
+
+// scan log ทั้งหมดในช่วงเวลา สำหรับรายงาน — รวม scan_logs (สำนักงาน) +
+// machine_records (หน้าเครื่อง) ผ่าน RPC report_logs (ดู migration-station-report-merge.sql)
+// คืน array รูปทรงเดียวกับ scan_logs เดิม (machine/operation/employee/part_unit ซ้อน) → metrics.js ใช้ต่อได้เลย
+export async function getScanLogsBetween(fromIso, toIso) {
+  const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("report_logs error", error); return []; }
+  return data || [];
+}
+
+// ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
+// ดึงบันทึกงานของ "เครื่องของ token นี้" เฉพาะวันนี้ + ยอดรวมประจำวัน (จาก DB)
+// คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
+// (เครื่อง/พนักงานดึงจาก session token ฝั่ง DB — client ปลอมไม่ได้)
+export async function getMachineDay() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return offlineMachineDay();                           // ออฟไลน์ → snapshot + งานค้างคิว
+  }
+  const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
+  if (error) {
+    console.warn("machine_day error", error);
+    return offlineMachineDay();                           // เน็ตสะดุด → ใช้ snapshot แทนจอเปล่า
+  }
+  if (data && data.ok !== false) setDaySnapshot(data);    // เก็บ snapshot ล่าสุดไว้ใช้ออฟไลน์
+  return data || { ok: false };
+}
+
+// สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
+async function offlineMachineDay() {
+  const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
+  const q = qRead().filter((it) => it.machineWork);
+  if (!q.length) return { ...snap, offline: true };
+  const daily = { ...(snap.daily || { quantity: 0, weight: 0, process_seconds: 0 }) };
+  const records = Array.isArray(snap.records) ? [...snap.records] : [];
+  let item = records.length;
+  for (const it of q) {
+    const mw = it.machineWork;
+    daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
+    daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
+    records.push({
+      id: "q-" + (it.ts || item), item: ++item,
+      qty: Number(mw.p_quantity) || 0, status: mw.p_status,
+      process_seconds: Number(mw.p_process_seconds) || 0,
+      materials_length: mw.p_material_length, pending: true,   // ธง = ยังไม่ซิงค์
+    });
+  }
+  return { ok: true, daily, records, offline: true };
+}
+
+// heartbeat: บอกเซิร์ฟเวอร์ว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน) +
+// เช็คว่าถูก superseded (โดนเข้าแทน) หรือยัง · fail-safe: error = ถือว่ายังปกติ
+export async function sessionHeartbeat() {
+  const t = authToken(); if (!t) return { ok: false };
   try {
-    if (typeof crypto === "undefined" || !crypto.subtle) return null;
-    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
-  } catch { return null; }
-}
-function randSalt() {
-  const a = new Uint8Array(16);
-  try { crypto.getRandomValues(a); } catch { /* ignore */ }
-  return Array.from(a).map((x) => x.toString(16).padStart(2, "0")).join("");
-}
-function readLoginCache() { try { return JSON.parse(localStorage.getItem(LOGIN_CACHE_KEY)) || {}; } catch { return {}; } }
-function writeLoginCache(m) { try { localStorage.setItem(LOGIN_CACHE_KEY, JSON.stringify(m)); } catch { /* ignore */ } }
-async function cacheCredential(code, password, user) {
-  try {
-    const salt = randSalt();
-    const hash = await sha256Hex(salt + ":" + password);
-    if (!hash) return;   // ไม่มี crypto.subtle (http) → ไม่เก็บ (จะได้ไม่มีทาง match แบบ null===null)
-    const m = readLoginCache();
-    m[code.trim().toLowerCase()] = { salt, hash, user, ts: Date.now() };
-    writeLoginCache(m);
-  } catch { /* ignore */ }
+    const { data, error } = await supabase.rpc("session_heartbeat", { p_token: t });
+    if (error) return { ok: false };
+    return data || { ok: false };
+  } catch { return { ok: false }; }
 }
 
-// ล็อกอินหน้าเครื่อง: ออนไลน์ = ตรวจ DB + จำ credential ไว้ · ออฟไลน์/เน็ตหลุด = เทียบกับที่จำไว้
-// คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
-export async function stationLogin(code, password) {
-  const key = code.trim().toLowerCase();
-  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
-  if (!isOffline) {
-    // บล็อกถ้ามีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) — fail-open ถ้า probe พลาด
-    try {
-      const { data: probe } = await supabase.rpc("session_probe", { p_code: code.trim() });
-      if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
-    } catch { /* fail-open: ปล่อยเข้า ไม่ให้ล็อกตายเพราะ RPC พลาด */ }
-
-    const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
-    if (!error) {
-      const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return { error: "bad" };            // เซิร์ฟเวอร์ตอบว่ารหัสผิด → ไม่ fallback
-      const user = mapLoginRow(row);
-      await cacheCredential(code, password, user);   // จำไว้ใช้ตอนออฟไลน์
-      return { user, offline: false };
+// บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
+// • p_client_id = UUID ต่อการบันทึก (สร้างครั้งเดียว) → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
+// • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
+// คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
+export async function recordMachineWork(
+  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt },
+  { allowQueue = true } = {}
+) {
+  const payload = {
+    p_token: authToken(),
+    p_qr: String(qr || "").trim(),
+    p_quantity: Number(quantity) || 0,
+    p_material_length: materialLengthMm == null || materialLengthMm === "" ? null : Number(materialLengthMm),
+    p_process_seconds: Number(processSeconds) || 0,
+    p_status: status || "inprocess",
+    p_client_id: clientId || newClientId(),               // idempotency key (คงเดิมทุกครั้งที่ลองซิงค์)
+    p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
+  };
+  const { data, error } = await supabase.rpc("record_machine_work", payload);
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) {
+      // เก็บ release_id ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number ออฟไลน์
+      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, qid: payload.p_client_id, ts: Date.now() }); qWrite(a);
+      return { ok: true, queued: true };
     }
-    // error = เน็ตมีปัญหา → ลองใช้ credential ที่แคชไว้
+    console.warn("record_machine_work error", error);
+    return { ok: false, reason: "error", message: error.message };
   }
-  const e = readLoginCache()[key];
-  if (!e) return { error: isOffline ? "offline_first" : "bad" };
-  const hash = await sha256Hex(e.salt + ":" + password);
-  if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };   // null ไม่ถือว่า match
-  return { user: e.user, offline: true };
-}
-
-// ─── Session ────────────────────────────────────────────────────────────────
-// ใช้ localStorage: ล็อกอินค้างไว้ ไม่หลุดเมื่อปิดแท็บ/เบราว์เซอร์ (เหมาะกับจอหน้าเครื่อง
-// ที่เปิดค้างทั้งวัน) — ออกจากระบบเมื่อกดปุ่ม "ออก" เท่านั้น
-// หมายเหตุความปลอดภัย: object นี้แก้ไขในเครื่องได้ (เช่น ตั้ง role=admin เอง) — การกัน
-// UI ตาม role เป็นแค่การช่วยผู้ใช้ ไม่ใช่กำแพงความปลอดภัยจริง กำแพงจริงอยู่ที่ DB (RLS/RPC)
-// อนึ่ง token ยังมีอายุ 12 ชม.ฝั่ง DB — ถ้าค้างข้ามวันอาจต้องล็อกอินใหม่รอบเดียว
-const SESSION_KEY = "mls-session";
-
-export function getSession() {
-  try {
-    // อ่าน localStorage ก่อน แล้ว fallback sessionStorage (รองรับ session เก่าที่ยังค้างอยู่)
-    const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-export function setSession(user) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
-}
-export function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  return data || { ok: false, reason: "error" };
 }
