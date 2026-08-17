@@ -265,6 +265,7 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-lbl-mat { font-size: 11px; color: #666; }
 .stn-lbl-line { font-size: 11px; color: #444; white-space: nowrap; }
 .stn-lbl-of { margin-top: 4px; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
+.stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
 .stn-qty-lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #333; }
 .stn-qty-stepper { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0 16px; }
 .stn-qty-stepper button { width: 46px; height: 46px; border: 1.5px solid var(--st-line); background: #fff; border-radius: 6px; font-size: 24px; cursor: pointer; line-height: 1; }
