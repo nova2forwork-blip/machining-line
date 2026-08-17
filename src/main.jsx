@@ -7,6 +7,13 @@ import "./styles.css";
 //    (vercel.json rewrite ทุก path → index.html อยู่แล้ว จึงไม่ต้องตั้ง route เพิ่ม)
 const isStation = window.location.pathname.replace(/\/+$/, "").toLowerCase().startsWith("/station");
 
+// ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต ──────────────
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => { /* ไม่รองรับก็ข้ามไป */ });
+  });
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
 if (isStation) {
