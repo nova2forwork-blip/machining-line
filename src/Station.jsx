@@ -7,6 +7,7 @@ import {
 import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
+  rejectedQueueCount, onRejectedQueue, retryRejected,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone } from "./fullscreen.js";
 
@@ -129,6 +130,7 @@ function MachineStation({ user, onLogout }) {
   const [toast, setToast] = useState(null);   // { text, tone }
   const toastRef = useRef(null);
   const [pending, setPending] = useState(scanQueueCount());
+  const [rejected, setRejected] = useState(rejectedQueueCount());
 
   // ── load today's records for this machine ──────────────────────────────
   const reload = useCallback(async () => {
@@ -146,7 +148,8 @@ function MachineStation({ user, onLogout }) {
   useEffect(() => {
     flushScanQueue().then(() => setPending(scanQueueCount()));
     const off = onScanQueue((n) => setPending(n));
-    return off;
+    const offR = onRejectedQueue((n) => setRejected(n));
+    return () => { off(); offR(); };
   }, []);
 
   // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
@@ -282,6 +285,12 @@ function MachineStation({ user, onLogout }) {
   return (
     <div className="stn-shell">
       {pending > 0 && <div className="stn-pending">⏳ ค้างซิงค์ {pending}</div>}
+      {rejected > 0 && (
+        <div className="stn-rejected" onClick={retryRejected}
+          title="แตะเพื่อลองซิงค์อีกครั้ง (หลังออฟฟิศกู้/แก้ข้อมูลแล้ว)">
+          ⚠️ ซิงค์ไม่สำเร็จ {rejected} — QR ถูกลบ/แก้ฝั่งออฟฟิศ · แตะเพื่อลองใหม่
+        </div>
+      )}
       <div className="stn-screen">
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
