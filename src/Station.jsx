@@ -7,9 +7,9 @@ import {
 import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
-  rejectedQueueCount, onRejectedQueue, retryRejected,
+  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -57,7 +57,7 @@ function vibrate(pattern) { try { navigator.vibrate?.(pattern); } catch { /* ign
 // STATION LOGIN — same credentials as the main app; intended for the
 // machine's own account (an employee whose machine_id is set).
 // ══════════════════════════════════════════════════════════════════════════
-function StationLogin({ onLogin }) {
+function StationLogin({ onLogin, notice }) {
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -69,13 +69,20 @@ function StationLogin({ onLogin }) {
     const res = await stationLogin(code, password);
     setBusy(false);
     if (!res || !res.user) {
+      if (res && res.error === "in_use") {
+        const t = res.lastSeen ? new Date(res.lastSeen) : null;
+        const hhmm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
+        setErr(`มีเครื่องอื่นใช้บัญชีนี้อยู่${hhmm ? ` (ใช้งานล่าสุด ${hhmm})` : ""} — เข้าไม่ได้ · ให้ออกจากระบบที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว`);
+        return;
+      }
       setErr(res && res.error === "offline_first"
         ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
         : "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง");
       return;
     }
     setSession(res.user);
-    enterFullscreen();   // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
+    enterFullscreen();          // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
+    warmCameraPermission();     // ขอสิทธิ์กล้อง "ครั้งเดียว" ตอนนี้เลย → SCAN ครั้งต่อไปไม่ถามซ้ำ
     onLogin(res.user);
   }
 
@@ -84,6 +91,7 @@ function StationLogin({ onLogin }) {
       <form className="stn-login" onSubmit={submit}>
         <h1>หน้าเครื่อง — เข้าสู่ระบบ</h1>
         <p>ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)</p>
+        {notice && <div className="stn-notice">{notice}</div>}
         <div className="stn-field">
           <label>รหัสเครื่อง / พนักงาน</label>
           <input className="stn-input" value={code} autoFocus
@@ -110,7 +118,7 @@ function StationLogin({ onLogin }) {
 // ══════════════════════════════════════════════════════════════════════════
 const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "part", READY: "ready", SAVE: "save" };
 
-function MachineStation({ user, onLogout }) {
+function MachineStation({ user, onLogout, onKicked }) {
   const machine = user.machine; // { id, code, name }
   const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
   const [rows, setRows] = useState([]);
@@ -135,6 +143,12 @@ function MachineStation({ user, onLogout }) {
   // ── load today's records for this machine ──────────────────────────────
   const reload = useCallback(async () => {
     const res = await getMachineDay();
+    // ถูกเตะออก (บัญชีถูกใช้ล็อกอินที่เครื่องอื่น) — เฉพาะตอนออนไลน์ที่เซิร์ฟเวอร์ตอบ unauthorized
+    if (res && res.ok === false && res.reason === "unauthorized"
+        && !(typeof navigator !== "undefined" && navigator.onLine === false)) {
+      onKicked && onKicked();
+      return;
+    }
     if (res && res.ok !== false) {
       setDaily(res.daily || { quantity: 0, weight: 0, process_seconds: 0 });
       setRows(res.records || []);
@@ -142,14 +156,47 @@ function MachineStation({ user, onLogout }) {
     } else {
       setLoadErr(res?.message || "โหลดข้อมูลไม่สำเร็จ");
     }
-  }, []);
+  }, [onKicked]);
   useEffect(() => { reload(); }, [reload]);
+  // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
+  useEffect(() => {
+    const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
+    return () => clearInterval(t);
+  }, [reload]);
+
+  // heartbeat: บอกว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน)
+  // ถ้าถูก superseded (มีเครื่องใหม่เข้าแทนตอนเราเงียบไป) → "ซิงค์งานค้างให้หมดก่อน" แล้วค่อยเด้งออก
+  // (token ที่ superseded ยังซิงค์ได้ → ข้อมูลไม่หาย)
+  useEffect(() => {
+    let stopped = false;
+    async function beat() {
+      if (stopped || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+      const r = await sessionHeartbeat();
+      if (stopped) return;
+      if (r && r.superseded) {
+        await flushScanQueue();                                  // ดันงานค้างขึ้นก่อน
+        if (scanQueueCount() === 0) { onKicked && onKicked(); }  // ไม่มีค้างแล้ว → ออกได้ปลอดภัย
+        else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
+      }
+    }
+    beat();
+    const t = setInterval(beat, 60000);
+    return () => { stopped = true; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     flushScanQueue().then(() => setPending(scanQueueCount()));
     const off = onScanQueue((n) => setPending(n));
     const offR = onRejectedQueue((n) => setRejected(n));
     return () => { off(); offR(); };
+  }, []);
+
+  // ขอสิทธิ์กล้องครั้งเดียวตอนแตะจอครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ ไม่ได้ผ่านหน้าล็อกอิน)
+  useEffect(() => {
+    const once = () => { warmCameraPermission(); window.removeEventListener("pointerdown", once); };
+    window.addEventListener("pointerdown", once, { once: true });
+    return () => window.removeEventListener("pointerdown", once);
   }, []);
 
   // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
@@ -734,6 +781,7 @@ function CameraScan({ onDecoded, busy, onClose }) {
 // ══════════════════════════════════════════════════════════════════════════
 export default function StationApp() {
   const [user, setUser] = useState(getSession());
+  const [notice, setNotice] = useState("");
   async function logout() {
     if (!window.confirm("ออกจากระบบและปิดแอป?")) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await logoutSession(); } catch { /* ignore */ }
@@ -742,11 +790,17 @@ export default function StationApp() {
     setUser(null);
     try { window.close(); } catch { /* ignore */ }   // พยายามปิดแอป/แท็บ (ได้ผลบน PWA/บางเบราว์เซอร์)
   }
+  // ถูกเตะออกเพราะบัญชีถูกใช้ล็อกอินที่เครื่องอื่น (1 บัญชี = 1 เครื่อง) — เด้งกลับหน้าล็อกอิน
+  function onKicked() {
+    clearSession();
+    setUser(null);
+    setNotice("บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่");
+  }
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
   useEffect(() => armFullscreenOnFirstTap(), []);
 
-  if (!user) return <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={setUser} /></div>;
+  if (!user) return <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} /></div>;
 
   if (!user.machine) {
     return (
@@ -761,5 +815,5 @@ export default function StationApp() {
       </div>
     );
   }
-  return <MachineStation user={user} onLogout={logout} />;
+  return <MachineStation user={user} onLogout={logout} onKicked={onKicked} />;
 }
