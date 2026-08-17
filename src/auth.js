@@ -91,6 +91,12 @@ export async function stationLogin(code, password) {
   const key = code.trim().toLowerCase();
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (!isOffline) {
+    // บล็อกถ้ามีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) — fail-open ถ้า probe พลาด
+    try {
+      const { data: probe } = await supabase.rpc("session_probe", { p_code: code.trim() });
+      if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
+    } catch { /* fail-open: ปล่อยเข้า ไม่ให้ล็อกตายเพราะ RPC พลาด */ }
+
     const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
     if (!error) {
       const row = Array.isArray(data) ? data[0] : data;
