@@ -497,26 +497,61 @@ function normalizeReleaseOrder(raw) {
 // ลำดับคอลัมน์ตามฟอร์ม Excel จริง (Image): [No.] Code, Qty, Length, Weight/M, Material, [Total Kg], Remark
 // __skip__ = คอลัมน์ที่ระบบคำนวณเอง (Total Kg) — รับค่าที่วางมาแต่ทิ้ง แล้วคิดใหม่
 const PASTE_COLS = ["code", "qty", "length_mm", "weight_per_m", "material", "__skip__", "remark"];
+
+// จับคอลัมน์จาก "ชื่อหัวตาราง" (header) — รองรับ MDF / REV และคอลัมน์สลับลำดับได้
+const HEADER_ALIASES = {
+  code: [/^code$/i, /เบอร์/i, /part\s*no/i, /part\s*number/i],
+  rev: [/^rev\.?$/i, /revision/i],
+  qty: [/qty/i, /q'?ty/i, /จำนวน/i],
+  length_mm: [/length/i, /ยาว/i, /ความยาว/i],
+  weight_per_m: [/weight\s*\/?\s*m/i, /\bw\/?m\b/i, /น้ำหนัก\s*\/?\s*เมตร/i, /weight\s*per/i],
+  material: [/material/i, /วัสดุ/i, /วัตถุดิบ/i],
+  remark: [/remark/i, /หมายเหตุ/i],
+};
+function matchHeaderCell(cell) {
+  const s = String(cell ?? "").trim();
+  if (!s) return null;
+  for (const [field, pats] of Object.entries(HEADER_ALIASES)) {
+    if (pats.some((re) => re.test(s))) return field;
+  }
+  return null;
+}
+function looksLikeHeader(cells) {
+  return cells.filter((c) => matchHeaderCell(c)).length >= 2;
+}
+
 function parsePastedRows(text) {
   const lines = String(text).replace(/\r/g, "").split("\n");
-  // ตัดบรรทัดว่างท้ายๆ ออก แต่เก็บบรรทัดกลางที่อาจว่างบางคอลัมน์
   while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
-  return lines
-    .map((line) => line.split("\t"))
-    .filter((cells) => cells.some((c) => String(c).trim() !== ""))
-    .map((cells) => {
-      // ถ้ามีคอลัมน์เกินมา 1 และคอลัมน์แรกเป็นเลขลำดับล้วน → ตัดคอลัมน์ No. ทิ้ง
-      let cols = cells;
-      if (cols.length === PASTE_COLS.length + 1 && /^\d+$/.test(String(cols[0]).trim())) {
-        cols = cols.slice(1);
-      }
+  const grid = lines.map((l) => l.split("\t")).filter((cells) => cells.some((c) => String(c).trim() !== ""));
+  if (grid.length === 0) return [];
+
+  // ── โหมดมีหัวตาราง: จับคอลัมน์จากชื่อหัว (รองรับ MDF/REV + สลับลำดับ) ──
+  if (looksLikeHeader(grid[0])) {
+    const map = grid[0].map(matchHeaderCell);
+    return grid.slice(1).map((cells) => {
       const row = {};
-      PASTE_COLS.forEach((key, i) => {
-        if (key === "__skip__") return;
-        if (cols[i] !== undefined) row[key] = String(cols[i]).trim();
+      map.forEach((field, i) => {
+        if (!field) return;
+        if (cells[i] !== undefined) row[field] = String(cells[i]).trim();
       });
       return row;
     });
+  }
+
+  // ── โหมดไม่มีหัวตาราง: ใช้ลำดับคงที่แบบเดิม ──
+  return grid.map((cells) => {
+    let cols = cells;
+    if (cols.length === PASTE_COLS.length + 1 && /^\d+$/.test(String(cols[0]).trim())) {
+      cols = cols.slice(1);
+    }
+    const row = {};
+    PASTE_COLS.forEach((key, i) => {
+      if (key === "__skip__") return;
+      if (cols[i] !== undefined) row[key] = String(cols[i]).trim();
+    });
+    return row;
+  });
 }
 
 // ─── Quick-create: Project ──────────────────────────────────────────────────
@@ -649,9 +684,10 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
 // ตาราง Part: วาง (paste) จาก Excel ได้ทั้งบล็อก — คอลัมน์ตรงตามฟอร์ม Production
 // Release Report (Code, Qty, Length, Weight/M, Material, Total Kg, Remark)
 // แต่ละแถว = 1 release + สร้าง QR ต่อชิ้นให้ครบตาม Qty (เหมือนการนำเข้า Excel)
-const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", mdf: "", rev: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
+const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", rev: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
 
 function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
+  const [modify, setModify] = useState("");   // Modify Release (เช่น M-001) — ระดับทั้งใบ
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
   const [projectId, setProjectId] = useState("");
@@ -810,14 +846,15 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
         releasedBy: user.id, makeQr, rows,
       });
-      // เก็บ Modify (MDF) / REV. ลง part_master — เว้นว่าง = "0"
+      // เก็บ Modify (ทั้งใบ) → mdf_no ทุก Part ในใบนี้ · REV → ราย Part — เว้นว่าง = "0"
       // (ต้องมีคอลัมน์ mdf_no / rev จาก migration-station.sql; ถ้ายังไม่มีจะข้ามเงียบๆ)
+      const mdfVal = modify.trim() || "0";
       for (const r of validRows) {
         const code = r.code.trim();
         if (!code) continue;
         try {
           await updateRows("part_master", { project_id: projectId, part_no: code }, {
-            mdf_no: (r.mdf ?? "").toString().trim() || "0",
+            mdf_no: mdfVal,
             rev: (r.rev ?? "").toString().trim() || "0",
           });
         } catch (_) { /* คอลัมน์อาจยังไม่มี — ไม่ให้ล้มทั้งใบ */ }
@@ -840,6 +877,10 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       </div>
 
       <div className="release-header-fields" style={{ marginBottom: 12 }}>
+        <Field label="Modify (Release)">
+          <Input value={modify} placeholder="เช่น M-001"
+            onChange={(e) => setModify(e.target.value)} />
+        </Field>
         <Field label="เลขที่ Release Order *">
           <Input value={releaseOrder} placeholder="เช่น P-009"
             onChange={(e) => setReleaseOrder(e.target.value)}
@@ -899,8 +940,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
             <tr>
               <th style={{ width: 34 }}>#</th>
               <th style={{ minWidth: 130 }}>Code *</th>
-              <th style={{ width: 78 }}>Modify</th>
-              <th style={{ width: 60 }}>REV.</th>
+              <th style={{ width: 64 }}>REV.</th>
               <th style={{ width: 78 }}>จำนวน *</th>
               <th style={{ width: 90 }}>Length (มม.)</th>
               <th style={{ width: 90 }}>Weight/M</th>
@@ -922,8 +962,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                 <tr key={r.id}>
                   <td className="pgrid-idx">{i + 1}</td>
                   <td><input value={r.code} onChange={(e) => setCell(r.id, "code", e.target.value)} onPaste={(e) => handlePaste(e, i, "code")} placeholder="AN04-001-01" /></td>
-                  <td><input value={r.mdf} onChange={(e) => setCell(r.id, "mdf", e.target.value)} placeholder="0" /></td>
-                  <td><input value={r.rev} onChange={(e) => setCell(r.id, "rev", e.target.value)} placeholder="0" /></td>
+                  <td><input value={r.rev} onChange={(e) => setCell(r.id, "rev", e.target.value)} onPaste={(e) => handlePaste(e, i, "rev")} placeholder="0" /></td>
                   <td><input value={r.qty} onChange={(e) => setCell(r.id, "qty", e.target.value)} onPaste={(e) => handlePaste(e, i, "qty")} inputMode="numeric" /></td>
                   <td><input value={r.length_mm} onChange={(e) => setCell(r.id, "length_mm", e.target.value)} onPaste={(e) => handlePaste(e, i, "length_mm")} inputMode="decimal" /></td>
                   <td><input value={r.weight_per_m} onChange={(e) => setCell(r.id, "weight_per_m", e.target.value)} onPaste={(e) => handlePaste(e, i, "weight_per_m")} inputMode="decimal" /></td>
@@ -2516,6 +2555,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     const chosen = picked.map((u) => {
       const part = parts.find((p) => p.id === u.part_master_id) || {};
       const proj = projects.find((p) => p.id === part.project_id) || {};
+      const wKg = u.weight ?? part.unit_weight;               // น้ำหนัก/ชิ้น (กก.)
+      const lMm = u.length_mm ?? part.default_length_mm;      // ความยาว/ชิ้น (มม.)
       return {
         ...u,
         _label: {
@@ -2527,6 +2568,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           qtyText: (u.unit_no != null && total != null)
             ? `${u.unit_no} OF ${total}`
             : (u.unit_no != null ? String(u.unit_no) : ""),
+          weightText: wKg != null ? `${fmtNum(wKg)} kg` : "",
+          lengthText: lMm != null ? `${fmtNum(lMm)} mm` : "",
         },
       };
     });
