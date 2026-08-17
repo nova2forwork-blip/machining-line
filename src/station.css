@@ -206,25 +206,50 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 
 .stn-pending { position: fixed; top: 14px; right: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--st-red-dk); background: #fdeaea; border: 1px solid #f6c9c9; border-radius: 20px; padding: 3px 11px; z-index: 30; }
 
-/* ── Ambient animation: คนแบกอลูมิเนียมเดินไปเครื่องตัด (ซ้าย→ขวา) ───────── */
+/* ── Ambient animation: คนแบกอลูมิเนียมเดินมา "วางบนเครื่องตัด" (ซ้าย→ขวา) ── */
 .stn-scene { width: min(88%, 560px); height: auto; display: block; margin: 0 auto 18px; }
-.stn-walker { animation: stn-walk-x 6.5s ease-in-out infinite; }
+/* คน (เดินเข้ามาแล้วถอยออก) */
+.stn-walker { animation: stn-walk 7s ease-in-out infinite; }
+/* แท่งอลูมิเนียม (เดินมากับคน แล้ววางลงบนเครื่อง) */
+.stn-carry  { animation: stn-carry 7s ease-in-out infinite; }
 .stn-leg1, .stn-leg2 { transform-box: fill-box; transform-origin: 50% 0%; }
 .stn-leg1 { animation: stn-leg-a .55s ease-in-out infinite; }
 .stn-leg2 { animation: stn-leg-b .55s ease-in-out infinite; }
 .stn-saw  { transform-box: fill-box; transform-origin: 50% 50%; animation: stn-saw 1.1s linear infinite; }
-@keyframes stn-walk-x {
-  0%   { transform: translateX(-130px); opacity: 0; }
-  7%   { opacity: 1; }
-  68%  { transform: translateX(215px); opacity: 1; }
-  80%  { transform: translateX(232px); opacity: 1; }   /* วางบนเครื่องตัด */
-  90%  { transform: translateX(232px); opacity: 0; }
-  100% { transform: translateX(-130px); opacity: 0; }
+.stn-spark { animation: stn-spark 7s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+@keyframes stn-walk {
+  0%   { transform: translateX(-150px); opacity: 0; }
+  8%   { opacity: 1; }
+  48%  { transform: translateX(150px); opacity: 1; }   /* ถึงข้างเครื่อง */
+  70%  { transform: translateX(150px); opacity: 1; }   /* ยืนวางของ */
+  84%  { transform: translateX(120px); opacity: 1; }
+  94%  { transform: translateX(20px);  opacity: 0; }    /* เดินถอยออก */
+  100% { transform: translateX(-150px); opacity: 0; }
+}
+@keyframes stn-carry {
+  0%   { transform: translateX(-150px) translateY(0);   opacity: 0; }
+  8%   { opacity: 1; }
+  48%  { transform: translateX(150px) translateY(0);    opacity: 1; }   /* ยังถืออยู่ */
+  60%  { transform: translateX(184px) translateY(38px); opacity: 1; }   /* วางลงบนเครื่องตัด */
+  90%  { transform: translateX(184px) translateY(38px); opacity: 1; }   /* วางค้างบนเครื่อง */
+  97%  { transform: translateX(184px) translateY(38px); opacity: 0; }
+  100% { transform: translateX(-150px) translateY(0);   opacity: 0; }
 }
 @keyframes stn-leg-a { 0%,100% { transform: rotate(20deg); } 50% { transform: rotate(-20deg); } }
 @keyframes stn-leg-b { 0%,100% { transform: rotate(-20deg); } 50% { transform: rotate(20deg); } }
 @keyframes stn-saw   { to { transform: rotate(360deg); } }
+/* ประกายไฟตอนตัด (หลังวางของบนเครื่อง) */
+@keyframes stn-spark {
+  0%,60% { opacity: 0; transform: scale(.6); }
+  63% { opacity: 1; transform: scale(1); }
+  67% { opacity: .2; transform: scale(.7); }
+  72% { opacity: 1; transform: scale(1.1); }
+  78% { opacity: .3; transform: scale(.8); }
+  85% { opacity: 1; transform: scale(1); }
+  90%,100% { opacity: 0; transform: scale(.6); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .stn-walker, .stn-leg1, .stn-leg2, .stn-saw { animation: none; }
-  .stn-walker { opacity: 1; transform: translateX(120px); }
+  .stn-walker, .stn-carry, .stn-leg1, .stn-leg2, .stn-saw, .stn-spark { animation: none; }
+  .stn-carry { opacity: 1; transform: translateX(184px) translateY(38px); }  /* แสดงของวางบนเครื่องแบบนิ่ง */
+  .stn-walker { opacity: 0; }
 }
