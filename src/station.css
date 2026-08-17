@@ -118,7 +118,7 @@
   .stn-lbl-qr { width: 8vh; height: 8vh; }
   .stn-lbl-num, .stn-lbl-name { font-size: 1.7vh; }
   .stn-lbl-part { font-size: 3vh; }
-  .stn-lbl-mat, .stn-lbl-line { font-size: 1.5vh; }
+  .stn-lbl-mat, .stn-lbl-line, .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.5vh; }
   .stn-lbl-of { font-size: 2.4vh; }
   .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3.2vh; }
   .stn-qty-stepper input { width: 16vh; font-size: 3.6vh; }
@@ -236,16 +236,11 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 
 .stn-cam { width: min(96%, 560px); max-height: 74vh; aspect-ratio: 1; position: relative; margin: 0 auto; background: #0d1512; border-radius: 12px; overflow: hidden; }
 .stn-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.stn-cam .corner { position: absolute; width: 48px; height: 48px; border: 4px solid var(--st-red); z-index: 2; }
-.stn-cam .tl { top: 8px; left: 8px; border-right: none; border-bottom: none; border-top-left-radius: 8px; }
-.stn-cam .tr { top: 8px; right: 8px; border-left: none; border-bottom: none; border-top-right-radius: 8px; }
-.stn-cam .bl { bottom: 8px; left: 8px; border-right: none; border-top: none; border-bottom-left-radius: 8px; }
-.stn-cam .br { bottom: 8px; right: 8px; border-left: none; border-top: none; border-bottom-right-radius: 8px; }
+/* แคนวาสวาดกรอบขาวเกาะรอบ QR ที่กล้องเจอ — object-fit ตรงกับ <video> เพื่อให้พิกัดตรงกัน */
+.stn-cam .stn-cam-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
 /* แถวที่ยังไม่ซิงค์ (ออฟไลน์) — จางลงเล็กน้อย + ขีดซ้ายสีเตือน */
 .stn-pending-row { opacity: .62; box-shadow: inset 3px 0 0 var(--st-alert); }
 
-/* กรอบสี่เหลี่ยมนิ่งๆ รอบพื้นที่สแกน QR (แทนเส้นเลเซอร์วิ่ง) */
-.stn-cam .stn-scan-frame { position: absolute; inset: 8px; border: 2px solid rgba(255,255,255,.5); border-radius: 10px; z-index: 1; pointer-events: none; }
 .stn-cam-close { position: absolute; top: 10px; right: 10px; z-index: 4; width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .stn-cam-close:active { transform: scale(.92); }
 .stn-cam-manual { margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
@@ -256,15 +251,21 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 /* ป้ายกำกับตัวใหม่ — โครงเดียวกับป้ายพิมพ์ (QR ซ้าย | ข้อมูล 2 คอลัมน์) */
 .stn-part-label { border: 1.5px solid var(--st-ink); border-radius: 12px; display: flex; gap: 12px; padding: 12px 14px; text-align: left; margin-bottom: 14px; align-items: center; background: #fff; box-shadow: var(--st-shadow); }
 .stn-lbl-qr { width: 58px; height: 58px; flex-shrink: 0; border: 1.5px solid var(--st-line); border-radius: 4px; background: conic-gradient(#111 0 25%, #fff 0 50%, #111 0 75%, #fff 0); background-size: 13px 13px; }
-.stn-lbl-body { flex: 1; display: flex; justify-content: space-between; gap: 12px; align-items: center; min-width: 0; }
-.stn-lbl-col { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.stn-lbl-body { flex: 1; display: flex; gap: 12px; align-items: center; min-width: 0; }
+.stn-lbl-col { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.stn-lbl-col.left { flex: 1; }
 .stn-lbl-col.right { text-align: right; align-items: flex-end; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; }
-.stn-lbl-num { font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stn-lbl-vline { width: 1px; align-self: stretch; margin: 4px 0; background: var(--st-line); flex-shrink: 0; }
+.stn-lbl-num { font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: #7a8296; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .stn-lbl-name { font-size: 13px; font-family: 'IBM Plex Sans Thai', sans-serif; color: var(--st-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .stn-lbl-part { font-size: 22px; font-weight: 700; letter-spacing: .02em; color: var(--st-ink); line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .stn-lbl-mat { font-size: 11px; color: #666; }
 .stn-lbl-line { font-size: 11px; color: #444; white-space: nowrap; }
-.stn-lbl-of { margin-top: 4px; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
+/* ตาราง MDF/REL/REV — ตัว M R ตรงกัน คอลัมน์ค่าตรงกัน */
+.stn-lbl-kv { display: grid; grid-template-columns: auto auto; column-gap: 6px; row-gap: 1px; align-items: baseline; justify-content: end; }
+.stn-lbl-kv .k { font-size: 11px; color: #777; white-space: nowrap; text-align: left; }
+.stn-lbl-kv .v { font-size: 11px; color: var(--st-ink); font-weight: 700; white-space: nowrap; text-align: left; }
+.stn-lbl-of { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--st-line); align-self: stretch; text-align: right; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
 .stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
 .stn-qty-lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #333; }
 .stn-qty-stepper { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0 16px; }
