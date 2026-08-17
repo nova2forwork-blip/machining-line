@@ -5,7 +5,7 @@ import {
   verifyLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, getMachineDay, recordMachineWork,
+  findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone } from "./fullscreen.js";
@@ -117,6 +117,7 @@ function MachineStation({ user, onLogout }) {
   const timerRef = useRef(null);
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
+  const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
   const [qty, setQty] = useState(0);
   const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
   const [busy, setBusy] = useState(false);
@@ -159,7 +160,7 @@ function MachineStation({ user, onLogout }) {
   useEffect(() => () => stopTimer(), []);
 
   function resetAll() {
-    stopTimer(); setElapsed(0); setMaterialLen(""); setUnit(null); setQty(0);
+    stopTimer(); setElapsed(0); setMaterialLen(""); setUnit(null); setProgress(null); setQty(0);
     setStatus(null); setStep(STEP.IDLE);
   }
 
@@ -193,16 +194,19 @@ function MachineStation({ user, onLogout }) {
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
-  // Cancel หลังสแกน → เวลาเดินต่อ แล้วกลับไปสแกนใหม่
-  function rescan() { setUnit(null); setQty(0); setStatus(null); startTimer(); setStep(STEP.SCAN); }
+  // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
+  function rescan() { setUnit(null); setProgress(null); setQty(0); setStatus(null); setStep(STEP.SCAN); }
   // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
   async function onDecoded(qr) {
     if (!qr) return false;
     setBusy(true);
     const u = await findUnitByQr(qr);
+    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
+    // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
+    // done = จำนวนที่บันทึกไปแล้วของล็อ/รีลีสนี้, total = จำนวนที่ต้องการทั้งใบ
+    const done = await getReleaseProgress(u.release_id);
     setBusy(false);
-    if (!u) { errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
-    stopTimer();              // สแกนเสร็จ → หยุดจับเวลา (เวลาที่ใช้ = START จนถึงสแกนเสร็จ)
+    setProgress({ done, total: u.release?.qty ?? null });
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -337,7 +341,7 @@ function MachineStation({ user, onLogout }) {
         <div className="stn-work-wrap">
           <div className="stn-work-area">
             <WorkArea
-              step={step} elapsed={elapsed} unit={unit} qty={qty} setQty={setQty}
+              step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
               status={status} setStatus={setStatus} busy={busy}
               onDecoded={onDecoded} confirmCancel={confirmCancel} confirmPart={confirmPart}
               closeScan={closeScan} rescan={rescan}
@@ -474,7 +478,7 @@ function StationAnim() {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan }) {
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan }) {
   if (step === STEP.IDLE) {
     return (
       <div className="stn-hint">
@@ -515,15 +519,32 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
     const p = unit?.part_master || {};
     const proj = p.projects || {};
     const rel = unit?.release || {};
+    // running number ของป้ายตัวใหม่: เริ่มจาก (ทำไปแล้ว + 1) OF จำนวนทั้งใบ
+    const total = progress?.total ?? rel.qty ?? null;
+    const done = progress?.done ?? 0;
+    const startNo = done + 1;
+    const endNo = done + Math.max(1, qty || 1);
+    const ofText = total != null
+      ? `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} OF ${fmt(total)}`
+      : `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`;
     return (
       <div className="stn-part-panel">
+        {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
         <div className="stn-part-label">
-          <div style={{ width: 54, height: 54, flexShrink: 0, border: "1.5px solid var(--st-line)", borderRadius: 3, background: "conic-gradient(#000 0 25%,#fff 0 50%,#000 0 75%,#fff 0)", backgroundSize: "12px 12px" }} />
-          <div className="meta">
-            <div className="big">{proj.name || proj.code || "-"}</div>
-            <div>{p.part_no || "-"}{p.material ? ` · ${p.material}` : ""}</div>
-            <div>REL NO. {rel.release_order || "-"}</div>
-            <div style={{ marginTop: 3, color: "#555" }}>ต้องการ {rel.qty != null ? fmt(rel.qty) : "-"} ชิ้น</div>
+          <div className="stn-lbl-qr" />
+          <div className="stn-lbl-body">
+            <div className="stn-lbl-col left">
+              <div className="stn-lbl-num">{proj.code || "-"}</div>
+              <div className="stn-lbl-name">{proj.name || "-"}</div>
+              <div className="stn-lbl-part">{p.part_no || "-"}</div>
+              {p.material ? <div className="stn-lbl-mat">{p.material}</div> : null}
+            </div>
+            <div className="stn-lbl-col right">
+              <div className="stn-lbl-line">MDF NO. {p.mdf_no || "-"}</div>
+              <div className="stn-lbl-line">REL NO. {rel.release_order || "-"}</div>
+              {p.rev ? <div className="stn-lbl-line">REV. {p.rev}</div> : null}
+              <div className="stn-lbl-of">{ofText}</div>
+            </div>
           </div>
         </div>
         <div className="stn-qty-lbl">QUANTITY</div>
