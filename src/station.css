@@ -241,6 +241,9 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-cam .tr { top: 8px; right: 8px; border-left: none; border-bottom: none; border-top-right-radius: 8px; }
 .stn-cam .bl { bottom: 8px; left: 8px; border-right: none; border-top: none; border-bottom-left-radius: 8px; }
 .stn-cam .br { bottom: 8px; right: 8px; border-left: none; border-top: none; border-bottom-right-radius: 8px; }
+/* แถวที่ยังไม่ซิงค์ (ออฟไลน์) — จางลงเล็กน้อย + ขีดซ้ายสีเตือน */
+.stn-pending-row { opacity: .62; box-shadow: inset 3px 0 0 var(--st-alert); }
+
 /* กรอบสี่เหลี่ยมนิ่งๆ รอบพื้นที่สแกน QR (แทนเส้นเลเซอร์วิ่ง) */
 .stn-cam .stn-scan-frame { position: absolute; inset: 8px; border: 2px solid rgba(255,255,255,.5); border-radius: 10px; z-index: 1; pointer-events: none; }
 .stn-cam-close { position: absolute; top: 10px; right: 10px; z-index: 4; width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
