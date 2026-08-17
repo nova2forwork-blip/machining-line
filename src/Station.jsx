@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import "./styles.css";
 import "./station.css";
 import {
-  verifyLogin, getSession, setSession, clearSession,
+  stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
@@ -65,12 +65,17 @@ function StationLogin({ onLogin }) {
   async function submit(e) {
     e.preventDefault();
     setErr(""); setBusy(true);
-    const user = await verifyLogin(code, password);
+    const res = await stationLogin(code, password);
     setBusy(false);
-    if (!user) { setErr("รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง"); return; }
-    setSession(user);
+    if (!res || !res.user) {
+      setErr(res && res.error === "offline_first"
+        ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
+        : "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง");
+      return;
+    }
+    setSession(res.user);
     enterFullscreen();   // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
-    onLogin(user);
+    onLogin(res.user);
   }
 
   return (
