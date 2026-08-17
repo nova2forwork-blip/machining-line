@@ -496,6 +496,17 @@ async function offlineMachineDay() {
   return { ok: true, daily, records, offline: true };
 }
 
+// heartbeat: บอกเซิร์ฟเวอร์ว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน) +
+// เช็คว่าถูก superseded (โดนเข้าแทน) หรือยัง · fail-safe: error = ถือว่ายังปกติ
+export async function sessionHeartbeat() {
+  const t = authToken(); if (!t) return { ok: false };
+  try {
+    const { data, error } = await supabase.rpc("session_heartbeat", { p_token: t });
+    if (error) return { ok: false };
+    return data || { ok: false };
+  } catch { return { ok: false }; }
+}
+
 // บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
 // • p_client_id = UUID ต่อการบันทึก (สร้างครั้งเดียว) → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
 // • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
