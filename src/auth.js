@@ -50,23 +50,27 @@ export async function verifyLogin(code, password) {
 }
 
 // ─── Session ────────────────────────────────────────────────────────────────
-// ใช้ sessionStorage โดยตั้งใจ: หายอัตโนมัติเมื่อปิดแท็บ/เบราว์เซอร์
+// ใช้ localStorage: ล็อกอินค้างไว้ ไม่หลุดเมื่อปิดแท็บ/เบราว์เซอร์ (เหมาะกับจอหน้าเครื่อง
+// ที่เปิดค้างทั้งวัน) — ออกจากระบบเมื่อกดปุ่ม "ออก" เท่านั้น
 // หมายเหตุความปลอดภัย: object นี้แก้ไขในเครื่องได้ (เช่น ตั้ง role=admin เอง) — การกัน
-// UI ตาม role เป็นแค่การช่วยผู้ใช้ ไม่ใช่กำแพงความปลอดภัยจริง กำแพงจริงต้องอยู่ที่
-// DB (RLS/RPC) เมื่อย้ายไป Supabase Auth แล้ว (ดู CHANGES.md)
+// UI ตาม role เป็นแค่การช่วยผู้ใช้ ไม่ใช่กำแพงความปลอดภัยจริง กำแพงจริงอยู่ที่ DB (RLS/RPC)
+// อนึ่ง token ยังมีอายุ 12 ชม.ฝั่ง DB — ถ้าค้างข้ามวันอาจต้องล็อกอินใหม่รอบเดียว
 const SESSION_KEY = "mls-session";
 
 export function getSession() {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    // อ่าน localStorage ก่อน แล้ว fallback sessionStorage (รองรับ session เก่าที่ยังค้างอยู่)
+    const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 export function setSession(user) {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
 }
 export function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
 }
