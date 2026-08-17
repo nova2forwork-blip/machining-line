@@ -247,9 +247,10 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   100% { transform: translateY(0); }
 }
 @keyframes stn-arm {
-  0%,52% { transform: rotate(0deg); }
-  60%,78% { transform: rotate(22deg); }   /* ก้มวางของลงเครื่อง */
-  86%,100% { transform: rotate(0deg); }
+  0%, 50% { transform: rotate(0deg); }     /* ยื่นแขนถือของ */
+  58%     { transform: rotate(88deg); }     /* วางเสร็จ → เอาแขนลงข้างตัว */
+  92%     { transform: rotate(88deg); }     /* แขนลงค้างไว้ */
+  100%    { transform: rotate(0deg); }      /* รีเซ็ตตอนมองไม่เห็น */
 }
 @keyframes stn-carry {
   0%   { transform: translateX(-160px) translateY(0);   opacity: 0; }
