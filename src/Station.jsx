@@ -660,8 +660,8 @@ function CameraScan({ onDecoded, busy, onClose }) {
       <div className="stn-cam">
         <video ref={videoRef} playsInline muted />
         <canvas ref={canvasRef} style={{ display: "none" }} />
+        <div className="stn-scan-frame" />
         <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
-        <div className="laser" />
         <button type="button" className="stn-cam-close" onClick={onClose} aria-label="ปิดกล้อง">✕</button>
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
