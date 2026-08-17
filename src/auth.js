@@ -25,6 +25,19 @@ export const ROLE_LABELS = {
 export function isAdmin(user)      { return user?.role === "admin"; }
 export function canManage(user)    { return user?.role === "admin" || user?.role === "supervisor"; }
 
+function mapLoginRow(row) {
+  return {
+    token: row.token,        // session token — แนบไปกับทุกการเขียนผ่าน supabase.js
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    role: row.role,
+    department: row.department_name || "-",
+    machine: row.machine_id ? { id: row.machine_id, code: row.machine_code, name: row.machine_name } : null,
+    operation: row.operation_id ? { id: row.operation_id, name: row.operation_name } : null,
+  };
+}
+
 // ─── Login (ตรวจฝั่ง DB ผ่าน RPC — client ไม่เห็น password_hash อีกต่อไป) ──────
 export async function verifyLogin(code, password) {
   const { data, error } = await supabase.rpc("verify_login", {
@@ -37,16 +50,56 @@ export async function verifyLogin(code, password) {
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return null;
-  return {
-    token: row.token,        // session token — แนบไปกับทุกการเขียนผ่าน supabase.js
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    role: row.role,
-    department: row.department_name || "-",
-    machine: row.machine_id ? { id: row.machine_id, code: row.machine_code, name: row.machine_name } : null,
-    operation: row.operation_id ? { id: row.operation_id, name: row.operation_name } : null,
-  };
+  return mapLoginRow(row);
+}
+
+// ─── Offline login (หน้าเครื่อง) ──────────────────────────────────────────
+// เก็บ credential ที่ล็อกอินสำเร็จ "ตอนออนไลน์" ไว้ในเครื่อง (salt + SHA-256 ของรหัสผ่าน)
+// เพื่อให้ล็อกอินซ้ำได้แม้ไม่มีเน็ต · ปลอดภัยพอสำหรับจอหน้าเครื่องที่เป็นอุปกรณ์เฉพาะ
+// (ไม่ใช่ bcrypt แต่ hash+salt ในเครื่อง — และตัว token เองก็เก็บในเครื่องอยู่แล้ว)
+const LOGIN_CACHE_KEY = "mls-login-cache";
+async function sha256Hex(s) {
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+function randSalt() {
+  const a = new Uint8Array(16);
+  try { crypto.getRandomValues(a); } catch { /* ignore */ }
+  return Array.from(a).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+function readLoginCache() { try { return JSON.parse(localStorage.getItem(LOGIN_CACHE_KEY)) || {}; } catch { return {}; } }
+function writeLoginCache(m) { try { localStorage.setItem(LOGIN_CACHE_KEY, JSON.stringify(m)); } catch { /* ignore */ } }
+async function cacheCredential(code, password, user) {
+  try {
+    const salt = randSalt();
+    const hash = await sha256Hex(salt + ":" + password);
+    const m = readLoginCache();
+    m[code.trim().toLowerCase()] = { salt, hash, user, ts: Date.now() };
+    writeLoginCache(m);
+  } catch { /* ignore */ }
+}
+
+// ล็อกอินหน้าเครื่อง: ออนไลน์ = ตรวจ DB + จำ credential ไว้ · ออฟไลน์/เน็ตหลุด = เทียบกับที่จำไว้
+// คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
+export async function stationLogin(code, password) {
+  const key = code.trim().toLowerCase();
+  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+  if (!isOffline) {
+    const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
+    if (!error) {
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) return { error: "bad" };            // เซิร์ฟเวอร์ตอบว่ารหัสผิด → ไม่ fallback
+      const user = mapLoginRow(row);
+      await cacheCredential(code, password, user);   // จำไว้ใช้ตอนออฟไลน์
+      return { user, offline: false };
+    }
+    // error = เน็ตมีปัญหา → ลองใช้ credential ที่แคชไว้
+  }
+  const e = readLoginCache()[key];
+  if (!e) return { error: isOffline ? "offline_first" : "bad" };
+  const hash = await sha256Hex(e.salt + ":" + password);
+  if (hash !== e.hash) return { error: "bad" };
+  return { user: e.user, offline: true };
 }
 
 // ─── Session ────────────────────────────────────────────────────────────────
