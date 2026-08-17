@@ -159,7 +159,7 @@ function MachineStation({ user, onLogout }) {
   useEffect(() => () => stopTimer(), []);
 
   function resetAll() {
-    stopTimer(); setElapsed(0); setMaterialLen(""); setUnit(null); setQty(0);
+    stopTimer(); stopAlarm(); setElapsed(0); setMaterialLen(""); setUnit(null); setQty(0);
     setStatus(null); setStep(STEP.IDLE);
   }
 
@@ -184,19 +184,31 @@ function MachineStation({ user, onLogout }) {
   }
 
   // ── SCAN ──────────────────────────────────────────────────────────────
+  // เสียงเตือนวนซ้ำ (ตอนสแกนผิด) — ดังต่อเนื่องจนกว่าจะสแกนใหม่/ปิด/สำเร็จ
+  const alarmRef = useRef(null);
+  function stopAlarm() { if (alarmRef.current) { clearInterval(alarmRef.current); alarmRef.current = null; } }
+  function startAlarm() {
+    stopAlarm();
+    beep(320, 240, 0.32); vibrate([90, 60, 90]);
+    alarmRef.current = setInterval(() => { beep(320, 240, 0.32); vibrate(140); }, 550);
+  }
+  useEffect(() => () => stopAlarm(), []);
+
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
+    stopAlarm();
     warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture)
     setStep(STEP.SCAN);
   }
-  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
+  function closeScan() { stopAlarm(); setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   async function onDecoded(qr) {
     if (!qr) return;
-    beep(950, 110); vibrate(60);   // ติ๊ด! ทันทีที่อ่าน QR ได้
+    stopAlarm();                    // เคลียร์เสียงเตือนเดิมก่อน
     setBusy(true);
     const u = await findUnitByQr(qr);
     setBusy(false);
-    if (!u) { beep(300, 200, 0.3); vibrate([70, 50, 70]); flash("ไม่พบ QR นี้ในระบบ", "warn"); return; }
+    if (!u) { startAlarm(); flash("ไม่พบ QR นี้ในระบบ — สแกนใหม่", "warn"); return; }  // ผิด = ดังต่อเนื่อง
+    beep(950, 110); vibrate(60);    // ติ๊ด! อ่านสำเร็จ (ครั้งเดียว)
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -221,6 +233,7 @@ function MachineStation({ user, onLogout }) {
     });
     setBusy(false);
     if (!res || res.ok === false) {
+      startAlarm();       // บันทึกผิดพลาด = เสียงเตือนต่อเนื่อง
       flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
       setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
       return;
@@ -362,52 +375,93 @@ function MachineStation({ user, onLogout }) {
 // ── Ambient animation: คนแบกอลูมิเนียมเดินไปวางบนเครื่องตัด (ซ้าย→ขวา) ────────
 function StationAnim() {
   return (
-    <svg className="stn-scene" viewBox="0 0 420 190" role="img"
+    <svg className="stn-scene" viewBox="0 0 460 200" role="img"
       aria-label="พนักงานยกอลูมิเนียมไปวางบนเครื่องตัด">
       <defs>
         <linearGradient id="stnAlu" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#f2f5f8" />
+          <stop offset="0.45" stopColor="#cdd3da" />
+          <stop offset="1" stopColor="#a6adb6" />
+        </linearGradient>
+        <linearGradient id="stnSteel" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#eef1f4" />
-          <stop offset="0.5" stopColor="#c7ccd3" />
-          <stop offset="1" stopColor="#aab0b8" />
+          <stop offset="0.5" stopColor="#c2c8d0" />
+          <stop offset="1" stopColor="#9aa0a8" />
         </linearGradient>
       </defs>
+
       {/* ground */}
-      <line x1="0" y1="171" x2="440" y2="171" stroke="#dfe3e8" strokeWidth="2" />
-      {/* เครื่องตัด (ขวา) */}
+      <line x1="0" y1="176" x2="460" y2="176" stroke="#e2e6ea" strokeWidth="2" />
+
+      {/* ── เครื่องตัด (ขวา) ─────────────────────────── */}
       <g>
-        <rect x="298" y="150" width="112" height="12" rx="2" fill="#1c1f24" />
-        <rect x="310" y="162" width="8" height="15" fill="#1c1f24" />
-        <rect x="392" y="162" width="8" height="15" fill="#1c1f24" />
-        {/* rollers บนโต๊ะ (ที่วางอลูมิเนียม) */}
-        <circle cx="316" cy="150" r="4.5" fill="#5b626b" />
-        <circle cx="340" cy="150" r="4.5" fill="#5b626b" />
-        <circle cx="388" cy="150" r="4.5" fill="#5b626b" />
-        <rect x="356" y="116" width="30" height="38" rx="3" fill="#2a2f36" />
+        <rect x="304" y="159" width="8" height="18" rx="1" fill="#1c2126" />
+        <rect x="410" y="159" width="8" height="18" rx="1" fill="#1c2126" />
+        <rect x="296" y="150" width="130" height="9" rx="3" fill="#2a3138" />
+        <circle cx="308" cy="150" r="4.5" fill="#6b727a" />
+        <circle cx="330" cy="150" r="4.5" fill="#6b727a" />
+        <circle cx="396" cy="150" r="4.5" fill="#6b727a" />
+        <circle cx="416" cy="150" r="4.5" fill="#6b727a" />
+        <rect x="350" y="98" width="54" height="38" rx="7" fill="#2a3138" />
+        <line x1="358" y1="107" x2="396" y2="107" stroke="#565d64" strokeWidth="2" />
+        <line x1="358" y1="113" x2="396" y2="113" stroke="#565d64" strokeWidth="2" />
+        <line x1="358" y1="119" x2="396" y2="119" stroke="#565d64" strokeWidth="2" />
+        <rect x="372" y="130" width="8" height="16" fill="#2a3138" />
+        <path d="M353 150 A23 23 0 0 1 399 150 L392 150 A16 16 0 0 0 360 150 Z" fill="#f5920b" />
         <g className="stn-saw">
-          <circle cx="371" cy="150" r="17" fill="#c7ccd3" stroke="#1c1f24" strokeWidth="2" />
-          <circle cx="371" cy="150" r="17" fill="none" stroke="#1c1f24" strokeWidth="3" strokeDasharray="3 5" />
-          <circle cx="371" cy="150" r="4" fill="#e11d1d" />
-        </g>
-        {/* ประกายไฟตอนตัด */}
-        <g className="stn-spark">
-          <path d="M371 132 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3 z" fill="#ff8a1e" />
+          <circle cx="376" cy="150" r="20" fill="url(#stnSteel)" stroke="#1c2126" strokeWidth="2" />
+          <circle cx="376" cy="150" r="20" fill="none" stroke="#1c2126" strokeWidth="3" strokeDasharray="3 5.5" />
+          <line x1="376" y1="134" x2="376" y2="166" stroke="#aeb4bb" strokeWidth="2" />
+          <line x1="360" y1="150" x2="392" y2="150" stroke="#aeb4bb" strokeWidth="2" />
+          <line x1="365" y1="139" x2="387" y2="161" stroke="#aeb4bb" strokeWidth="1.5" />
+          <line x1="387" y1="139" x2="365" y2="161" stroke="#aeb4bb" strokeWidth="1.5" />
+          <circle cx="376" cy="150" r="5" fill="#e11d1d" />
         </g>
       </g>
-      {/* อลูมิเนียม (เดินมากับคน แล้ววางลงบนเครื่อง) — เลเยอร์แยก */}
+
+      {/* ── อลูมิเนียม (เดินมากับคน แล้ววางบนเครื่อง) ── */}
       <g className="stn-carry">
-        <rect x="86" y="106" width="150" height="10" rx="5" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
-        <rect x="90" y="108" width="120" height="2.4" rx="1.2" fill="#ffffff" opacity="0.7" />
+        <rect x="86" y="105" width="150" height="12" rx="6" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
+        <rect x="86" y="105" width="7" height="12" rx="3" fill="#9098a1" />
+        <rect x="229" y="105" width="7" height="12" rx="3" fill="#9098a1" />
+        <rect x="94" y="107.5" width="132" height="2.4" rx="1.2" fill="#ffffff" opacity="0.75" />
+        <g className="stn-shine"><rect x="96" y="106" width="12" height="10" rx="2" fill="#ffffff" opacity="0.9" transform="skewX(-18)" /></g>
       </g>
-      {/* คนเดิน (เลื่อนซ้าย→ขวา แล้วถอยออก) */}
-      <g className="stn-walker">
-        <ellipse cx="60" cy="172" rx="26" ry="4" fill="rgba(0,0,0,.12)" />
-        <rect className="stn-leg1" x="56" y="137" width="7" height="33" rx="3.5" fill="#1c1f24" />
-        <rect className="stn-leg2" x="56" y="137" width="7" height="33" rx="3.5" fill="#33383e" />
-        <rect x="53" y="104" width="13" height="38" rx="6" fill="#1c1f24" />
-        <circle cx="59" cy="95" r="11" fill="#1c1f24" />
-        <rect x="58" y="110" width="46" height="7" rx="3.5" fill="#33383e" />
-        <circle cx="100" cy="113" r="5" fill="#1c1f24" />
+
+      {/* ── ประกายไฟตอนตัด (บนสุด) ── */}
+      <g className="stn-spark">
+        <path d="M366 150 l3.5 -9 3.5 9 9 3.5 -9 3.5 -3.5 9 -3.5 -9 -9 -3.5 z" fill="#ffb02e" />
+        <line x1="366" y1="150" x2="352" y2="162" stroke="#ff8a1e" strokeWidth="2" strokeLinecap="round" />
+        <line x1="366" y1="150" x2="356" y2="166" stroke="#ffb02e" strokeWidth="2" strokeLinecap="round" />
+        <line x1="366" y1="150" x2="348" y2="156" stroke="#ff8a1e" strokeWidth="1.6" strokeLinecap="round" />
+        <circle cx="350" cy="164" r="1.6" fill="#ffd27a" />
+        <circle cx="345" cy="158" r="1.4" fill="#ffd27a" />
       </g>
+
+      {/* ── พนักงาน (เดินซ้าย→ขวา, ตัวเด้ง, ก้มวางของ) ── */}
+      <g className="stn-walker"><g className="stn-bob">
+        <ellipse cx="62" cy="178" rx="24" ry="4" fill="rgba(0,0,0,.12)" />
+        <g className="stn-leg1">
+          <rect x="55" y="138" width="8" height="28" rx="4" fill="#1c2126" />
+          <rect x="55" y="163" width="15" height="6" rx="3" fill="#14181c" />
+        </g>
+        <g className="stn-leg2">
+          <rect x="55" y="138" width="8" height="28" rx="4" fill="#2a3138" />
+          <rect x="55" y="163" width="15" height="6" rx="3" fill="#20262b" />
+        </g>
+        <rect x="51" y="103" width="19" height="40" rx="8" fill="#232a31" />
+        <rect x="51" y="120" width="19" height="4" fill="#eef2f5" opacity="0.85" />
+        <rect x="58" y="103" width="4" height="40" fill="#eef2f5" opacity="0.5" />
+        <g className="stn-arm">
+          <rect x="58" y="110" width="47" height="8" rx="4" fill="#2a3138" />
+          <circle cx="104" cy="114" r="5" fill="#e8b98f" />
+        </g>
+        <rect x="56" y="99" width="8" height="6" fill="#e8b98f" />
+        <circle cx="60" cy="92" r="10" fill="#e8b98f" />
+        <path d="M50 90 Q60 76 70 90 Z" fill="#f5920b" />
+        <rect x="47" y="88" width="27" height="4" rx="2" fill="#f5920b" />
+        <path d="M60 78 L60 90" stroke="#d97a00" strokeWidth="1.5" />
+      </g></g>
     </svg>
   );
 }
@@ -430,7 +484,7 @@ function WorkArea({ step, elapsed, unit, qty, setQty, status, setStatus, busy, o
         <StationAnim />
         <div className="stn-hint">
           <div className="big">● กำลังบันทึกเวลา</div>
-          กด <b>SCAN</b> เพื่อสแกน QR ล็อต/งานที่กำลังทำ
+          กด <b>SCAN</b> เพื่อสแกนชิ้นงาน
         </div>
       </div>
     );
