@@ -221,10 +221,9 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   0%   { transform: translateX(-150px); opacity: 0; }
   8%   { opacity: 1; }
   48%  { transform: translateX(150px); opacity: 1; }   /* ถึงข้างเครื่อง */
-  70%  { transform: translateX(150px); opacity: 1; }   /* ยืนวางของ */
-  84%  { transform: translateX(120px); opacity: 1; }
-  94%  { transform: translateX(20px);  opacity: 0; }    /* เดินถอยออก */
-  100% { transform: translateX(-150px); opacity: 0; }
+  82%  { transform: translateX(150px); opacity: 1; }   /* ยืนวางของ (ไม่เดินถอยหลัง) */
+  90%  { transform: translateX(150px); opacity: 0; }   /* จางหายอยู่กับที่ */
+  100% { transform: translateX(-150px); opacity: 0; }  /* รีเซ็ตกลับซ้ายตอนมองไม่เห็น */
 }
 @keyframes stn-carry {
   0%   { transform: translateX(-150px) translateY(0);   opacity: 0; }
