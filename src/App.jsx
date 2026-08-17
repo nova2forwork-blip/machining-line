@@ -293,9 +293,9 @@ function Login({ onLogin }) {
 const MENU = [
   { group: "การผลิต", items: [
     { key: "release", label: "Release Production", icon: "box" },
-    { key: "finished", label: "Finished Part", icon: "check" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
     { key: "manageReleases", label: "จัดการ Release", icon: "grid", can: canManage },
+    { key: "manageProjects", label: "จัดการ Projects", icon: "folder", can: canManage },
   ] },
   { group: "รายงาน", items: [
     { key: "report", label: "Report", icon: "chart" },
@@ -317,7 +317,7 @@ function canOpenTab(user, key) {
   return MENU.flatMap((g) => g.items).some((it) => it.key === key && (!it.can || it.can(user)));
 }
 const BOTTOM_LEFT = { key: "release", label: "Release", icon: "box" };
-const BOTTOM_LEFT2 = { key: "finished", label: "เสร็จแล้ว", icon: "check" };
+const BOTTOM_LEFT2 = { key: "labels", label: "พิมพ์ QR", icon: "qr" };
 const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart" };
 
 function Shell({ user, onLogout }) {
@@ -419,9 +419,9 @@ function Shell({ user, onLogout }) {
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "detail" && <ScanPage user={user} />}
-          {tab === "finished" && <FinishedPartPage />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "manageReleases" && canManage(user) && <ReleaseManagePage />}
+          {tab === "manageProjects" && canManage(user) && <ManageProjectsPage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsSummaryPage />}
@@ -1497,6 +1497,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
   const totalFinished = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
   const totalInProgress = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
   const pctOverall = group.totalQty > 0 ? Math.round((totalFinished / group.totalQty) * 100) : 0;
+  // น้ำหนักที่ทำเสร็จแล้ว = จำนวนชิ้นที่เสร็จ × น้ำหนัก/ชิ้น (ของแต่ละ Part)
+  const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
+  const finishedWeight = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
 
   return (
     <div>
@@ -1546,8 +1549,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
                 {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(group.totalQty)} ชิ้น</span>
               </div>
               <ProgressBar pct={pctOverall} finished={totalFinished} total={group.totalQty} />
+              <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
+                น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(group.totalWeight)} กก.</span>
+              </div>
               {totalInProgress > 0 && (
-                <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
                   กำลังทำ: {fmtNum(totalInProgress)} ชิ้น
                 </div>
               )}
@@ -2467,13 +2473,13 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 3) FINISHED PART
 // ══════════════════════════════════════════════════════════════════════════
-function FinishedPartPage() {
+// เนื้อหา Finished Part (สถิติ + ตาราง) — ใช้ซ้ำได้ทั้งหน้าเดี่ยวและฝังใน Report
+function FinishedPartSection() {
   const [units, setUnits] = useState([]);
   useEffect(() => { getAllUnitsFull("finished").then(setUnits); }, []);
   const totalWeight = units.reduce((s, u) => s + Number(u.weight || u.part_master?.unit_weight || 0), 0);
   return (
-    <div>
-      <div className="page-head"><div className="page-title">Finished Part</div></div>
+    <>
       <div className="stat-row">
         <StatCard label="ชิ้นที่เสร็จทั้งหมด" value={units.length.toLocaleString()} icon="check" />
         <StatCard label="น้ำหนักวัสดุ (กก.)" value={fmtNum(totalWeight)} icon="weight" />
@@ -2504,7 +2510,7 @@ function FinishedPartPage() {
           </div>
         )}
       </Card>
-    </div>
+    </>
   );
 }
 
@@ -3206,6 +3212,12 @@ function ReportPage({ goTo }) {
         )}
       </Card>
 
+      {/* ── Finished Part (รวมมาไว้ในหน้า Report) ──────────────────────────── */}
+      <div className="section-heading" style={{ margin: "26px 2px 12px", fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
+        Finished Part — ชิ้นงานที่เสร็จสมบูรณ์
+      </div>
+      <FinishedPartSection />
+
       {showNewProject && (
         <QuickAddProjectModal
           onClose={() => setShowNewProject(false)}
@@ -3290,6 +3302,80 @@ function MachinesSummaryPage() {
           </table>
         </div>
       </Card>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 6.5) MANAGE PROJECTS — เพิ่ม / แก้ไข / ลบ โปรเจค (ใช้ ProjectEditModal + QuickAdd)
+// ══════════════════════════════════════════════════════════════════════════
+function ManageProjectsPage() {
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);   // { project, impact }
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    listRows("projects", { order: "code" }).then((rows) => { setProjects(rows); setLoading(false); });
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  async function openEdit(p) {
+    const impact = await getProjectImpact(p.id);
+    setEditing({ project: p, impact });
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">จัดการ Projects</div>
+          <div className="page-sub">เพิ่ม / แก้ไข / ลบ โปรเจค (การลบจะเช็คผลกระทบก่อน)</div>
+        </div>
+        <Btn variant="accent" onClick={() => setShowAdd(true)}><Icon name="folder" size={15} /> เพิ่มโปรเจค</Btn>
+      </div>
+      <Card title={`โปรเจคทั้งหมด (${projects.length})`}>
+        {loading ? (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+        ) : projects.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="folder" size={32} />
+            <div className="empty-state-title">ยังไม่มีโปรเจค</div>
+            <div className="empty-state-sub">กด “เพิ่มโปรเจค” เพื่อสร้างโปรเจคแรก</div>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>รหัส</th><th>ชื่อโปรเจค</th><th>สร้างเมื่อ</th><th></th></tr></thead>
+              <tbody>
+                {projects.map((p) => (
+                  <tr key={p.id}>
+                    <td style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
+                    <td>{p.name}</td>
+                    <td>{fmtDT(p.created_at)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <Btn variant="ghost" size="sm" onClick={() => openEdit(p)}><Icon name="settings" size={13} /> แก้ไข</Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {showAdd && (
+        <QuickAddProjectModal onClose={() => setShowAdd(false)} onCreated={() => { setShowAdd(false); reload(); }} />
+      )}
+      {editing && (
+        <ProjectEditModal
+          project={editing.project} impact={editing.impact}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload(); }}
+          onDeleted={() => { setEditing(null); reload(); }}
+        />
+      )}
     </div>
   );
 }
