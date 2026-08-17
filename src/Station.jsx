@@ -8,7 +8,7 @@ import {
   findUnitByQr, getMachineDay, recordMachineWork,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone } from "./fullscreen.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -263,7 +263,10 @@ function MachineStation({ user, onLogout }) {
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
           <button className="stn-logout" onClick={onLogout}>ออก</button>
-          <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
+          {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
+          {!isStandalone() && (
+            <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
+          )}
           {machine ? machine.code : "— ไม่มีเครื่อง —"}
         </div>
 
