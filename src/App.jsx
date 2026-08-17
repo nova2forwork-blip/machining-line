@@ -3752,11 +3752,20 @@ function PartMasterCrud() {
 // ══════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [user, setUser] = useState(getSession());
+
+  // ฝ่ายผลิต / พนักงานหน้าเครื่อง (role = operator) → เด้งไปหน้าเครื่องใหม่ /station อัตโนมัติ
+  // (admin / supervisor ใช้หน้าปกติเหมือนเดิม) — session แชร์กันทั้งสองส่วนอยู่แล้ว
+  const goStation = !!user && user.role === "operator";
+  useEffect(() => {
+    if (goStation) window.location.replace("/station");
+  }, [goStation]);
+
   async function logout() {
     try { await logoutSession(); } catch (_) { /* ignore */ } // ยกเลิก token ฝั่ง DB
     clearSession();
     setUser(null);
   }
   if (!user) return <Login onLogin={setUser} />;
+  if (goStation) return null; // กำลังพาไป /station
   return <Shell user={user} onLogout={logout} />;
 }
