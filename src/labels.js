@@ -95,12 +95,13 @@ export function printLabels(units, opts = {}) {
     body { margin: 0; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, ${widthMm}mm); gap: 3mm; justify-content: start; }
   `;
+  // 1 ป้าย/หน้า · หน้ากระดาษ = ขนาดป้ายจริง (เท่าเนื้องานจริง) · ป้ายถัดไปขึ้นหน้าใหม่
   const rollCss = `
     @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
-    body { margin: 0; }
+    html, body { margin: 0; padding: 0; }
     .grid { display: block; }
-    .lbl { page-break-after: always; border-radius: 0; border: none; }
-    .lbl:last-child { page-break-after: auto; }
+    .lbl { page-break-after: always; break-after: page; margin: 0; }
+    .lbl:last-child { page-break-after: auto; break-after: auto; }
   `;
 
   const html = `<!DOCTYPE html>
