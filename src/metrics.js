@@ -11,6 +11,13 @@
 
 // ดึงน้ำหนักพร้อม fallback: ค่าที่ปล่อยลงชิ้น → ค่าเริ่มต้นจาก Part Master → 0
 const w = (value, fallback) => Number(value ?? fallback ?? 0);
+// จำนวนชิ้นของ log แต่ละแถว: หน้าเครื่อง = quantity (ล็อต), หน้าสำนักงาน = 1 (สแกน 1 ครั้ง = 1 ชิ้น)
+const q = (l) => Number(l?.quantity ?? 1) || 0;
+
+// จำนวนชิ้นรวมทั้งหมดในชุด logs (นับ quantity ของงานหน้าเครื่องด้วย)
+export function totalPieces(logs) {
+  return (logs || []).reduce((sum, l) => sum + q(l), 0);
+}
 
 // ── 1) per-scan: ปริมาณงานที่ประมวลผล (ภาระเครื่อง / ขั้นตอน) ─────────────
 // นับทุกแถวใน scan_logs — ชิ้นที่ผ่านหลายขั้นตอนถูกนับหลายครั้งโดยตั้งใจ
@@ -71,10 +78,11 @@ export function machineOpMatrix(logs) {
       byMachine.set(m, { name: m, total: { count: 0, weight: 0 }, ops: {} });
     }
     const entry = byMachine.get(m);
+    const pcs = q(l);
     entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
-    entry.ops[op].count += 1;
+    entry.ops[op].count += pcs;
     entry.ops[op].weight += wt;
-    entry.total.count += 1;
+    entry.total.count += pcs;
     entry.total.weight += wt;
   }
 
@@ -105,10 +113,11 @@ export function partOpMatrix(logs) {
       byPart.set(partNo, { partNo, partName, total: { count: 0, weight: 0 }, ops: {} });
     }
     const entry = byPart.get(partNo);
+    const pcs = q(l);
     entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
-    entry.ops[op].count  += 1;
+    entry.ops[op].count  += pcs;
     entry.ops[op].weight += wt;
-    entry.total.count    += 1;
+    entry.total.count    += pcs;
     entry.total.weight   += wt;
   }
 
