@@ -6,7 +6,7 @@ import {
 } from "./auth.js";
 import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
-  scanQueueCount, onScanQueue, flushScanQueue, logoutSession,
+  scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone } from "./fullscreen.js";
 
@@ -144,6 +144,15 @@ function MachineStation({ user, onLogout }) {
     return off;
   }, []);
 
+  // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
+  // ทำเงียบๆ เบื้องหลัง + รีเฟรชทุกครั้งที่เน็ตกลับมา
+  useEffect(() => {
+    prefetchUnitsForOffline().catch(() => {});
+    const onOnline = () => prefetchUnitsForOffline().catch(() => {});
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   function flash(text, tone = "ok") {
     setToast({ text, tone });
     clearTimeout(toastRef.current);
@@ -229,6 +238,7 @@ function MachineStation({ user, onLogout }) {
       materialLengthMm: materialLen === "" ? null : Number(materialLen),
       processSeconds: elapsed,
       status,
+      releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
     });
     setBusy(false);
     if (!res || res.ok === false) {
@@ -295,7 +305,8 @@ function MachineStation({ user, onLogout }) {
                 const fin = String(r.status).toLowerCase() === "finished";
                 const isNew = (r.id && r.id === newRowId);
                 return (
-                  <tr key={r.id || i} className={isNew ? "stn-new" : ""}>
+                  <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
+                    title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
                     <td>{r.item != null ? String(r.item).padStart(3, "0") : pad(i + 1)}</td>
                     <td>{r.mdf_no || "-"}</td>
                     <td>{r.rel_no || "-"}</td>
