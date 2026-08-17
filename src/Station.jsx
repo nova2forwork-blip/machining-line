@@ -159,7 +159,7 @@ function MachineStation({ user, onLogout }) {
   useEffect(() => () => stopTimer(), []);
 
   function resetAll() {
-    stopTimer(); stopAlarm(); setElapsed(0); setMaterialLen(""); setUnit(null); setQty(0);
+    stopTimer(); setElapsed(0); setMaterialLen(""); setUnit(null); setQty(0);
     setStatus(null); setStep(STEP.IDLE);
   }
 
@@ -184,30 +184,21 @@ function MachineStation({ user, onLogout }) {
   }
 
   // ── SCAN ──────────────────────────────────────────────────────────────
-  // เสียงเตือนวนซ้ำ (ตอนสแกนผิด) — ดังต่อเนื่องจนกว่าจะสแกนใหม่/ปิด/สำเร็จ
-  const alarmRef = useRef(null);
-  function stopAlarm() { if (alarmRef.current) { clearInterval(alarmRef.current); alarmRef.current = null; } }
-  function startAlarm() {
-    stopAlarm();
-    beep(320, 240, 0.32); vibrate([90, 60, 90]);
-    alarmRef.current = setInterval(() => { beep(320, 240, 0.32); vibrate(140); }, 550);
-  }
-  useEffect(() => () => stopAlarm(), []);
+  // เสียงเตือน "ครั้งเดียว" ตอนสแกน/กดผิด (ไม่ค้าง ไม่วนซ้ำ)
+  function errorBeep() { beep(320, 240, 0.32); vibrate([90, 60, 90]); }
 
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
-    stopAlarm();
-    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture)
+    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
     setStep(STEP.SCAN);
   }
-  function closeScan() { stopAlarm(); setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
+  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   async function onDecoded(qr) {
     if (!qr) return;
-    stopAlarm();                    // เคลียร์เสียงเตือนเดิมก่อน
     setBusy(true);
     const u = await findUnitByQr(qr);
     setBusy(false);
-    if (!u) { startAlarm(); flash("ไม่พบ QR นี้ในระบบ — สแกนใหม่", "warn"); return; }  // ผิด = ดังต่อเนื่อง
+    if (!u) { errorBeep(); flash("ไม่พบ QR นี้ในระบบ — สแกนใหม่", "warn"); return; }  // ผิด = ติ๊ดเตือนครั้งเดียว
     beep(950, 110); vibrate(60);    // ติ๊ด! อ่านสำเร็จ (ครั้งเดียว)
     setUnit(u);
     if (qty === 0) setQty(1);
@@ -233,7 +224,7 @@ function MachineStation({ user, onLogout }) {
     });
     setBusy(false);
     if (!res || res.ok === false) {
-      startAlarm();       // บันทึกผิดพลาด = เสียงเตือนต่อเนื่อง
+      errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
       flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
       setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
       return;
@@ -622,7 +613,7 @@ function CameraScan({ onDecoded, busy, onClose }) {
     e.preventDefault();
     if (!manual.trim() || doneRef.current) return;
     doneRef.current = true;
-    onDecoded(manual.trim());
+    onDecoded(manual.trim());   // เสียงติ๊ด/เตือนอยู่ใน onDecoded (ตามผลสแกน)
   }
 
   return (
