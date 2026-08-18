@@ -692,8 +692,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const [projectId, setProjectId] = useState("");
   const [rows, setRows] = useState(() => Array.from({ length: 5 }, BLANK_ROW));
   const [makeQr, setMakeQr] = useState(true);
-  const [operations, setOperations] = useState([]);
-  const [bulkRouting, setBulkRouting] = useState([]); // Routing แม่แบบ สำหรับกด "ใช้กับ Part ใหม่ทั้งหมด"
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
@@ -727,8 +725,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     window.addEventListener("keydown", onKeydown);
     return () => window.removeEventListener("keydown", onKeydown);
   }, [busy]);
-
-  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
 
   function setCell(rowId, key, value) {
     setRowsU((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
@@ -780,9 +776,10 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   }
 
   const project = projects.find((p) => p.id === projectId);
-  const validRows = rows.filter((r) => r.code.trim() && (gnum(r.qty) || 0) > 0);
-  const totalQty = validRows.reduce((s, r) => s + (gnum(r.qty) || 0), 0);
-  const totalKg = validRows.reduce((s, r) => s + (rowTotalKg(r) || 0), 0);
+  const qtyOf = (r) => gnum(r.qty) || 1;                       // เว้นว่าง = 1 อัตโนมัติ
+  const validRows = rows.filter((r) => r.code.trim());         // ขอแค่มีรหัส Code (จำนวนไม่บังคับ)
+  const totalQty = validRows.reduce((s, r) => s + qtyOf(r), 0);
+  const totalKg = validRows.reduce((s, r) => s + (qtyOf(r) * (rowWeightPcs(r) || 0)), 0);
   const partsInProject = parts.filter((p) => p.project_id === projectId);
 
   // Part เดิมในโปรเจคนี้ (ถ้ามี) — ใช้ตัดสินว่าแถวนี้เป็น Part ใหม่หรือของเดิม
@@ -802,30 +799,13 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   }
   const isNewPartRow = (row) => row.code.trim() && !existingPartFor(row);
   const newPartCount = validRows.filter(isNewPartRow).length;
-  // Part ใหม่ที่ยังไม่เลือก Routing เลย — เตือนเพราะจะไม่มีวันขึ้นสถานะ "เสร็จ"
-  const newNoRouting = validRows.filter((r) => isNewPartRow(r) && (r.routing || []).length === 0).length;
-
-  function toggleRowOp(rowId, opName) {
-    setRowsU((rs) => rs.map((r) => {
-      if (r.id !== rowId) return r;
-      const has = (r.routing || []).includes(opName);
-      return { ...r, routing: has ? r.routing.filter((x) => x !== opName) : [...(r.routing || []), opName] };
-    }));
-  }
-  function toggleBulkOp(opName) {
-    setBulkRouting((b) => (b.includes(opName) ? b.filter((x) => x !== opName) : [...b, opName]));
-  }
-  // ใช้ Routing แม่แบบกับทุกแถวที่เป็น Part ใหม่พร้อมกัน
-  function applyBulkRouting() {
-    setRowsU((rs) => rs.map((r) => (isNewPartRow(r) ? { ...r, routing: [...bulkRouting] } : r)));
-  }
 
   async function doSave() {
     const ro = normalizeReleaseOrder(releaseOrder);
     if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009'); return; }
     if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
-    if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code และจำนวน Qty)"); return; }
+    if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code)"); return; }
 
     setBusy(true); setErr(""); setProgress("กำลังบันทึกทั้งใบ...");
     try {
@@ -834,12 +814,12 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       // รหัสซ้ำในใบเดียวจะถูก find-or-create ให้ถูกต้อง ไม่ชนกันเอง (แก้ M2)
       const rows = validRows.map((r) => ({
         code: r.code.trim(),
-        qty: gnum(r.qty),
+        qty: qtyOf(r),                    // เว้นว่าง = 1
         unit_weight: rowWeightPcs(r),
         length_mm: gnum(r.length_mm),
         material: r.material?.trim() || null,
         remark: r.remark?.trim() || null,
-        routing: r.routing || [],
+        routing: [],                      // ไม่ใช้ Routing แล้ว — ขั้นตอนขึ้นกับเครื่องที่ทำ
       }));
       const res = await createReleaseBatch({
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
@@ -901,29 +881,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
         วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Code · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
         (คอลัมน์ No. และ Total Kg ระบบจัดการ/คำนวณให้เอง) · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M
-        <br />Routing: Part เดิมจะดึงขั้นตอนที่เคยตั้งไว้ให้อัตโนมัติ · Part ใหม่เลือกได้ในคอลัมน์ขวาสุด
+        <br />จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ (ไม่ต้องตั้ง Routing ต่อ Part แล้ว)
       </div>
-
-      {newPartCount > 0 && operations.length > 0 && (
-        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 600, marginBottom: 6 }}>
-            ตั้ง Routing ให้ Part ใหม่พร้อมกัน ({newPartCount} Part ใหม่)
-          </div>
-          <div className="chip-row" style={{ marginBottom: 8 }}>
-            {operations.map((o) => {
-              const active = bulkRouting.includes(o.name);
-              return (
-                <span key={o.id} onClick={() => toggleBulkOp(o.name)} className={`chip ${active ? "active" : ""}`}>
-                  {o.name}{active ? ` (${bulkRouting.indexOf(o.name) + 1})` : ""}
-                </span>
-              );
-            })}
-          </div>
-          <Btn type="button" variant="ghost" size="sm" onClick={applyBulkRouting} disabled={bulkRouting.length === 0}>
-            ใช้ Routing นี้กับ Part ใหม่ทั้งหมด
-          </Btn>
-        </div>
-      )}
 
       {!projectId && (
         <div className="pgrid-need-project">
@@ -940,14 +899,13 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
               <th style={{ width: 34 }}>#</th>
               <th style={{ minWidth: 130 }}>Code *</th>
               <th style={{ width: 64 }}>REV.</th>
-              <th style={{ width: 78 }}>จำนวน *</th>
+              <th style={{ width: 78 }}>จำนวน</th>
               <th style={{ width: 90 }}>Length (มม.)</th>
               <th style={{ width: 90 }}>Weight/M</th>
               <th style={{ minWidth: 110 }}>Material</th>
               <th style={{ width: 92, textAlign: "right" }}>น้ำหนัก/ชิ้น</th>
               <th style={{ width: 92, textAlign: "right" }}>Total Kg</th>
               <th style={{ minWidth: 110 }}>Remark</th>
-              <th style={{ minWidth: 170 }}>Routing</th>
               <th style={{ width: 30 }}></th>
             </tr>
           </thead>
@@ -955,8 +913,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
             {rows.map((r, i) => {
               const wpcs = rowWeightPcs(r);
               const tkg = rowTotalKg(r);
-              const ex = existingPartFor(r);
-              const hasCode = r.code.trim() !== "";
               return (
                 <tr key={r.id}>
                   <td className="pgrid-idx">{i + 1}</td>
@@ -969,46 +925,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
                   <td className="pgrid-ro">{wpcs != null ? fmtNum(wpcs) : "-"}</td>
                   <td className="pgrid-ro">{tkg != null ? fmtNum(tkg) : "-"}</td>
                   <td><input value={r.remark} onChange={(e) => setCell(r.id, "remark", e.target.value)} onPaste={(e) => handlePaste(e, i, "remark")} /></td>
-                  <td className="pgrid-routing">
-                    {!hasCode ? (
-                      <span style={{ color: "var(--muted-2)", paddingLeft: 8 }}>—</span>
-                    ) : ex ? (
-                      // Part เดิม — โชว์ routing ที่เคยตั้งไว้ อ่านอย่างเดียว
-                      (ex.routing || []).length > 0
-                        ? <span className="pgrid-routing-ro" title="ดึงจาก Part เดิมอัตโนมัติ">{ex.routing.join(" → ")}</span>
-                        : <span className="pgrid-routing-warn" title="Part เดิมนี้ยังไม่ได้ตั้ง Routing — ไปตั้งที่ Setup ได้">ยังไม่ตั้ง (Part เดิม)</span>
-                    ) : (
-                      // Part ใหม่ — เลือกขั้นตอนได้ + เตือนถ้าเบอร์นี้มีในโปรเจคอื่น
-                      <div className="pgrid-chips">
-                        {operations.map((o) => {
-                          const active = (r.routing || []).includes(o.name);
-                          return (
-                            <span key={o.id} onClick={() => toggleRowOp(r.id, o.name)} className={`chip chip-sm ${active ? "active" : ""}`}>
-                              {o.name}{active ? ` (${r.routing.indexOf(o.name) + 1})` : ""}
-                            </span>
-                          );
-                        })}
-                        {operations.length === 0 && <span style={{ fontSize: 11, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน</span>}
-                        {(() => {
-                          const others = otherProjectMatches(r);
-                          if (others.length === 0) return null;
-                          return (
-                            <div className="pgrid-xproj" title="เบอร์เดียวกันมีในโปรเจคอื่น — คนละ Part จึงไม่ดึง routing มาให้ แสดงไว้อ้างอิงเท่านั้น">
-                              <Icon name="folder" size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />
-                              เบอร์นี้มีในโปรเจคอื่น: {others.slice(0, 2).map((m, k) => (
-                                <span key={k}>
-                                  {k > 0 ? " · " : ""}
-                                  {m.project?.code || "?"}
-                                  {(m.part.routing || []).length > 0 ? ` (${m.part.routing.join("→")})` : " (ยังไม่ตั้ง)"}
-                                </span>
-                              ))}
-                              {others.length > 2 ? ` +${others.length - 2}` : ""}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
-                  </td>
                   <td className="pgrid-del" onClick={() => removeRow(r.id)} title="ลบแถว">✕</td>
                 </tr>
               );
@@ -1033,12 +949,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <span>รวม <b>{fmtNum(totalQty)}</b> ชิ้น · <b>{validRows.length}</b> Part · น้ำหนักรวม <b>{fmtNum(totalKg)}</b> กก.</span>
         {newPartCount > 0 && <span style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</span>}
       </div>
-      {newNoRouting > 0 && (
-        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 6, lineHeight: 1.5 }}>
-          <Icon name="bolt" size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
-          มี Part ใหม่ {newNoRouting} รายการที่ยังไม่ได้เลือก Routing — ชิ้นงานเหล่านี้จะไม่ขึ้นสถานะ "เสร็จ" จนกว่าจะตั้งขั้นตอน (เลือกในคอลัมน์ Routing หรือใช้ปุ่มด้านบน)
-        </div>
-      )}
 
       <label className="toggle-row" style={{ marginTop: 14 }}>
         <span className={`toggle-switch${makeQr ? " on" : ""}`}>
@@ -3509,33 +3419,49 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
         {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
       </div>
 
-      {/* รายการ Release ในโปรเจคนี้ */}
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
-          Release ในโปรเจคนี้{rels ? ` (${rels.length})` : ""}
-        </div>
-        {rels === null ? (
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>กำลังโหลด...</div>
-        ) : rels.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มี Release</div>
-        ) : (
-          <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-            <table className="data-table" style={{ fontSize: 12.5 }}>
-              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th></tr></thead>
-              <tbody>
-                {rels.map((r) => (
-                  <tr key={r.id}>
-                    <td>{fmtDT(r.release_date)}</td>
-                    <td>{r.release_order || "-"}</td>
-                    <td>{r.part_master?.part_no || "-"}</td>
-                    <td>{fmtNum(r.qty)} ชิ้น</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* รายการ Release ในโปรเจคนี้ — รวมเป็น 1 Release Order ต่อ 1 แถว */}
+      {(() => {
+        let orders = null;
+        if (rels) {
+          const map = new Map();
+          for (const r of rels) {
+            const key = r.release_order || `__${r.id}`;   // ไม่มีเลขที่ → แยกแถวของตัวเอง
+            const g = map.get(key) || { order: r.release_order || "-", date: r.release_date, parts: 0, qty: 0 };
+            g.parts += 1; g.qty += Number(r.qty) || 0;
+            if (new Date(r.release_date) > new Date(g.date)) g.date = r.release_date;
+            map.set(key, g);
+          }
+          orders = Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+        }
+        return (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
+              Release ในโปรเจคนี้{orders ? ` (${orders.length})` : ""}
+            </div>
+            {orders === null ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>กำลังโหลด...</div>
+            ) : orders.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มี Release</div>
+            ) : (
+              <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <table className="data-table" style={{ fontSize: 12.5 }}>
+                  <thead><tr><th>วันที่</th><th>Release Order</th><th>จำนวน Part</th><th>จำนวนรวม</th></tr></thead>
+                  <tbody>
+                    {orders.map((g, i) => (
+                      <tr key={i}>
+                        <td>{fmtDT(g.date)}</td>
+                        <td>{g.order}</td>
+                        <td>{g.parts} Part</td>
+                        <td>{fmtNum(g.qty)} ชิ้น</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         <span onClick={() => !busy && remove()} style={{ color: "var(--danger-hi)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}>
