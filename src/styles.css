@@ -314,12 +314,23 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 .modal-wide { max-width: 900px; }
 
 /* Paste-friendly parts grid (Add Release popup) */
-.pgrid-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.pgrid-wrap { overflow: auto; max-height: 46vh; border: 1px solid var(--border); border-radius: 10px; }
 table.pgrid { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 12.5px; }
 table.pgrid th {
   background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: 11px;
   text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; z-index: 3;   /* ล็อกหัวตารางไว้ตอนเลื่อนแถวเยอะๆ */
 }
+
+/* แถบปุ่ม/สรุป ด้านบน (ล็อกไว้หัว ไม่ต้องเลื่อนลงไปกดบันทึก) */
+.release-actionbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 10px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+}
+.release-actionbar .ra-summary { font-size: 12.5px; color: var(--muted); }
+.release-actionbar .ra-summary b { color: var(--text); }
+.release-actionbar .ra-spacer { flex: 1; }
 table.pgrid td { padding: 0; border-bottom: 1px solid var(--border-soft); }
 table.pgrid td.pgrid-ro { padding: 6px 8px; color: var(--muted); font-family: var(--font-mono); white-space: nowrap; text-align: right; }
 table.pgrid td.pgrid-idx { padding: 6px 8px; color: var(--muted-2); text-align: center; width: 34px; }
