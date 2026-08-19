@@ -309,7 +309,6 @@ const MENU = [
     { key: "parts", label: "Parts Summary", icon: "grid" },
   ] },
   { group: "จัดการ", items: [
-    { key: "manageReleases", label: "จัดการ Release", icon: "grid", can: canManage },
     { key: "setup", label: "Setup", icon: "settings", can: isAdmin },
   ] },
 ];
@@ -426,7 +425,6 @@ function Shell({ user, onLogout }) {
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
-          {tab === "manageReleases" && canManage(user) && <ReleaseManagePage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsPage user={user} />}
@@ -1187,94 +1185,50 @@ function ProgressBar({ pct, finished, total }) {
 function PartProgressModal({ release, user, onClose }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [opCounts, setOpCounts] = useState({}); // ชื่อขั้นตอน -> จำนวนชิ้นที่ผ่านแล้ว
-  const [notStarted, setNotStarted] = useState(0);
+  const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง)
   const [finished, setFinished] = useState(0);
+  const [inProgress, setInProgress] = useState(0);
   const [totalUnits, setTotalUnits] = useState(release.qty || 0);
 
-  // ── Routing (ตั้ง/แก้ได้ในหน้านี้เลย — เฉพาะ Admin) ──────────────────────────
-  const [routing, setRouting] = useState(release.part_master?.routing || []);
-  const [operations, setOperations] = useState([]);
-  const [editRouting, setEditRouting] = useState((release.part_master?.routing || []).length === 0);
-  const [savingRouting, setSavingRouting] = useState(false);
-  const [routingErr, setRoutingErr] = useState("");
-  const [reloadKey, setReloadKey] = useState(0); // บังคับโหลดตัวเลขความคืบหน้าใหม่หลังแก้ routing
-  const canEditRouting = isAdmin(user);
+  const routing = release.part_master?.routing || [];
   const partNo = release.part_master?.part_no || "-";
   const partName = release.part_master?.part_name || "";
 
-  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
-
-  function toggleRoutingOp(name) {
-    setRouting((rt) => (rt.includes(name) ? rt.filter((x) => x !== name) : [...rt, name]));
-  }
-  async function saveRouting() {
-    if (!release.part_master_id) { setRoutingErr("ไม่พบรหัส Part (part_master_id)"); return; }
-    setSavingRouting(true); setRoutingErr("");
-    try {
-      await updateRow("part_master", release.part_master_id, { routing });
-      if (release.part_master) release.part_master.routing = routing; // อัปเดตในหน่วยความจำ เผื่อเปิดซ้ำ
-      // คำนวณสถานะย้อนหลังให้ชิ้นที่สแกนไปแล้ว (เช่น routing ขั้นเดียว → ที่สแกนแล้วเป็น finished ทันที)
-      await recalcPartStatus(release.part_master_id);
-      setEditRouting(false);
-      setReloadKey((k) => k + 1); // โหลดตัวเลขความคืบหน้าใหม่
-    } catch (e) {
-      setRoutingErr("บันทึก Routing ไม่สำเร็จ: " + (e.message || "") + " (ต้องเป็นสิทธิ์ Admin)");
-    }
-    setSavingRouting(false);
-  }
+  // สไตล์การ์ดสรุป (ใช้ซ้ำหลายจุด)
+  const cellStyle = { flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
+  const cellLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const cellVal = { fontSize: 16, fontWeight: 700 };
 
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true); setErr("");
       try {
-        // 1) ชิ้นทั้งหมดของล็อตนี้ (release เดียว = 1 Part)
-        const { data: units, error: uErr } = await supabase
-          .from("part_units").select("id, status").eq("release_id", release.id);
-        if (uErr) throw uErr;
-        const ids = (units || []).map((u) => u.id);
-        const fin = (units || []).filter((u) => u.status === "finished").length;
-
-        // 2) การสแกนทั้งหมดของชิ้นเหล่านี้ พร้อมชื่อขั้นตอน
-        let scans = [];
-        if (ids.length) {
-          const { data: sc, error: sErr } = await supabase
-            .from("scan_logs").select("part_unit_id, operation:operations(name)")
-            .in("part_unit_id", ids);
-          if (sErr) throw sErr;
-          scans = sc || [];
-        }
-
-        // 3) นับชิ้น (distinct) ต่อขั้นตอน + หาว่ากี่ชิ้นยังไม่เริ่มเลย
-        const byOp = {};
-        const scannedUnits = new Set();
-        for (const s of scans) {
-          const op = s.operation?.name;
-          if (!op) continue;
-          (byOp[op] = byOp[op] || new Set()).add(s.part_unit_id);
-          scannedUnits.add(s.part_unit_id);
-        }
-        const counts = {};
-        Object.entries(byOp).forEach(([op, set]) => { counts[op] = set.size; });
-
-        if (alive) {
-          setOpCounts(counts);
-          setFinished(fin);
-          setTotalUnits(ids.length || release.qty || 0);
-          setNotStarted((ids.length || 0) - scannedUnits.size);
-          setLoading(false);
-        }
+        // จำนวนชิ้น (รวม/เสร็จ/กำลังทำ) + ความคืบหน้าแยกขั้นตอนจากงานหน้าเครื่องจริง
+        // ใช้แหล่งเดียวกับการ์ดรวมในหน้ารายละเอียด Release เพื่อให้ตัวเลขตรงกัน
+        const [stats, prog] = await Promise.all([
+          getUnitStatsByReleaseIds([release.id]),
+          getReleaseOpProgress([release.id]),
+        ]);
+        if (!alive) return;
+        const s = stats[release.id] || { total: release.qty || 0, finished: 0, inProgress: 0 };
+        setTotalUnits(s.total || release.qty || 0);
+        setFinished(s.finished || 0);
+        setInProgress(s.inProgress || 0);
+        setOpProg(Array.isArray(prog[release.id]) ? prog[release.id] : []);
+        setLoading(false);
       } catch (e) {
         if (alive) { setErr("โหลดข้อมูลไม่สำเร็จ: " + e.message); setLoading(false); }
       }
     })();
     return () => { alive = false; };
-  }, [release, reloadKey]);
+  }, [release]);
 
-  // ขั้นตอนที่ถูกสแกนแต่ไม่ได้อยู่ใน routing (กันข้อมูลหลุด routing) — เอามาแสดงต่อท้าย
-  const extraOps = Object.keys(opCounts).filter((op) => !routing.includes(op));
+  // เรียงขั้นตอนตาม routing ก่อน แล้วต่อด้วยขั้นตอนที่มีงานจริงแต่ไม่อยู่ใน routing
+  const opMap = new Map(opProg.map((o) => [o.op, o]));
+  const extraOps = opProg.filter((o) => !routing.includes(o.op)).map((o) => o.op);
   const stages = [...routing, ...extraOps];
+  const notStarted = Math.max(0, totalUnits - finished - inProgress);
 
   return (
     <Modal
@@ -1293,23 +1247,83 @@ function PartProgressModal({ release, user, onClose }) {
             const uw = release.unit_weight ?? release.part_master?.unit_weight;
             const len = release.length_mm ?? release.part_master?.default_length_mm;
             return (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>น้ำหนัก/ชิ้น</div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{uw != null ? `${fmtNum(uw)} กก.` : "-"}</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                <div style={cellStyle}>
+                  <div style={cellLbl}>น้ำหนัก/ชิ้น</div>
+                  <div style={cellVal}>{uw != null ? `${fmtNum(uw)} กก.` : "-"}</div>
                 </div>
-                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>ความยาว/ชิ้น</div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{len != null ? `${fmtNum(len)} มม.` : "-"}</div>
+                <div style={cellStyle}>
+                  <div style={cellLbl}>ความยาว/ชิ้น</div>
+                  <div style={cellVal}>{len != null ? `${fmtNum(len)} มม.` : "-"}</div>
                 </div>
-                <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>น้ำหนักรวม</div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{uw != null ? `${fmtNum(totalUnits * uw)} กก.` : "-"}</div>
+                <div style={cellStyle}>
+                  <div style={cellLbl}>น้ำหนักรวม</div>
+                  <div style={cellVal}>{uw != null ? `${fmtNum(totalUnits * uw)} กก.` : "-"}</div>
                 </div>
               </div>
             );
           })()}
 
+          {/* ── สรุปจำนวนชิ้น: ทั้งหมด / เสร็จ / กำลังทำ / ยังไม่เริ่ม ───────── */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={cellStyle}>
+              <div style={cellLbl}>จำนวนทั้งหมด</div>
+              <div style={cellVal}>{fmtNum(totalUnits)} ชิ้น</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={cellLbl}>เสร็จแล้ว</div>
+              <div style={{ ...cellVal, color: finished > 0 ? "var(--success)" : "var(--text)" }}>{fmtNum(finished)} ชิ้น</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={cellLbl}>กำลังทำ</div>
+              <div style={{ ...cellVal, color: inProgress > 0 ? "var(--accent-dk)" : "var(--text)" }}>{fmtNum(inProgress)} ชิ้น</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={cellLbl}>ยังไม่เริ่ม</div>
+              <div style={{ ...cellVal, color: "var(--muted)" }}>{fmtNum(notStarted)} ชิ้น</div>
+            </div>
+          </div>
+
+          {/* ── ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น (งานหน้าเครื่อง) ─────────────────── */}
+          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalUnits)} ชิ้น
+          </div>
+          {stages.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "var(--muted)", padding: "2px 2px 6px", lineHeight: 1.6 }}>
+              {routing.length === 0
+                ? "Part นี้ยังไม่ได้ตั้ง Routing — ไปตั้งขั้นตอนที่ Setup › Part Master ก่อน"
+                : "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้"}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {stages.map((op, i) => {
+                const e = opMap.get(op) || { done: 0, finished: 0 };
+                const done = Number(e.done) || 0;
+                const fin = Number(e.finished) || 0;
+                const pct = totalUnits > 0 ? Math.round((done / totalUnits) * 100) : 0;
+                const over = done > totalUnits;
+                const inRouting = routing.includes(op);
+                return (
+                  <div key={op}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 4, gap: 10 }}>
+                      <span style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        {inRouting && <span className="stage-seq">{i + 1}</span>}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{op}</span>
+                        {!inRouting && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)" }}>(นอก routing)</span>}
+                      </span>
+                      <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+                        ทำแล้ว {fmtNum(done)} / {fmtNum(totalUnits)} ชิ้น
+                        {fin > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(fin)}</span> : null}
+                        {over ? <span style={{ color: "var(--warning)" }}> · เกิน (สแปร์)</span> : null}
+                      </span>
+                    </div>
+                    <ProgressBar pct={Math.min(pct, 100)} finished={done} total={totalUnits} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -1320,25 +1334,71 @@ function PartProgressModal({ release, user, onClose }) {
   );
 }
 
-function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
-  const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
+function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
+  const canEdit = canManage(user);   // admin / supervisor เท่านั้นที่แก้ไข/ลบได้
+  // สำเนา releases แบบ local เพื่อให้แก้ไข/ลบ สะท้อนทันทีในหน้านี้ (ยอดรวมคิดใหม่ตามนี้)
+  const [releases, setReleases] = useState(group.releases);
   const [unitStats, setUnitStats] = useState({});
   const [opProg, setOpProg] = useState({});   // ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง) ต่อ release
   const [statsLoading, setStatsLoading] = useState(true);
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
+  const [editing, setEditing] = useState(null);   // release ที่กำลังแก้ไข
+  const [busyId, setBusyId] = useState(null);     // release ที่กำลังลบ
 
-  const loadStats = useCallback(() => {
-    const ids = group.releases.map((r) => r.id);
+  // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
+  const totalQty = releases.reduce((s, r) => s + (r.qty || 0), 0);
+  const totalWeight = releases.reduce((s, r) => s + (r.qty || 0) * (r.unit_weight || 0), 0);
+  const notes = new Set(releases.map((r) => r.note).filter(Boolean));
+  const noteLabel = notes.size === 0 ? "-" : notes.size === 1 ? [...notes][0] : `${notes.size} หมายเหตุ`;
+
+  const loadStats = useCallback((list = releases) => {
+    const ids = list.map((r) => r.id);
+    if (ids.length === 0) { setUnitStats({}); setOpProg({}); setStatsLoading(false); return; }
     setStatsLoading(true);
     Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
       .then(([s, op]) => { setUnitStats(s); setOpProg(op || {}); setStatsLoading(false); });
-  }, [group]);
+  }, [releases]);
   useEffect(() => { loadStats(); }, [loadStats]);
+
+  // ── ลบ Release (พร้อม QR + ประวัติสแกนของล็อตนั้น) ───────────────────────
+  async function handleDelete(r) {
+    setBusyId(r.id);
+    try {
+      const units = await listRows("part_units", { filters: { release_id: r.id } });
+      const scanned = units.filter((u) => u.status !== "released").length;
+      const msg = scanned > 0
+        ? `ล็อตนี้มี ${units.length} ชิ้น และมี ${scanned} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบ Release นี้จะลบ QR และประวัติสแกนของชิ้นทั้งหมดในล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
+        : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
+      if (!confirm(msg)) { setBusyId(null); return; }
+      await deleteReleaseCascade(r.id);
+      const next = releases.filter((x) => x.id !== r.id);
+      setReleases(next);
+      onChanged && onChanged();               // ให้หน้ารายการหลักรีโหลดด้วย
+      if (next.length === 0) { onBack(); return; } // ลบหมดทั้งกลุ่ม → กลับหน้ารายการ
+      loadStats(next);
+    } catch (e) {
+      alert("ลบไม่สำเร็จ: " + e.message);
+    }
+    setBusyId(null);
+  }
+
+  // หลังแก้ไข Release: ดึงค่าล่าสุดของล็อตในกลุ่มนี้มาแสดง แล้วรีเฟรชสถิติ
+  async function afterEdit() {
+    setEditing(null);
+    onChanged && onChanged();
+    try {
+      const all = await getReleasesFull();
+      const ids = new Set(releases.map((r) => r.id));
+      const updated = all.filter((r) => ids.has(r.id));
+      if (updated.length) { setReleases(updated); loadStats(updated); }
+      else loadStats();
+    } catch { loadStats(); }
+  }
 
   // รวมความคืบหน้า "แยกตามขั้นตอน" ของทั้ง Release Order (งานหน้าเครื่อง) — ตัด/เจาะ/บาก
   const opAgg = (() => {
     const by = new Map();
-    for (const r of group.releases) {
+    for (const r of releases) {
       for (const o of opProg[r.id] || []) {
         const k = o.op || "ไม่ระบุ";
         const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0 };
@@ -1350,12 +1410,12 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
   })();
 
   // รวมทุก Part ใน Release Order นี้
-  const totalFinished = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
-  const totalInProgress = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
-  const pctOverall = group.totalQty > 0 ? Math.round((totalFinished / group.totalQty) * 100) : 0;
+  const totalFinished = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
+  const totalInProgress = releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
+  const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
   // น้ำหนักที่ทำเสร็จแล้ว = จำนวนชิ้นที่เสร็จ × น้ำหนัก/ชิ้น (ของแต่ละ Part)
   const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
-  const finishedWeight = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
+  const finishedWeight = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
 
   return (
     <div>
@@ -1375,7 +1435,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
               หน้าแรก
             </Btn>
           </div>
-          <div className="page-title">{group.releaseOrder ? `Release Order: ${group.releaseOrder}` : `Release — ${group.releases[0]?.part_master?.part_no || ""}`}</div>
+          <div className="page-title">{group.releaseOrder ? `Release Order: ${group.releaseOrder}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}</div>
           <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtDT(group.date)}</div>
         </div>
       </div>
@@ -1383,15 +1443,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
       <div className="grid-3" style={{ marginBottom: 16 }}>
         <Card>
           <div className="label-el">จำนวนรวม</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalQty)} ชิ้น</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalQty)} ชิ้น</div>
         </Card>
         <Card>
           <div className="label-el">น้ำหนักรวม</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalWeight)} กก.</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalWeight)} กก.</div>
         </Card>
         <Card>
           <div className="label-el">Part No.</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{group.releases.length} Part</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{releases.length} Part</div>
         </Card>
         <Card>
           <div className="label-el" style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -1402,11 +1462,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
           ) : (
             <>
               <div style={{ fontSize: 22, fontWeight: 700, color: pctOverall === 100 ? "var(--success)" : "var(--text)" }}>
-                {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(group.totalQty)} ชิ้น</span>
+                {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(totalQty)} ชิ้น</span>
               </div>
-              <ProgressBar pct={pctOverall} finished={totalFinished} total={group.totalQty} />
+              <ProgressBar pct={pctOverall} finished={totalFinished} total={totalQty} />
               <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
-                น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(group.totalWeight)} กก.</span>
+                น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
               </div>
               {totalInProgress > 0 && (
                 <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
@@ -1421,23 +1481,23 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
       {!statsLoading && opAgg.length > 0 && (
         <Card title="ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)">
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน (ตัด/เจาะ/บาก) — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(group.totalQty)} ชิ้น
+            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน (ตัด/เจาะ/บาก) — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalQty)} ชิ้น
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {opAgg.map((o) => {
-              const pct = group.totalQty > 0 ? Math.round((o.done / group.totalQty) * 100) : 0;
-              const over = o.done > group.totalQty;
+              const pct = totalQty > 0 ? Math.round((o.done / totalQty) * 100) : 0;
+              const over = o.done > totalQty;
               return (
                 <div key={o.op}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
                     <span style={{ fontWeight: 600 }}>{o.op}</span>
                     <span style={{ color: "var(--muted)" }}>
-                      ทำแล้ว {fmtNum(o.done)} / {fmtNum(group.totalQty)} ชิ้น
+                      ทำแล้ว {fmtNum(o.done)} / {fmtNum(totalQty)} ชิ้น
                       {o.finished > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(o.finished)}</span> : null}
                       {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
                     </span>
                   </div>
-                  <ProgressBar pct={Math.min(pct, 100)} finished={o.done} total={group.totalQty} />
+                  <ProgressBar pct={Math.min(pct, 100)} finished={o.done} total={totalQty} />
                 </div>
               );
             })}
@@ -1459,12 +1519,13 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
                 <th>น้ำหนักรวม</th>
                 <th>ความยาว/ชิ้น</th>
                 <th>หมายเหตุ</th>
+                {canEdit && <th>จัดการ</th>}
                 <th></th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {group.releases.map((r) => {
+              {releases.map((r) => {
                 const st = unitStats[r.id] || null;
                 const finished = st?.finished ?? 0;
                 const total = st?.total ?? r.qty;
@@ -1494,6 +1555,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
                     <td>{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>
                     <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
                     <td>{r.note || "-"}</td>
+                    {canEdit && (
+                      <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                        <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>แก้ไข</span>
+                        <span onClick={() => busyId !== r.id && handleDelete(r)} style={{ color: "var(--danger-hi)", cursor: busyId === r.id ? "wait" : "pointer" }}>
+                          {busyId === r.id ? "กำลังลบ..." : "ลบ"}
+                        </span>
+                      </td>
+                    )}
                     <td>
                       <span onClick={(e) => { e.stopPropagation(); goTo && goTo("labels", { releaseId: r.id }); }} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
                         <Icon name="printer" size={13} /> พิมพ์ QR
@@ -1509,11 +1578,18 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
           </table>
         </div>
       </Card>
-      {noteLabel !== "-" && group.notes.size > 1 && (
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...group.notes].join(" · ")}</div>
+      {noteLabel !== "-" && notes.size > 1 && (
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...notes].join(" · ")}</div>
       )}
 
       {viewPart && <PartProgressModal release={viewPart} user={user} onClose={() => { setViewPart(null); loadStats(); }} />}
+      {editing && (
+        <ReleaseEditModal
+          release={editing}
+          onClose={() => setEditing(null)}
+          onSaved={afterEdit}
+        />
+      )}
     </div>
   );
 }
@@ -1569,7 +1645,7 @@ function ReleasePage({ user, goTo }) {
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
 
   if (viewGroup) {
-    return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} />;
+    return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
   }
 
   return (
@@ -1577,7 +1653,7 @@ function ReleasePage({ user, goTo }) {
       <div className="page-head page-head-release">
         <div>
           <div className="page-title">Release Production</div>
-          <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้)</div>
+          <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Btn variant="accent" onClick={() => setShowAdd(true)}>
@@ -2758,106 +2834,6 @@ function ReleaseEditModal({ release, onClose, onSaved }) {
         </>
       )}
     </Modal>
-  );
-}
-
-function ReleaseManagePage() {
-  const [releases, setReleases] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [editing, setEditing] = useState(null);
-  const [busyId, setBusyId] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setReleases(await getReleasesFull());
-    setLoading(false);
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const filtered = releases.filter((r) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return [
-      r.release_order, r.part_master?.part_no, r.part_master?.projects?.code,
-      r.part_master?.projects?.name, r.note,
-    ].some((v) => (v || "").toLowerCase().includes(q));
-  });
-
-  async function handleDelete(release) {
-    setBusyId(release.id);
-    try {
-      const units = await listRows("part_units", { filters: { release_id: release.id } });
-      const scanned = units.filter((u) => u.status !== "released").length;
-      const msg = scanned > 0
-        ? `ล็อตนี้มี ${units.length} ชิ้น และมี ${scanned} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบ Release นี้จะลบ QR และประวัติสแกนของชิ้นทั้งหมดในล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
-        : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
-      if (!confirm(msg)) { setBusyId(null); return; }
-      await deleteReleaseCascade(release.id);
-      await load();
-    } catch (e) {
-      alert("ลบไม่สำเร็จ: " + e.message);
-    }
-    setBusyId(null);
-  }
-
-  return (
-    <div>
-      <div className="page-head">
-        <div>
-          <div className="page-title">จัดการ Release</div>
-          <div className="page-sub">แก้ไขจำนวน/น้ำหนัก/ความยาว/หมายเหตุ หรือลบ Release ที่เคยปล่อยงานไปแล้ว</div>
-        </div>
-      </div>
-
-      <Card>
-        <Field label="ค้นหา">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="เลข Release Order / รหัส Part / รหัสโปรเจค / หมายเหตุ" />
-        </Field>
-        <div className="table-wrap" style={{ marginTop: 12 }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>วันที่</th><th>Release Order</th><th>โปรเจค</th><th>Part</th><th>จำนวน</th>
-                <th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>หมายเหตุ</th><th>ปล่อยโดย</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id}>
-                  <td>{fmtDT(r.release_date)}</td>
-                  <td>{r.release_order || "-"}</td>
-                  <td>{r.part_master?.projects?.code || "-"}</td>
-                  <td>{r.part_master?.part_no || "-"}</td>
-                  <td>{r.qty}</td>
-                  <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                  <td>{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
-                  <td>{r.note || "-"}</td>
-                  <td>{r.employee?.name || "-"}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>แก้ไข</span>
-                    <span onClick={() => busyId !== r.id && handleDelete(r)} style={{ color: "var(--danger-hi)", cursor: busyId === r.id ? "wait" : "pointer" }}>
-                      {busyId === r.id ? "กำลังลบ..." : "ลบ"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {!loading && filtered.length === 0 && (
-                <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ไม่พบ Release</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {editing && (
-        <ReleaseEditModal
-          release={editing}
-          onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); await load(); }}
-        />
-      )}
-    </div>
   );
 }
 
