@@ -271,6 +271,19 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-lbl-of { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--st-line); align-self: stretch; text-align: right; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
 .stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
 .stn-lbl-rework { font-size: 10.5px; color: var(--st-alert); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+
+/* แถบแจ้งเวอร์ชันใหม่ (หน้าเครื่อง) — ลอยด้านบนสุด กดอัปเดตเอง */
+.stn-update {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  background: #14e39a; color: #05271b; font-weight: 700; font-size: 1.7vh;
+  padding: 0.9vh 2vh; box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+}
+.stn-update button {
+  background: #05271b; color: #14e39a; border: none; border-radius: 7px;
+  padding: 0.7vh 2vh; font-weight: 800; font-size: 1.6vh; cursor: pointer;
+}
+.stn-update button:disabled { opacity: .7; }
 .stn-qty-lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #333; }
 .stn-qty-stepper { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0 16px; }
 .stn-qty-stepper button { width: 46px; height: 46px; border: 1.5px solid var(--st-line); background: #fff; border-radius: 6px; font-size: 24px; cursor: pointer; line-height: 1; }
