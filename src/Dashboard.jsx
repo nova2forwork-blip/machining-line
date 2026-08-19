@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import "./dashboard.css";
 import { getScanLogsBetween, supabase } from "./supabase.js";
 import { machineOpMatrix } from "./metrics.js";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 const fmtInt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
@@ -59,6 +60,7 @@ export default function Dashboard() {
   const [hit, setHit] = useState(new Set());           // ชื่อเครื่องที่เพิ่งมีงานเข้า (แฟลชการ์ด)
   const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
   const hitTimer = useRef(0);
+  const hourlyRef = useRef([]);                        // อ้างอิงข้อมูลกราฟคงที่ (กันรีอนิเมชันซ้ำ)
 
   const fetchNow = useCallback(async () => {
     const { from, to } = bangkokTodayRange();
@@ -120,6 +122,26 @@ export default function Dashboard() {
   const maxKg = Math.max(1, ...machines.map((m) => m.weight));
   const feed = logs.slice(0, 9);
 
+  // ── กราฟการผลิตรายชั่วโมง (กก. ต่อ ชม.) ตามเวลาไทย ────────────────────
+  // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
+  // ไม่ควรทำให้กราฟรีเซ็ต/กระพริบใหม่) — Recharts จะขยับก็ต่อเมื่อค่าจริงเปลี่ยน
+  const HOUR = 3600 * 1000;
+  const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
+  const hourly = useMemo(() => {
+    const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
+    const perHourKg = new Array(24).fill(0);
+    for (const l of logs) perHourKg[bkkHour(l.scanned_at)] += Number(l.weight) || 0;
+    const active = logs.map((l) => bkkHour(l.scanned_at));
+    let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
+    startH = Math.min(startH, Math.max(0, curH - 3)); // โชว์อย่างน้อย ~4 จุด
+    const arr = [];
+    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, kg: Math.round(perHourKg[h] * 10) / 10 });
+    // คงอ้างอิงเดิมถ้าค่าเท่าเดิม → กราฟไม่รีอนิเมชันซ้ำทุกโพล/ทุกวินาที
+    if (JSON.stringify(arr) === JSON.stringify(hourlyRef.current)) return hourlyRef.current;
+    hourlyRef.current = arr;
+    return arr;
+  }, [logs, curH]);
+
   if (!booted) {
     return (
       <div className="dash-boot">
@@ -174,19 +196,34 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="dash-panel dash-chart">
-          <div className="dash-panel-h" style={{ marginBottom: "0.4vh" }}>น้ำหนักที่ผลิต · แยกตามเครื่อง (กก.)</div>
-          {machines.length === 0 ? (
-            <div className="dash-empty">—</div>
-          ) : (
-            machines.slice(0, 6).map((m) => (
-              <div key={m.name} className="dash-chart-row">
-                <div className="cname">{m.name}</div>
-                <div className="dash-chart-track"><div className="dash-chart-bar" style={{ width: `${Math.max(3, (m.weight / maxKg) * 100)}%` }} /></div>
-                <div className="cval dash-num">{fmtKg(m.weight)} กก.</div>
-              </div>
-            ))
-          )}
+        <div className="dash-panel">
+          <div className="dash-panel-h"><span>การผลิตรายชั่วโมง · วันนี้ (กก.)</span></div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {hourly.length === 0 ? (
+              <div className="dash-empty">รอข้อมูลการผลิต…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourly} margin={{ top: 12, right: 18, left: 4, bottom: 4 }}>
+                  <defs>
+                    <linearGradient id="dashArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#14e39a" stopOpacity={0.55} />
+                      <stop offset="100%" stopColor="#14e39a" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#24302a" vertical={false} />
+                  <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
+                    tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
+                  <YAxis stroke="#24302a" tickLine={false} width={56}
+                    tick={{ fill: "#9db1a8", fontSize: 13 }}
+                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  <Area type="monotone" dataKey="kg" stroke="#14e39a" strokeWidth={3}
+                    fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
+                    activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
+                    animationDuration={900} isAnimationActive />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </div>
       </div>
 
