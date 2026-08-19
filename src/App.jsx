@@ -341,11 +341,8 @@ function Shell({ user, onLogout }) {
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
   }
 
-  // ปุ่มสแกนกลมด้านล่าง: พาไปหน้าเลือกโหมดก่อนเสมอ
-  // (ผู้ใช้เลือก หน้าเครื่อง / มือถือ แล้วค่อยกด "เริ่มสแกน" เอง)
-  function goScanNow() {
-    go("detail");
-  }
+  // (เอาการสแกนออกจากหน้าสำนักงานแล้ว — การสแกนทำที่หน้าเครื่อง /station เท่านั้น
+  //  หน้าสำนักงานบนมือถือ/ไอแพดจึงไม่ต้องใช้กล้อง)
 
   return (
     <div className="app-shell">
@@ -424,7 +421,6 @@ function Shell({ user, onLogout }) {
       <div className="content">
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
-          {tab === "detail" && <ScanPage user={user} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
@@ -441,10 +437,6 @@ function Shell({ user, onLogout }) {
         </div>
         <div className={`bottom-nav-item ${tab === BOTTOM_LEFT2.key ? "active" : ""}`} onClick={() => go(BOTTOM_LEFT2.key)}>
           <Icon name={BOTTOM_LEFT2.icon} size={20} /><span>{BOTTOM_LEFT2.label}</span>
-        </div>
-        <div className="bottom-nav-scan" onClick={goScanNow}>
-          <div className="bottom-nav-scan-btn"><Icon name="scan" size={22} strokeWidth={2.2} /></div>
-          <span>สแกน</span>
         </div>
         <div className={`bottom-nav-item ${tab === BOTTOM_RIGHT.key ? "active" : ""}`} onClick={() => go(BOTTOM_RIGHT.key)}>
           <Icon name={BOTTOM_RIGHT.icon} size={20} /><span>{BOTTOM_RIGHT.label}</span>
@@ -1417,12 +1409,22 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   })();
 
   // รวมทุก Part ใน Release Order นี้
-  const totalFinished = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
-  const totalInProgress = releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
-  const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
-  // น้ำหนักที่ทำเสร็จแล้ว = จำนวนชิ้นที่เสร็จ × น้ำหนัก/ชิ้น (ของแต่ละ Part)
+  // ★ B3: ให้ "เสร็จแล้ว (ภาพรวม)" ตรงกับงานหน้าเครื่อง — ถ้ามีงานหน้าเครื่อง (opAgg)
+  //   ใช้ยอด "เสร็จของขั้นตอนสุดท้าย (most-downstream)" เป็นตัวแทน "ชิ้นที่เสร็จจริง"
+  //   ถ้าไม่มี ค่อย fallback ไปที่ part_units.status (งานสแกนฝั่งสำนักงาน)
   const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
-  const finishedWeight = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
+  const stationOn = opAgg.length > 0;
+  const lastOp = stationOn ? opAgg[opAgg.length - 1] : null;
+  const officeFinished = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
+  const totalFinished = stationOn ? Math.min(lastOp.finished, totalQty) : officeFinished;
+  const totalInProgress = stationOn
+    ? Math.max(0, Math.min(lastOp.done, totalQty) - totalFinished)
+    : releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
+  const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
+  const avgW = totalQty > 0 ? totalWeight / totalQty : 0;
+  const finishedWeight = stationOn
+    ? totalFinished * avgW
+    : releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
 
   return (
     <div>
@@ -1475,6 +1477,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
                 น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
               </div>
+              {stationOn && (
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                  * นับจากขั้นตอนสุดท้าย ({lastOp.op}) ของงานหน้าเครื่อง
+                </div>
+              )}
               {totalInProgress > 0 && (
                 <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
                   กำลังทำ: {fmtNum(totalInProgress)} ชิ้น
