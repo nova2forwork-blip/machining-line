@@ -58,8 +58,8 @@ export function setupUpdateWatcher(reg) {
 
   // เช็คเวอร์ชันเป็นระยะ (จอเปิดค้างทั้งวัน) + ตอนกลับมาออนไลน์/กลับมาโฟกัส
   const check = () => { checkVersion(); if (reg) { try { reg.update(); } catch { /* ignore */ } } };
-  setTimeout(check, 60 * 1000);                     // เช็คครั้งแรกหลังเปิด 1 นาที
-  setInterval(check, 15 * 60 * 1000);               // จากนั้นทุก 15 นาที
+  setTimeout(check, 8 * 1000);                      // เช็คครั้งแรกไวๆ หลังเปิด (กันหน้าที่เปิดค้าง/โหลดจากแคชเก่า)
+  setInterval(check, 5 * 60 * 1000);                // จากนั้นทุก 5 นาที
   window.addEventListener("online", check);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 }
