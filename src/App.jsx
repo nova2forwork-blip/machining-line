@@ -6,7 +6,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
-  createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
+  createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, recalcPartStatus,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
@@ -2588,8 +2588,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     for (const u of units) if (!seen.has(u.release_id)) { seen.add(u.release_id); reps.push(u); }
     return reps;
   })();
-  const multi = lotReps.length > 1;                  // หลายพาร์ท → บังคับป้ายรวมล็อต (1 ใบ/พาร์ท)
-  const effScope = multi ? "lot" : labelScope;
+  const multi = lotReps.length > 1;                  // เลือกหลายพาร์ท (ใช้ปรับข้อความอธิบาย)
+  const effScope = labelScope;                       // เลือกป้ายรายชิ้น (รันเบอร์) ได้แม้เลือกหลายพาร์ท
   const displayed = effScope === "unit" ? units : lotReps;
 
   // เลือกทุกใบที่แสดงโดยอัตโนมัติ
@@ -2693,17 +2693,24 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         }>
           <Field label="ชนิดป้าย">
             <div className="chip-row">
-              <span className={`chip ${effScope === "unit" ? "active" : ""}`} style={multi ? { opacity: 0.4, pointerEvents: "none" } : undefined} onClick={() => !multi && setLabelScope("unit")}>ป้ายรายชิ้น · ติดทุกชิ้น (ชิ้นใหญ่)</span>
+              <span className={`chip ${effScope === "unit" ? "active" : ""}`} onClick={() => setLabelScope("unit")}>ป้ายรายชิ้น · รันเบอร์ 1 OF N (ชิ้นใหญ่)</span>
               <span className={`chip ${effScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)</span>
             </div>
           </Field>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 12px", lineHeight: 1.6 }}>
-            {multi
-              ? `เลือกหลายพาร์ท (${fmtNum(lotReps.length)} พาร์ท) — พิมพ์ป้ายรวมล็อต 1 ใบต่อพาร์ท · ถ้าต้องการป้ายรายชิ้น ให้เลือกพาร์ทเจาะจงในช่อง Part`
-              : effScope === "unit"
-                ? "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น — ติดสติกเกอร์รายชิ้น สแกนทีละชิ้น (จำนวน = 1)"
-                : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ"}
+            {effScope === "unit"
+              ? (multi
+                  ? `ป้ายรายชิ้น (รันเบอร์) — ทุกพาร์ทที่เลือก (${fmtNum(lotReps.length)} พาร์ท) จะได้ป้ายครบทุกชิ้น เลขวิ่ง 1 OF N แยกตามแต่ละพาร์ท`
+                  : "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น เลขวิ่ง 1 OF N — ติดสติกเกอร์รายชิ้น")
+              : (multi
+                  ? `ป้ายรวมล็อต — ${fmtNum(lotReps.length)} พาร์ท ได้ 1 ใบต่อพาร์ท (สแกน 1 ครั้งแล้วกรอกจำนวน)`
+                  : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ")}
           </div>
+          {effScope === "unit" && displayed.length > 1500 && (
+            <div style={{ fontSize: 12, color: "var(--warn, #b45309)", margin: "-4px 2px 10px", fontWeight: 600 }}>
+              ⚠ ป้ายรายชิ้นรวม {fmtNum(displayed.length)} ใบ — พิมพ์เยอะมาก อาจใช้เวลาโหลด/พิมพ์นาน (เลือกเฉพาะพาร์ทที่ต้องการได้)
+            </div>
+          )}
 
           {/* ── แถบเครื่องมือ (ย้ายขึ้นบน + sticky) ─────────────────────────── */}
           <div className="qr-toolbar">
@@ -3311,12 +3318,20 @@ function ProjectsPage({ user }) {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [ps, summary] = await Promise.all([
+    const [ps, summary, station] = await Promise.all([
       listRows("projects", { order: "code" }),
       getProjectSummary(),
+      getProjectStationProgress(),   // B3: ความคืบหน้าจากงานหน้าเครื่อง
     ]);
     const m = {};
-    (summary || []).forEach((s) => { m[s.id] = s; });
+    (summary || []).forEach((s) => { m[s.id] = { ...s }; });
+    // merge: ใช้ค่าที่ "มากกว่า" ระหว่างสแกนสำนักงาน (part_units.status) กับหน้าเครื่อง
+    Object.entries(station || {}).forEach(([pid, st]) => {
+      const base = m[pid] || { id: pid, total: 0, finished: 0, weight: 0 };
+      const stFin = Number(st?.finished) || 0;
+      if (stFin >= (Number(base.finished) || 0)) { base.finished = stFin; base.weight = Number(st?.weight) || base.weight; }
+      m[pid] = base;
+    });
     setProjects(ps); setStatMap(m); setLoading(false);
   }, []);
   useEffect(() => { reload(); }, [reload]);
