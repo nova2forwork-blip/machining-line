@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, getUnitStatsByReleaseIds, supabase,
+  deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, recalcPartStatus,
@@ -16,6 +16,7 @@ import { printLabels, LABEL_PRESETS } from "./labels.js";
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
   processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
+  machineDailyMatrix, missingWeightParts,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
 import {
@@ -30,6 +31,12 @@ const CHART = {
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
+// เวลาเป็น ชม.:นาที (สำหรับ "เวลาเดินเครื่อง") — ปัดวินาทีทิ้ง อ่านง่ายในรายงาน
+const fmtHrs = (secs) => {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h} ชม. ${String(m).padStart(2, "0")} น.` : `${m} น.`;
+};
 
 // ─── เสียง + สั่น ตอบรับการสแกน (สำคัญบนหน้าโรงงานที่ไม่ได้จ้องจอ) ───────────────
 let _audioCtx = null;
@@ -1316,15 +1323,31 @@ function PartProgressModal({ release, user, onClose }) {
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
   const noteLabel = group.notes.size === 0 ? "-" : group.notes.size === 1 ? [...group.notes][0] : `${group.notes.size} หมายเหตุ`;
   const [unitStats, setUnitStats] = useState({});
+  const [opProg, setOpProg] = useState({});   // ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง) ต่อ release
   const [statsLoading, setStatsLoading] = useState(true);
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
 
   const loadStats = useCallback(() => {
     const ids = group.releases.map((r) => r.id);
     setStatsLoading(true);
-    getUnitStatsByReleaseIds(ids).then((s) => { setUnitStats(s); setStatsLoading(false); });
+    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+      .then(([s, op]) => { setUnitStats(s); setOpProg(op || {}); setStatsLoading(false); });
   }, [group]);
   useEffect(() => { loadStats(); }, [loadStats]);
+
+  // รวมความคืบหน้า "แยกตามขั้นตอน" ของทั้ง Release Order (งานหน้าเครื่อง) — ตัด/เจาะ/บาก
+  const opAgg = (() => {
+    const by = new Map();
+    for (const r of group.releases) {
+      for (const o of opProg[r.id] || []) {
+        const k = o.op || "ไม่ระบุ";
+        const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0 };
+        e.done += Number(o.done) || 0; e.finished += Number(o.finished) || 0;
+        by.set(k, e);
+      }
+    }
+    return Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
+  })();
 
   // รวมทุก Part ใน Release Order นี้
   const totalFinished = group.releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
@@ -1394,6 +1417,33 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
           )}
         </Card>
       </div>
+
+      {!statsLoading && opAgg.length > 0 && (
+        <Card title="ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)">
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน (ตัด/เจาะ/บาก) — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(group.totalQty)} ชิ้น
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {opAgg.map((o) => {
+              const pct = group.totalQty > 0 ? Math.round((o.done / group.totalQty) * 100) : 0;
+              const over = o.done > group.totalQty;
+              return (
+                <div key={o.op}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>{o.op}</span>
+                    <span style={{ color: "var(--muted)" }}>
+                      ทำแล้ว {fmtNum(o.done)} / {fmtNum(group.totalQty)} ชิ้น
+                      {o.finished > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(o.finished)}</span> : null}
+                      {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
+                    </span>
+                  </div>
+                  <ProgressBar pct={Math.min(pct, 100)} finished={o.done} total={group.totalQty} />
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
         <div className="table-wrap">
@@ -2868,6 +2918,9 @@ function ReportPage({ goTo }) {
   const chartData = Object.values(byOp);
   const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
   const partMatrix = partOpMatrix(filteredLogs); // ตารางแยก Part No. × ขั้นตอน
+  const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
+  const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
+  const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
 
   return (
     <div>
@@ -2933,7 +2986,16 @@ function ReportPage({ goTo }) {
         <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
         <StatCard label="น้ำหนักวัสดุ · นับต่อชิ้น (กก.)" value={fmtNum(material)} icon="weight" />
         <StatCard label="ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)" value={fmtNum(processed)} icon="bolt" />
+        <StatCard label="เวลาเดินเครื่องรวม (จับจากหน้าเครื่อง)" value={fmtHrs(totalSeconds)} icon="bolt" />
       </div>
+
+      {noWeight.length > 0 && (
+        <div className="card" style={{ background: "var(--danger-tint, #fff4f4)", borderColor: "var(--danger, #e11d1d)", color: "var(--danger-dk, #a01212)", fontSize: 12.5, padding: "10px 14px", marginBottom: 14, lineHeight: 1.6 }}>
+          ⚠️ <b>มี Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น — น้ำหนักจะถูกนับเป็น 0 กก.</b><br />
+          {noWeight.map((p) => `${p.partNo} (${fmtNum(p.pieces)} ชิ้น)`).join(" · ")}
+          <br /><span style={{ opacity: .8 }}>ไปตั้งค่าน้ำหนัก/ชิ้นที่ Setup → Part Master เพื่อให้ กก. ครบถ้วน</span>
+        </div>
+      )}
       <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
         <b>น้ำหนักวัสดุ</b> = น้ำหนักของชิ้นงานจริง นับแต่ละชิ้นครั้งเดียว ·{" "}
         <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอนถูกนับซ้ำตามจำนวนขั้น (ใช้วัดภาระงานรวมของสายการผลิต)
@@ -2963,6 +3025,7 @@ function ReportPage({ goTo }) {
                   <th>เครื่องจักร</th>
                   {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
                   <th>รวม</th>
+                  <th>เวลาเดินเครื่อง</th>
                 </tr>
               </thead>
               <tbody>
@@ -2982,6 +3045,7 @@ function ReportPage({ goTo }) {
                     <td style={{ fontWeight: 600 }}>
                       {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
                     </td>
+                    <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2990,6 +3054,54 @@ function ReportPage({ goTo }) {
         )}
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10 }}>
           เครื่องที่ทำได้หลายขั้นตอนจะเห็นน้ำหนักแยกรายขั้นตอนในคอลัมน์ต่างๆ — ตัวเลขนี้คือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ
+        </div>
+      </Card>
+
+      <Card title="รายวัน × เครื่องจักร (กก. / จำนวน / เวลา ต่อวัน)">
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          แต่ละเครื่องทำได้กี่กิโล/กี่ชิ้น และใช้เวลาเท่าไร ในแต่ละวัน · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง
+        </div>
+        {dailyMatrix.machines.length === 0 ? (
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>เครื่องจักร</th>
+                  {dailyMatrix.days.map((d) => <th key={d}>{d.slice(5)}</th>)}
+                  <th>รวม</th>
+                  <th>เฉลี่ย/วัน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyMatrix.machines.map((m) => (
+                  <tr key={m.name}>
+                    <td style={{ fontWeight: 600 }}>{m.name}</td>
+                    {dailyMatrix.days.map((d) => {
+                      const c = m.days[d];
+                      return (
+                        <td key={d} style={{ whiteSpace: "nowrap" }}>
+                          {c
+                            ? <span>{fmtNum(c.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(c.count)} ชิ้น · {fmtHrs(c.seconds)}</span></span>
+                            : <span style={{ color: "var(--surface-3)" }}>—</span>}
+                        </td>
+                      );
+                    })}
+                    <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {fmtNum(m.total.weight)} กก.<br /><span style={{ color: "var(--muted)", fontWeight: 400, fontSize: 11 }}>{fmtNum(m.total.count)} ชิ้น · {fmtHrs(m.total.seconds)}</span>
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk, #0a7)" }}>
+                      {fmtNum(m.avg.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(m.avg.count)} ชิ้น · {fmtHrs(m.avg.seconds)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
+          หมายเหตุ: <b>เวลาเดินเครื่อง</b> คือเวลาที่จับจากการกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาที่เครื่องเปิดจริง) ใช้ดูแนวโน้มภาระงาน
         </div>
       </Card>
 
@@ -3108,6 +3220,7 @@ function MachinesSummaryPage() {
                 <th>เครื่องจักร</th>
                 {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
                 <th>รวมทุกขั้นตอน</th>
+                <th>เวลาเดินเครื่อง</th>
               </tr>
             </thead>
             <tbody>
@@ -3127,10 +3240,11 @@ function MachinesSummaryPage() {
                   <td style={{ fontWeight: 600 }}>
                     {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
                   </td>
+                  <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
                 </tr>
               ))}
               {matrix.machines.length === 0 && (
-                <tr><td colSpan={matrix.opNames.length + 2} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
+                <tr><td colSpan={matrix.opNames.length + 3} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
               )}
             </tbody>
           </table>
