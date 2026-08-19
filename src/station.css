@@ -272,16 +272,21 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
 .stn-lbl-rework { font-size: 10.5px; color: var(--st-alert); font-weight: 700; margin-top: 2px; white-space: nowrap; }
 
-/* แถบแจ้งเวอร์ชันใหม่ (หน้าเครื่อง) — ลอยด้านบนสุด กดอัปเดตเอง */
+/* popup แจ้งเวอร์ชันใหม่ (หน้าเครื่อง) — การ์ดมุมขวาล่าง กดอัปเดตเอง */
 .stn-update {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-  display: flex; align-items: center; justify-content: center; gap: 14px;
-  background: #14e39a; color: #05271b; font-weight: 700; font-size: 1.7vh;
-  padding: 0.9vh 2vh; box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+  position: fixed; right: 2.2vh; bottom: 2.2vh; left: auto; top: auto; z-index: 9999;
+  display: flex; flex-direction: column; align-items: stretch; gap: 1.2vh;
+  width: 40vh; max-width: calc(100vw - 4vh);
+  background: #141a17; color: #fff;
+  border: 1px solid #24302a; border-left: 0.6vh solid #14e39a;
+  border-radius: 1.6vh; padding: 1.8vh 2vh; box-shadow: 0 1.2vh 3.6vh rgba(0, 0, 0, .5);
+  animation: stnUbIn .3s ease;
 }
+@keyframes stnUbIn { from { opacity: 0; transform: translateY(2vh); } to { opacity: 1; transform: translateY(0); } }
+.stn-update > span { font-size: 1.7vh; line-height: 1.5; font-weight: 600; }
 .stn-update button {
-  background: #05271b; color: #14e39a; border: none; border-radius: 7px;
-  padding: 0.7vh 2vh; font-weight: 800; font-size: 1.6vh; cursor: pointer;
+  background: #14e39a; color: #05271b; border: none; border-radius: 1vh;
+  padding: 1.1vh 2vh; font-weight: 800; font-size: 1.8vh; cursor: pointer;
 }
 .stn-update button:disabled { opacity: .7; }
 .stn-qty-lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #333; }
