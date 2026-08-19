@@ -12,6 +12,7 @@ import {
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
+import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
@@ -4039,6 +4040,22 @@ function PartMasterCrud() {
 // ══════════════════════════════════════════════════════════════════════════
 // ROOT
 // ══════════════════════════════════════════════════════════════════════════
+// แถบแจ้ง "มีเวอร์ชันใหม่" — ให้ผู้ใช้กดอัปเดตเองเมื่อพร้อม (ไม่รีโหลดกลางคัน)
+function UpdateBanner() {
+  const ready = useUpdateReady();
+  const [busy, setBusy] = useState(false);
+  const [offline, setOffline] = useState(false);
+  if (!ready) return null;
+  return (
+    <div className="update-banner">
+      <span><b>มีเวอร์ชันใหม่ของระบบ</b>{offline ? " — ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่" : " — อัปเดตเพื่อใช้เวอร์ชันล่าสุด"}</span>
+      <button className="ub-btn" disabled={busy} onClick={() => { setBusy(true); if (!applyUpdate()) { setBusy(false); setOffline(true); } }}>
+        {busy ? "กำลังอัปเดต…" : "อัปเดตเดี๋ยวนี้"}
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(getSession());
 
@@ -4054,7 +4071,8 @@ export default function App() {
     clearSession();
     setUser(null);
   }
-  if (!user) return <Login onLogin={setUser} />;
-  if (goStation) return null; // กำลังพาไป /station
-  return <Shell user={user} onLogout={logout} />;
+  const content = !user
+    ? <Login onLogin={setUser} />
+    : goStation ? null : <Shell user={user} onLogout={logout} />;
+  return <><UpdateBanner />{content}</>;
 }
