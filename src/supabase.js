@@ -268,6 +268,15 @@ export async function getUnitStatsByReleaseIds(releaseIds) {
   return stats;
 }
 
+// ความคืบหน้า "แยกตามขั้นตอน" ต่อ Release (จากงานหน้าเครื่อง machine_records)
+// คืน { <release_id>: [ {op, seq, done, finished}, ... ] } — ดู release_op_progress RPC
+export async function getReleaseOpProgress(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  const { data, error } = await supabase.rpc("release_op_progress", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_op_progress error", error); return {}; }
+  return data || {};
+}
+
 // ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
 // จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
 export async function getEmployees() {
