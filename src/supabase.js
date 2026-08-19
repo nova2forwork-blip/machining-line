@@ -154,20 +154,25 @@ export async function prefetchUnitsForOffline(limit = 4000) {
 // ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
 //   ออนไลน์ = ยอดจริงจาก DB + งานที่ยังค้างคิว (ยังไม่ซิงค์) แล้ว snapshot ไว้
 //   ออฟไลน์ = snapshot ล่าสุด + งานที่ค้างคิว
-export async function getReleaseProgress(releaseId) {
+export async function getReleaseProgress(releaseId, operationId = null) {
   if (!releaseId) return 0;
+  // นับ "แยกตามขั้นตอน (operation) ของเครื่องนี้" — เครื่องตัด/เจาะ/บาก มีตัวนับของตัวเอง
+  // ยึดตามเครื่องจักรเป็นหลัก: เจาะไปกี่ชิ้น OF จำนวนสั่ง โดยไม่รวมยอดของขั้นตอนอื่น
+  const key = releaseId + (operationId ? "|" + operationId : "");
+  // สเตชันนี้ทำ operation เดียว → งานค้างคิวทั้งหมดคือ operation นี้อยู่แล้ว
   const queued = queuedQtyForRelease(releaseId);
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return (await getCachedProgress(releaseId)) + queued;
+    return (await getCachedProgress(key)) + queued;
   }
-  const { data, error } = await supabase
-    .from("machine_records").select("quantity").eq("release_id", releaseId);
+  let q = supabase.from("machine_records").select("quantity").eq("release_id", releaseId);
+  if (operationId) q = q.eq("operation_id", operationId);   // เฉพาะขั้นตอนของเครื่องนี้
+  const { data, error } = await q;
   if (error) {
     console.warn("getReleaseProgress error", error);
-    return (await getCachedProgress(releaseId)) + queued;
+    return (await getCachedProgress(key)) + queued;
   }
   const done = (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-  setCachedProgress(releaseId, done);                     // snapshot ไว้ใช้ออฟไลน์
+  setCachedProgress(key, done);                           // snapshot ไว้ใช้ออฟไลน์ (แยกตาม operation)
   return done + queued;
 }
 
