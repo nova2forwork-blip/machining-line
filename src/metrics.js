@@ -13,6 +13,8 @@
 const w = (value, fallback) => Number(value ?? fallback ?? 0);
 // จำนวนชิ้นของ log แต่ละแถว: หน้าเครื่อง = quantity (ล็อต), หน้าสำนักงาน = 1 (สแกน 1 ครั้ง = 1 ชิ้น)
 const q = (l) => Number(l?.quantity ?? 1) || 0;
+// เวลาเดินเครื่อง (วินาที) ของ log แต่ละแถว — มีเฉพาะงานหน้าเครื่อง (report_logs v3)
+const sec = (l) => Number(l?.process_seconds) || 0;
 
 // จำนวนชิ้นรวมทั้งหมดในชุด logs (นับ quantity ของงานหน้าเครื่องด้วย)
 export function totalPieces(logs) {
@@ -75,15 +77,18 @@ export function machineOpMatrix(logs) {
     opNames.add(op);
 
     if (!byMachine.has(m)) {
-      byMachine.set(m, { name: m, total: { count: 0, weight: 0 }, ops: {} });
+      byMachine.set(m, { name: m, total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
     }
     const entry = byMachine.get(m);
     const pcs = q(l);
-    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
+    const s = sec(l);
+    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0 };
     entry.ops[op].count += pcs;
     entry.ops[op].weight += wt;
+    entry.ops[op].seconds += s;
     entry.total.count += pcs;
     entry.total.weight += wt;
+    entry.total.seconds += s;
   }
 
   const machines = Array.from(byMachine.values()).sort(
@@ -145,4 +150,65 @@ export function weightedProgress(units) {
     }
   }
   return { done, material, pct: material > 0 ? (done / material) * 100 : 0 };
+}
+
+// ── 6) machine × day matrix (กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง) ─────────────
+// ตอบคำถาม "เครื่องนี้ทำได้กี่กิโล/กี่ชิ้น/ใช้เวลาเท่าไร ต่อวัน"
+// ใช้เขตเวลาไทย (Asia/Bangkok) ในการตัดวัน เพื่อให้ตรงกับ Daily Report หน้าเครื่อง
+// คืน:
+//   {
+//     machines: [{ name, days:{ 'YYYY-MM-DD':{count,weight,seconds} },
+//                  total:{count,weight,seconds}, dayCount, avg:{count,weight,seconds} }],
+//     days: [รายการวันที่ทั้งหมดที่พบ เรียงจากเก่า→ใหม่],
+//   }
+function bangkokDay(iso) {
+  if (!iso) return "-";
+  // แปลงเป็นเวลาไทยแล้วตัดเป็น YYYY-MM-DD (ไม่พึ่ง locale ของเครื่องผู้ใช้)
+  const d = new Date(iso);
+  const t = new Date(d.getTime() + 7 * 3600 * 1000);
+  return t.toISOString().slice(0, 10);
+}
+export function machineDailyMatrix(logs) {
+  const byMachine = new Map();
+  const days = new Set();
+  for (const l of logs || []) {
+    const m = l.machine?.name || "ไม่ระบุ";
+    const day = bangkokDay(l.scanned_at);
+    days.add(day);
+    if (!byMachine.has(m)) {
+      byMachine.set(m, { name: m, days: {}, total: { count: 0, weight: 0, seconds: 0 } });
+    }
+    const e = byMachine.get(m);
+    e.days[day] = e.days[day] || { count: 0, weight: 0, seconds: 0 };
+    const pcs = q(l), wt = w(l.weight, l.part_unit?.part_master?.unit_weight), s = sec(l);
+    e.days[day].count += pcs; e.days[day].weight += wt; e.days[day].seconds += s;
+    e.total.count += pcs; e.total.weight += wt; e.total.seconds += s;
+  }
+  const machines = Array.from(byMachine.values()).map((e) => {
+    const dayCount = Object.keys(e.days).length || 1;   // จำนวน "วันที่มีงาน" (เฉลี่ยจากวันที่ทำจริง)
+    return {
+      ...e,
+      dayCount,
+      avg: {
+        count: e.total.count / dayCount,
+        weight: e.total.weight / dayCount,
+        seconds: e.total.seconds / dayCount,
+      },
+    };
+  }).sort((a, b) => b.total.weight - a.total.weight);
+  return { machines, days: Array.from(days).sort() };
+}
+
+// ── 7) ตรวจ Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น (กก. จะกลายเป็น 0 เงียบๆ) ──────
+// คืนรายชื่อ Part No. ที่มีงาน (quantity > 0) แต่คำนวณน้ำหนักได้ 0
+export function missingWeightParts(logs) {
+  const bad = new Map();
+  for (const l of logs || []) {
+    if (q(l) <= 0) continue;
+    const wt = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    if (wt > 0) continue;
+    const partNo = l.part_unit?.part_master?.part_no || "ไม่ระบุ";
+    bad.set(partNo, (bad.get(partNo) || 0) + q(l));
+  }
+  return Array.from(bad.entries()).map(([partNo, pieces]) => ({ partNo, pieces }));
 }
