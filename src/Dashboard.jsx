@@ -342,9 +342,30 @@ const MLINE_SVG = `
 
   <!-- parts moving on belt -->
   <g class="ml-parts">
-    <g style="animation-delay:0s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
-    <g style="animation-delay:-2s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
-    <g style="animation-delay:-4s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
+    <g style="animation-delay:0s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-2s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-4s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
   </g>
 
   <!-- Machine A: cutting -->
