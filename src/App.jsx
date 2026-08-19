@@ -291,19 +291,18 @@ function Login({ onLogin }) {
 // ══════════════════════════════════════════════════════════════════════════
 // can: ฟังก์ชันเช็คสิทธิ์ต่อเมนู (undefined = ทุก role เข้าได้)
 const MENU = [
-  { group: "การผลิต", items: [
+  { group: "ขั้นตอนงาน", items: [
+    { key: "projects", label: "Projects", icon: "folder" },
     { key: "release", label: "Release Production", icon: "box" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
-    { key: "manageReleases", label: "จัดการ Release", icon: "grid", can: canManage },
-    { key: "manageProjects", label: "จัดการ Projects", icon: "folder", can: canManage },
+    { key: "report", label: "Report (ข้อมูลสแกน)", icon: "chart" },
   ] },
   { group: "รายงาน", items: [
-    { key: "report", label: "Report", icon: "chart" },
     { key: "machines", label: "Machines Summary", icon: "machine" },
-    { key: "projects", label: "Projects Summary", icon: "folder" },
     { key: "parts", label: "Parts Summary", icon: "grid" },
   ] },
-  { group: "ระบบ", items: [
+  { group: "จัดการ", items: [
+    { key: "manageReleases", label: "จัดการ Release", icon: "grid", can: canManage },
     { key: "setup", label: "Setup", icon: "settings", can: isAdmin },
   ] },
 ];
@@ -321,7 +320,7 @@ const BOTTOM_LEFT2 = { key: "labels", label: "พิมพ์ QR", icon: "qr" };
 const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart" };
 
 function Shell({ user, onLogout }) {
-  const [tab, setTab] = useState("release");
+  const [tab, setTab] = useState("projects");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
 
@@ -421,10 +420,9 @@ function Shell({ user, onLogout }) {
           {tab === "detail" && <ScanPage user={user} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "manageReleases" && canManage(user) && <ReleaseManagePage />}
-          {tab === "manageProjects" && canManage(user) && <ManageProjectsPage />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
-          {tab === "projects" && <ProjectsSummaryPage />}
+          {tab === "projects" && <ProjectsPage user={user} />}
           {tab === "parts" && <PartsSummaryPage />}
           {tab === "setup" && isAdmin(user) && <SetupPage />}
         </div>
@@ -1641,7 +1639,7 @@ function ReleasePage({ user, goTo }) {
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <div className="table-wrap">
           <table className="data-table responsive-cards">
-            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวน Part</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
               {groups.map((g) => {
                 // รวม stats ของทุก release ในกลุ่มนี้
@@ -1654,7 +1652,8 @@ function ReleasePage({ user, goTo }) {
                     <td data-label="วันที่">{fmtDT(g.date)}</td>
                     <td data-label="โปรเจค">{g.projectCode}</td>
                     <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                    <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น{g.releases.length > 1 ? ` (${g.releases.length} Part)` : ""}</td>
+                    <td data-label="จำนวน Part">{fmtNum(g.releases.length)} Part</td>
+                    <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
                     <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
                       {statsReady && gPct !== null ? (
                         <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
@@ -3216,21 +3215,30 @@ function MachinesSummaryPage() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 6.5) MANAGE PROJECTS — เพิ่ม / แก้ไข / ลบ โปรเจค (ใช้ ProjectEditModal + QuickAdd)
+// 6.5) PROJECTS — รวม "จัดการ + สรุปความคืบหน้า" ไว้หน้าเดียว (เมนูแรกของขั้นตอนงาน)
 // ══════════════════════════════════════════════════════════════════════════
-function ManageProjectsPage() {
-  const [projects, setProjects] = useState([]);
+function ProjectsPage({ user }) {
+  const canEdit = canManage(user);
+  const [projects, setProjects] = useState([]);   // รายการโปรเจคเต็ม (รวม new ที่ยังไม่มีงาน)
+  const [statMap, setStatMap] = useState({});      // id → { total, finished, weight }
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState(null);   // { project, impact }
+  const [editing, setEditing] = useState(null);    // { project, impact }
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
     setLoading(true);
-    listRows("projects", { order: "code" }).then((rows) => { setProjects(rows); setLoading(false); });
+    const [ps, summary] = await Promise.all([
+      listRows("projects", { order: "code" }),
+      getProjectSummary(),
+    ]);
+    const m = {};
+    (summary || []).forEach((s) => { m[s.id] = s; });
+    setProjects(ps); setStatMap(m); setLoading(false);
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
   async function openEdit(p) {
+    if (!canEdit) return;
     const impact = await getProjectImpact(p.id);
     setEditing({ project: p, impact });
   }
@@ -3239,10 +3247,12 @@ function ManageProjectsPage() {
     <div>
       <div className="page-head">
         <div>
-          <div className="page-title">จัดการ Projects</div>
-          <div className="page-sub">เพิ่ม / แก้ไข / ลบ โปรเจค (การลบจะเช็คผลกระทบก่อน)</div>
+          <div className="page-title">Projects</div>
+          <div className="page-sub">เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค</div>
         </div>
-        <Btn variant="accent" onClick={() => setShowAdd(true)}><Icon name="folder" size={15} /> เพิ่มโปรเจค</Btn>
+        {canEdit && (
+          <Btn variant="accent" onClick={() => setShowAdd(true)}><Icon name="folder" size={15} /> เพิ่มโปรเจค</Btn>
+        )}
       </div>
       <Card title={`โปรเจคทั้งหมด (${projects.length})`}>
         {loading ? (
@@ -3256,18 +3266,36 @@ function ManageProjectsPage() {
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>รหัส</th><th>ชื่อโปรเจค</th><th>สร้างเมื่อ</th><th></th></tr></thead>
+              <thead><tr>
+                <th>รหัส</th><th>ชื่อโปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักวัสดุ (กก.)</th>{canEdit && <th></th>}
+              </tr></thead>
               <tbody>
-                {projects.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
-                    <td>{p.name}</td>
-                    <td>{fmtDT(p.created_at)}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <Btn variant="ghost" size="sm" onClick={() => openEdit(p)}><Icon name="settings" size={13} /> แก้ไข</Btn>
-                    </td>
-                  </tr>
-                ))}
+                {projects.map((p) => {
+                  const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
+                  const pct = s.total ? Math.round((s.finished / s.total) * 100) : 0;
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
+                      <td>{p.name}</td>
+                      <td>{fmtNum(s.total)}</td>
+                      <td>{fmtNum(s.finished)}</td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
+                            <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? "var(--success)" : "var(--accent)" }} />
+                          </div>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{pct}%</span>
+                        </div>
+                      </td>
+                      <td>{fmtNum(s.weight)}</td>
+                      {canEdit && (
+                        <td style={{ textAlign: "right" }}>
+                          <Btn variant="ghost" size="sm" onClick={() => openEdit(p)}><Icon name="settings" size={13} /> แก้ไข</Btn>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -3285,46 +3313,6 @@ function ManageProjectsPage() {
           onDeleted={() => { setEditing(null); reload(); }}
         />
       )}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// 7) PROJECTS SUMMARY
-// ══════════════════════════════════════════════════════════════════════════
-function ProjectsSummaryPage() {
-  // รวมยอดฝั่ง DB ผ่าน RPC — ไม่ต้องโหลด part_units ทุกแถวมาคำนวณใน browser (แก้ H6)
-  const [rows, setRows] = useState([]);
-  useEffect(() => { getProjectSummary().then(setRows); }, []);
-  return (
-    <div>
-      <div className="page-head"><div className="page-title">Projects Summary</div></div>
-      <Card title="ความคืบหน้าแยกตามโปรเจค (สะสมทั้งหมด)">
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>รหัส</th><th>โปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักวัสดุ (กก.)</th></tr></thead>
-            <tbody>
-              {rows.map((r) => {
-                const pct = r.total ? Math.round((r.finished / r.total) * 100) : 0;
-                return (
-                  <tr key={r.id}>
-                    <td>{r.code}</td><td>{r.name}</td><td>{r.total}</td><td>{r.finished}</td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? "var(--success)" : "var(--accent)" }} />
-                        </div>
-                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{pct}%</span>
-                      </div>
-                    </td>
-                    <td>{fmtNum(r.weight)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
     </div>
   );
 }
