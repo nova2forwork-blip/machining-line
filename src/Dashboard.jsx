@@ -224,6 +224,9 @@ export default function Dashboard() {
         <Kpi label={t.kpiScans} value={scanCount} format={fmtInt} unit={t.unitTimes} flash={hit.size > 0} />
       </div>
 
+      {/* ── แถบอนิเมชันสายการผลิต (เหนือ Machines) ── */}
+      <MachineLine />
+
       {/* ── main: machine cards + chart ── */}
       <div className="dash-main">
         <div className="dash-panel">
@@ -302,6 +305,94 @@ export default function Dashboard() {
       </div>
     </div>
   );
+}
+
+// ─── แถบอนิเมชัน "สายการผลิตกำลังทำงาน" (SVG ในตัว: สายพานวิ่ง + แขนกล + ชิ้นงาน) ──
+const MLINE_SVG = `
+<svg class="mline" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Production line running">
+  <defs>
+    <linearGradient id="mlSteel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a473f"/><stop offset="1" stop-color="#212c27"/></linearGradient>
+    <linearGradient id="mlAlu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8ede9"/><stop offset="1" stop-color="#9fb0a7"/></linearGradient>
+  </defs>
+  <style>
+    .mline{width:100%;height:100%;display:block}
+    .ml-belt{animation:mlBelt 1s linear infinite}
+    @keyframes mlBelt{to{stroke-dashoffset:-32}}
+    .ml-parts g{animation:mlPart 6s linear infinite}
+    @keyframes mlPart{0%{transform:translateX(0);opacity:0}6%{opacity:1}88%{opacity:1}100%{transform:translateX(956px);opacity:0}}
+    .ml-a{animation:mlArrow 1.2s ease-in-out infinite}.ml-a.a2{animation-delay:.2s}.ml-a.a3{animation-delay:.4s}
+    @keyframes mlArrow{0%,100%{opacity:.2}50%{opacity:1}}
+    .ml-scr{animation:mlScr 2.4s ease-in-out infinite}@keyframes mlScr{0%,100%{opacity:.9}50%{opacity:.4}}
+    .ml-led{animation:mlLed 1.4s steps(1) infinite}.ml-led.l2{animation-delay:.7s}
+    @keyframes mlLed{0%,60%{opacity:1}61%,100%{opacity:.2}}
+    .ml-spark{transform-origin:273px 122px;animation:mlSpark .16s steps(2) infinite}
+    @keyframes mlSpark{0%{opacity:.9}50%{opacity:.25}100%{opacity:.8}}
+    .ml-box{animation:mlBox 6s ease-in-out infinite}@keyframes mlBox{0%,68%{opacity:0;transform:translateX(-12px)}80%{opacity:1;transform:translateX(0)}100%{opacity:1}}
+  </style>
+
+  <!-- flow arrows (infeed) -->
+  <g fill="none" stroke="#14e39a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path class="ml-a a1" d="M16 100 l16 14 -16 14"/><path class="ml-a a2" d="M42 100 l16 14 -16 14"/><path class="ml-a a3" d="M68 100 l16 14 -16 14"/>
+  </g>
+
+  <!-- conveyor belt -->
+  <rect x="95" y="120" width="1010" height="22" rx="11" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <line class="ml-belt" x1="108" y1="131" x2="1092" y2="131" stroke="#14e39a" stroke-width="3" stroke-dasharray="16 16" stroke-linecap="round" opacity="0.55"/>
+  <g fill="#0d1310"><rect x="150" y="142" width="10" height="34" rx="2"/><rect x="430" y="142" width="10" height="34" rx="2"/><rect x="720" y="142" width="10" height="34" rx="2"/><rect x="1010" y="142" width="10" height="34" rx="2"/></g>
+
+  <!-- parts moving on belt -->
+  <g class="ml-parts">
+    <g style="animation-delay:0s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
+    <g style="animation-delay:-2s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
+    <g style="animation-delay:-4s"><rect x="120" y="104" width="52" height="13" rx="3" fill="url(#mlAlu)"/><rect x="120" y="104" width="52" height="3" rx="1.5" fill="#14e39a" opacity=".5"/></g>
+  </g>
+
+  <!-- Machine A: cutting -->
+  <g>
+    <rect x="228" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="242" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="246" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="250" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="266" cy="104" r="4.5" fill="#ffc23d"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 273 122" to="360 273 122" dur="0.5s" repeatCount="indefinite"/>
+      <circle cx="273" cy="122" r="16" fill="#c2c8d0" stroke="#0d1310" stroke-width="2"/><circle cx="273" cy="122" r="16" fill="none" stroke="#0d1310" stroke-width="3" stroke-dasharray="3 5"/><circle cx="273" cy="122" r="4" fill="#14e39a"/>
+    </g>
+    <g class="ml-spark" fill="#ffb02e"><path d="M266 122 l-9 -5 M266 124 l-11 2 M266 126 l-8 6"/><circle cx="255" cy="120" r="1.6"/><circle cx="252" cy="127" r="1.4"/></g>
+  </g>
+
+  <!-- Robot arm 1 (pick & place) -->
+  <rect x="404" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="3.4s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="-22 421 100; 8 421 100; -22 421 100"/>
+    <rect x="416" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="406" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="404" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="432" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="421" cy="100" r="9" fill="#14e39a"/>
+
+  <!-- Machine B: drilling -->
+  <g>
+    <rect x="556" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="570" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="574" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="578" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="594" cy="104" r="4.5" fill="#ffc23d"/>
+    <rect x="598" y="88" width="6" height="8" fill="#39473f"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="translate" dur="1.1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" values="0 0; 0 16; 0 0"/><rect x="599" y="96" width="4" height="20" fill="#aeb6bd"/></g>
+  </g>
+
+  <!-- Robot arm 2 -->
+  <rect x="734" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="2.9s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="14 751 100; -16 751 100; 14 751 100"/>
+    <rect x="746" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="736" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="734" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="762" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="751" cy="100" r="9" fill="#14e39a"/>
+
+  <!-- Output machine + boxes -->
+  <g>
+    <rect x="980" y="52" width="94" height="70" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="994" y="64" width="66" height="26" rx="4" fill="#0b1512"/><rect class="ml-scr" x="998" y="68" width="58" height="18" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="998" cy="106" r="4.5" fill="#22e07a"/>
+  </g>
+  <g class="ml-box" style="animation-delay:0s"><rect x="1096" y="96" width="40" height="26" rx="3" fill="#2c3a34" stroke="#0d1310"/><rect x="1096" y="106" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+  <g class="ml-box" style="animation-delay:-3s"><rect x="1096" y="70" width="40" height="24" rx="3" fill="#33413a" stroke="#0d1310"/><rect x="1096" y="79" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+</svg>`;
+
+function MachineLine() {
+  return <div className="dash-panel dash-line" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
 }
 
 function Kpi({ label, value, format, unit, flash }) {
