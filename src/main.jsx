@@ -9,10 +9,12 @@ const path = window.location.pathname.replace(/\/+$/, "").toLowerCase();
 const isStation = path.startsWith("/station");
 const isDashboard = path.startsWith("/dashboard");
 
-// ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต ──────────────
+// ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต + แจ้งเวอร์ชันใหม่ ──
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => { /* ไม่รองรับก็ข้ามไป */ });
+    navigator.serviceWorker.register("/sw.js")
+      .then((reg) => import("./updatePrompt.js").then(({ setupUpdateWatcher }) => setupUpdateWatcher(reg)))
+      .catch(() => { /* ไม่รองรับก็ข้ามไป */ });
   });
 }
 
