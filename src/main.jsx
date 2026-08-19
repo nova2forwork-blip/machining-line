@@ -20,29 +20,30 @@ if ("serviceWorker" in navigator) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
+// ปิดหน้าโหลดชั่วคราว (boot-splash) หลังแอปเรนเดอร์แล้ว — เฟดออกนุ่มๆ กันจอมืด
+function hideBootSplash() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const s = document.getElementById("boot-splash");
+    if (!s) return;
+    s.style.opacity = "0";
+    setTimeout(() => { try { s.remove(); } catch { /* ignore */ } }, 400);
+  }));
+}
+
 if (isDashboard) {
   document.body.classList.add("dash-body");
   import("./Dashboard.jsx").then(({ default: Dashboard }) => {
-    root.render(
-      <React.StrictMode>
-        <Dashboard />
-      </React.StrictMode>
-    );
+    root.render(<React.StrictMode><Dashboard /></React.StrictMode>);
+    hideBootSplash();
   });
 } else if (isStation) {
   import("./Station.jsx").then(({ default: StationApp }) => {
-    root.render(
-      <React.StrictMode>
-        <StationApp />
-      </React.StrictMode>
-    );
+    root.render(<React.StrictMode><StationApp /></React.StrictMode>);
+    hideBootSplash();
   });
 } else {
   import("./App.jsx").then(({ default: App }) => {
-    root.render(
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>
-    );
+    root.render(<React.StrictMode><App /></React.StrictMode>);
+    hideBootSplash();
   });
 }
