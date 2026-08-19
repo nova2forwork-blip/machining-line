@@ -704,6 +704,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   // ── Undo stack (Ctrl+Z) ─────────────────────────────────────────────────
   // เก็บ snapshot ของ rows ก่อนทุกการเปลี่ยนแปลง ไม่เกิน 50 ขั้น
   const historyRef = useRef([]);
+  const rowsScrollRef = useRef(null);   // กรอบเลื่อนตารางแถว (ปุ่ม "ขึ้นบนสุด")
 
   // ใช้แทน setRows เสมอเมื่อต้องการ undo ได้
   const setRowsU = useCallback((updater) => {
@@ -919,7 +920,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </div>
       )}
 
-      <div className="pgrid-wrap" style={!projectId ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
+      <div ref={rowsScrollRef} className="pgrid-wrap" style={!projectId ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
         <table className="pgrid">
           <thead>
             <tr>
@@ -973,6 +974,11 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
           {makeQr ? "เปิดสร้าง QR — จะได้ป้ายทุกชิ้นอัตโนมัติ" : "ปิดสร้าง QR — บันทึกแค่ยอด Release"}
         </span>
+        <Btn variant="ghost" size="sm" style={{ marginLeft: "auto" }}
+          onClick={() => rowsScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px" }}><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+          &nbsp;ขึ้นบนสุด
+        </Btn>
       </div>
     </Modal>
   );
@@ -2497,6 +2503,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [projectFilter, setProjectFilter] = useState("");
   const [releaseOrder, setReleaseOrder] = useState("");
   const [search, setSearch] = useState("");
+  const gridRef = useRef(null);   // กรอบเลื่อนตาราง QR (ใช้ปุ่ม "ขึ้นบนสุด")
 
   useEffect(() => {
     (async () => {
@@ -2682,7 +2689,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               <span className={`chip ${effScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)</span>
             </div>
           </Field>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 14px", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 12px", lineHeight: 1.6 }}>
             {multi
               ? `เลือกหลายพาร์ท (${fmtNum(lotReps.length)} พาร์ท) — พิมพ์ป้ายรวมล็อต 1 ใบต่อพาร์ท · ถ้าต้องการป้ายรายชิ้น ให้เลือกพาร์ทเจาะจงในช่อง Part`
               : effScope === "unit"
@@ -2690,40 +2697,16 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ"}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 10, marginBottom: 8 }}>
-            {displayed.slice(0, 600).map((u) => {
-              const part = parts.find((p) => p.id === u.part_master_id);
-              return (
-                <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`} style={{ alignItems: "center", textAlign: "center", gap: 6 }}>
-                  <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)", alignSelf: "flex-start" }} />
-                  <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />
-                  {part?.part_no ? <span style={{ fontSize: 12, fontWeight: 600 }}>{part.part_no}</span> : null}
-                  {showCode ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--muted)", wordBreak: "break-all" }}>{u.qr_code}</span> : null}
-                </label>
-              );
-            })}
-          </div>
-          {displayed.length > 600 && (
-            <>
-              {/* ใบที่เกิน 600 (พรีวิว) — ยังเรนเดอร์ QR ซ่อนไว้ เพื่อให้พิมพ์ครบทุกใบ */}
-              <div style={{ display: "none" }}>
-                {displayed.slice(600).map((u) => <QRCodeSVG key={u.id} id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />)}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px 14px" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
-            </>
-          )}
-
-          <hr className="section-divider" />
-
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {/* ── แถบเครื่องมือ (ย้ายขึ้นบน + sticky) ─────────────────────────── */}
+          <div className="qr-toolbar">
             <Field label="ขนาดป้าย">
               <Select value={labelPreset} onChange={(e) => setLabelPreset(e.target.value)}
-                options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 170 }} />
+                options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 160 }} />
             </Field>
             {labelPreset === "custom" && (
               <>
-                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 80 }} /></Field>
-                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 80 }} /></Field>
+                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 78 }} /></Field>
+                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 78 }} /></Field>
               </>
             )}
             <Field label="รูปแบบการพิมพ์">
@@ -2732,10 +2715,47 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>หลายป้าย/แผ่น A4</span>
               </div>
             </Field>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 10 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 9 }}>
               <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
             </label>
-            <Btn variant="accent" onClick={doPrint} style={{ marginBottom: 2 }}><Icon name="printer" size={15} />พิมพ์ ({selected.size})</Btn>
+            <div className="qr-toolbar-print">
+              <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
+              <Btn variant="accent" onClick={doPrint}><Icon name="printer" size={15} />พิมพ์ ({fmtNum(selected.size)})</Btn>
+            </div>
+          </div>
+
+          {/* ── ตาราง QR เลื่อนได้ (มีสกอลบาร์ด้านข้าง) ───────────────────── */}
+          <div ref={gridRef} className="qr-grid-scroll">
+            <div className="qr-grid">
+              {displayed.slice(0, 600).map((u) => {
+                const part = parts.find((p) => p.id === u.part_master_id);
+                return (
+                  <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`} style={{ alignItems: "center", textAlign: "center", gap: 6 }}>
+                    <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)", alignSelf: "flex-start" }} />
+                    <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />
+                    {part?.part_no ? <span style={{ fontSize: 12, fontWeight: 600 }}>{part.part_no}</span> : null}
+                    {showCode ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--muted)", wordBreak: "break-all" }}>{u.qr_code}</span> : null}
+                  </label>
+                );
+              })}
+            </div>
+            {displayed.length > 600 && (
+              <>
+                {/* ใบที่เกิน 600 (พรีวิว) — ยังเรนเดอร์ QR ซ่อนไว้ เพื่อให้พิมพ์ครบทุกใบ */}
+                <div style={{ display: "none" }}>
+                  {displayed.slice(600).map((u) => <QRCodeSVG key={u.id} id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />)}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 2px", textAlign: "center" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
+              </>
+            )}
+          </div>
+
+          {/* ── ปุ่มกลับขึ้นด้านบนสุด ─────────────────────────────────────── */}
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+            <Btn variant="ghost" size="sm" onClick={() => gridRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px" }}><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+              &nbsp;ขึ้นไปด้านบนสุด
+            </Btn>
           </div>
         </Card>
       )}
