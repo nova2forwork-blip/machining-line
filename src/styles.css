@@ -313,6 +313,26 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 }
 .modal-wide { max-width: 900px; }
 
+/* ── QR labels: แถบเครื่องมือด้านบน + ตารางเลื่อนได้ ─────────────────────── */
+.qr-toolbar {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
+  padding: 12px 14px; margin-bottom: 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+  position: sticky; top: 8px; z-index: 6;
+}
+.qr-toolbar-print { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-bottom: 2px; }
+.qr-count { font-size: 12.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.qr-grid-scroll {
+  max-height: 56vh; overflow-y: auto; padding: 12px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+}
+.qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.qr-grid-scroll::-webkit-scrollbar { width: 14px; }
+.qr-grid-scroll::-webkit-scrollbar-track { background: transparent; }
+.qr-grid-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 4px solid var(--surface); }
+.qr-grid-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.qr-grid-scroll { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
 /* Paste-friendly parts grid (Add Release popup) */
 .pgrid-wrap { overflow: auto; max-height: 46vh; border: 1px solid var(--border); border-radius: 10px; }
 table.pgrid { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 12.5px; }
