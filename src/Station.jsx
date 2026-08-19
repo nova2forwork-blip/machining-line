@@ -139,6 +139,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   const [qty, setQty] = useState(0);
   const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
   const [busy, setBusy] = useState(false);
+  const savingRef = useRef(false);   // กันกด OK ซ้ำระหว่างบันทึก (re-entrancy)
   const [toast, setToast] = useState(null);   // { text, tone }
   const toastRef = useRef(null);
   const [pending, setPending] = useState(scanQueueCount());
@@ -150,7 +151,10 @@ function MachineStation({ user, onLogout, onKicked }) {
     // ถูกเตะออก (บัญชีถูกใช้ล็อกอินที่เครื่องอื่น) — เฉพาะตอนออนไลน์ที่เซิร์ฟเวอร์ตอบ unauthorized
     if (res && res.ok === false && res.reason === "unauthorized"
         && !(typeof navigator !== "undefined" && navigator.onLine === false)) {
-      onKicked && onKicked();
+      // ★ H2: ดันงานค้างขึ้นก่อนเตะออก — กันงานออฟไลน์ค้างซิงค์ไม่ได้อีก
+      await flushScanQueue();
+      if (scanQueueCount() === 0) { onKicked && onKicked(); }
+      else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
       return;
     }
     if (res && res.ok !== false) {
@@ -195,6 +199,13 @@ function MachineStation({ user, onLogout, onKicked }) {
     const off = onScanQueue((n) => setPending(n));
     const offR = onRejectedQueue((n) => setRejected(n));
     return () => { off(); offR(); };
+  }, []);
+
+  // แจ้งเตือนถ้าที่เก็บข้อมูลเต็ม (เขียนคิวไม่ได้) — งานอาจไม่ถูกบันทึก (B4)
+  useEffect(() => {
+    const onFull = () => flash("⚠ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก แจ้งผู้ดูแลระบบ", "warn");
+    window.addEventListener("mls-storage-full", onFull);
+    return () => window.removeEventListener("mls-storage-full", onFull);
   }, []);
 
   // ขอสิทธิ์กล้องครั้งเดียวตอนแตะจอครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ ไม่ได้ผ่านหน้าล็อกอิน)
@@ -274,10 +285,13 @@ function MachineStation({ user, onLogout, onKicked }) {
     // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
     // done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
     // ยึดตามเครื่องจักร: ตัด/เจาะ/บาก นับแยกกัน (ไม่รวมยอดข้ามขั้นตอน)
-    const done = await getReleaseProgress(u.release_id, op?.id || user.operation?.id || null);
+    // ★ H1: ต้องรู้ "ขั้นตอน (operation) ของเครื่องนี้" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้
+    //   อย่าเอายอด "รวมทุกขั้นตอน" มาโชว์ (จะหลอกให้หยุดงานก่อนครบ) → โชว์เป็นไม่ทราบแทน
+    const opId = op?.id || user.operation?.id || null;
+    const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     setBusy(false);
-    setProgress({ done, total: u.release?.qty ?? null, offline });
+    setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -293,37 +307,43 @@ function MachineStation({ user, onLogout, onKicked }) {
 
   // ── บันทึก (เรียกจากปุ่ม OK) ─────────────────────────────────────────────
   async function doSave() {
+    if (savingRef.current) return;      // กันกด OK รัวๆ → บันทึกซ้ำ (re-entrancy)
+    savingRef.current = true;
     setBusy(true);
-    const res = await recordMachineWork({
-      qr: unit.qr_code,
-      quantity: qty,
-      materialLengthMm: materialLen === "" ? null : Number(materialLen),
-      processSeconds: elapsed,
-      status,
-      releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
-    });
-    setBusy(false);
-    if (!res || res.ok === false) {
-      errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
-      flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
-      setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
-      return;
-    }
-    if (res.queued) {
-      flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
+    try {
+      const res = await recordMachineWork({
+        qr: unit.qr_code,
+        quantity: qty,
+        materialLengthMm: materialLen === "" ? null : Number(materialLen),
+        processSeconds: elapsed,
+        status,
+        releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
+      });
+      if (!res || res.ok === false) {
+        errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
+        flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
+        setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
+        return;
+      }
+      if (res.queued) {
+        flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
+        resetAll();
+        return;
+      }
+      // update table + daily from server response
+      if (res.daily) setDaily(res.daily);
+      if (res.row) {
+        setRows((rs) => [...rs, res.row]);
+        setNewRowId(res.row.id || `${Date.now()}`);
+      } else {
+        reload();
+      }
+      flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
       resetAll();
-      return;
+    } finally {
+      setBusy(false);
+      savingRef.current = false;
     }
-    // update table + daily from server response
-    if (res.daily) setDaily(res.daily);
-    if (res.row) {
-      setRows((rs) => [...rs, res.row]);
-      setNewRowId(res.row.id || `${Date.now()}`);
-    } else {
-      reload();
-    }
-    flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
-    resetAll();
   }
 
   // scroll table to newest row when it changes
@@ -603,14 +623,17 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     // running number ของป้ายตัวใหม่: เริ่มจาก (ทำไปแล้ว + 1) OF จำนวนทั้งใบ
     // นับ "แยกตามขั้นตอนของเครื่องนี้" (เจาะ/ตัด/บาก แยกกัน) — ดู getReleaseProgress
     const total = progress?.total ?? rel.qty ?? null;
+    const noOp = !!progress?.noOp;                 // ไม่รู้ขั้นตอนของเครื่อง → ไม่โชว์เลขวิ่งที่อาจหลอก
     const done = progress?.done ?? 0;
     const startNo = done + 1;
     const endNo = done + Math.max(1, qty || 1);
-    const ofText = total != null
-      ? `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} OF ${fmt(total)}`
-      : `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`;
+    const ofText = noOp
+      ? (total != null ? `— OF ${fmt(total)}` : "—")
+      : (total != null
+          ? `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} OF ${fmt(total)}`
+          : `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`);
     // ทำเกินจำนวนสั่งแล้ว → บันทึกต่อได้ปกติ (เช่น ตัดเผื่อเป็นสแปร์ หรือกลับไปเจาะเพิ่ม)
-    const isOver = total != null && done >= total;
+    const isOver = !noOp && total != null && done >= total;
     return (
       <div className="stn-part-panel">
         {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
