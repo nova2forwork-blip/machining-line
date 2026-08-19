@@ -3,6 +3,7 @@ import "./dashboard.css";
 import { getScanLogsBetween, supabase } from "./supabase.js";
 import { machineOpMatrix } from "./metrics.js";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 const fmtInt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
@@ -87,6 +88,14 @@ export default function Dashboard() {
     }
     seenRef.current = keys;
   }, []);
+
+  // จอโชว์ไม่มีคนกด → มีเวอร์ชันใหม่ก็รีโหลดเงียบๆ เอง (หน่วง 4 วิ กันจังหวะกำลังอัปเดต)
+  const updateReady = useUpdateReady();
+  useEffect(() => {
+    if (!updateReady) return;
+    const t = setTimeout(() => applyUpdate(), 4000);
+    return () => clearTimeout(t);
+  }, [updateReady]);
 
   // โหลดรอบแรก + โพลทุก 5 วิ (near real-time) + นาฬิกาเดินทุก 1 วิ
   useEffect(() => {
