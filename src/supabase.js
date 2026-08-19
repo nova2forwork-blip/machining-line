@@ -280,6 +280,14 @@ export async function getReleaseOpProgress(releaseIds) {
   return data || {};
 }
 
+// ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
+// คืน { <project_id>: { finished, weight } }
+export async function getProjectStationProgress() {
+  const { data, error } = await supabase.rpc("project_station_progress");
+  if (error) { console.warn("project_station_progress error", error); return {}; }
+  return data || {};
+}
+
 // ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
 // จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
 export async function getEmployees() {
@@ -384,7 +392,9 @@ export async function flushScanQueue() {
 
   _flushing = true;
   const done = new Set();          // qid ที่จัดการเสร็จแล้ว (สำเร็จ/ถูก reject) → เอาออกจากคิว
+  const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (นับเฉพาะ error รอบนี้)
   const rejects = [];
+  const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
   try {
     for (const item of a) {
       let data, error;
@@ -393,10 +403,17 @@ export async function flushScanQueue() {
       } else {
         ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
       }
-      if (error) continue;                                        // เน็ต/DB มีปัญหา → คงไว้ retry
+      if (error) {
+        // แยก "เน็ต/DB สะดุด" (retry) ออกจาก "พลาดถาวร" (วนไม่จบ) — H3
+        if (typeof navigator !== "undefined" && navigator.onLine === false) continue; // ออฟไลน์ = ไม่ถือเป็นครั้ง
+        const at = (Number(item.attempts) || 0) + 1;
+        if (at >= MAX_ATTEMPTS) { rejects.push({ item, reason: "retry_exhausted" }); done.add(item.qid); }
+        else bumped.set(item.qid, at);                            // ยังไม่ถึงเพดาน → คงไว้ retry (บันทึกจำนวนครั้ง)
+        continue;
+      }
       if (data && data.ok === false) {
         if (data.reason === "unauthorized") continue;             // token หมดอายุ → คงไว้รอ login
-        if (item.machineWork) rejects.push({ item, reason: data.reason }); // ลบ/แก้ฝั่งออฟฟิศ → rejected
+        rejects.push({ item, reason: data.reason });              // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
         done.add(item.qid);
         continue;
       }
@@ -407,8 +424,10 @@ export async function flushScanQueue() {
     _flushing = false;
     try {
       // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
+      // + อัปเดตจำนวนครั้งที่ลองพลาด (attempts) ของ item ที่ยังคงอยู่
       const cur = qRead();
-      qWrite(cur.filter((it) => !done.has(it.qid)));
+      qWrite(cur.filter((it) => !done.has(it.qid))
+                .map((it) => (bumped.has(it.qid) ? { ...it, attempts: bumped.get(it.qid) } : it)));
       for (const r of rejects) pushRejected(r.item, r.reason);    // pushRejected กันซ้ำด้วย qid แล้ว
     } catch (e) { console.warn("flush finalize failed", e); }
   }
