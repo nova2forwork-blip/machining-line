@@ -2515,29 +2515,80 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialReleaseId]);
 
-  useEffect(() => {
-    if (!releaseId) { setUnits([]); setSelected(new Set()); return; }
-    setLoading(true);
-    listRows("part_units", { order: "unit_no", filters: { release_id: releaseId } }).then((rows) => {
-      setUnits(rows);
-      setLoading(false);
-    });
-  }, [releaseId]);
+  function partOf(r) { return parts.find((p) => p.id === r.part_master_id); }
 
-  // เลือกป้ายตามชนิด: รายชิ้น = เลือกทุกชิ้น · รวมล็อต = เลือกชิ้นแรกใบเดียว
+  // ── ตัวกรองลูกโซ่ + ช่องค้นหาอิสระ (คำนวณก่อน effect โหลด QR) ─────────────
+  const q = search.trim().toLowerCase();
+  const relHay = (r) => {
+    const part = partOf(r);
+    const proj = projects.find((p) => p.id === part?.project_id);
+    return [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name]
+      .filter(Boolean).join(" ").toLowerCase();
+  };
+  const matchSearch = (r) => !q || relHay(r).includes(q);
+  const relsInProject = releases.filter((r) => (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
+  const releaseOrders = Array.from(new Set(relsInProject.map((r) => r.release_order).filter(Boolean))).sort();
+  const filteredReleases = relsInProject.filter((r) => !releaseOrder || r.release_order === releaseOrder);
+  const hasFilter = !!(projectFilter || releaseOrder || q || releaseId);
+
+  // ★ ล็อตที่จะโชว์ QR: เลือก Part เจาะจง = ล็อตนั้น · เลือกแค่ Project/Release = "ทุกล็อต" ในตัวกรอง
+  const activeReleaseIds = releaseId
+    ? [releaseId]
+    : ((projectFilter || releaseOrder || q) ? filteredReleases.map((r) => r.id) : []);
+  const activeIdsKey = activeReleaseIds.join(",");
+
+  // โหลดชิ้นงาน (QR) ของ "ทุกล็อต" ที่เลือก — แบ่ง batch กัน URL ยาวเกิน + แบ่งหน้ากันเกิน 1000
   useEffect(() => {
-    if (!units.length) { setSelected(new Set()); return; }
-    if (labelScope === "lot") setSelected(new Set([units[0].id]));
-    else setSelected(new Set(units.map((u) => u.id)));
-  }, [labelScope, units]);
+    if (!activeIdsKey) { setUnits([]); setSelected(new Set()); return; }
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      const ids = activeIdsKey.split(",");
+      const out = [];
+      for (let i = 0; i < ids.length; i += 60) {
+        const chunk = ids.slice(i, i + 60);
+        let from = 0;
+        for (;;) {
+          const { data, error } = await supabase
+            .from("part_units")
+            .select("id, unit_no, qr_code, release_id, part_master_id")
+            .in("release_id", chunk)
+            .order("release_id", { ascending: true }).order("unit_no", { ascending: true })
+            .range(from, from + 999);
+          if (error || !data || !data.length) break;
+          out.push(...data);
+          if (data.length < 1000) break;
+          from += 1000;
+        }
+      }
+      if (alive) { setUnits(out); setLoading(false); }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIdsKey]);
+
+  // 1 ใบต่อ 1 พาร์ท (ตัวแทนใบแรกของแต่ละล็อต) — สำหรับป้ายรวมล็อต / เลือกหลายพาร์ท
+  const lotReps = (() => {
+    const seen = new Set(); const reps = [];
+    for (const u of units) if (!seen.has(u.release_id)) { seen.add(u.release_id); reps.push(u); }
+    return reps;
+  })();
+  const multi = lotReps.length > 1;                  // หลายพาร์ท → บังคับป้ายรวมล็อต (1 ใบ/พาร์ท)
+  const effScope = multi ? "lot" : labelScope;
+  const displayed = effScope === "unit" ? units : lotReps;
+
+  // เลือกทุกใบที่แสดงโดยอัตโนมัติ
+  useEffect(() => {
+    setSelected(new Set(displayed.map((u) => u.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIdsKey, effScope, units.length]);
 
   function toggle(id) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAll() {
-    setSelected((s) => (s.size === units.length ? new Set() : new Set(units.map((u) => u.id))));
+    setSelected((s) => (s.size === displayed.length ? new Set() : new Set(displayed.map((u) => u.id))));
   }
-  function partOf(r) { return parts.find((p) => p.id === r.part_master_id); }
 
   function currentSize() {
     if (labelPreset === "custom") return { w: Number(customW) || 20, h: Number(customH) || 20 };
@@ -2545,13 +2596,13 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     return { w: p.w, h: p.h };
   }
   function doPrint() {
-    const picked = units.filter((u) => selected.has(u.id));
-    if (!picked.length) { alert("กรุณาเลือกอย่างน้อย 1 ชิ้น"); return; }
+    const picked = displayed.filter((u) => selected.has(u.id));
+    if (!picked.length) { alert("กรุณาเลือกอย่างน้อย 1 ใบ"); return; }
     const { w, h } = currentSize();
-    const rel = releases.find((r) => r.id === releaseId);
-    const total = rel?.qty;
-    // เติมข้อมูลลงแต่ละป้าย: โปรเจค / Part / MDF / REL / จำนวน (X OF Y)
+    // เติมข้อมูลลงแต่ละป้าย: อ้างอิง Release ของแต่ละใบเอง (รองรับหลายพาร์ท)
     const chosen = picked.map((u) => {
+      const rel = releases.find((r) => r.id === u.release_id) || {};
+      const total = rel.qty;
       const part = parts.find((p) => p.id === u.part_master_id) || {};
       const proj = projects.find((p) => p.id === part.project_id) || {};
       return {
@@ -2561,8 +2612,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           projectName: proj.name || "",
           partNo: part.part_no || "",
           mdfNo: part.mdf_no ?? "-",
-          relNo: rel?.release_order || "",
-          qtyText: labelScope === "lot"
+          relNo: rel.release_order || "",
+          qtyText: effScope === "lot"
             ? (total != null ? `รวม ${total} ชิ้น` : "")   // ป้ายรวมล็อต: โชว์จำนวนทั้งล็อต
             : ((u.unit_no != null && total != null)          // ป้ายรายชิ้น: X OF Y
                 ? `${u.unit_no} OF ${total}`
@@ -2573,21 +2624,6 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
   }
 
-  // ── ตัวกรองลูกโซ่ + ช่องค้นหาอิสระ ──────────────────────────────────────
-  const q = search.trim().toLowerCase();
-  const relHay = (r) => {
-    const part = partOf(r);
-    const proj = projects.find((p) => p.id === part?.project_id);
-    return [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name]
-      .filter(Boolean).join(" ").toLowerCase();
-  };
-  const matchSearch = (r) => !q || relHay(r).includes(q);
-  // releases ในโปรเจคที่เลือก (ใช้สร้างตัวเลือก Release Order)
-  const relsInProject = releases.filter((r) => (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
-  const releaseOrders = Array.from(new Set(relsInProject.map((r) => r.release_order).filter(Boolean))).sort();
-  // Part options = กรองด้วย Release Order ที่เลือกด้วย
-  const filteredReleases = relsInProject.filter((r) => !releaseOrder || r.release_order === releaseOrder);
-  const hasFilter = !!(projectFilter || releaseOrder || q || releaseId);
   function clearSearch() { setProjectFilter(""); setReleaseOrder(""); setSearch(""); setReleaseId(""); }   // ล้างทั้งหมด
 
   return (
@@ -2636,41 +2672,45 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       {loading && <Card><div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div></Card>}
 
-      {!loading && units.length > 0 && (
-        <Card title={`ชิ้นงานในล็อตนี้ (${units.length})`} right={
-          labelScope === "unit"
-            ? <Btn size="sm" onClick={toggleAll}>{selected.size === units.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
-            : null
+      {!loading && displayed.length > 0 && (
+        <Card title={`ป้ายที่จะพิมพ์ (${fmtNum(displayed.length)})`} right={
+          !multi ? <Btn size="sm" onClick={toggleAll}>{selected.size === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn> : null
         }>
           <Field label="ชนิดป้าย">
             <div className="chip-row">
-              <span className={`chip ${labelScope === "unit" ? "active" : ""}`} onClick={() => setLabelScope("unit")}>ป้ายรายชิ้น · ติดทุกชิ้น (ชิ้นใหญ่)</span>
-              <span className={`chip ${labelScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบ (ชิ้นเล็ก สแกนกรอกจำนวน)</span>
+              <span className={`chip ${effScope === "unit" ? "active" : ""}`} style={multi ? { opacity: 0.4, pointerEvents: "none" } : undefined} onClick={() => !multi && setLabelScope("unit")}>ป้ายรายชิ้น · ติดทุกชิ้น (ชิ้นใหญ่)</span>
+              <span className={`chip ${effScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)</span>
             </div>
           </Field>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 14px", lineHeight: 1.6 }}>
-            {labelScope === "unit"
-              ? "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น — ติดสติกเกอร์รายชิ้น สแกนทีละชิ้น (จำนวน = 1)"
-              : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ"}
+            {multi
+              ? `เลือกหลายพาร์ท (${fmtNum(lotReps.length)} พาร์ท) — พิมพ์ป้ายรวมล็อต 1 ใบต่อพาร์ท · ถ้าต้องการป้ายรายชิ้น ให้เลือกพาร์ทเจาะจงในช่อง Part`
+              : effScope === "unit"
+                ? "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น — ติดสติกเกอร์รายชิ้น สแกนทีละชิ้น (จำนวน = 1)"
+                : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ"}
           </div>
 
-          {labelScope === "unit" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 18 }}>
-              {units.map((u) => (
-                <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`}>
-                  <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)" }} />
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{u.qr_code}</span>
-                  <span style={{ display: "none" }}><QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={90} /></span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 10, marginBottom: 8 }}>
+            {displayed.slice(0, 600).map((u) => {
+              const part = parts.find((p) => p.id === u.part_master_id);
+              return (
+                <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`} style={{ alignItems: "center", textAlign: "center", gap: 6 }}>
+                  <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)", alignSelf: "flex-start" }} />
+                  <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />
+                  {part?.part_no ? <span style={{ fontSize: 12, fontWeight: 600 }}>{part.part_no}</span> : null}
+                  {showCode ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--muted)", wordBreak: "break-all" }}>{u.qr_code}</span> : null}
                 </label>
-              ))}
-            </div>
-          ) : (
-            <div style={{ marginBottom: 18 }}>
-              <label className="unit-check checked" style={{ maxWidth: 240 }}>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{units[0]?.qr_code}</span>
-                <span style={{ display: "none" }}><QRCodeSVG id={`pq-${units[0]?.id}`} value={units[0]?.qr_code || ""} size={90} /></span>
-              </label>
-            </div>
+              );
+            })}
+          </div>
+          {displayed.length > 600 && (
+            <>
+              {/* ใบที่เกิน 600 (พรีวิว) — ยังเรนเดอร์ QR ซ่อนไว้ เพื่อให้พิมพ์ครบทุกใบ */}
+              <div style={{ display: "none" }}>
+                {displayed.slice(600).map((u) => <QRCodeSVG key={u.id} id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />)}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px 14px" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
+            </>
           )}
 
           <hr className="section-divider" />
@@ -2700,10 +2740,10 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </Card>
       )}
 
-      {!loading && releaseId && units.length === 0 && (
+      {!loading && activeIdsKey && displayed.length === 0 && (
         <div className="empty-state">
           <Icon name="qr" size={32} />
-          <div className="empty-state-title">ไม่พบชิ้นงานในล็อตนี้</div>
+          <div className="empty-state-title">ไม่พบชิ้นงาน (QR) ในตัวกรองนี้</div>
         </div>
       )}
     </div>
