@@ -31,10 +31,10 @@ export function printLabels(units, opts = {}) {
   if (!units || units.length === 0) return;
 
   // ขนาดสัมพัทธ์กับความสูงป้าย เพื่อให้ย่อ/ขยายป้ายแล้วสัดส่วนคงเดิม
-  const qrMm = Math.max(6, Math.min(heightMm - 2, heightMm * 0.84));
-  const fSmall = (heightMm * 0.17).toFixed(2);   // ≈ Arial 2 มม. ที่ป้าย 12 มม.
-  const fBig = (heightMm * 0.26).toFixed(2);      // ≈ Arial 3 มม.
-  const radius = (heightMm * 0.16).toFixed(2);
+  const qrMm = heightMm.toFixed(2);              // QR ใหญ่เต็มความสูงป้าย
+  const fSmall = (heightMm * 0.17).toFixed(2);
+  const fBig = (heightMm * 0.27).toFixed(2);
+  const fMed = (heightMm * 0.23).toFixed(2);     // MDF NO. / REL NO. ให้ใหญ่ขึ้น
 
   const labelCells = units.map((u) => {
     const svg = collectQrSvg(u.id);
@@ -62,14 +62,14 @@ export function printLabels(units, opts = {}) {
   const labelCss = `
     .lbl {
       width: ${widthMm}mm; height: ${heightMm}mm;
-      border: 0.3mm solid #111; border-radius: ${radius}mm;
       display: flex; align-items: center; gap: 1.5mm;
-      padding: 1mm 1.6mm; box-sizing: border-box; overflow: hidden;
-      font-family: Arial, 'Helvetica Neue', sans-serif; color: #111;
+      padding: 0 1.4mm; box-sizing: border-box; overflow: hidden;
+      font-family: Arial, 'Helvetica Neue', sans-serif; color: #000;
       page-break-inside: avoid;
     }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
-    .qr svg { width: 100%; height: 100%; display: block; }
+    .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
+    .qr svg rect, .qr svg path { fill: #000 !important; }
     .body {
       flex: 1; height: 100%; display: flex;
       gap: 2mm; align-items: center; min-width: 0;
@@ -78,16 +78,15 @@ export function printLabels(units, opts = {}) {
     .body .col.left { flex: 1; }
     .body .col.right { text-align: left; align-items: flex-end; flex-shrink: 0; }
     /* เส้นแบ่งกลางระหว่างข้อมูลโปรเจค (ซ้าย) กับ MDF/REL (ขวา) */
-    .vline { width: 0.2mm; align-self: stretch; margin: 1.4mm 0; background: #c8c8c8; flex-shrink: 0; }
-    .c { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .c.num { color: #666; letter-spacing: .01em; }
-    .c.name { color: #222; }
+    .vline { width: 0.2mm; align-self: stretch; margin: 1.4mm 0; background: #000; flex-shrink: 0; }
+    .c { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #000; }
+    .c.num { letter-spacing: .01em; }
     .c.part { font-size: ${fBig}mm; font-weight: 700; letter-spacing: .02em; margin-top: 0.5mm; }
-    /* ตาราง MDF/REL: คอลัมน์ชื่อ (M,R) ตรงกัน · คอลัมน์ค่าตรงกัน */
+    /* ตาราง MDF/REL: คอลัมน์ชื่อ (M,R) ตรงกัน · คอลัมน์ค่าตรงกัน — ใหญ่ขึ้น + ดำล้วน */
     .kv { display: grid; grid-template-columns: auto auto; column-gap: 1mm; row-gap: 0.3mm; align-items: baseline; }
-    .kv .k { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; color: #666; }
-    .kv .v { font-size: ${fSmall}mm; line-height: 1.18; white-space: nowrap; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
-    .c.qty { margin-top: 0.6mm; padding-top: 0.5mm; border-top: 0.15mm solid #ddd; font-weight: 700; align-self: stretch; text-align: right; }
+    .kv .k { font-size: ${fMed}mm; line-height: 1.18; white-space: nowrap; color: #000; font-weight: 600; }
+    .kv .v { font-size: ${fMed}mm; line-height: 1.18; white-space: nowrap; font-weight: 700; color: #000; overflow: hidden; text-overflow: ellipsis; }
+    .c.qty { margin-top: 0.6mm; padding-top: 0.5mm; border-top: 0.2mm solid #000; font-weight: 700; align-self: stretch; text-align: right; }
   `;
 
   const sheetCss = `
