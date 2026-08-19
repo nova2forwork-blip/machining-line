@@ -5,7 +5,9 @@ import "./styles.css";
 // ─── Route split: /station = machine terminal (หน้าเครื่อง) ──────────────
 //    ทุก path อื่น = แอปปกติ (สำนักงาน)  ·  ทั้งสองใช้ Supabase/ฐานข้อมูลเดียวกัน
 //    (vercel.json rewrite ทุก path → index.html อยู่แล้ว จึงไม่ต้องตั้ง route เพิ่ม)
-const isStation = window.location.pathname.replace(/\/+$/, "").toLowerCase().startsWith("/station");
+const path = window.location.pathname.replace(/\/+$/, "").toLowerCase();
+const isStation = path.startsWith("/station");
+const isDashboard = path.startsWith("/dashboard");
 
 // ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต ──────────────
 if ("serviceWorker" in navigator) {
@@ -16,7 +18,16 @@ if ("serviceWorker" in navigator) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
-if (isStation) {
+if (isDashboard) {
+  document.body.classList.add("dash-body");
+  import("./Dashboard.jsx").then(({ default: Dashboard }) => {
+    root.render(
+      <React.StrictMode>
+        <Dashboard />
+      </React.StrictMode>
+    );
+  });
+} else if (isStation) {
   import("./Station.jsx").then(({ default: StationApp }) => {
     root.render(
       <React.StrictMode>
