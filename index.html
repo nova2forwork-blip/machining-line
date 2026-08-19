@@ -20,6 +20,28 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- หน้าโหลดชั่วคราว (inline ไม่พึ่ง bundle) — กัน "จอมืด" ระหว่างรีโหลด/อัปเดต
+         โทนสีเข้มสำหรับ /dashboard และ /station · หน้าสำนักงานใช้โทนสว่างเดิม -->
+    <script>
+      (function () {
+        try {
+          var p = location.pathname.replace(/\/+$/, "").toLowerCase();
+          var dark = p.indexOf("/dashboard") === 0 || p.indexOf("/station") === 0;
+          var bg = dark ? "#0b0f0d" : "#eef3f1";
+          var fg = dark ? "#14e39a" : "#10b981";
+          var track = dark ? "#24302a" : "#d7e3dd";
+          document.body.style.background = bg;
+          var st = document.createElement("style");
+          st.textContent = "@keyframes bootspin{to{transform:rotate(360deg)}}";
+          document.head.appendChild(st);
+          var s = document.createElement("div");
+          s.id = "boot-splash";
+          s.style.cssText = "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:" + bg + ";z-index:99999;transition:opacity .35s ease";
+          s.innerHTML = '<div style="width:56px;height:56px;border:5px solid ' + track + ';border-top-color:' + fg + ';border-radius:50%;animation:bootspin 1s linear infinite"></div>';
+          document.body.appendChild(s);
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
