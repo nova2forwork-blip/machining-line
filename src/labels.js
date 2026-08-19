@@ -69,7 +69,9 @@ export function printLabels(units, opts = {}) {
     }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
     .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
-    .qr svg rect, .qr svg path { fill: #000 !important; }
+    /* ห้าม !important ทับ fill ทั้งหมด — เดิมทำให้ "พื้นหลัง QR ดำ" กลายเป็นกล่องดำทึบ
+       QRCodeSVG วาดพื้นหลังขาว + โมดูลดำมาให้อยู่แล้ว จึงปล่อยตามค่าเดิม (ดำล้วนคมชัด) */
+    .qr svg path[fill="#FFFFFF"], .qr svg rect[fill="#FFFFFF"] { fill: #fff; }
     .body {
       flex: 1; height: 100%; display: flex;
       gap: 2mm; align-items: center; min-width: 0;
