@@ -31,17 +31,20 @@ function authToken() {
 // (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
 
 export async function listRows(table, { order, ascending = true, filters } = {}) {
-  let q = supabase.from(table).select("*");
-  if (filters) {
-    for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
+  // แบ่งหน้าเอง (page 1000) — กันเพดาน 1,000 แถวของ PostgREST ที่ตัดข้อมูลเงียบๆ (H5)
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    let q = supabase.from(table).select("*");
+    if (filters) { for (const [col, val] of Object.entries(filters)) q = q.eq(col, val); }
+    if (order) q = q.order(order, { ascending });
+    q = q.range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) { console.warn("listRows error", table, error); return all; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
   }
-  if (order) q = q.order(order, { ascending });
-  const { data, error } = await q;
-  if (error) {
-    console.warn("listRows error", table, error);
-    return [];
-  }
-  return data || [];
+  return all;
 }
 
 export async function insertRow(table, row) {
@@ -302,7 +305,19 @@ export async function recordScan({ unitId }) {
 const SCAN_Q_KEY = "mls-scan-queue";
 const scanQListeners = new Set();
 function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || []; } catch { return []; } }
-function qWrite(a) { localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a)); scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
+// เขียนคิวลง localStorage แบบ "ไม่โยน error" — ถ้าที่เก็บเต็ม (quota/โหมดส่วนตัว) จะ
+// warn + แจ้ง event แทนที่จะทำให้ flush ค้าง (ดู B4 ในรายงานคุณภาพ) · คืน true=สำเร็จ
+function qWrite(a) {
+  try {
+    localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a));
+    scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} });
+    return true;
+  } catch (e) {
+    console.warn("qWrite failed (storage full?)", e);
+    try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ }
+    return false;
+  }
+}
 export function scanQueueCount() { return qRead().length; }
 export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
 // รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
@@ -388,11 +403,14 @@ export async function flushScanQueue() {
       done.add(item.qid);                                         // ok / deduped = สำเร็จ
     }
   } finally {
-    // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
-    const cur = qRead();
-    qWrite(cur.filter((it) => !done.has(it.qid)));
-    for (const r of rejects) pushRejected(r.item, r.reason);      // pushRejected กันซ้ำด้วย qid แล้ว
+    // ★ ปลดล็อกก่อนเสมอ — กันค้างถาวรถ้าเขียน localStorage พลาด (B4)
     _flushing = false;
+    try {
+      // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
+      const cur = qRead();
+      qWrite(cur.filter((it) => !done.has(it.qid)));
+      for (const r of rejects) pushRejected(r.item, r.reason);    // pushRejected กันซ้ำด้วย qid แล้ว
+    } catch (e) { console.warn("flush finalize failed", e); }
   }
 }
 
