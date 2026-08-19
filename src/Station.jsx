@@ -10,6 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
+import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -790,6 +791,22 @@ function CameraScan({ onDecoded, busy, onClose }) {
 // ══════════════════════════════════════════════════════════════════════════
 // ROOT (station)
 // ══════════════════════════════════════════════════════════════════════════
+// แถบแจ้ง "มีอัปเดต" สำหรับหน้าเครื่อง — คนงานกดเองเมื่อพร้อม (งานค้าง/ออฟไลน์ไม่หาย เพราะเก็บใน localStorage)
+function StationUpdateBanner() {
+  const ready = useUpdateReady();
+  const [busy, setBusy] = useState(false);
+  const [offline, setOffline] = useState(false);
+  if (!ready) return null;
+  return (
+    <div className="stn-update">
+      <span>● มีเวอร์ชันใหม่{offline ? " · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่" : " — กดอัปเดตเมื่อพร้อม"}</span>
+      <button onClick={() => { setBusy(true); if (!applyUpdate()) { setBusy(false); setOffline(true); } }} disabled={busy}>
+        {busy ? "กำลังอัปเดต…" : "อัปเดต"}
+      </button>
+    </div>
+  );
+}
+
 export default function StationApp() {
   const [user, setUser] = useState(getSession());
   const [notice, setNotice] = useState("");
@@ -811,10 +828,11 @@ export default function StationApp() {
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
   useEffect(() => armFullscreenOnFirstTap(), []);
 
-  if (!user) return <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} /></div>;
-
-  if (!user.machine) {
-    return (
+  let content;
+  if (!user) {
+    content = <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} /></div>;
+  } else if (!user.machine) {
+    content = (
       <div className="stn-login-wrap">
         <div className="stn-login">
           <h1>บัญชีนี้ยังไม่ได้ผูกเครื่องจักร</h1>
@@ -825,6 +843,8 @@ export default function StationApp() {
         </div>
       </div>
     );
+  } else {
+    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} />;
   }
-  return <MachineStation user={user} onLogout={logout} onKicked={onKicked} />;
+  return <><StationUpdateBanner />{content}</>;
 }
