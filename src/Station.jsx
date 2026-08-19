@@ -120,6 +120,9 @@ const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "
 
 function MachineStation({ user, onLogout, onKicked }) {
   const machine = user.machine; // { id, code, name }
+  // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
+  // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
+  const [op, setOp] = useState(user.operation || null);
   const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
   const [rows, setRows] = useState([]);
   const [newRowId, setNewRowId] = useState(null);
@@ -152,6 +155,7 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (res && res.ok !== false) {
       setDaily(res.daily || { quantity: 0, weight: 0, process_seconds: 0 });
       setRows(res.records || []);
+      if (res.operation) setOp(res.operation);   // ขั้นตอนล่าสุดของเครื่องนี้ (จาก machine_day)
       setLoadErr("");
     } else {
       setLoadErr(res?.message || "โหลดข้อมูลไม่สำเร็จ");
@@ -267,8 +271,9 @@ function MachineStation({ user, onLogout, onKicked }) {
     const u = await findUnitByQr(qr);
     if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
     // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
-    // done = จำนวนที่บันทึกไปแล้วของล็อ/รีลีสนี้, total = จำนวนที่ต้องการทั้งใบ
-    const done = await getReleaseProgress(u.release_id);
+    // done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
+    // ยึดตามเครื่องจักร: ตัด/เจาะ/บาก นับแยกกัน (ไม่รวมยอดข้ามขั้นตอน)
+    const done = await getReleaseProgress(u.release_id, op?.id || user.operation?.id || null);
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     setBusy(false);
     setProgress({ done, total: u.release?.qty ?? null, offline });
@@ -595,6 +600,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const proj = p.projects || {};
     const rel = unit?.release || {};
     // running number ของป้ายตัวใหม่: เริ่มจาก (ทำไปแล้ว + 1) OF จำนวนทั้งใบ
+    // นับ "แยกตามขั้นตอนของเครื่องนี้" (เจาะ/ตัด/บาก แยกกัน) — ดู getReleaseProgress
     const total = progress?.total ?? rel.qty ?? null;
     const done = progress?.done ?? 0;
     const startNo = done + 1;
@@ -602,6 +608,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const ofText = total != null
       ? `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} OF ${fmt(total)}`
       : `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`;
+    // ทำเกินจำนวนสั่งแล้ว → บันทึกต่อได้ปกติ (เช่น ตัดเผื่อเป็นสแปร์ หรือกลับไปเจาะเพิ่ม)
+    const isOver = total != null && done >= total;
     return (
       <div className="stn-part-panel">
         {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
@@ -622,6 +630,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
               <div className="stn-lbl-of">{progress?.offline ? `~${ofText}` : ofText}</div>
+              {isOver ? <div className="stn-lbl-rework">เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)</div> : null}
               {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
             </div>
           </div>
