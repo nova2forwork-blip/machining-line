@@ -2674,7 +2674,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       {!loading && displayed.length > 0 && (
         <Card title={`ป้ายที่จะพิมพ์ (${fmtNum(displayed.length)})`} right={
-          !multi ? <Btn size="sm" onClick={toggleAll}>{selected.size === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn> : null
+          <Btn size="sm" onClick={toggleAll}>{selected.size === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
         }>
           <Field label="ชนิดป้าย">
             <div className="chip-row">
