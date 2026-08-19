@@ -1303,80 +1303,6 @@ function PartProgressModal({ release, user, onClose }) {
             );
           })()}
 
-          {/* ── ตัวตั้ง/แก้ Routing (เฉพาะ Admin) ─────────────────────────── */}
-          {canEditRouting && (editRouting || routing.length === 0) ? (
-            <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-              <div className="label-el" style={{ marginBottom: 8 }}>ตั้ง/แก้ Routing — เลือกขั้นตอนที่ Part นี้ต้องผ่าน ตามลำดับ</div>
-              <div className="chip-row" style={{ marginBottom: 8 }}>
-                {operations.map((o) => {
-                  const active = routing.includes(o.name);
-                  return (
-                    <span key={o.id} onClick={() => toggleRoutingOp(o.name)} className={`chip ${active ? "active" : ""}`}>
-                      {o.name}{active ? ` (${routing.indexOf(o.name) + 1})` : ""}
-                    </span>
-                  );
-                })}
-                {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — เพิ่มที่ Setup &gt; ขั้นตอนงาน ก่อน</span>}
-              </div>
-              {routingErr && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 6 }}>{routingErr}</div>}
-              <div style={{ display: "flex", gap: 8 }}>
-                <Btn variant="accent" size="sm" onClick={saveRouting} disabled={savingRouting || routing.length === 0}>
-                  {savingRouting ? "กำลังบันทึก..." : "บันทึก Routing"}
-                </Btn>
-                {(release.part_master?.routing || []).length > 0 && (
-                  <Btn variant="ghost" size="sm" onClick={() => { setRouting(release.part_master.routing); setEditRouting(false); setRoutingErr(""); }}>ยกเลิก</Btn>
-                )}
-              </div>
-            </div>
-          ) : canEditRouting ? (
-            <div style={{ marginBottom: 12 }}>
-              <Btn variant="ghost" size="sm" onClick={() => setEditRouting(true)}><Icon name="settings" size={13} /> แก้ Routing</Btn>
-            </div>
-          ) : null}
-
-          {stages.length === 0 ? (
-            <div style={{ color: "var(--warning)", fontSize: 13, lineHeight: 1.6 }}>
-              {canEditRouting
-                ? 'เลือกขั้นตอนด้านบนแล้วกด "บันทึก Routing" เพื่อเริ่มติดตามความคืบหน้า'
-                : "Part นี้ยังไม่ได้ตั้ง Routing — แจ้ง Admin ให้ตั้งที่ Setup > Part Master"}
-            </div>
-          ) : (
-          <>
-          <div className="stage-list">
-            {stages.map((op, i) => {
-              const done = opCounts[op] || 0;
-              const remaining = Math.max(0, totalUnits - done);
-              const pct = totalUnits > 0 ? Math.round((done / totalUnits) * 100) : 0;
-              const isExtra = !routing.includes(op);
-              return (
-                <div className="stage-row" key={op}>
-                  <div className="stage-head">
-                    <span className="stage-name">
-                      <span className="stage-seq">{isExtra ? "?" : i + 1}</span>
-                      {op}{isExtra && <span className="stage-extra"> (นอก routing)</span>}
-                    </span>
-                    <span className="stage-nums">
-                      ทำแล้ว <b>{fmtNum(done)}</b> · เหลือ <b style={{ color: remaining > 0 ? "var(--warning)" : "var(--success)" }}>{fmtNum(remaining)}</b>
-                    </span>
-                  </div>
-                  <div className="stage-bar">
-                    <div className="stage-bar-fill" style={{ width: `${pct}%`, background: pct === 100 ? "var(--success)" : "var(--accent-dk)" }} />
-                    <span className="stage-bar-pct">{pct}%</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="stage-summary">
-            <div><span className="stage-summary-num">{fmtNum(notStarted)}</span><span>ยังไม่เริ่ม</span></div>
-            <div><span className="stage-summary-num" style={{ color: "var(--success)" }}>{fmtNum(finished)}</span><span>เสร็จครบทุกขั้นตอน</span></div>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.5 }}>
-            "ทำแล้ว" = จำนวนชิ้นที่สแกนผ่านขั้นตอนนั้นแล้ว · "เหลือ" = ยังไม่ผ่านขั้นตอนนั้น (เทียบกับทั้งล็อต {fmtNum(totalUnits)} ชิ้น)
-          </div>
-          </>
-          )}
         </>
       )}
 
@@ -1441,7 +1367,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome }) {
           <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(group.totalWeight)} กก.</div>
         </Card>
         <Card>
-          <div className="label-el">จำนวน Part</div>
+          <div className="label-el">Part No.</div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>{group.releases.length} Part</div>
         </Card>
         <Card>
@@ -1639,7 +1565,7 @@ function ReleasePage({ user, goTo }) {
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <div className="table-wrap">
           <table className="data-table responsive-cards">
-            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>จำนวน Part</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
             <tbody>
               {groups.map((g) => {
                 // รวม stats ของทุก release ในกลุ่มนี้
@@ -1652,7 +1578,7 @@ function ReleasePage({ user, goTo }) {
                     <td data-label="วันที่">{fmtDT(g.date)}</td>
                     <td data-label="โปรเจค">{g.projectCode}</td>
                     <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                    <td data-label="จำนวน Part">{fmtNum(g.releases.length)} Part</td>
+                    <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
                     <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
                     <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
                       {statsReady && gPct !== null ? (
@@ -3432,7 +3358,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
             ) : (
               <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
                 <table className="data-table" style={{ fontSize: 12.5 }}>
-                  <thead><tr><th>วันที่</th><th>Release Order</th><th>จำนวน Part</th><th>จำนวนรวม</th></tr></thead>
+                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th></tr></thead>
                   <tbody>
                     {orders.map((g, i) => (
                       <tr key={i}>
