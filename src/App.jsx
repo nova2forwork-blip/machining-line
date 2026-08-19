@@ -2512,6 +2512,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [search, setSearch] = useState("");
   const gridRef = useRef(null);   // กรอบเลื่อนตาราง QR (ใช้ปุ่ม "ขึ้นบนสุด")
+  const [committedKey, setCommittedKey] = useState(""); // ★ โหลด QR เฉพาะหลังกด "ค้นหา" (กันโหลดหมื่นใบทันที)
 
   useEffect(() => {
     (async () => {
@@ -2521,10 +2522,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     })();
   }, []);
 
-  // มาจากปุ่ม "พิมพ์ QR" ในหน้ารายละเอียด Release — เลือกล็อตให้อัตโนมัติ
+  // มาจากปุ่ม "พิมพ์ QR" ในหน้ารายละเอียด Release — เลือกล็อต + ค้นหาให้อัตโนมัติ
   useEffect(() => {
     if (initialReleaseId) {
       setReleaseId(initialReleaseId);
+      setCommittedKey(initialReleaseId);   // จากปุ่มพิมพ์ QR = โชว์เลย ไม่ต้องกดค้นหา
       onConsumeInitial && onConsumeInitial();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2552,13 +2554,13 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     : ((projectFilter || releaseOrder || q) ? filteredReleases.map((r) => r.id) : []);
   const activeIdsKey = activeReleaseIds.join(",");
 
-  // โหลดชิ้นงาน (QR) ของ "ทุกล็อต" ที่เลือก — แบ่ง batch กัน URL ยาวเกิน + แบ่งหน้ากันเกิน 1000
+  // โหลดชิ้นงาน (QR) — เฉพาะ "หลังกดค้นหา" (committedKey) เท่านั้น · แบ่ง batch กัน URL ยาว + แบ่งหน้ากันเกิน 1000
   useEffect(() => {
-    if (!activeIdsKey) { setUnits([]); setSelected(new Set()); return; }
+    if (!committedKey) { setUnits([]); setSelected(new Set()); return; }
     let alive = true;
     setLoading(true);
     (async () => {
-      const ids = activeIdsKey.split(",");
+      const ids = committedKey.split(",");
       const out = [];
       for (let i = 0; i < ids.length; i += 60) {
         const chunk = ids.slice(i, i + 60);
@@ -2580,7 +2582,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIdsKey]);
+  }, [committedKey]);
 
   // 1 ใบต่อ 1 พาร์ท (ตัวแทนใบแรกของแต่ละล็อต) — สำหรับป้ายรวมล็อต / เลือกหลายพาร์ท
   const lotReps = (() => {
@@ -2596,7 +2598,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   useEffect(() => {
     setSelected(new Set(displayed.map((u) => u.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIdsKey, effScope, units.length]);
+  }, [committedKey, effScope, units.length]);
 
   function toggle(id) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -2639,7 +2641,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
   }
 
-  function clearSearch() { setProjectFilter(""); setReleaseOrder(""); setSearch(""); setReleaseId(""); }   // ล้างทั้งหมด
+  function doSearch() { setCommittedKey(activeIdsKey); }   // กดค้นหา = โหลด/แสดง QR ตามตัวกรองปัจจุบัน
+  function clearSearch() { setProjectFilter(""); setReleaseOrder(""); setSearch(""); setReleaseId(""); setCommittedKey(""); }   // ล้างทั้งหมด
+  const searchDirty = activeIdsKey !== committedKey;   // ตัวกรองเปลี่ยนหลังค้นหา → ต้องกดค้นหาใหม่
 
   return (
     <div>
@@ -2651,16 +2655,13 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       </div>
 
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
-        {/* ช่องค้นหาอิสระ — ค้นได้ทุกอย่าง พร้อมปุ่มล้างทั้งหมด */}
+        {/* ช่องค้นหาอิสระ (กรองตัวเลือกในดรอปดาวน์) */}
         <div className={`lot-search ${hasFilter ? "has" : ""}`}>
           <svg className="lot-search-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
           </svg>
           <input className="lot-search-in" value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="ค้นหา Part No. / Release Order / โปรเจค / วันที่..." />
-          <button type="button" className="lot-search-clear" onClick={clearSearch} disabled={!hasFilter} title="ล้างทั้งหมด">
-            <Icon name="close" size={14} /> ล้าง
-          </button>
         </div>
 
         {/* ดรอปดาวลูกโซ่: เลือกโปรเจค → รายการ Release แคบลง → เลือก Part */}
@@ -2679,6 +2680,19 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
               options={filteredReleases.map((r) => ({ value: r.id, label: `${fmtDT(r.release_date)} — ${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
           </Field>
+        </div>
+
+        {/* ★ เลือกก่อน แล้วกด "ค้นหา" ค่อยโหลด/แสดง QR · ปุ่มล้างอยู่ข้างกัน */}
+        <div style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn variant="accent" onClick={doSearch} disabled={!activeIdsKey}>
+            <Icon name="qr" size={15} /> ค้นหา QR
+          </Btn>
+          <Btn variant="ghost" onClick={clearSearch} disabled={!hasFilter && !committedKey}>
+            <Icon name="close" size={14} /> ล้าง
+          </Btn>
+          {searchDirty && committedKey && (
+            <span style={{ fontSize: 12, color: "var(--warn, #b45309)", fontWeight: 600 }}>ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต</span>
+          )}
         </div>
         {hasFilter && filteredReleases.length === 0 && (
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด</div>
@@ -2775,7 +2789,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </Card>
       )}
 
-      {!loading && activeIdsKey && displayed.length === 0 && (
+      {!loading && committedKey && displayed.length === 0 && (
         <div className="empty-state">
           <Icon name="qr" size={32} />
           <div className="empty-state-title">ไม่พบชิ้นงาน (QR) ในตัวกรองนี้</div>
