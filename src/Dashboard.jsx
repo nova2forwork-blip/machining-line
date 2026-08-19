@@ -9,16 +9,46 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 const fmtInt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const fmtKg = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 const pad = (n) => String(n).padStart(2, "0");
-function fmtHrs(secs) {
+function fmtHrs(secs, L = "th") {
   const s = Math.max(0, Math.floor(Number(secs) || 0));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}:${pad(m)} ชม.` : `${m} น.`;
+  return h > 0 ? `${h}:${pad(m)} ${L === "en" ? "h" : "ชม."}` : `${m} ${L === "en" ? "m" : "น."}`;
 }
 function fmtClock(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
-function fmtThaiDate(d) {
-  return d.toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+function fmtDateLoc(d, L) {
+  return d.toLocaleDateString(L === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 function timeOf(iso) { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+
+// ─── สองภาษา ไทย/อังกฤษ ─────────────────────────────────────────────────────
+const STR = {
+  th: {
+    subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
+    kpiPieces: "ชิ้นที่ผลิตวันนี้", unitPieces: "ชิ้น",
+    kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
+    kpiTime: "เวลาเดินเครื่องรวม",
+    kpiScans: "จำนวนครั้งที่บันทึก", unitTimes: "ครั้ง",
+    machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
+    noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
+    hourly: "การผลิตรายชั่วโมง · วันนี้ (กก.)", waitingData: "รอข้อมูลการผลิต…",
+    liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
+    finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
+    booting: "กำลังเชื่อมต่อสายการผลิต…",
+  },
+  en: {
+    subtitle: "Live Production Monitor", live: "LIVE",
+    kpiPieces: "Pieces Produced Today", unitPieces: "pcs",
+    kpiWeight: "Total Weight Today", unitKg: "kg",
+    kpiTime: "Total Machine Time",
+    kpiScans: "Records Logged", unitTimes: "times",
+    machines: "Machines · Today", machineUnit: "machines",
+    noWork: "No work yet today — waiting for the first scan…",
+    hourly: "Hourly Production · Today (kg)", waitingData: "Waiting for production data…",
+    liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
+    finished: "Finished", inProcess: "In Process",
+    booting: "Connecting to the production line…",
+  },
+};
 
 // ช่วง "วันนี้" ตามเวลาไทย (Asia/Bangkok, UTC+7) → คืน ISO from/to
 function bangkokTodayRange() {
@@ -57,6 +87,11 @@ export default function Dashboard() {
   const [logs, setLogs] = useState([]);
   const [booted, setBooted] = useState(false);
   const [now, setNow] = useState(new Date());
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("mls-dash-lang") === "en" ? "en" : "th"; } catch { return "th"; }
+  });
+  const t = STR[lang];
+  const setLangSave = (l) => { setLang(l); try { localStorage.setItem("mls-dash-lang", l); } catch { /* ignore */ } };
   const [fresh, setFresh] = useState(new Set());       // key ของสแกนใหม่ (ไฮไลต์ฟีด)
   const [hit, setHit] = useState(new Set());           // ชื่อเครื่องที่เพิ่งมีงานเข้า (แฟลชการ์ด)
   const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
@@ -155,7 +190,7 @@ export default function Dashboard() {
     return (
       <div className="dash-boot">
         <div className="spin" />
-        <div style={{ fontSize: "2vh" }}>กำลังเชื่อมต่อสายการผลิต…</div>
+        <div style={{ fontSize: "2vh" }}>{t.booting}</div>
       </div>
     );
   }
@@ -166,38 +201,42 @@ export default function Dashboard() {
       <div className="dash-head">
         <div className="dash-title">
           MACHINING LINE
-          <span className="sub">Live Production Monitor</span>
+          <span className="sub">{t.subtitle}</span>
         </div>
         <div className="dash-headright">
-          <div className="dash-live"><span className="dot" /> LIVE</div>
+          <div className="dash-langsel">
+            <button className={lang === "th" ? "on" : ""} onClick={() => setLangSave("th")}>ไทย</button>
+            <button className={lang === "en" ? "on" : ""} onClick={() => setLangSave("en")}>EN</button>
+          </div>
+          <div className="dash-live"><span className="dot" /> {t.live}</div>
           <div style={{ textAlign: "right" }}>
             <div className="dash-clock dash-num">{fmtClock(now)}</div>
-            <div className="dash-date">{fmtThaiDate(now)}</div>
+            <div className="dash-date">{fmtDateLoc(now, lang)}</div>
           </div>
         </div>
       </div>
 
       {/* ── KPI hero row ── */}
       <div className="dash-kpi-row">
-        <Kpi label="ชิ้นที่ผลิตวันนี้" value={totalPieces} format={fmtInt} unit="ชิ้น" flash={hit.size > 0} />
-        <Kpi label="น้ำหนักรวมวันนี้" value={totalKg} format={fmtKg} unit="กก." flash={hit.size > 0} />
-        <Kpi label="เวลาเดินเครื่องรวม" value={totalSec} format={fmtHrs} unit="" flash={hit.size > 0} />
-        <Kpi label="จำนวนครั้งที่บันทึก" value={scanCount} format={fmtInt} unit="ครั้ง" flash={hit.size > 0} />
+        <Kpi label={t.kpiPieces} value={totalPieces} format={fmtInt} unit={t.unitPieces} flash={hit.size > 0} />
+        <Kpi label={t.kpiWeight} value={totalKg} format={fmtKg} unit={t.unitKg} flash={hit.size > 0} />
+        <Kpi label={t.kpiTime} value={totalSec} format={(v) => fmtHrs(v, lang)} unit="" flash={hit.size > 0} />
+        <Kpi label={t.kpiScans} value={scanCount} format={fmtInt} unit={t.unitTimes} flash={hit.size > 0} />
       </div>
 
       {/* ── main: machine cards + chart ── */}
       <div className="dash-main">
         <div className="dash-panel">
-          <div className="dash-panel-h"><span>เครื่องจักร · วันนี้</span><span style={{ color: "var(--dash-green)" }}>{machines.length} เครื่อง</span></div>
+          <div className="dash-panel-h"><span>{t.machines}</span><span style={{ color: "var(--dash-green)" }}>{machines.length} {t.machineUnit}</span></div>
           {machines.length === 0 ? (
-            <div className="dash-empty">ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…</div>
+            <div className="dash-empty">{t.noWork}</div>
           ) : (
             <div className="dash-machines">
               {machines.map((m) => (
                 <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
                   <div className="name">{m.name}{m.op ? <span className="op">{m.op}</span> : null}</div>
-                  <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">กก.</span></div>
-                  <div className="meta"><CountNumber value={m.count} format={fmtInt} /> ชิ้น · {fmtHrs(m.seconds)}</div>
+                  <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
+                  <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
                   <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div>
                 </div>
               ))}
@@ -206,10 +245,10 @@ export default function Dashboard() {
         </div>
 
         <div className="dash-panel">
-          <div className="dash-panel-h"><span>การผลิตรายชั่วโมง · วันนี้ (กก.)</span></div>
+          <div className="dash-panel-h"><span>{t.hourly}</span></div>
           <div style={{ flex: 1, minHeight: 0 }}>
             {hourly.length === 0 ? (
-              <div className="dash-empty">รอข้อมูลการผลิต…</div>
+              <div className="dash-empty">{t.waitingData}</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={hourly} margin={{ top: 12, right: 18, left: 4, bottom: 4 }}>
@@ -238,9 +277,9 @@ export default function Dashboard() {
 
       {/* ── live feed ── */}
       <div className="dash-feed dash-panel">
-        <div className="dash-panel-h"><span>◉ ฟีดการผลิตสด</span></div>
+        <div className="dash-panel-h"><span>{t.liveFeed}</span></div>
         {feed.length === 0 ? (
-          <div className="dash-empty">รอการสแกนจากหน้าเครื่อง…</div>
+          <div className="dash-empty">{t.waitingScan}</div>
         ) : (
           <div className="dash-feed-list">
             {feed.map((l) => {
@@ -252,7 +291,7 @@ export default function Dashboard() {
                   <div className="line2">
                     <span className="chip">{l.machine?.name || "—"}</span>
                     {l.operation?.name ? <span>{l.operation.name}</span> : null}
-                    <span className={finished ? "st-fin" : "st-inp"}>{finished ? "Finished" : "In Process"}</span>
+                    <span className={finished ? "st-fin" : "st-inp"}>{finished ? t.finished : t.inProcess}</span>
                   </div>
                   <div className="time dash-num">{timeOf(l.scanned_at)}</div>
                 </div>
