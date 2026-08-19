@@ -42,25 +42,34 @@ export function toggleFullscreen() {
   } catch { /* ignore */ }
 }
 
-// ── ขออนุญาตกล้อง "ครั้งเดียว" ล่วงหน้า ───────────────────────────────────
-// เบราว์เซอร์บน https จะจำสิทธิ์กล้องต่อโดเมนอยู่แล้ว — ฟังก์ชันนี้ทริกให้ถามครั้งแรก
-// ตั้งแต่ตอนล็อกอิน/แตะจอ แล้วครั้งต่อๆ ไป (รวมตอนกด SCAN) จะเข้ากล้องได้เลยไม่ถามซ้ำ
-// ถ้าได้สิทธิ์แล้ว (granted) จะข้ามไป ไม่เปิดกล้องโดยไม่จำเป็น
+// ── ขออนุญาตกล้อง "ครั้งเดียวตอนเปิดครั้งแรก" ────────────────────────────────
+// ปัญหาเดิม: ตัวจำอยู่ในหน่วยความจำ (รีเซ็ตทุกครั้งที่เปิดแอป) + บน iOS/Safari
+//   Permissions API ไม่รองรับ name:"camera" เลยตกไปเรียก getUserMedia ใหม่ทุกครั้ง
+//   → เด้งขออนุญาต "ทุกครั้งที่เปิดแอป"
+// แก้: จำถาวรใน localStorage ว่า "เคยถามไปแล้ว" → เปิดครั้งต่อๆ ไปจะไม่ขอตอนเปิดอีก
+//   (กล้องจะถูกขอเฉพาะ "ตอนกด SCAN จริง" เท่านั้น) ถ้าเบราว์เซอร์ยังจำสิทธิ์ได้ (https ทั่วไป)
+//   ตอนกด SCAN ก็จะไม่ถามซ้ำอยู่แล้ว
+const CAM_ASKED_KEY = "mls-cam-asked";
 let _camWarmed = false;
+function camAsked() { try { return localStorage.getItem(CAM_ASKED_KEY) === "1"; } catch { return false; } }
+function markCamAsked() { try { localStorage.setItem(CAM_ASKED_KEY, "1"); } catch { /* ignore */ } }
+
 export async function warmCameraPermission() {
-  if (_camWarmed) return;
+  if (_camWarmed || camAsked()) { _camWarmed = true; return; }   // เคยถามแล้ว → ไม่ขอตอนเปิดอีก
   try {
     if (navigator.permissions?.query) {
       try {
         const st = await navigator.permissions.query({ name: "camera" });
-        if (st.state === "granted") { _camWarmed = true; return; }   // ให้สิทธิ์แล้ว ไม่ต้องเปิด
-        if (st.state === "denied") return;                            // ถูกปฏิเสธถาวร — ไปแก้ที่ตั้งค่าเบราว์เซอร์
-      } catch { /* Permissions API ไม่รองรับ name:camera — ลอง getUserMedia ต่อ */ }
+        if (st.state === "granted") { _camWarmed = true; markCamAsked(); return; }
+        if (st.state === "denied") { markCamAsked(); return; }
+      } catch { /* iOS/Safari ไม่รองรับ name:camera — ไปขอครั้งเดียวด้านล่าง */ }
     }
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    markCamAsked();   // ★ ทำเครื่องหมาย "ถามแล้ว" ก่อนขอ → ต่อให้ผู้ใช้กดปิด/ปฏิเสธ ก็ไม่ถามตอนเปิดอีก
     const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-    s.getTracks().forEach((t) => t.stop());                          // ปิดกล้องทันที เก็บแค่สิทธิ์
+    s.getTracks().forEach((t) => t.stop());                        // ปิดกล้องทันที เก็บแค่สิทธิ์
     _camWarmed = true;
-  } catch { /* ผู้ใช้ยังไม่กดอนุญาต/ปฏิเสธ → จะถูกถามอีกครั้งตอนกด SCAN */ }
+  } catch { /* ผู้ใช้ปฏิเสธ/ไม่มีกล้อง — กล้องจะถูกขออีกทีตอนกด SCAN เท่านั้น */ }
 }
 
 // เรียกเต็มจอตอนผู้ใช้แตะจอครั้งแรก (fallback สำหรับคนที่ล็อกอินค้างไว้ ไม่มี gesture ตอนโหลด)
