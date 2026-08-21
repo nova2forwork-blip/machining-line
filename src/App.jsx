@@ -443,7 +443,7 @@ function Shell({ user, onLogout }) {
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "machines" && <MachinesSummaryPage />}
-          {tab === "projects" && <ProjectsPage user={user} />}
+          {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
           {tab === "setup" && isAdmin(user) && <SetupPage />}
         </div>
@@ -3338,13 +3338,99 @@ function MachinesSummaryPage() {
 // ══════════════════════════════════════════════════════════════════════════
 // 6.5) PROJECTS — รวม "จัดการ + สรุปความคืบหน้า" ไว้หน้าเดียว (เมนูแรกของขั้นตอนงาน)
 // ══════════════════════════════════════════════════════════════════════════
-function ProjectsPage({ user }) {
+// ─── ดู Release ทั้งหมดในโปรเจคเดียว → เจาะเข้า Release → Part → รายละเอียด ──────
+//   ใช้ ReleaseGroupDetail ตัวเดียวกับหน้า Release Production เพื่อให้รายละเอียดเหมือนกัน
+function ProjectReleasesView({ project, user, goTo, onBack }) {
+  const [groups, setGroups] = useState(null);   // null = กำลังโหลด
+  const [stats, setStats] = useState({});       // release_id → { total, finished, ... }
+  const [viewGroup, setViewGroup] = useState(null);
+
+  const load = useCallback(async () => {
+    const all = await getReleasesFull();
+    const mine = all.filter((r) => r.part_master?.project_id === project.id);
+    setGroups(groupReleases(mine));
+    const ids = mine.map((r) => r.id);
+    if (ids.length) getUnitStatsByReleaseIds(ids).then(setStats);
+    else setStats({});
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  // เจาะเข้า Release Order → แสดง Part + รายละเอียด (เหมือนหน้า Release Production)
+  if (viewGroup) {
+    return (
+      <ReleaseGroupDetail
+        group={viewGroup} user={user} goTo={goTo}
+        onBack={() => setViewGroup(null)}
+        onHome={onBack}
+        onChanged={load}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" size="sm" onClick={onBack}><Icon name="arrowLeft" size={14} /> กลับไปหน้า Projects</Btn>
+          </div>
+          <div className="page-title">{project.code} — {project.name}</div>
+          <div className="page-sub">Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด</div>
+        </div>
+      </div>
+      <Card title={groups ? `Release ทั้งหมด (${groups.length})` : "Release ทั้งหมด"}>
+        {groups === null ? (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+        ) : groups.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="box" size={32} />
+            <div className="empty-state-title">ยังไม่มี Release ในโปรเจคนี้</div>
+            <div className="empty-state-sub">ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก</div>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table responsive-cards">
+              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th></tr></thead>
+              <tbody>
+                {groups.map((g) => {
+                  const gFinished = g.releases.reduce((s, r) => s + (stats[r.id]?.finished || 0), 0);
+                  const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
+                  const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
+                  const ready = g.releases.every((r) => r.id in stats);
+                  return (
+                    <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
+                      <td data-label="วันที่">{fmtDT(g.date)}</td>
+                      <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
+                      <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
+                      <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
+                      <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
+                        {ready && gPct !== null ? (
+                          <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
+                        ) : (
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
+                        )}
+                      </td>
+                      <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ProjectsPage({ user, goTo }) {
   const canEdit = canManage(user);
   const [projects, setProjects] = useState([]);   // รายการโปรเจคเต็ม (รวม new ที่ยังไม่มีงาน)
   const [statMap, setStatMap] = useState({});      // id → { total, finished, weight }
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);    // { project, impact }
+  const [viewProject, setViewProject] = useState(null); // โปรเจคที่กดเข้าไปดู Release อยู่
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -3372,12 +3458,22 @@ function ProjectsPage({ user }) {
     setEditing({ project: p, impact });
   }
 
+  // กดเข้าไปดู Release ในโปรเจคนี้ (แล้วเจาะเข้า Part / รายละเอียด ต่อได้)
+  if (viewProject) {
+    return (
+      <ProjectReleasesView
+        project={viewProject} user={user} goTo={goTo}
+        onBack={() => { setViewProject(null); reload(); }}
+      />
+    );
+  }
+
   return (
     <div>
       <div className="page-head">
         <div>
           <div className="page-title">Projects</div>
-          <div className="page-sub">เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค</div>
+          <div className="page-sub">เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค · แตะแถวเพื่อดู Release และ Part ในโปรเจคนั้น</div>
         </div>
         {canEdit && (
           <Btn variant="accent" onClick={() => setShowAdd(true)}><Icon name="folder" size={15} /> เพิ่มโปรเจค</Btn>
@@ -3403,7 +3499,7 @@ function ProjectsPage({ user }) {
                   const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
                   const pct = s.total ? Math.round((s.finished / s.total) * 100) : 0;
                   return (
-                    <tr key={p.id}>
+                    <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้">
                       <td style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
                       <td>{p.name}</td>
                       <td>{fmtNum(s.total)}</td>
@@ -3419,7 +3515,7 @@ function ProjectsPage({ user }) {
                       <td>{fmtNum(s.weight)}</td>
                       {canEdit && (
                         <td style={{ textAlign: "right" }}>
-                          <Btn variant="ghost" size="sm" onClick={() => openEdit(p)}><Icon name="settings" size={13} /> แก้ไข</Btn>
+                          <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn>
                         </td>
                       )}
                     </tr>
