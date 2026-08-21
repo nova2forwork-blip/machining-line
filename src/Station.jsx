@@ -11,6 +11,18 @@ import {
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
+import { useLang } from "./i18n-dom.js";
+
+// ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง (ใช้ตัวแปล DOM ตัวเดียวกับหน้าสำนักงาน · ซิงค์ผ่าน localStorage)
+function StnLangToggle() {
+  const [lang, setLang] = useLang();
+  return (
+    <button className="stn-lang" onClick={() => setLang(lang === "th" ? "en" : "th")}
+      title="สลับภาษา / Switch language">
+      {lang === "th" ? "EN" : "ไทย"}
+    </button>
+  );
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -89,7 +101,8 @@ function StationLogin({ onLogin, notice }) {
 
   return (
     <div className="stn-login-wrap">
-      <form className="stn-login" onSubmit={submit}>
+      <form className="stn-login" onSubmit={submit} style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
         <h1>หน้าเครื่อง — เข้าสู่ระบบ</h1>
         <p>ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)</p>
         {notice && <div className="stn-notice">{notice}</div>}
@@ -433,6 +446,7 @@ function MachineStation({ user, onLogout, onKicked }) {
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
           {/* ปุ่มออกจากระบบมุมบนซ้าย — โผล่เฉพาะมือถือจอเล็ก (แท็บเล็ตใช้ปุ่มใหญ่ด้านล่าง) */}
           <button className="stn-logout stn-toplogout" onClick={onLogout} title="ออกจากระบบ" aria-label="ออกจากระบบ">⏻ ออก</button>
+          <StnLangToggle />
           {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
           {!isStandalone() && (
             <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
