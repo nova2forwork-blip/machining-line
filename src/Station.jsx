@@ -305,6 +305,10 @@ function MachineStation({ user, onLogout, onKicked }) {
   function confirmPart() {
     if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
+    if (!Number.isInteger(qty)) { flash("จำนวนต้องเป็นจำนวนเต็ม", "warn"); return; }
+    if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
+    // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
+    if (qty > 2000 && !confirm(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`)) return;
     doSave();
   }
 
@@ -666,8 +670,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
         <div className="stn-qty-stepper">
           <button onClick={() => setQty(Math.max(0, qty - 1))}>−</button>
           <input inputMode="numeric" value={qty}
-            onChange={(e) => setQty(Math.max(0, parseInt(e.target.value || "0", 10) || 0))} />
-          <button onClick={() => setQty(qty + 1)}>+</button>
+            onChange={(e) => setQty(Math.min(100000, Math.max(0, parseInt(e.target.value || "0", 10) || 0)))} />
+          <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
         <div className="stn-row-btns" style={{ marginBottom: 14 }}>
           <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>In Process</button>
