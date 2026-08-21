@@ -13,7 +13,7 @@ import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { useLang } from "./i18ndom.js";
+import { useLang } from "./i18n-dom.js";
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
