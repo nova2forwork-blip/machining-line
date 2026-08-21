@@ -1,796 +1,476 @@
-@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import "./dashboard.css";
+import { getScanLogsBetween, supabase } from "./supabase.js";
+import { machineOpMatrix } from "./metrics.js";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
-/* ═══════════════════════════════════════════════════════════════
-   DESIGN TOKENS — Clean light SaaS theme (mint / emerald accent)
-   Bright, airy, card-based — white surfaces on a soft mint-grey
-   canvas, generous rounding, quiet shadows.
-   ═══════════════════════════════════════════════════════════════ */
-:root {
-  --bg: #eef3f1;
-  --bg-grid: #e2ebe7;
-  --surface: #ffffff;
-  --surface-2: #f4f8f6;
-  --surface-3: #e9f0ed;
-  --border: #e1e9e5;
-  --border-soft: #ecf2ef;
-  --text: #142420;
-  --muted: #6d7d76;
-  --muted-2: #9caaa3;
-
-  --accent: #10b981;        /* emerald — primary actions / active nav */
-  --accent-hi: #34d399;
-  --accent-dk: #0a8a60;
-  --accent-ink: #ffffff;
-  --accent-tint: #e5f9f1;
-  --steel: #3b82f6;         /* info / in-progress */
-  --steel-hi: #60a5fa;
-  --success: #22c55e;
-  --success-hi: #4ade80;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --danger-hi: #f87171;
-
-  --radius-lg: 20px;
-  --radius: 14px;
-  --radius-sm: 10px;
-
-  --font-display: 'Kanit', 'IBM Plex Sans Thai', sans-serif;
-  --font-body: 'IBM Plex Sans Thai', 'IBM Plex Sans', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
-
-  --shadow-card: 0 1px 2px rgba(20,50,40,.04), 0 10px 24px -14px rgba(20,50,40,.12);
-  --shadow-pop: 0 20px 50px -12px rgba(20,50,40,.22);
-
-  color-scheme: light;
+// ─── helpers ──────────────────────────────────────────────────────────────
+const fmtInt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
+const fmtKg = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const pad = (n) => String(n).padStart(2, "0");
+function fmtHrs(secs, L = "th") {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}:${pad(m)} ${L === "en" ? "h" : "ชม."}` : `${m} ${L === "en" ? "m" : "น."}`;
 }
-
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-body);
-  -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
+function fmtClock(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function fmtDateLoc(d, L) {
+  return d.toLocaleDateString(L === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
-#root { min-height: 100vh; }
-h1, h2, h3 { font-family: var(--font-display); margin: 0; }
-button { font-family: inherit; }
-input, select, textarea { font-family: inherit; }
-::selection { background: var(--accent-hi); color: #06231a; }
+function timeOf(iso) { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border); }
+// ─── สองภาษา ไทย/อังกฤษ ─────────────────────────────────────────────────────
+const STR = {
+  th: {
+    subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
+    kpiPieces: "ชิ้นที่ผลิตวันนี้", unitPieces: "ชิ้น",
+    kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
+    kpiTime: "เวลาเดินเครื่องรวม (หน้าเครื่อง)",
+    kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
+    machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
+    noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
+    hourly: "การผลิตรายชั่วโมง · วันนี้ (กก.)", waitingData: "รอข้อมูลการผลิต…",
+    liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
+    finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
+    booting: "กำลังเชื่อมต่อสายการผลิต…",
+  },
+  en: {
+    subtitle: "Live Production Monitor", live: "LIVE",
+    kpiPieces: "Pieces Produced Today", unitPieces: "pcs",
+    kpiWeight: "Total Weight Today", unitKg: "kg",
+    kpiTime: "Machine Time · logged",
+    kpiScans: "Scans Today", unitTimes: "scans",
+    machines: "Machines · Today", machineUnit: "machines",
+    noWork: "No work yet today — waiting for the first scan…",
+    hourly: "Hourly Production · Today (kg)", waitingData: "Waiting for production data…",
+    liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
+    finished: "Finished", inProcess: "In Progress",
+    booting: "Connecting to the production line…",
+  },
+};
 
-a { color: var(--accent-dk); }
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 6px;
+// ช่วง "วันนี้" ตามเวลาไทย (Asia/Bangkok, UTC+7) → คืน ISO from/to
+function bangkokTodayRange() {
+  const now = new Date();
+  const bkk = new Date(now.getTime() + 7 * 3600 * 1000);
+  const startUtcMs = Date.UTC(bkk.getUTCFullYear(), bkk.getUTCMonth(), bkk.getUTCDate(), 0, 0, 0) - 7 * 3600 * 1000;
+  return { from: new Date(startUtcMs).toISOString(), to: new Date().toISOString() };
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+// ─── ตัวเลขวิ่ง count-up (ease-out) ─────────────────────────────────────────
+function CountNumber({ value, format = fmtInt, className = "" }) {
+  const [disp, setDisp] = useState(value);
+  const fromRef = useRef(value);
+  const rafRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current, to = Number(value) || 0;
+    if (from === to) { setDisp(to); return; }
+    const dur = 850; let start = 0;
+    const step = (ts) => {
+      if (!start) start = ts;
+      const p = Math.min((ts - start) / dur, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisp(from + (to - from) * eased);
+      if (p < 1) rafRef.current = requestAnimationFrame(step);
+      else fromRef.current = to;
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [value]);
+  return <span className={`dash-num ${className}`}>{format(disp)}</span>;
 }
 
-/* ── Layout shell ─────────────────────────────────────────────── */
-.app-shell { min-height: 100vh; display: flex; background: var(--bg); }
+const keyOf = (l) => `${l.part_unit_id || "?"}|${l.scanned_at}|${l.operation?.name || "?"}|${l.quantity}`;
 
-.sidebar {
-  width: 258px; flex-shrink: 0; background: var(--surface);
-  border-right: 1px solid var(--border-soft);
-  padding: 22px 16px; display: flex; flex-direction: column;
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
-}
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; }
-.brand-mark {
-  width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
-  background: linear-gradient(145deg, var(--accent-hi), var(--accent) 65%, var(--accent-dk));
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 12px -2px rgba(16,185,129,.45);
-}
-.brand-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--text); line-height: 1.15; }
-.brand-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+export default function Dashboard() {
+  const [logs, setLogs] = useState([]);
+  const [booted, setBooted] = useState(false);
+  const [now, setNow] = useState(new Date());
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("mls-dash-lang") === "en" ? "en" : "th"; } catch { return "th"; }
+  });
+  const t = STR[lang];
+  const setLangSave = (l) => { setLang(l); try { localStorage.setItem("mls-dash-lang", l); } catch { /* ignore */ } };
+  const [fresh, setFresh] = useState(new Set());       // key ของสแกนใหม่ (ไฮไลต์ฟีด)
+  const [hit, setHit] = useState(new Set());           // ชื่อเครื่องที่เพิ่งมีงานเข้า (แฟลชการ์ด)
+  const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
+  const hitTimer = useRef(0);
+  const hourlyRef = useRef([]);                        // อ้างอิงข้อมูลกราฟคงที่ (กันรีอนิเมชันซ้ำ)
 
-.nav-group { margin-bottom: 6px; }
-.nav-group-label {
-  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--muted-2); font-weight: 600; margin: 18px 10px 7px;
-}
-.nav-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border-radius: var(--radius-sm); cursor: pointer;
-  font-size: 13.5px; color: #37473f; margin-bottom: 2px; font-weight: 500;
-  transition: background .15s ease, color .15s ease;
-  user-select: none;
-}
-.nav-item:hover { background: var(--surface-2); }
-.nav-item.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: 0 6px 14px -6px rgba(16,185,129,.55); }
-.nav-item svg { stroke: var(--muted); flex-shrink: 0; transition: stroke .15s ease; }
-.nav-item.active svg, .nav-item:hover svg { stroke: #37473f; }
-.nav-item.active svg { stroke: var(--accent-ink); }
+  const fetchNow = useCallback(async () => {
+    const { from, to } = bangkokTodayRange();
+    let data;
+    try {
+      data = await getScanLogsBetween(from, to);
+    } catch {
+      // ดึงข้อมูลพลาด (เน็ต/DB) → อย่าค้างสปินเนอร์ ปล่อยให้โพลรอบหน้าลองใหม่
+      setBooted(true);
+      return;
+    }
+    const rows = Array.isArray(data) ? data : [];
+    setLogs(rows);
+    setBooted(true);
 
-.sidebar-footer {
-  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-soft);
-}
-.user-chip { display: flex; align-items: center; gap: 10px; padding: 8px 10px 12px; }
-.user-avatar {
-  width: 34px; height: 34px; border-radius: 50%; background: var(--accent-tint);
-  display: flex; align-items: center; justify-content: center; font-size: 13px;
-  font-weight: 600; color: var(--accent-dk); flex-shrink: 0; font-family: var(--font-display);
-  border: 1px solid var(--border);
-}
-.user-name { font-size: 13px; color: var(--text); font-weight: 600; }
-.user-role { font-size: 11px; color: var(--muted); }
-.logout-item { color: var(--danger); }
-.logout-item svg { stroke: var(--danger); }
-.logout-item:hover { background: #fef2f2; }
+    // ตรวจสแกนใหม่ (เทียบกับรอบก่อน) — รอบแรกถือว่า "เห็นแล้วทั้งหมด" ไม่แฟลช
+    const keys = new Set(rows.map(keyOf));
+    if (seenRef.current) {
+      const freshKeys = new Set();
+      const hitMachines = new Set();
+      for (const l of rows) {
+        const k = keyOf(l);
+        if (!seenRef.current.has(k)) { freshKeys.add(k); if (l.machine?.name) hitMachines.add(l.machine.name); }
+      }
+      if (freshKeys.size) {
+        setFresh(freshKeys);
+        setHit(hitMachines);
+        clearTimeout(hitTimer.current);
+        hitTimer.current = setTimeout(() => { setHit(new Set()); setFresh(new Set()); }, 1600);
+      }
+    }
+    seenRef.current = keys;
+  }, []);
 
-.topbar {
-  display: none; position: sticky; top: 0; z-index: 30;
-  background: rgba(255,255,255,.94); backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--border-soft);
-  border-radius: 0 0 20px 20px;
-  align-items: center; justify-content: space-between;
-  padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top));
-  gap: 10px;
-  box-shadow: 0 8px 22px -14px rgba(20,50,40,.28);
-}
-.topbar-center { flex: 1; min-width: 0; }
-.topbar-title { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--text); line-height: 1.2; }
-.topbar-sub { font-size: 10.5px; color: var(--muted); margin-top: 1px; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.topbar-avatar {
-  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
-  background: linear-gradient(150deg, var(--accent-hi), var(--accent) 75%);
-  color: #fff; font-family: var(--font-display); font-weight: 600; font-size: 14px;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 10px -2px rgba(16,185,129,.5); border: 2px solid #fff;
-}
-.topbar-avatar:active { transform: scale(.93); }
-.icon-btn {
-  width: 38px; height: 38px; border-radius: 11px; border: 1px solid var(--border);
-  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
-  cursor: pointer; flex-shrink: 0; color: var(--text);
-}
-.icon-btn:active { transform: scale(.94); }
+  // จอโชว์ไม่มีคนกด → มีเวอร์ชันใหม่ก็รีโหลดเงียบๆ เอง (หน่วง 4 วิ กันจังหวะกำลังอัปเดต)
+  const updateReady = useUpdateReady();
+  useEffect(() => {
+    if (!updateReady) return;
+    const t = setTimeout(() => applyUpdate(), 4000);
+    return () => clearTimeout(t);
+  }, [updateReady]);
 
-.drawer-backdrop {
-  display: none; position: fixed; inset: 0; background: rgba(20,36,32,.45);
-  z-index: 60; backdrop-filter: blur(2px);
-}
-.drawer {
-  position: fixed; top: 0; left: 0; bottom: 0; width: 82vw; max-width: 300px;
-  background: var(--surface); z-index: 61; padding: 18px 14px;
-  transform: translateX(-100%); transition: transform .25s ease;
-  overflow-y: auto; box-shadow: var(--shadow-pop);
-  border-radius: 0 22px 22px 0;
-}
-.drawer.open { transform: translateX(0); }
+  // โหลดรอบแรก + โพลทุก 5 วิ (near real-time) + นาฬิกาเดินทุก 1 วิ
+  useEffect(() => {
+    fetchNow();
+    const poll = setInterval(fetchNow, 5000);
+    const clock = setInterval(() => setNow(new Date()), 1000);
+    return () => { clearInterval(poll); clearInterval(clock); clearTimeout(hitTimer.current); };
+  }, [fetchNow]);
 
-.content {
-  flex: 1; min-width: 0; padding: 28px 32px 60px;
-  max-width: 1180px;
-}
-.content-inner { width: 100%; }
+  // เรียลไทม์: มีงานหน้าเครื่องเข้ามาปุ๊บ ดึงใหม่ทันที (ถ้าเปิด replication ไว้)
+  useEffect(() => {
+    let ch;
+    try {
+      ch = supabase
+        .channel("dash-machine-records")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "machine_records" }, () => fetchNow())
+        .subscribe();
+    } catch { /* ถ้าไม่รองรับ realtime ก็ยังมี poll 5 วิ */ }
+    return () => { try { ch && supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, [fetchNow]);
 
-.bottom-nav {
-  display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
-  background: rgba(255,255,255,.96); backdrop-filter: blur(14px);
-  border-top: 1px solid var(--border-soft);
-  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
-  align-items: center; justify-content: space-around;
-}
-.bottom-nav-item {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  font-size: 10.5px; color: var(--muted); padding: 6px 10px; border-radius: 14px;
-  cursor: pointer; min-width: 54px;
-  transition: background .18s ease, color .18s ease, transform .12s ease;
-}
-.bottom-nav-item:active { transform: scale(.94); }
-.bottom-nav-item.active {
-  color: var(--accent-ink);
-  background: linear-gradient(150deg, var(--accent-hi), var(--accent) 75%);
-  box-shadow: 0 6px 14px -6px rgba(16,185,129,.55);
-}
-.bottom-nav-item svg { stroke: currentColor; }
-.bottom-nav-scan {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  margin-top: -26px;
-}
-.bottom-nav-scan-btn {
-  width: 54px; height: 54px; border-radius: 50%;
-  background: linear-gradient(150deg, var(--accent-hi), var(--accent) 70%);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 20px -4px rgba(16,185,129,.55), 0 0 0 5px var(--surface);
-  cursor: pointer; transition: transform .12s ease;
-}
-.bottom-nav-scan-btn:active { transform: scale(.92); }
-.bottom-nav-scan-btn svg { stroke: #fff; }
-.bottom-nav-scan span { font-size: 10.5px; color: var(--accent-dk); font-weight: 600; }
+  // ── สรุปตัวเลข ────────────────────────────────────────────────────────
+  // memo ตาม logs เท่านั้น — นาฬิกาเดินทุก 1 วิ ไม่ต้องคำนวณยอดทั้งวันใหม่ (เปลือง CPU
+  // บนจอเปิดทั้งวัน) · ค่าจริงเปลี่ยนแค่ตอนโพล 5 วิ
+  const { totalPieces, totalKg, totalSec, scanCount, machines, maxKg, feed } = useMemo(() => {
+    const tPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+    const tKg = logs.reduce((s, l) => s + (Number(l.weight) || 0), 0);
+    const tSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+    const matrix = machineOpMatrix(logs);
+    const mach = matrix.machines.map((m) => {
+      const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
+      return { name: m.name, op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
+    });
+    return {
+      totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
+      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: logs.slice(0, 9),
+    };
+  }, [logs]);
 
-@media (max-width: 900px) {
-  .app-shell { flex-direction: column; }
-  .sidebar { display: none; }
-  .topbar { display: flex; }
-  .drawer-backdrop.open { display: block; }
-  .content { padding: 16px 14px 100px; }
-  .bottom-nav { display: flex; }
-}
+  // ── กราฟการผลิตรายชั่วโมง (กก. ต่อ ชม.) ตามเวลาไทย ────────────────────
+  // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
+  // ไม่ควรทำให้กราฟรีเซ็ต/กระพริบใหม่) — Recharts จะขยับก็ต่อเมื่อค่าจริงเปลี่ยน
+  const HOUR = 3600 * 1000;
+  const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
+  const hourly = useMemo(() => {
+    const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
+    const perHourKg = new Array(24).fill(0);
+    for (const l of logs) perHourKg[bkkHour(l.scanned_at)] += Number(l.weight) || 0;
+    const active = logs.map((l) => bkkHour(l.scanned_at));
+    let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
+    startH = Math.min(startH, Math.max(0, curH - 3)); // โชว์อย่างน้อย ~4 จุด
+    const arr = [];
+    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, kg: Math.round(perHourKg[h] * 10) / 10 });
+    // ★ ชั่วโมงล่าสุด = ยังทำไม่ครบชั่วโมง → แยกเป็น "เส้นประ (กำลังดำเนินการ)"
+    //   เพื่อไม่ให้ดูเหมือนการผลิตดิ่งลง · เส้นทึบหยุดที่ชั่วโมงที่จบแล้ว
+    if (arr.length >= 2) {
+      const last = arr.length - 1;
+      arr[last].kgLive = arr[last].kg;          // จุดชั่วโมงปัจจุบัน (เส้นประ)
+      arr[last - 1].kgLive = arr[last - 1].kg;  // ต่อเส้นประจากจุดก่อนหน้า
+      arr[last].kg = null;                        // เส้นทึบไม่ลากถึงชั่วโมงที่ยังไม่ครบ
+    }
+    // คงอ้างอิงเดิมถ้าค่าเท่าเดิม → กราฟไม่รีอนิเมชันซ้ำทุกโพล/ทุกวินาที
+    if (JSON.stringify(arr) === JSON.stringify(hourlyRef.current)) return hourlyRef.current;
+    hourlyRef.current = arr;
+    return arr;
+  }, [logs, curH]);
 
-/* ── Atoms ─────────────────────────────────────────────────────── */
-.card {
-  background: var(--surface); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg); padding: 20px 22px; margin-bottom: 16px;
-  box-shadow: var(--shadow-card);
-}
-.card-head {
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
-}
-.card-title { font-size: 14.5px; font-weight: 600; color: var(--text); font-family: var(--font-display); letter-spacing: .01em; }
-.card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  // ── แฟลช KPI เฉพาะตัวที่ค่าเปลี่ยน (เดิมกระพริบทั้ง 4 ทุกการสแกน = รก) ──────
+  const prevTotals = useRef({ p: 0, k: 0, s: 0, c: 0 });
+  const kpiTimer = useRef(0);
+  const [kpiHit, setKpiHit] = useState({});
+  useEffect(() => {
+    const pv = prevTotals.current;
+    const hitK = { pieces: totalPieces !== pv.p, kg: totalKg !== pv.k, sec: totalSec !== pv.s, scans: scanCount !== pv.c };
+    const hadData = pv.p || pv.k || pv.s || pv.c;   // รอบแรก (บูต) อย่าแฟลช
+    if (hadData && (hitK.pieces || hitK.kg || hitK.sec || hitK.scans)) {
+      setKpiHit(hitK);
+      clearTimeout(kpiTimer.current);
+      kpiTimer.current = setTimeout(() => setKpiHit({}), 1600);
+    }
+    prevTotals.current = { p: totalPieces, k: totalKg, s: totalSec, c: scanCount };
+  }, [totalPieces, totalKg, totalSec, scanCount]);
+  useEffect(() => () => clearTimeout(kpiTimer.current), []);
 
-.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-title { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--font-display); }
-.page-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
-
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  border-radius: 11px; padding: 10px 18px; font-size: 13.5px; font-weight: 600;
-  cursor: pointer; border: 1px solid var(--border); background: var(--surface-2);
-  color: var(--text); transition: transform .1s ease, filter .15s ease, opacity .15s ease, box-shadow .15s ease;
-  white-space: nowrap;
-}
-.btn:hover { filter: brightness(1.02); }
-.btn:active { transform: scale(.97); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-accent { background: linear-gradient(150deg, var(--accent-hi), var(--accent) 75%); border-color: var(--accent); color: #fff; box-shadow: 0 6px 16px -6px rgba(16,185,129,.55); }
-.btn-success { background: linear-gradient(150deg, var(--success-hi), var(--success) 75%); border-color: var(--success); color: #fff; }
-.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-.btn-ghost { background: transparent; border-color: var(--border); color: var(--text); }
-.btn-block { width: 100%; }
-.btn-lg { padding: 14px 22px; font-size: 15px; border-radius: 13px; }
-.btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 8px; }
-
-.field { margin-bottom: 12px; }
-.label-el { font-size: 11.5px; color: var(--muted); margin-bottom: 5px; font-weight: 600; letter-spacing: .01em; }
-.input, select.select {
-  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 11px; padding: 10px 12px; font-size: 14px; width: 100%; outline: none;
-  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
-}
-.input:focus, select.select:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px var(--accent-tint); }
-.input::placeholder { color: var(--muted-2); }
-
-.badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  border-radius: 7px; padding: 3px 9px; font-size: 11.5px; font-weight: 600;
-  border: 1px solid; white-space: nowrap;
-}
-
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px,1fr)); gap: 10px; }
-.stat-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.stat-row .card { flex: 1; min-width: 140px; margin-bottom: 0; }
-.stat-value { font-family: var(--font-display); font-size: 27px; font-weight: 600; color: var(--text); }
-.stat-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
-
-@media (max-width: 720px) {
-  .grid-2, .grid-3 { grid-template-columns: 1fr; }
-  .page-title { font-size: 19px; }
-  .card { padding: 16px 17px; }
-}
-
-.table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table.data-table { width: 100%; border-collapse: collapse; min-width: 480px; }
-table.data-table th {
-  text-align: left; padding: 10px 12px; font-size: 11px; letter-spacing: .03em;
-  text-transform: uppercase; color: var(--muted-2); border-bottom: 1px solid var(--border);
-  font-weight: 700; white-space: nowrap; background: var(--surface-2);
-}
-table.data-table th:first-child { border-top-left-radius: 10px; }
-table.data-table th:last-child { border-top-right-radius: 10px; }
-table.data-table td {
-  padding: 11px 12px; font-size: 13px; color: var(--text); border-bottom: 1px solid var(--border-soft);
-}
-table.data-table tbody tr:hover { background: var(--surface-2); }
-
-/* ── Modal (quick-create Project / Part) ─────────────────────────── */
-.modal-backdrop {
-  position: fixed; inset: 0; background: rgba(20,36,32,.45);
-  backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center;
-  padding: 18px; z-index: 60;
-}
-.modal {
-  width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto;
-  background: var(--surface); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg); padding: 22px 24px; box-shadow: var(--shadow-pop);
-}
-.modal-wide { max-width: 900px; }
-
-/* ── แถบแจ้งเวอร์ชันใหม่ (กดอัปเดตเอง) ──────────────────────────────────── */
-/* popup แจ้งอัปเดต — การ์ดมุมขวาล่าง */
-.update-banner {
-  position: fixed; right: 20px; bottom: 20px; left: auto; top: auto; z-index: 1000;
-  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
-  width: 300px; max-width: calc(100vw - 32px);
-  background: #fff; color: var(--text, #142420);
-  border: 1px solid var(--border, #e1e9e5); border-left: 4px solid var(--accent, #10b981);
-  border-radius: 14px; padding: 14px 16px; box-shadow: 0 12px 34px rgba(0, 0, 0, .18);
-  animation: ubIn .3s ease;
-}
-@keyframes ubIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-.update-banner > span { font-size: 13px; line-height: 1.5; color: var(--muted, #6d7d76); }
-.update-banner > span b { color: var(--text, #142420); }
-.update-banner .ub-btn {
-  background: var(--accent, #10b981); color: #fff; border: none; border-radius: 9px;
-  padding: 9px 14px; font-size: 13.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
-}
-.update-banner .ub-btn:disabled { opacity: .7; cursor: default; }
-
-/* ── QR labels: แถบเครื่องมือด้านบน + ตารางเลื่อนได้ ─────────────────────── */
-.qr-toolbar {
-  display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
-  padding: 12px 14px; margin-bottom: 14px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
-  position: sticky; top: 8px; z-index: 6;
-}
-.qr-toolbar-print { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-bottom: 2px; }
-.qr-count { font-size: 12.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
-.qr-grid-scroll {
-  max-height: 56vh; overflow-y: auto; padding: 12px;
-  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
-}
-.qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.qr-grid-scroll::-webkit-scrollbar { width: 14px; }
-.qr-grid-scroll::-webkit-scrollbar-track { background: transparent; }
-.qr-grid-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 4px solid var(--surface); }
-.qr-grid-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-.qr-grid-scroll { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-
-/* Paste-friendly parts grid (Add Release popup) */
-.pgrid-wrap { overflow: auto; max-height: 46vh; border: 1px solid var(--border); border-radius: 10px; }
-table.pgrid { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 12.5px; }
-table.pgrid th {
-  background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: 11px;
-  text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
-  position: sticky; top: 0; z-index: 3;   /* ล็อกหัวตารางไว้ตอนเลื่อนแถวเยอะๆ */
-}
-
-/* แถบปุ่ม/สรุป ด้านบน (ล็อกไว้หัว ไม่ต้องเลื่อนลงไปกดบันทึก) */
-.release-actionbar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 10px 12px; margin-bottom: 10px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
-}
-.release-actionbar .ra-summary { font-size: 12.5px; color: var(--muted); }
-.release-actionbar .ra-summary b { color: var(--text); }
-.release-actionbar .ra-spacer { flex: 1; }
-table.pgrid td { padding: 0; border-bottom: 1px solid var(--border-soft); }
-table.pgrid td.pgrid-ro { padding: 6px 8px; color: var(--muted); font-family: var(--font-mono); white-space: nowrap; text-align: right; }
-table.pgrid td.pgrid-idx { padding: 6px 8px; color: var(--muted-2); text-align: center; width: 34px; }
-table.pgrid input {
-  width: 100%; border: none; background: transparent; padding: 7px 8px;
-  font-size: 12.5px; color: var(--text); font-family: inherit; outline: none;
-}
-table.pgrid input:focus { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 4px; }
-table.pgrid tr:hover td { background: var(--surface-2); }
-table.pgrid .pgrid-del { color: var(--danger-hi); cursor: pointer; text-align: center; width: 30px; user-select: none; }
-.pgrid-foot { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: 12.5px; }
-.pgrid-foot b { color: var(--text); }
-table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
-.pgrid-routing-ro { font-size: 11.5px; color: var(--muted); padding-left: 2px; }
-.pgrid-routing-warn { font-size: 11.5px; color: var(--warning); padding-left: 2px; }
-.pgrid-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.chip.chip-sm { padding: 2px 8px; font-size: 11px; border-radius: 20px; }
-.pgrid-need-project {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  background: var(--accent-tint); border: 1px solid var(--accent);
-  color: var(--accent-dk); font-size: 12px; font-weight: 600;
-  padding: 10px 12px; border-radius: 10px; margin-bottom: 10px; line-height: 1.5;
-}
-.pgrid-need-project svg { stroke: var(--accent-dk); flex-shrink: 0; }
-.pgrid-xproj {
-  width: 100%; font-size: 10.5px; color: #1d4ed8;
-  background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2);
-  border-radius: 6px; padding: 2px 6px; margin-top: 3px; line-height: 1.4;
-}
-.pgrid-xproj svg { stroke: #1d4ed8; }
-.modal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 10px; }
-.modal-title { font-size: 16.5px; font-weight: 600; color: var(--text); font-family: var(--font-display); }
-.modal-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
-.modal-close {
-  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
-  width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; flex-shrink: 0;
-}
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-
-/* Clickable table rows (desktop) — used for Part rows in Release detail */
-.data-table tbody tr.release-row { cursor: pointer; transition: background .12s ease; }
-.data-table tbody tr.release-row:hover td { background: var(--surface-2); }
-
-/* Per-part progress funnel (PartProgressModal) */
-.stage-list { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
-.stage-row { display: flex; flex-direction: column; gap: 5px; }
-.stage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.stage-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; color: var(--text); }
-.stage-seq {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700;
-  background: var(--accent-tint); color: var(--accent-dk); flex-shrink: 0;
-}
-.stage-extra { font-weight: 400; font-size: 11px; color: var(--muted); }
-.stage-nums { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
-.stage-nums b { color: var(--text); }
-.stage-bar { position: relative; height: 18px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.stage-bar-fill { height: 100%; border-radius: 6px 0 0 6px; transition: width .4s ease; }
-.stage-bar-pct { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); font-size: 10.5px; font-weight: 600; color: var(--text); }
-.stage-summary { display: flex; gap: 10px; margin-top: 16px; }
-.stage-summary > div {
-  flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 2px;
-}
-.stage-summary-num { font-size: 20px; font-weight: 700; color: var(--text); }
-.stage-summary > div > span:last-child { font-size: 11.5px; color: var(--muted); }
-.field-inline-btn {
-  display: flex; align-items: flex-end; gap: 8px;
-}
-.field-inline-btn > .field { flex: 1; margin-bottom: 0; }
-.icon-btn-add {
-  height: 42px; width: 42px; padding: 0; flex-shrink: 0;
-}
-
-/* Add Release popup header: 3 equal-width fields + a + button that hangs to the right
-   so the โปรเจค box lines up with Release Order and วันที่ (ไม่ถูกปุ่ม + บีบให้แคบ) */
-.release-header-fields {
-  display: grid;
-  grid-template-columns: 0.8fr 1fr 1fr 1fr auto;
-  gap: 12px;
-  align-items: end;
-}
-.release-header-fields > .field { margin-bottom: 0; }
-.release-header-fields > .icon-btn-add { align-self: end; justify-self: start; }
-@media (max-width: 680px) {
-  .release-header-fields { grid-template-columns: 1fr 1fr; }
-}
-
-.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.chip {
-  padding: 7px 13px; border-radius: 9px; font-size: 12.5px; cursor: pointer; font-weight: 500;
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-
-/* ── Routing rail (signature element) ────────────────────────────
-   Encodes the actual sequence of operations a part must travel
-   through — numbered stations on a track, like a progress tracker. */
-.rail { display: flex; align-items: center; overflow-x: auto; padding: 6px 2px 10px; }
-.rail-node-wrap { display: flex; align-items: center; flex-shrink: 0; }
-.rail-node {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 58px;
-}
-.rail-dot {
-  width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display); font-size: 12px; font-weight: 600; flex-shrink: 0;
-  border: 2px solid var(--border); background: var(--surface-2); color: var(--muted);
-  transition: all .2s ease;
-}
-.rail-dot.done { background: var(--success); border-color: var(--success); color: #fff; }
-.rail-dot.current { border-color: var(--accent); color: var(--accent-dk); background: var(--accent-tint); box-shadow: 0 0 0 4px rgba(16,185,129,.16); }
-.rail-label { font-size: 10.5px; color: var(--muted); text-align: center; white-space: nowrap; }
-.rail-label.done { color: var(--success); font-weight: 500; }
-.rail-label.current { color: var(--accent-dk); font-weight: 600; }
-.rail-line { width: 26px; height: 2px; background: var(--border); flex-shrink: 0; margin: 0 -2px 20px; }
-.rail-line.done { background: var(--success); }
-
-/* ── Login ─────────────────────────────────────────────────────── */
-.login-wrap {
-  min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  padding: 20px; position: relative; overflow: hidden;
-  background:
-    radial-gradient(900px 500px at 15% -10%, var(--accent-tint) 0%, transparent 60%),
-    radial-gradient(700px 450px at 110% 10%, #eaf6ff 0%, transparent 55%),
-    var(--bg);
-}
-.login-wrap::before {
-  content: ""; position: absolute; inset: 0; opacity: .6; pointer-events: none;
-  background-image:
-    linear-gradient(var(--bg-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: radial-gradient(600px 400px at 50% 40%, black, transparent);
-}
-.login-card {
-  position: relative; background: var(--surface); border: 1px solid var(--border-soft);
-  border-radius: 24px; padding: 38px 34px; width: 100%; max-width: 380px;
-  box-shadow: var(--shadow-pop);
-}
-.login-mark {
-  width: 52px; height: 52px; border-radius: 15px; margin-bottom: 18px;
-  background: linear-gradient(145deg, var(--accent-hi), var(--accent) 65%, var(--accent-dk));
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 20px -4px rgba(16,185,129,.5);
-}
-
-/* ── Full-screen scan station (deliberately dark for camera contrast) ── */
-.scan-station {
-  position: fixed; inset: 0; z-index: 100; background: #0d1512;
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.scan-topbar {
-  display: flex; align-items: center; gap: 10px; padding: 14px 14px;
-  padding-top: max(14px, env(safe-area-inset-top));
-  background: linear-gradient(180deg, rgba(0,0,0,.55), transparent);
-  position: relative; z-index: 2;
-}
-.scan-topbar-info { flex: 1; min-width: 0; }
-.scan-topbar-title { font-size: 13.5px; font-weight: 600; color: #fff; }
-.scan-topbar-sub { font-size: 11.5px; color: rgba(255,255,255,.6); }
-.scan-counter {
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--accent-hi);
-  background: rgba(16,185,129,.16); border: 1px solid rgba(16,185,129,.4);
-  padding: 4px 10px; border-radius: 20px; flex-shrink: 0;
-}
-
-.scan-viewport {
-  flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(ellipse at center, #16221c 0%, #0d1512 75%);
-  overflow: hidden; min-height: 0;
-}
-.scan-frame {
-  width: min(72vw, 300px); height: min(72vw, 300px); position: relative; flex-shrink: 0;
-}
-.scan-frame .corner { position: absolute; width: 34px; height: 34px; border: 3px solid var(--accent-hi); }
-.scan-frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; border-top-left-radius: 10px; }
-.scan-frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; border-top-right-radius: 10px; }
-.scan-frame .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; border-bottom-left-radius: 10px; }
-.scan-frame .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; border-bottom-right-radius: 10px; }
-.scan-line {
-  position: absolute; left: 6%; right: 6%; height: 2px; top: 10%;
-  background: linear-gradient(90deg, transparent, var(--accent-hi), transparent);
-  box-shadow: 0 0 10px 1px rgba(52,211,153,.7);
-  animation: scanmove 2.2s ease-in-out infinite;
-}
-@keyframes scanmove { 0%,100% { top: 8%; } 50% { top: 90%; } }
-#qr-cam-region { width: 100%; }
-#qr-cam-region video { border-radius: 14px; }
-
-.scan-idle-hint { text-align: center; color: rgba(255,255,255,.45); font-size: 13px; padding: 0 20px; }
-.scan-idle-hint svg { stroke: rgba(255,255,255,.3); margin-bottom: 10px; }
-
-.scan-manual {
-  padding: 10px 14px; background: rgba(255,255,255,.03); position: relative; z-index: 2;
-}
-.scan-manual .input {
-  background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.14); color: #fff;
-  font-family: var(--font-mono); font-size: 15px; padding: 13px 14px;
-}
-.scan-toggle-cam {
-  width: 100%; margin-top: 8px; background: transparent; border: 1px dashed rgba(255,255,255,.22);
-  color: rgba(255,255,255,.75);
-}
-
-.scan-sheet {
-  background: var(--surface); border-top: 1px solid var(--border-soft);
-  border-radius: 20px 20px 0 0; padding: 16px 18px calc(16px + env(safe-area-inset-bottom));
-  max-height: 62vh; overflow-y: auto; position: relative; z-index: 3;
-  box-shadow: 0 -12px 30px -10px rgba(0,0,0,.35);
-  animation: sheetup .22s ease;
-}
-@keyframes sheetup { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.scan-sheet-handle { width: 36px; height: 4px; border-radius: 3px; background: var(--border); margin: 0 auto 12px; }
-.scan-msg {
-  font-size: 13px; padding: 10px 12px; border-radius: 10px; margin: 0 14px 10px;
-  background: var(--surface-2); border: 1px solid var(--border-soft);
-}
-
-/* Read-only project/release/weight/length shown after a scan — no typing needed */
-.scan-info-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-  margin: 14px 0 16px;
-}
-.scan-info-cell {
-  background: var(--surface-2); border: 1px solid var(--border-soft);
-  border-radius: 10px; padding: 9px 11px;
-}
-.scan-info-label { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; letter-spacing: .01em; }
-.scan-info-value { font-size: 14px; color: var(--text); font-weight: 600; font-family: var(--font-mono); }
-
-/* ── Scan mode selector ─────────────────────────────────────── */
-.scan-mode-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
-}
-.scan-mode-card {
-  position: relative; display: flex; flex-direction: column; align-items: center;
-  gap: 6px; padding: 16px 12px 14px; border-radius: var(--radius);
-  border: 2px solid var(--border); background: var(--surface-2);
-  cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
-  font-family: inherit; text-align: center;
-}
-.scan-mode-card:hover { border-color: var(--accent); background: var(--accent-tint); }
-.scan-mode-card.active {
-  border-color: var(--accent); background: var(--accent-tint);
-  box-shadow: 0 0 0 3px rgba(16,185,129,.15);
-}
-.scan-mode-icon {
-  width: 44px; height: 44px; border-radius: 13px;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.scan-mode-icon.tone-accent { background: rgba(16,185,129,.14); color: var(--accent-dk); }
-.scan-mode-icon.tone-steel  { background: rgba(59,130,246,.12); color: #1d4ed8; }
-.scan-mode-label { font-size: 14px; font-weight: 700; color: var(--text); line-height: 1; }
-.scan-mode-sub { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
-.scan-mode-badge {
-  display: flex; align-items: center; gap: 3px;
-  font-size: 10px; font-weight: 600; color: var(--accent-dk);
-  background: var(--accent-tint); border: 1px solid rgba(16,185,129,.35);
-  padding: 2px 7px; border-radius: 20px; margin-top: 2px;
-}
-.scan-mode-badge svg { stroke: var(--accent-dk); }
-.scan-mode-hint {
-  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
-  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 10px;
-  font-size: 12.5px; color: var(--muted); line-height: 1.55;
-}
-.scan-mode-hint svg { stroke: var(--muted); margin-top: 1px; }
-.scan-mode-hint strong { color: var(--text); }
-
-/* ── Scan toast overlay (station mode) ─────────────────────── */
-.scan-toast {
-  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px; white-space: nowrap;
-  padding: 8px 16px; border-radius: 22px; font-size: 13px; font-weight: 600;
-  pointer-events: none; z-index: 10;
-  animation: toastpop .18s ease;
-  box-shadow: 0 4px 14px rgba(0,0,0,.35);
-}
-.scan-toast.scan-toast-center { top: 50%; bottom: auto; transform: translate(-50%, -50%); }
-@keyframes toastpop { from { opacity: 0; transform: translateX(-50%) scale(.88); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
-.scan-toast svg { flex-shrink: 0; }
-.scan-toast.tone-success { background: rgba(34,197,94,.92); color: #052e16; }
-.scan-toast.tone-success svg { stroke: #052e16; }
-.scan-toast.tone-warning { background: rgba(245,158,11,.92); color: #422006; }
-.scan-toast.tone-warning svg { stroke: #422006; }
-.scan-toast.tone-danger  { background: rgba(239,68,68,.92);  color: #450a0a; }
-.scan-toast.tone-danger svg { stroke: #450a0a; }
-
-/* ── Scan mode pill in topbar sub-line ───────────────────────── */
-.scan-mode-pill {
-  display: inline-flex; align-items: center;
-  font-size: 10px; font-weight: 700; letter-spacing: .03em;
-  padding: 1px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle;
-}
-.scan-mode-pill.station { background: rgba(16,185,129,.25); color: var(--accent-hi); }
-.scan-mode-pill.mobile  { background: rgba(59,130,246,.22); color: #93c5fd; }
-
-/* ── Label print preview / grid ──────────────────────────────── */
-.label-preview {
-  background: #fff; border-radius: 8px; padding: 8px; text-align: center;
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  border: 1px solid #d8d8d8;
-}
-.label-preview .code { font-size: 9px; color: #111; font-family: var(--font-mono); word-break: break-all; line-height: 1.3; }
-.unit-check {
-  display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 9px;
-  border: 1px solid var(--border-soft); font-size: 12.5px; cursor: pointer; user-select: none;
-}
-.unit-check.checked { border-color: var(--accent); background: var(--accent-tint); }
-
-.section-divider { height: 1px; background: var(--border-soft); margin: 18px 0; border: none; }
-
-.empty-state { text-align: center; padding: 30px 16px; color: var(--muted); }
-.empty-state svg { stroke: var(--muted-2); margin-bottom: 10px; }
-.empty-state-title { font-size: 13.5px; color: var(--text); font-weight: 600; margin-bottom: 3px; }
-.empty-state-sub { font-size: 12px; }
-
-/* ── Modal lock feedback (backdrop click ignored / busy-lock) ──────────── */
-.modal-close-disabled { opacity: .35; cursor: not-allowed; }
-@keyframes modalShake {
-  10%, 90% { transform: translateX(-1px); }
-  20%, 80% { transform: translateX(2px); }
-  30%, 50%, 70% { transform: translateX(-5px); }
-  40%, 60% { transform: translateX(5px); }
-}
-.modal-shake { animation: modalShake .32s ease; }
-.modal-lock-hint {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11.5px; color: var(--accent-dk); background: var(--accent-tint);
-  border: 1px solid #cdeee1; border-radius: 9px; padding: 7px 10px; margin-bottom: 14px;
-}
-.modal-lock-hint svg { stroke: var(--accent-dk); flex-shrink: 0; }
-
-/* ── Toggle switch (e.g. "สร้าง QR ต่อชิ้น") ────────────────────────────── */
-.toggle-row {
-  display: flex; align-items: flex-start; gap: 12px; cursor: pointer; user-select: none;
-  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--radius);
-  padding: 12px 14px; margin-bottom: 16px;
-}
-.toggle-switch {
-  position: relative; flex-shrink: 0; width: 42px; height: 25px; border-radius: 20px;
-  background: var(--border); transition: background .18s ease; margin-top: 1px;
-}
-.toggle-switch.on { background: var(--accent); }
-.toggle-switch input {
-  position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; width: 100%; height: 100%;
-}
-.toggle-knob {
-  position: absolute; top: 3px; left: 3px; width: 19px; height: 19px; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s ease;
-}
-.toggle-switch.on .toggle-knob { transform: translateX(17px); }
-.toggle-text { display: flex; flex-direction: column; gap: 2px; }
-.toggle-text-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.toggle-text-sub { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
-
-/* ── Release page: mobile-first layout ──────────────────────────────────
-   หัวข้อ + ปุ่มนำเข้า Excel วางเรียงเต็มความกว้างบนมือถือ, ปุ่ม Release
-   ค้าง (sticky) เหนือแถบเมนูล่างให้กดได้ตลอดโดยไม่ต้องเลื่อนจนสุดฟอร์ม,
-   และตารางประวัติ Release พับเป็นการ์ดแทนตารางที่ต้องเลื่อนแนวนอน. */
-@media (max-width: 640px) {
-  .page-head-release { flex-direction: column; align-items: stretch; gap: 10px; }
-  .release-import-btn { width: 100%; justify-content: center; }
-
-  .release-submit-btn {
-    position: sticky; bottom: calc(72px + env(safe-area-inset-bottom));
-    width: 100%; z-index: 5; box-shadow: 0 10px 26px -8px rgba(16,185,129,.5);
+  if (!booted) {
+    return (
+      <div className="dash-boot">
+        <div className="spin" />
+        <div style={{ fontSize: "2vh" }}>{t.booting}</div>
+      </div>
+    );
   }
+
+  return (
+    <div className="dash">
+      {/* ── header ── */}
+      <div className="dash-head">
+        <div className="dash-title">
+          MACHINING LINE
+          <span className="sub">{t.subtitle}</span>
+        </div>
+        <div className="dash-headright">
+          <div className="dash-langsel">
+            <button className={lang === "th" ? "on" : ""} onClick={() => setLangSave("th")}>ไทย</button>
+            <button className={lang === "en" ? "on" : ""} onClick={() => setLangSave("en")}>EN</button>
+          </div>
+          <div className="dash-live"><span className="dot" /> {t.live}</div>
+          <div style={{ textAlign: "right" }}>
+            <div className="dash-clock dash-num">{fmtClock(now)}</div>
+            <div className="dash-date">{fmtDateLoc(now, lang)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── KPI hero row ── */}
+      <div className="dash-kpi-row">
+        <Kpi label={t.kpiPieces} value={totalPieces} format={fmtInt} unit={t.unitPieces} flash={!!kpiHit.pieces} />
+        <Kpi label={t.kpiWeight} value={totalKg} format={fmtKg} unit={t.unitKg} flash={!!kpiHit.kg} />
+        <Kpi label={t.kpiTime} value={totalSec} format={(v) => fmtHrs(v, lang)} unit="" flash={!!kpiHit.sec} />
+        <Kpi label={t.kpiScans} value={scanCount} format={fmtInt} unit={t.unitTimes} flash={!!kpiHit.scans} />
+      </div>
+
+      {/* ── แถบอนิเมชันสายการผลิต (เหนือ Machines) ── */}
+      <MachineLine />
+
+      {/* ── main: machine cards + chart ── */}
+      <div className="dash-main">
+        <div className="dash-panel">
+          <div className="dash-panel-h"><span>{t.machines}</span><span style={{ color: "var(--dash-green)" }}>{machines.length} {t.machineUnit}</span></div>
+          {machines.length === 0 ? (
+            <div className="dash-empty">{t.noWork}</div>
+          ) : (
+            <div className="dash-machines">
+              {machines.map((m) => (
+                <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
+                  <div className="name">{m.name}{m.op ? <span className="op">{m.op}</span> : null}</div>
+                  <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
+                  <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
+                  <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="dash-panel">
+          <div className="dash-panel-h"><span>{t.hourly}</span></div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {hourly.length === 0 ? (
+              <div className="dash-empty">{t.waitingData}</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourly} margin={{ top: 12, right: 18, left: 4, bottom: 4 }}>
+                  <defs>
+                    <linearGradient id="dashArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#14e39a" stopOpacity={0.55} />
+                      <stop offset="100%" stopColor="#14e39a" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#24302a" vertical={false} />
+                  <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
+                    tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
+                  <YAxis stroke="#24302a" tickLine={false} width={56}
+                    tick={{ fill: "#9db1a8", fontSize: 13 }}
+                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  <Area type="monotone" dataKey="kg" stroke="#14e39a" strokeWidth={3}
+                    fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
+                    activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
+                    connectNulls={false} animationDuration={900} isAnimationActive />
+                  {/* ชั่วโมงล่าสุด (ยังไม่ครบ) — เส้นประ ไม่มีพื้น เพื่อบอกว่า "กำลังดำเนินการ" */}
+                  <Area type="monotone" dataKey="kgLive" stroke="#14e39a" strokeWidth={3}
+                    strokeDasharray="5 6" fill="none" connectNulls={false}
+                    dot={{ r: 4, fill: "#0b0f0d", stroke: "#22e07a", strokeWidth: 2 }}
+                    isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+          {hourly.some((p) => p.kgLive != null) && (
+            <div style={{ fontSize: "1.25vh", color: "#9db1a8", padding: "2px 4px 0", textAlign: "right" }}>
+              ┄┄ {lang === "th" ? "ชั่วโมงล่าสุด · กำลังดำเนินการ (ยังไม่ครบชั่วโมง)" : "current hour · in progress (partial)"}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── live feed ── */}
+      <div className="dash-feed dash-panel">
+        <div className="dash-panel-h"><span>{t.liveFeed}</span></div>
+        {feed.length === 0 ? (
+          <div className="dash-empty">{t.waitingScan}</div>
+        ) : (
+          <div className="dash-feed-list">
+            {feed.map((l) => {
+              const finished = String(l.status).toLowerCase() === "finished";
+              return (
+                <div key={keyOf(l)} className={`dash-feed-item ${fresh.has(keyOf(l)) ? "fresh" : ""}`}>
+                  <div className="part">{l.part_unit?.part_master?.part_no || "—"}</div>
+                  <div className="qty">+{fmtInt(l.quantity)}</div>
+                  <div className="line2">
+                    <span className="chip">{l.machine?.name || "—"}</span>
+                    {l.operation?.name ? <span>{l.operation.name}</span> : null}
+                    <span className={finished ? "st-fin" : "st-inp"}>{finished ? t.finished : t.inProcess}</span>
+                  </div>
+                  <div className="time dash-num">{timeOf(l.scanned_at)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
-/* ตารางแบบการ์ด — ครอบถึง iPad แนวตั้ง (≤820px) ให้ไม่ต้องเลื่อนซ้ายขวา */
-@media (max-width: 820px) {
-  .data-table.responsive-cards { min-width: 0; }
-  .data-table.responsive-cards thead { display: none; }
-  .data-table.responsive-cards,
-  .data-table.responsive-cards tbody,
-  .data-table.responsive-cards tr,
-  .data-table.responsive-cards td { display: block; width: 100%; }
-  .data-table.responsive-cards tr.release-row {
-    cursor: pointer; margin-bottom: 10px; border: 1px solid var(--border-soft);
-    border-radius: var(--radius); padding: 12px 14px; background: var(--surface);
-    box-shadow: var(--shadow-card);
-  }
-  .data-table.responsive-cards tr.release-row:active { transform: scale(.99); }
-  .data-table.responsive-cards td {
-    border-bottom: none; padding: 4px 0; display: flex; justify-content: space-between;
-    align-items: baseline; gap: 10px; font-size: 13px;
-  }
-  .data-table.responsive-cards td::before {
-    content: attr(data-label); font-size: 11px; color: var(--muted); font-weight: 600; flex-shrink: 0;
-  }
-  /* เซลล์ที่ไม่มี label (เช่น ปุ่มดูขั้นตอน) ไม่ต้องขึ้นหัวเปล่าๆ */
-  .data-table.responsive-cards td[data-label=""]::before { content: none; }
-  .data-table.responsive-cards td[colspan] { display: block; text-align: center; padding: 20px 0; }
-  .data-table.responsive-cards td[colspan]::before { content: none; }
+// ─── แถบอนิเมชัน "สายการผลิตกำลังทำงาน" (SVG ในตัว: สายพานวิ่ง + แขนกล + ชิ้นงาน) ──
+const MLINE_SVG = `
+<svg class="mline" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Production line running">
+  <defs>
+    <linearGradient id="mlSteel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a473f"/><stop offset="1" stop-color="#212c27"/></linearGradient>
+    <linearGradient id="mlAlu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8ede9"/><stop offset="1" stop-color="#9fb0a7"/></linearGradient>
+  </defs>
+  <style>
+    .mline{width:100%;height:100%;display:block}
+    .ml-belt{animation:mlBelt 1s linear infinite}
+    @keyframes mlBelt{to{stroke-dashoffset:-32}}
+    .ml-parts g{animation:mlPart 6s linear infinite}
+    @keyframes mlPart{0%{transform:translateX(0);opacity:0}6%{opacity:1}88%{opacity:1}100%{transform:translateX(956px);opacity:0}}
+    .ml-a{animation:mlArrow 1.2s ease-in-out infinite}.ml-a.a2{animation-delay:.2s}.ml-a.a3{animation-delay:.4s}
+    @keyframes mlArrow{0%,100%{opacity:.2}50%{opacity:1}}
+    .ml-scr{animation:mlScr 2.4s ease-in-out infinite}@keyframes mlScr{0%,100%{opacity:.9}50%{opacity:.4}}
+    .ml-led{animation:mlLed 1.4s steps(1) infinite}.ml-led.l2{animation-delay:.7s}
+    @keyframes mlLed{0%,60%{opacity:1}61%,100%{opacity:.2}}
+    .ml-spark{transform-origin:273px 122px;animation:mlSpark .5s ease-in-out infinite}
+    @keyframes mlSpark{0%,100%{opacity:.75}50%{opacity:.4}}
+    .ml-box{animation:mlBox 6s ease-in-out infinite}@keyframes mlBox{0%,68%{opacity:0;transform:translateX(-12px)}80%{opacity:1;transform:translateX(0)}100%{opacity:1}}
+    /* เคารพผู้ใช้ที่ตั้งค่า "ลดการเคลื่อนไหว" + กันจอ 24 ชม.ล้าตา = ปิดอนิเมชันตกแต่ง */
+    @media (prefers-reduced-motion: reduce){
+      .ml-belt,.ml-parts g,.ml-a,.ml-scr,.ml-led,.ml-spark,.ml-box{animation:none !important}
+    }
+  </style>
+
+  <!-- flow arrows (infeed) -->
+  <g fill="none" stroke="#14e39a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path class="ml-a a1" d="M16 100 l16 14 -16 14"/><path class="ml-a a2" d="M42 100 l16 14 -16 14"/><path class="ml-a a3" d="M68 100 l16 14 -16 14"/>
+  </g>
+
+  <!-- conveyor belt -->
+  <rect x="95" y="120" width="1010" height="22" rx="11" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <line class="ml-belt" x1="108" y1="131" x2="1092" y2="131" stroke="#14e39a" stroke-width="3" stroke-dasharray="16 16" stroke-linecap="round" opacity="0.55"/>
+  <g fill="#0d1310"><rect x="150" y="142" width="10" height="34" rx="2"/><rect x="430" y="142" width="10" height="34" rx="2"/><rect x="720" y="142" width="10" height="34" rx="2"/><rect x="1010" y="142" width="10" height="34" rx="2"/></g>
+
+  <!-- parts moving on belt -->
+  <g class="ml-parts">
+    <g style="animation-delay:0s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-2s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-4s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+  </g>
+
+  <!-- Machine A: cutting -->
+  <g>
+    <rect x="228" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="242" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="246" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="250" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="266" cy="104" r="4.5" fill="#ffc23d"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 273 122" to="360 273 122" dur="0.5s" repeatCount="indefinite"/>
+      <circle cx="273" cy="122" r="16" fill="#c2c8d0" stroke="#0d1310" stroke-width="2"/><circle cx="273" cy="122" r="16" fill="none" stroke="#0d1310" stroke-width="3" stroke-dasharray="3 5"/><circle cx="273" cy="122" r="4" fill="#14e39a"/>
+    </g>
+    <g class="ml-spark" fill="#ffb02e"><path d="M266 122 l-9 -5 M266 124 l-11 2 M266 126 l-8 6"/><circle cx="255" cy="120" r="1.6"/><circle cx="252" cy="127" r="1.4"/></g>
+  </g>
+
+  <!-- Robot arm 1 (pick & place) -->
+  <rect x="404" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="3.4s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="-22 421 100; 8 421 100; -22 421 100"/>
+    <rect x="416" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="406" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="404" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="432" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="421" cy="100" r="9" fill="#14e39a"/>
+
+  <!-- Machine B: drilling -->
+  <g>
+    <rect x="556" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="570" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="574" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="578" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="594" cy="104" r="4.5" fill="#ffc23d"/>
+    <rect x="598" y="88" width="6" height="8" fill="#39473f"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="translate" dur="1.1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" values="0 0; 0 16; 0 0"/><rect x="599" y="96" width="4" height="20" fill="#aeb6bd"/></g>
+  </g>
+
+  <!-- Robot arm 2 -->
+  <rect x="734" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="2.9s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="14 751 100; -16 751 100; 14 751 100"/>
+    <rect x="746" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="736" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="734" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="762" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="751" cy="100" r="9" fill="#14e39a"/>
+
+  <!-- Output machine + boxes -->
+  <g>
+    <rect x="980" y="52" width="94" height="70" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="994" y="64" width="66" height="26" rx="4" fill="#0b1512"/><rect class="ml-scr" x="998" y="68" width="58" height="18" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="998" cy="106" r="4.5" fill="#22e07a"/>
+  </g>
+  <g class="ml-box" style="animation-delay:0s"><rect x="1096" y="96" width="40" height="26" rx="3" fill="#2c3a34" stroke="#0d1310"/><rect x="1096" y="106" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+  <g class="ml-box" style="animation-delay:-3s"><rect x="1096" y="70" width="40" height="24" rx="3" fill="#33413a" stroke="#0d1310"/><rect x="1096" y="79" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+</svg>`;
+
+function MachineLine() {
+  return <div className="dash-panel dash-line" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
 }
 
-/* ── Label print: search bar + cascading filters ─────────────────────────── */
-.lot-search {
-  display: flex; align-items: center; gap: 10px;
-  height: 46px; padding: 0 8px 0 14px;
-  background: var(--surface); border: 1.5px solid var(--border); border-radius: 12px;
-  transition: border-color .15s, box-shadow .15s;
+function Kpi({ label, value, format, unit, flash }) {
+  return (
+    <div className={`dash-kpi ${flash ? "flash" : ""}`}>
+      <div className="lbl">{label}</div>
+      <div className="val"><CountNumber value={value} format={format} />{unit ? <span className="unit">{unit}</span> : null}</div>
+    </div>
+  );
 }
-.lot-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
-.lot-search.has { border-color: var(--accent-hi); }
-.lot-search-ic { color: var(--muted); flex-shrink: 0; }
-.lot-search:focus-within .lot-search-ic { color: var(--accent-dk); }
-.lot-search-in {
-  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-  font-size: 14px; color: var(--text); font-family: inherit;
-}
-.lot-search-in::placeholder { color: var(--muted); }
-.lot-search-clear {
-  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
-  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-  border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  font-family: inherit; transition: background .12s, color .12s, border-color .12s;
-}
-.lot-search-clear:hover:not(:disabled) { background: #fbe9e9; border-color: #f2c2c2; color: #c0392b; }
-.lot-search-clear:disabled { opacity: .4; cursor: not-allowed; }
