@@ -3765,11 +3765,8 @@ function SetupPage() {
   const [tab, setTab] = useState("machines");
   const TABS = [
     { key: "machines", label: "เครื่องจักร" },
-    { key: "operations", label: "ขั้นตอนงาน" },
-    { key: "projects", label: "โปรเจค" },
-    { key: "parts", label: "Part Master / Routing" },
+    { key: "parts", label: "Part Master" },
     { key: "employees", label: "พนักงาน" },
-    { key: "departments", label: "แผนก" },
     { key: "backup", label: "สำรองข้อมูล" },
   ];
   return (
@@ -4395,21 +4392,12 @@ function EmployeeCrud() {
 function PartMasterCrud() {
   const [rows, setRows] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [operations, setOperations] = useState([]);
   const [form, setForm] = useState({ routing: [] });
   const load = useCallback(async () => {
     setRows(await listRows("part_master", { order: "part_no" }));
     setProjects(await listRows("projects", { order: "code" }));
-    setOperations(await listRows("operations", { order: "seq" }));
   }, []);
   useEffect(() => { load(); }, [load]);
-
-  function toggleOp(name) {
-    setForm((f) => {
-      const has = (f.routing || []).includes(name);
-      return { ...f, routing: has ? f.routing.filter((x) => x !== name) : [...(f.routing || []), name] };
-    });
-  }
 
   async function add() {
     if (!form.part_no || !form.project_id) { alert("กรอกโปรเจคและรหัส Part ให้ครบ"); return; }
@@ -4424,8 +4412,8 @@ function PartMasterCrud() {
   async function remove(id) { if (confirm("ลบ Part นี้?")) { await deleteRow("part_master", id); load(); } }
 
   return (
-    <Card title="เพิ่ม Part ใหม่ + กำหนด Routing">
-      <div className="grid-3" style={{ marginBottom: 4 }}>
+    <Card title="เพิ่ม Part ใหม่">
+      <div className="grid-3" style={{ marginBottom: 16 }}>
         <Field label="โปรเจค"><Select value={form.project_id || ""} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
           options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} /></Field>
         <Field label="รหัส Part"><Input value={form.part_no || ""} onChange={(e) => setForm({ ...form, part_no: e.target.value })} /></Field>
@@ -4434,28 +4422,16 @@ function PartMasterCrud() {
         <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
         <Field label="ความยาวโดยประมาณ/ชิ้น (มม.)"><Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} /></Field>
       </div>
-      <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
-      <div className="chip-row" style={{ marginBottom: 16 }}>
-        {operations.map((o) => {
-          const active = (form.routing || []).includes(o.name);
-          return (
-            <span key={o.id} onClick={() => toggleOp(o.name)} className={`chip ${active ? "active" : ""}`}>
-              {o.name}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
-            </span>
-          );
-        })}
-      </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
-          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>Routing</th><th></th></tr></thead>
+          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
                 <td style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td>
                 <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
                 <td>{r.default_length_mm ? `${fmtNum(r.default_length_mm)} มม.` : "-"}</td>
-                <td>{(r.routing || []).join(" → ")}</td>
                 <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
               </tr>
             ))}
