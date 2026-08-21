@@ -25,12 +25,19 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET") return;                       // POST/PUT (RPC) = ปล่อยผ่าน
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;        // Supabase/ต่างโดเมน = ปล่อยผ่าน (ไม่แคช)
+  // คำขอตรวจเวอร์ชัน (/?_v=timestamp) มี query ไม่ซ้ำทุกครั้ง — ปล่อยผ่าน ไม่แคช
+  // (ไม่งั้นสะสมเป็น entry ใหม่ทุก 5 นาที ไม่มีลบ = storage บวมบนจอเปิดทั้งวัน)
+  if (url.search.includes("_v=")) return;
 
   // โหลดหน้า (SPA) → network-first, ออฟไลน์ใช้ index.html จากแคช
   if (req.mode === "navigate") {
     e.respondWith(
       fetch(req).then((res) => {
-        caches.open(CACHE).then((c) => c.put("/index.html", res.clone())).catch(() => {});
+        // เก็บเป็น app shell เฉพาะเมื่อโหลดสำเร็จจริง (res.ok) — กันหน้า error 4xx/5xx
+        // ตอน deploy ถูกแคชแล้วเสิร์ฟเป็นหน้าแอปค้างไปเรื่อยๆ
+        if (res && res.ok) {
+          caches.open(CACHE).then((c) => c.put("/index.html", res.clone())).catch(() => {});
+        }
         return res;
       }).catch(() => caches.match("/index.html").then((r) => r || caches.match("/")))
     );
