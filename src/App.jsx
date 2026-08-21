@@ -3011,38 +3011,35 @@ function ReportPage({ goTo }) {
       )}
 
       <Card title="ช่วงเวลาที่ต้องการดู">
-        <div className="chip-row" style={{ marginBottom: 16 }}>
-          {RANGE_MODES.map((m) => (
-            <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
-              {m.label}
-            </span>
-          ))}
+        {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรอง Part (ขวา) */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+          <div className="chip-row">
+            {RANGE_MODES.map((m) => (
+              <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
+                {m.label}
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>Part:</span>
+            <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ minWidth: 200 }}
+              options={parts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
+          </div>
         </div>
 
-        {rangeMode === "preset" && <div style={{ marginBottom: 4 }}><PresetPicker value={preset} onChange={setPreset} /></div>}
-
-        {rangeMode === "month" && (
-          <div style={{ maxWidth: 220, marginBottom: 4 }}>
-            <Field label="เลือกเดือนที่ต้องการดู">
-              <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} />
-            </Field>
-          </div>
-        )}
-
-        {rangeMode === "custom" && (
-          <div className="grid-2" style={{ maxWidth: 420, marginBottom: 4 }}>
-            <Field label="จากวันที่"><Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} /></Field>
-            <Field label="ถึงวันที่"><Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} /></Field>
-          </div>
-        )}
-
-        <div className="section-divider" />
-
-        <div style={{ maxWidth: 280 }}>
-          <Field label="กรองเฉพาะ Part (เว้นว่าง = ดูทุก Part)">
-            <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)}
-              options={parts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
-          </Field>
+        {/* แถวล่าง: ค่าตามโหมดที่เลือก */}
+        <div style={{ marginTop: 12 }}>
+          {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
+          {rangeMode === "month" && (
+            <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 200 }} />
+          )}
+          {rangeMode === "custom" && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
+              <span style={{ color: "var(--muted)" }}>–</span>
+              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
+            </div>
+          )}
         </div>
       </Card>
 
