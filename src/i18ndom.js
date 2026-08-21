@@ -1,0 +1,229 @@
+// ─── 2 ภาษา (ไทย/อังกฤษ) แบบครอบทั้งแอปสำนักงาน ──────────────────────────────
+// วิธี: แปลที่ระดับ DOM (text node + placeholder/title) ด้วยพจนานุกรม เมื่อสลับเป็น EN
+//   → ไม่ต้องแก้ JSX ทีละจุด (มีข้อความ ~250 จุด) และเพิ่มคำแปลได้ง่ายแค่เติมใน DICT
+//   คำที่ยังไม่มีคำแปลจะคงเป็นไทย (graceful) · MutationObserver คอยแปลของที่เพิ่ง render
+import { useState, useEffect } from "react";
+
+const THAI = /[฀-๿]/;
+
+// ── พจนานุกรม ไทย → อังกฤษ (คีย์ = ข้อความไทยที่ตัดช่องว่างหัวท้ายแล้ว) ──────────
+const DICT = {
+  // ทั่วไป / ปุ่ม
+  "ยกเลิก": "Cancel", "บันทึก": "Save", "ลบ": "Delete", "แก้ไข": "Edit", "เพิ่ม": "Add",
+  "ปิด": "Close", "รีเฟรช": "Refresh", "ค้นหา": "Search", "ล้าง": "Clear", "รวม": "Total",
+  "จำนวน": "Qty", "จำนวนรวม": "Total qty", "จำนวนทั้งหมด": "Total qty", "จำนวนชิ้น": "Pieces",
+  "ชื่อ": "Name", "รหัส": "Code", "วันที่": "Date", "สถานะ": "Status", "หมายเหตุ": "Remark",
+  "ประเภท": "Type", "ลำดับ": "Order", "สิทธิ์": "Role", "สิทธิ์การใช้งาน": "Role",
+  "แผนก": "Department", "ชื่อแผนก": "Department name", "ความสามารถ": "Capabilities",
+  "กำลังโหลด...": "Loading…", "กำลังบันทึก...": "Saving…", "กำลังสร้าง...": "Creating…",
+  "กำลังลบ...": "Deleting…", "กำลังนำเข้า...": "Importing…", "กำลังอัปเดต…": "Updating…",
+  "กำลังเข้าสู่ระบบ...": "Signing in…", "กำลังบันทึกทั้งใบ...": "Saving all…", "กำลังนำเข้าทั้งใบ...": "Importing all…",
+  "— เลือก —": "— Select —", "ยกเลิกทั้งหมด": "Deselect all", "เลือกทั้งหมด": "Select all",
+  "เพิ่มเติม": "More", "จัดการ": "Manage", "รายงาน": "Reports", "ขั้นตอนงาน": "Workflow",
+  "เพิ่มแถว": "Add row", "ลบแถว": "Delete row", "เพิ่มรายการใหม่": "Add new item",
+  "หน้าแรก": "Home", "กลับหน้าแรก": "Back to home", "ดูขั้นตอน": "View steps",
+
+  // เมนู / หัวข้อหลัก
+  "โปรเจค": "Projects", "เครื่องจักร": "Machine", "หน้าเครื่อง": "Machine terminal", "มือถือ": "Mobile",
+  "พิมพ์ QR": "Print QR", "พิมพ์ QR / ป้าย": "Print QR / Labels", "รายงาน": "Reports",
+  "Report (ข้อมูลสแกน)": "Report (scans)", "ระบบบันทึกการทำงานเครื่องจักร": "Machine production logging",
+  "ออกจากระบบ": "Log out", "เข้าสู่ระบบ": "Sign in", "รหัสผ่าน": "Password",
+  "พนักงาน": "Employees", "พนักงานหน้าเครื่อง": "Machine operator", "หัวหน้างาน": "Supervisor",
+
+  // น้ำหนัก / ความยาว / หน่วย
+  "น้ำหนัก": "Weight", "ความยาว": "Length", "วัสดุ": "Material",
+  "น้ำหนัก/ชิ้น": "Weight/pc", "น้ำหนักรวม": "Total weight", "ความยาว/ชิ้น": "Length/pc",
+  "น้ำหนัก/ชิ้น (กก.)": "Weight/pc (kg)", "ความยาว/ชิ้น (มม.)": "Length/pc (mm)",
+  "น้ำหนักวัสดุ (กก.)": "Material weight (kg)", "น้ำหนักวัสดุ": "Material weight",
+  "เวลาเดินเครื่อง": "Machine time", "เฉลี่ย/วัน": "Avg/day",
+  "ชิ้น": "pcs", "กก.": "kg", "มม.": "mm", "ใบ": "labels", "พาร์ท": "parts", "Part": "parts",
+  "ยาว (มม.)": "Length (mm)", "Length (มม.)": "Length (mm)", "กว้าง (มม.)": "Width (mm)", "สูง (มม.)": "Height (mm)",
+
+  // Part / Release / โปรเจค
+  "ชื่อ Part": "Part name", "รหัส Part": "Part code", "รหัส Part *": "Part code *",
+  "ชื่อโปรเจค": "Project name", "รหัสโปรเจค": "Project code", "ชื่อโปรเจค *": "Project name *", "รหัสโปรเจค *": "Project code *",
+  "เพิ่ม Release": "Add Release", "เพิ่ม Part": "Add Part", "เพิ่มโปรเจค": "Add Project",
+  "สร้างโปรเจคใหม่": "New Project", "สร้างโปรเจค": "Create Project", "โปรเจคใหม่": "New Project",
+  "สร้าง Part": "Create Part", "Part ใหม่": "New Part", "สร้างใหม่": "New", "มีอยู่แล้ว": "Exists",
+  "แก้ไขโปรเจค": "Edit Project", "เพิ่มโปรเจคใหม่": "Add new project", "ลบโปรเจคนี้": "Delete this project",
+  "แก้ไข Release": "Edit Release", "บันทึก Release": "Save Release", "ปล่อยงาน": "Released", "ปล่อยงาน (ชิ้น)": "Released (pcs)",
+  "เลขที่ Release Order": "Release Order no.", "เลขที่ Release Order *": "Release Order no. *",
+  "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Done", "เสร็จ": "Done", "ทำแล้ว": "Done",
+  "กำลังทำ": "In progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
+  "เสร็จแล้ว (ภาพรวม)": "Done (overall)", "ยังไม่มี Release": "No releases yet", "ยังไม่มีโปรเจค": "No projects yet",
+
+  // สถานะ / ข้อความ
+  "มีเวอร์ชันใหม่ของระบบ": "A new version is available", "อัปเดตเดี๋ยวนี้": "Update now",
+  "ยังไม่ตั้ง": "Not set", "ยังไม่ได้กำหนด Routing สำหรับ Part นี้": "No routing set for this part",
+  "ไม่บังคับ": "Optional", "ปิด": "Close", "ใช่": "Yes", "ไม่ใช่": "No", "ทั้งหมด": "All",
+
+  // เครื่องจักร / setup
+  "เครื่องจักรประจำ": "Assigned machine", "ขั้นตอนประจำ": "Assigned operation",
+  "เครื่องจักรประจำ *": "Assigned machine *", "ขั้นตอนประจำ *": "Assigned operation *",
+  "รหัสเครื่อง": "Machine code", "ชื่อเครื่องจักร": "Machine name", "รหัสพนักงาน": "Employee code",
+  "ขั้นตอนที่ทำได้": "Operations", "ขั้นตอนที่เครื่องนี้ทำได้": "Operations this machine can do",
+  "ไม่จำกัด (ยังไม่ตั้ง)": "Unlimited (not set)", "ประเภทงาน": "Work type",
+  "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ": "Add machine + capabilities",
+  "รหัสผ่านเริ่มต้น": "Default password", "ใช้งาน": "Active", "ปิดใช้งาน": "Disabled",
+  "ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)": "Set new password (blank = keep)",
+
+  // Report
+  "สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก": "Scan summary by period and selected Part",
+  "ช่วงเวลาที่ต้องการดู": "Period to view", "ช่วงเวลาด่วน": "Quick range", "รายเดือน": "Monthly",
+  "กำหนดเอง (จาก–ถึง)": "Custom (from–to)", "วันนี้": "Today", "7 วันล่าสุด": "Last 7 days",
+  "30 วันล่าสุด": "Last 30 days", "12 เดือนล่าสุด": "Last 12 months", "จากวันที่": "From", "ถึงวันที่": "To",
+  "จำนวนชิ้นที่ทำ · รวมทุกขั้นตอน": "Pieces done · all operations", "งาน/ล็อตที่มีความเคลื่อนไหว": "Active lots",
+  "น้ำหนักวัสดุ · นับต่อชิ้น (กก.)": "Material weight · per piece (kg)",
+  "ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)": "Processed workload · all ops (kg)",
+  "เวลาเดินเครื่องรวม (จับจากหน้าเครื่อง)": "Total machine time (from terminal)",
+  "เครื่องจักร × ขั้นตอน (ปริมาณงานที่ประมวลผล)": "Machine × operation (processed workload)",
+  "ปริมาณงานที่แต่ละเครื่องประมวลผล": "Workload processed by each machine",
+  "รวมทุกขั้นตอน": "All operations", "ปริมาณงานที่ประมวลผล": "Processed workload",
+  "สรุปแยกตามชนิด Part (สะสมทั้งหมด)": "Summary by Part (cumulative)",
+  "Finished Part — ชิ้นงานที่เสร็จสมบูรณ์": "Finished Parts — completed pieces",
+
+  // Machines/Parts summary + Projects page
+  "เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค": "Add / edit / delete projects + progress by project",
+  "ยังไม่มีการสแกนในช่วงเวลานี้": "No scans in this period",
+  "แต่ละเครื่องทำได้กี่กิโล/กี่ชิ้น และใช้เวลาเท่าไร ในแต่ละวัน ·": "kg/pieces/time per machine, per day ·",
+  "คิดจากเฉพาะวันที่มีงานจริง": "based on days with activity only", "หมายเหตุ:": "Note:",
+
+  // QR labels
+  "พิมพ์ QR / ป้าย": "Print QR / Labels", "เลือกล็อตที่ต้องการพิมพ์": "Select lot to print",
+  "ค้นหา QR": "Search QR", "ป้ายที่จะพิมพ์": "Labels to print", "ชนิดป้าย": "Label type",
+  "ขนาดป้าย": "Label size", "รูปแบบการพิมพ์": "Print mode", "แสดงรหัสใต้ QR": "Show code under QR",
+  "ป้ายรายชิ้น · รันเบอร์ 1 OF N (ชิ้นใหญ่)": "Per-piece · running 1 OF N (large)",
+  "ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)": "Lot label · 1 per part (small)",
+  "1 ป้าย/หน้า · เท่าจริง": "1 label/page · actual size", "หลายป้าย/แผ่น A4": "Many/sheet A4",
+  "ไม่พบชิ้นงาน (QR) ในตัวกรองนี้": "No pieces (QR) match this filter",
+  "ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต": "Filter changed — press “Search QR” to update",
+  "ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด": "No lots match — press “Clear” to see all",
+  "ค้นหา Part No. / Release Order / โปรเจค / วันที่...": "Search Part No. / Release Order / Project / date…",
+  "นำเข้าจาก Excel (หลาย Part)": "Import from Excel (multi-Part)", "ล้างตัวกรอง": "Clear filters",
+  "กรุณาเลือกอย่างน้อย 1 ใบ": "Please select at least 1 label",
+
+  // Release detail / progress modal
+  "กลับไปหน้า Release": "Back to Releases", "โหลดความคืบหน้าล่าสุด": "Load latest progress",
+  "จำนวนทั้งหมด": "Total qty", "ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น": "Pieces done per operation",
+  "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้": "No terminal work recorded for this part",
+  "กดเพื่อดูความคืบหน้าแยกขั้นตอน": "Tap to view per-operation progress",
+  "ชิ้นที่เสร็จทั้งหมด": "Total finished", "รายการชิ้นงานที่เสร็จสมบูรณ์": "Completed pieces list",
+  "ยังไม่มีชิ้นงานที่เสร็จสมบูรณ์": "No completed pieces yet",
+
+  // Setup
+  "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)": "Operation name (e.g. cut/drill/notch)",
+  "ยังไม่มีขั้นตอนงาน — ไปตั้งค่าที่ Setup ก่อน": "No operations — set them up in Setup first",
+  "จำนวนต้องมากกว่า 0": "Qty must be greater than 0",
+};
+
+// ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
+const RULES = [
+  [/^ทั้งหมด\s+(.+?)\s+ชิ้น$/, (m) => `Total ${m[1]} pcs`],
+  [/^รวม\s+(.+?)\s+ชิ้น$/, (m) => `Total ${m[1]} pcs`],
+  [/^(.+?)\s+ชิ้น$/, (m) => `${m[1]} pcs`],
+  [/^(.+?)\s+พาร์ท$/, (m) => `${m[1]} parts`],
+  [/^(.+?)\s+Part$/, (m) => `${m[1]} parts`],
+  [/^(.+?)\s+ใบ$/, (m) => `${m[1]} labels`],
+  [/^(.+?)\s+กก\.$/, (m) => `${m[1]} kg`],
+  [/^(.+?)\s+มม\.$/, (m) => `${m[1]} mm`],
+  [/^(.+?)\s+เครื่อง$/, (m) => `${m[1]} machines`],
+  [/^เลือก\s+(.+)$/, (m) => `Selected ${m[1]}`],
+  [/^Part\s*\((\d[\d,]*)\)$/, (m) => `Part (${m[1]})`],
+  [/^Release\s*\((\d[\d,]*)\)$/, (m) => `Release (${m[1]})`],
+  [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
+];
+
+function toEN(trimmed) {
+  if (DICT[trimmed] != null) return DICT[trimmed];
+  for (const [re, fn] of RULES) { const m = trimmed.match(re); if (m) return fn(m); }
+  return null;
+}
+
+// ── เครื่องมือแปล DOM ────────────────────────────────────────────────────────
+let LANG = "th";
+try { LANG = localStorage.getItem("mls-lang") === "en" ? "en" : "th"; } catch { /* ignore */ }
+const listeners = new Set();
+const origText = new Map();   // textNode -> ไทยต้นฉบับ
+const origAttr = new Map();   // el -> { placeholder?, title? }
+const touched = new Set();    // node/el ที่แปลไปแล้ว (ไว้ restore ตอนกลับเป็นไทย)
+let observer = null;
+let busy = false;             // กัน observer วนซ้ำระหว่างที่เราแก้เอง
+
+function translateTextNode(n) {
+  const raw = n.nodeValue; if (!raw) return;
+  const trimmed = raw.trim();
+  if (!trimmed || !THAI.test(trimmed)) return;   // ไม่มีไทย = ข้าม (แปลแล้ว/ตัวเลข)
+  const en = toEN(trimmed); if (en == null) return;
+  if (!origText.has(n)) { origText.set(n, raw); touched.add(n); }
+  const lead = raw.match(/^\s*/)[0], trail = raw.match(/\s*$/)[0];
+  n.nodeValue = lead + en + trail;
+}
+function translateAttrs(el) {
+  for (const a of ["placeholder", "title"]) {
+    const v = el.getAttribute && el.getAttribute(a);
+    if (!v || !THAI.test(v)) continue;
+    const en = toEN(v.trim()); if (en == null) continue;
+    const cur = origAttr.get(el) || {};
+    if (cur[a] == null) { cur[a] = v; origAttr.set(el, cur); touched.add(el); }
+    el.setAttribute(a, en);
+  }
+}
+function walk(root) {
+  if (!root) return;
+  if (root.nodeType === 3) { translateTextNode(root); return; }
+  if (root.nodeType !== 1) return;
+  translateAttrs(root);
+  const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let n; while ((n = tw.nextNode())) translateTextNode(n);
+  root.querySelectorAll && root.querySelectorAll("[placeholder],[title]").forEach(translateAttrs);
+}
+function restoreAll() {
+  for (const node of touched) {
+    if (node.nodeType === 3) { if (origText.has(node)) node.nodeValue = origText.get(node); }
+    else { const a = origAttr.get(node); if (a) { for (const k in a) node.setAttribute(k, a[k]); } }
+  }
+  origText.clear(); origAttr.clear(); touched.clear();
+}
+function applyLang() {
+  busy = true;
+  try {
+    if (LANG === "en") walk(document.body);
+    else restoreAll();
+  } finally { busy = false; }
+}
+function ensureObserver() {
+  if (observer) return;
+  observer = new MutationObserver((muts) => {
+    if (busy || LANG !== "en") return;
+    busy = true;
+    try {
+      for (const m of muts) {
+        if (m.type === "characterData") translateTextNode(m.target);
+        else m.addedNodes && m.addedNodes.forEach((nd) => walk(nd));
+      }
+    } finally { busy = false; }
+  });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
+export function setLang(l) {
+  LANG = l === "en" ? "en" : "th";
+  try { localStorage.setItem("mls-lang", LANG); } catch { /* ignore */ }
+  applyLang();
+  listeners.forEach((f) => { try { f(LANG); } catch { /* ignore */ } });
+}
+export function getLang() { return LANG; }
+
+// เริ่มทำงานเมื่อ DOM พร้อม (เรียกจาก App.jsx ด้วยการ import)
+if (typeof window !== "undefined") {
+  const boot = () => { ensureObserver(); if (LANG === "en") applyLang(); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else setTimeout(boot, 0);
+}
+
+// React hook สำหรับปุ่มสลับ
+export function useLang() {
+  const [l, setL] = useState(LANG);
+  useEffect(() => { listeners.add(setL); return () => listeners.delete(setL); }, []);
+  return [l, setLang];
+}
