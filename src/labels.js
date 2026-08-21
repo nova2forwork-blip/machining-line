@@ -116,14 +116,23 @@ export function printLabels(units, opts = {}) {
 <html lang="th"><head><meta charset="UTF-8" />
 <title>${escapeHtml(title)}</title>
 <style>
-  * { box-sizing: border-box; }
-  body { background: #fff; }
+  /* บังคับพิมพ์สีให้ตรงเป๊ะทุกองค์ประกอบ — กัน QR ขึ้น "เงาเทาซ้อน"/สีจาง
+     เวลาเบราว์เซอร์พยายามประหยัดหมึก หรือ "Background graphics" ไม่ได้ติ๊ก */
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  html, body { background: #fff; }
+  /* QR = ขาว-ดำล้วน ห้ามมีเงา/ฟิลเตอร์/โปร่งใส (กันเงาเทาซ้อน) */
+  .qr, .qr svg, .qr svg * { box-shadow: none !important; filter: none !important; opacity: 1 !important; }
   ${labelCss}
   ${mode === "roll" ? rollCss : sheetCss}
 </style>
 </head><body>
 <div class="grid">${labelCells}</div>
-<script>window.onload = () => { window.print(); };</script>
+<script>
+  // พิมพ์ตอนโหลดเสร็จ · หลังเซฟ/ปิดกล่องพิมพ์ ให้ "ปิดหน้าต่างนี้เอง"
+  // กันหน้าต่างพิมพ์ค้างซ้อนกันหลายชั้นเมื่อสั่งพิมพ์หลายครั้ง
+  window.onafterprint = () => { try { window.close(); } catch (e) {} };
+  window.onload = () => { setTimeout(() => { window.print(); }, 120); };
+</script>
 </body></html>`;
 
   const w = window.open("", "_blank", "width=1000,height=700");
