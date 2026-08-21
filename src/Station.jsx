@@ -888,7 +888,14 @@ export default function StationApp() {
           <p>หน้าเครื่องต้องใช้บัญชีที่กำหนด "เครื่องจักรประจำ" ไว้ที่ Setup → พนักงาน<br />
             แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน</p>
           <button className="stn-btn" onClick={logout}>ออกจากระบบ</button>
-          <div className="stn-login-foot"><a className="stn-link-normal" href="/">ไปหน้าปกติ (สำนักงาน) →</a></div>
+          <div className="stn-login-foot">
+            {/* บัญชี operator จะถูกหน้าออฟฟิศเด้งกลับมา /station เสมอ → ต้องออกจากระบบก่อน
+                ไม่งั้นกด "ไปหน้าสำนักงาน" จะวนลูป · บัญชี admin/supervisor ไปได้เลย */}
+            <span className="stn-link-normal" style={{ cursor: "pointer" }}
+              onClick={() => { if (user.role === "operator") clearSession(); window.location.href = "/"; }}>
+              ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →
+            </span>
+          </div>
         </div>
       </div>
     );
