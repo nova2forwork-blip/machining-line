@@ -85,10 +85,18 @@ export async function parseReleaseExcel(file) {
   const { headerRowIndex, colMap } = header;
 
   const items = [];
+  let blankStreak = 0;                    // นับแถว Code ว่างติดกัน — เยอะ = จบตารางจริง
+  const END_AFTER_BLANKS = 15;            // ว่างติดกันเกินนี้ = ถือว่าจบ (กันวน footer ยาวๆ)
   for (let r = headerRowIndex + 1; r < rows.length; r++) {
     const row = rows[r];
     const code = String(row[colMap.code] ?? "").trim();
-    if (!code) break; // จบตารางเมื่อคอลัมน์ Code ว่าง (กันแถว footer ที่เหลือ 0 ค้างอยู่)
+    if (!code) {
+      // แถว Code ว่าง = ข้ามไป (เผื่อเป็นแถวคั่นกลางตาราง) — ไม่หยุดทันที กัน Part หลังช่องว่างหาย
+      // แต่ถ้าว่างติดกันหลายแถว ถือว่าจบตาราง (footer/ท้ายไฟล์) จึงหยุด
+      if (++blankStreak >= END_AFTER_BLANKS) break;
+      continue;
+    }
+    blankStreak = 0;
     const qty = toNumber(row[colMap.qty]);
     if (!qty || qty <= 0) continue; // ข้ามแถวที่ไม่มีจำนวนจริง
 
