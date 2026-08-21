@@ -47,6 +47,7 @@ const DICT = {
   "สร้าง Part": "Create Part", "Part ใหม่": "New Part", "สร้างใหม่": "New", "มีอยู่แล้ว": "Exists",
   "แก้ไขโปรเจค": "Edit Project", "เพิ่มโปรเจคใหม่": "Add new project", "ลบโปรเจคนี้": "Delete this project",
   "แก้ไข Release": "Edit Release", "บันทึก Release": "Save Release", "ปล่อยงาน": "Released", "ปล่อยงาน (ชิ้น)": "Released (pcs)",
+  "ลบ Part นี้": "Delete this Part", "ลบ Release นี้": "Delete this Release",
   "เลขที่ Release Order": "Release Order no.", "เลขที่ Release Order *": "Release Order no. *",
   "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Done", "เสร็จ": "Done", "ทำแล้ว": "Done",
   "กำลังทำ": "In progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
