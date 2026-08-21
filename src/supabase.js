@@ -487,6 +487,64 @@ export async function recalcPartStatus(partMasterId) {
   return data || { updated: 0, finished: 0 };
 }
 
+// ── สำรองข้อมูล (Backup / Export) ────────────────────────────────────────
+// ดึงข้อมูล "ทุกตารางหลัก" ออกมาเป็นก้อน JSON เดียว เพื่อดาวน์โหลดเก็บเอง
+// (สำรองอีกชั้นนอกเหนือจากแบ็คอัพอัตโนมัติของ Supabase) — อ่านอย่างเดียว ไม่แก้ข้อมูล
+export const BACKUP_TABLES = [
+  "projects", "part_master", "releases", "part_units",
+  "scan_logs", "machine_records", "operations", "machines",
+  "machine_operations", "employees", "departments",
+];
+
+export async function exportAllData(onProgress) {
+  const tables = {};
+  const counts = {};
+  for (let i = 0; i < BACKUP_TABLES.length; i++) {
+    const t = BACKUP_TABLES[i];
+    if (onProgress) onProgress({ table: t, index: i, total: BACKUP_TABLES.length });
+    const rows = await listRows(t);
+    tables[t] = rows;
+    counts[t] = rows.length;
+  }
+  return {
+    _meta: {
+      app: "machining-line-system",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      counts,
+      totalRows: Object.values(counts).reduce((a, b) => a + b, 0),
+    },
+    tables,
+  };
+}
+
+// ── จุดกู้คืนในแอป (Restore Points) — ผ่าน RPC (ตรวจ admin ฝั่ง DB) ─────────
+export async function ensureDailyBackup() {
+  const { data, error } = await supabase.rpc("ensure_daily_backup", { p_token: authToken() });
+  if (error) { console.warn("ensure_daily_backup", error); return null; }
+  return data;
+}
+export async function listBackups() {
+  const { data, error } = await supabase.rpc("list_backups", { p_token: authToken() });
+  if (error) { console.warn("list_backups", error); throw error; }
+  return data || [];
+}
+export async function snapshotAllProjects(kind = "manual") {
+  const { data, error } = await supabase.rpc("snapshot_all_projects", { p_token: authToken(), p_kind: kind });
+  if (error) { console.warn("snapshot_all_projects", error); throw error; }
+  return data;
+}
+export async function snapshotProject(projectId, kind = "manual") {
+  const { data, error } = await supabase.rpc("snapshot_project", { p_token: authToken(), p_project_id: projectId, p_kind: kind });
+  if (error) { console.warn("snapshot_project", error); throw error; }
+  return data;
+}
+export async function restoreBackup(backupId, mode = "merge") {
+  const { data, error } = await supabase.rpc("restore_backup", { p_token: authToken(), p_backup_id: backupId, p_mode: mode });
+  if (error) { console.warn("restore_backup", error); throw error; }
+  return data;
+}
+
 // รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
 export async function getProjectSummary() {
   const { data, error } = await supabase.rpc("project_summary");
