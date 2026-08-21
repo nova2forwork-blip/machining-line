@@ -6,8 +6,9 @@ import "./styles.css";
 //    ทุก path อื่น = แอปปกติ (สำนักงาน)  ·  ทั้งสองใช้ Supabase/ฐานข้อมูลเดียวกัน
 //    (vercel.json rewrite ทุก path → index.html อยู่แล้ว จึงไม่ต้องตั้ง route เพิ่ม)
 const path = window.location.pathname.replace(/\/+$/, "").toLowerCase();
-const isStation = path.startsWith("/station");
-const isDashboard = path.startsWith("/dashboard");
+// เทียบแบบเป๊ะ/มีขอบเขต — กัน /stationery, /dashboard-foo เผลอเข้าหน้าเครื่อง/แดชบอร์ด
+const isStation = path === "/station" || path.startsWith("/station/");
+const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
 
 // ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต + แจ้งเวอร์ชันใหม่ ──
 if ("serviceWorker" in navigator) {
@@ -41,8 +42,12 @@ function onChunkError(e) {
   if (tries < 3) {
     try { sessionStorage.setItem("mls-load-retry", String(tries + 1)); } catch { /* ignore */ }
     setTimeout(() => { try { location.reload(); } catch { /* ignore */ } }, 2500);
-  } else if (s) {
-    s.innerHTML = '<div style="color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6">โหลดแอปไม่สำเร็จ<br>กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่</div>';
+  } else {
+    if (s) s.innerHTML = '<div style="color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6">โหลดแอปไม่สำเร็จ<br>กำลังลองใหม่อัตโนมัติ…</div>';
+    // จอเปิดทิ้ง 24 ชม. (เช่น Dashboard/หน้าเครื่อง) — อย่าหยุดถาวร ลองใหม่เป็นระยะจนกว่าจะสำเร็จ
+    // รีเซ็ตตัวนับก่อน เพื่อให้รอบถัดไปได้ retry เร็ว 3 ครั้งอีกชุด
+    try { sessionStorage.removeItem("mls-load-retry"); } catch { /* ignore */ }
+    setTimeout(() => { try { location.reload(); } catch { /* ignore */ } }, 30000);
   }
 }
 
