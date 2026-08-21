@@ -7,7 +7,7 @@ import {
 import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
-  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat,
+  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -124,6 +124,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
   const [op, setOp] = useState(user.operation || null);
+  const [machineOps, setMachineOps] = useState([]);   // ขั้นตอนที่เครื่องนี้ทำได้ (สำหรับปุ่มเลือก)
   const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
   const [rows, setRows] = useState([]);
   const [newRowId, setNewRowId] = useState(null);
@@ -161,13 +162,28 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (res && res.ok !== false) {
       setDaily(res.daily || { quantity: 0, weight: 0, process_seconds: 0 });
       setRows(res.records || []);
-      if (res.operation) setOp(res.operation);   // ขั้นตอนล่าสุดของเครื่องนี้ (จาก machine_day)
       setLoadErr("");
+      // หมายเหตุ: ไม่ตั้ง op จาก machine_day ที่นี่ — เพราะ reload ทำงานหลังบันทึกทุกครั้ง
+      //   ถ้าตั้งจะไปทับ "ขั้นตอนที่คนงานเลือกเอง" · การตั้ง default ทำที่ effect โหลด machineOps
     } else {
       setLoadErr(res?.message || "โหลดข้อมูลไม่สำเร็จ");
     }
   }, [onKicked]);
   useEffect(() => { reload(); }, [reload]);
+
+  // โหลดขั้นตอนที่เครื่องนี้ทำได้ + ตั้ง default การเลือก (ครั้งเดียวตอนเปิด)
+  useEffect(() => {
+    getMachineOps().then((ops) => {
+      setMachineOps(ops);
+      setOp((cur) => {
+        if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังทำได้ → คงเดิม
+        if (user.operation && ops.some((o) => o.id === user.operation.id)) return user.operation; // ใช้ขั้นตอนประจำบัญชี
+        if (ops.length === 1) return ops[0];                               // ทำได้ขั้นตอนเดียว → เลือกให้เลย
+        return cur;                                                        // ทำได้หลายขั้นตอน → ให้คนงานแตะเลือก
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
   useEffect(() => {
     const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
@@ -276,6 +292,8 @@ function MachineStation({ user, onLogout, onKicked }) {
 
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
+    // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
+    if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
     warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
     // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
     // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
@@ -332,6 +350,7 @@ function MachineStation({ user, onLogout, onKicked }) {
         processSeconds: elapsed,
         status,
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
+        operationId: op?.id || null,  // ★ ขั้นตอนที่เลือกบนจอ
       });
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
@@ -388,6 +407,27 @@ function MachineStation({ user, onLogout, onKicked }) {
           ⚠️ ซิงค์ไม่สำเร็จ {rejected} — QR ถูกลบ/แก้ฝั่งออฟฟิศ · แตะเพื่อลองใหม่
         </div>
       )}
+
+      {/* ── ปุ่มเลือกขั้นตอน — โชว์เฉพาะเครื่องที่ทำได้หลายขั้นตอน ─────────────── */}
+      {machineOps.length > 1 && (
+        <div className="stn-oppick">
+          <span className="stn-oppick-lbl">ขั้นตอน:</span>
+          {machineOps.map((o) => (
+            <button key={o.id}
+              className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`}
+              onClick={() => setOp(o)}>
+              {o.name}
+            </button>
+          ))}
+          {!op && <span className="stn-oppick-hint">← แตะเลือกก่อนสแกน</span>}
+        </div>
+      )}
+      {machineOps.length === 1 && (
+        <div className="stn-oppick one"><span className="stn-oppick-lbl">ขั้นตอน:</span>
+          <span className="stn-oppick-btn sel" style={{ pointerEvents: "none" }}>{machineOps[0].name}</span>
+        </div>
+      )}
+
       <div className="stn-screen">
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
