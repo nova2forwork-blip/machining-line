@@ -122,6 +122,8 @@ const DICT = {
   // Release detail / progress modal
   "กลับไปหน้า Release": "Back to Releases", "โหลดความคืบหน้าล่าสุด": "Load latest progress",
   "กลับไปหน้า Projects": "Back to Projects", "น้ำหนักรวม (กก.)": "Total weight (kg)",
+  // ชื่อขั้นตอน (operation) — แปลในตาราง/ป้ายเมื่อสลับ EN
+  "ตัด": "Cut", "เจาะ": "Drill", "บาก": "Notch", "พับ": "Bend", "เชื่อม": "Weld", "ประกอบ": "Assemble", "ไม่ระบุ": "Unspecified",
   // หัวข้อ + คำอธิบายแต่ละหน้า (2 ภาษา)
   "พิมพ์ QR / ป้าย": "Print QR / Labels", "สแกนหน้าเครื่องจักร": "Scan at machine",
   "เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค · แตะแถวเพื่อดู Release และ Part ในโปรเจคนั้น":
