@@ -1590,9 +1590,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     <td>{r.note || "-"}</td>
                     {canEdit && (
                       <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-                        <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>แก้ไข</span>
-                        <span onClick={() => busyId !== r.id && handleDelete(r)} style={{ color: "var(--danger-hi)", cursor: busyId === r.id ? "wait" : "pointer" }}>
-                          {busyId === r.id ? "กำลังลบ..." : "ลบ"}
+                        <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>
+                          {busyId === r.id ? "กำลังลบ..." : "แก้ไข"}
                         </span>
                       </td>
                     )}
@@ -1621,6 +1620,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           release={editing}
           onClose={() => setEditing(null)}
           onSaved={afterEdit}
+          onDelete={() => { const r = editing; setEditing(null); handleDelete(r); }}
         />
       )}
     </div>
@@ -2827,7 +2827,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 //                ลบต่ำกว่าจำนวนที่สแกนไปแล้วไม่ได้ เพื่อไม่ให้ประวัติการทำงานหาย
 // - แก้น้ำหนัก/ความยาว → จ่ายค่าลงทุกชิ้นในล็อตนี้ใหม่ (เหมือนตอน Release ครั้งแรก)
 // ลบทั้ง Release → ลบ QR (part_units) และประวัติสแกน (scan_logs) ของล็อตนั้นทั้งหมด
-function ReleaseEditModal({ release, onClose, onSaved }) {
+function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [qty, setQty] = useState(release.qty);
   const [unitWeight, setUnitWeight] = useState(release.unit_weight ?? "");
   const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
@@ -2935,9 +2935,17 @@ function ReleaseEditModal({ release, onClose, onSaved }) {
 
           {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
 
-          <div className="modal-actions">
-            <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-            <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+          <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+            {onDelete ? (
+              <Btn type="button" variant="ghost" onClick={onDelete} disabled={busy}
+                style={{ color: "var(--danger-hi)" }}>
+                ลบ Release นี้
+              </Btn>
+            ) : <span />}
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+              <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+            </div>
           </div>
         </>
       )}
