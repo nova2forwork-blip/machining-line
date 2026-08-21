@@ -160,18 +160,22 @@ export default function Dashboard() {
   }, [fetchNow]);
 
   // ── สรุปตัวเลข ────────────────────────────────────────────────────────
-  const totalPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-  const totalKg = logs.reduce((s, l) => s + (Number(l.weight) || 0), 0);
-  const totalSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
-  const scanCount = logs.length;
-
-  const matrix = machineOpMatrix(logs);
-  const machines = matrix.machines.map((m) => {
-    const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
-    return { name: m.name, op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
-  });
-  const maxKg = Math.max(1, ...machines.map((m) => m.weight));
-  const feed = logs.slice(0, 9);
+  // memo ตาม logs เท่านั้น — นาฬิกาเดินทุก 1 วิ ไม่ต้องคำนวณยอดทั้งวันใหม่ (เปลือง CPU
+  // บนจอเปิดทั้งวัน) · ค่าจริงเปลี่ยนแค่ตอนโพล 5 วิ
+  const { totalPieces, totalKg, totalSec, scanCount, machines, maxKg, feed } = useMemo(() => {
+    const tPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+    const tKg = logs.reduce((s, l) => s + (Number(l.weight) || 0), 0);
+    const tSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+    const matrix = machineOpMatrix(logs);
+    const mach = matrix.machines.map((m) => {
+      const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
+      return { name: m.name, op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
+    });
+    return {
+      totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
+      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: logs.slice(0, 9),
+    };
+  }, [logs]);
 
   // ── กราฟการผลิตรายชั่วโมง (กก. ต่อ ชม.) ตามเวลาไทย ────────────────────
   // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
