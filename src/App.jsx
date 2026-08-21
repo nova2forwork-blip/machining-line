@@ -445,7 +445,7 @@ function Shell({ user, onLogout }) {
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
-          {tab === "report" && <ReportPage goTo={go} />}
+          {tab === "report" && <ReportPage />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
@@ -3018,11 +3018,7 @@ const RANGE_MODES = [
   { value: "custom", label: "กำหนดเอง (จาก–ถึง)" },
 ];
 
-function ReportPage({ goTo }) {
-  // ── Quick actions: create a project, or jump to Release Production ──
-  const [showNewProject, setShowNewProject] = useState(false);
-  const [createdMsg, setCreatedMsg] = useState("");
-
+function ReportPage() {
   // ── Flexible date filter: quick preset / specific month / custom from–to ──
   const [rangeMode, setRangeMode] = useState("preset");
   const [preset, setPreset] = useState("week");
@@ -3077,21 +3073,7 @@ function ReportPage({ goTo }) {
           <div className="page-title">Report</div>
           <div className="page-sub">สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก</div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="ghost" onClick={() => setShowNewProject(true)}>
-            <Icon name="folder" size={15} />สร้างโปรเจคใหม่
-          </Btn>
-          <Btn variant="accent" onClick={() => goTo && goTo("release")}>
-            <Icon name="box" size={15} />เพิ่ม Release
-          </Btn>
-        </div>
       </div>
-
-      {createdMsg && (
-        <div className="card" style={{ background: "var(--accent-tint)", borderColor: "var(--accent)", color: "var(--accent-dk)", fontSize: 13, fontWeight: 600, padding: "12px 16px" }}>
-          {createdMsg}
-        </div>
-      )}
 
       <Card title="ช่วงเวลาที่ต้องการดู">
         {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรอง Part (ขวา) */}
@@ -3308,16 +3290,6 @@ function ReportPage({ goTo }) {
         Finished Part — ชิ้นงานที่เสร็จสมบูรณ์
       </div>
       <FinishedPartSection />
-
-      {showNewProject && (
-        <QuickAddProjectModal
-          onClose={() => setShowNewProject(false)}
-          onCreated={(project) => {
-            setCreatedMsg(`สร้างโปรเจค ${project.code} — ${project.name} สำเร็จ`);
-            setTimeout(() => setCreatedMsg(""), 3500);
-          }}
-        />
-      )}
     </div>
   );
 }
