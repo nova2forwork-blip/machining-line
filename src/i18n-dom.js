@@ -114,6 +114,26 @@ const DICT = {
   "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)": "Operation name (e.g. cut/drill/notch)",
   "ยังไม่มีขั้นตอนงาน — ไปตั้งค่าที่ Setup ก่อน": "No operations — set them up in Setup first",
   "จำนวนต้องมากกว่า 0": "Qty must be greater than 0",
+
+  // หัวข้อการ์ด / หัวข้อตาราง เพิ่มเติม
+  "ค้นหา Release": "Search Release",
+  "ประวัติการ Release ล่าสุด": "Recent Releases",
+  "รายละเอียดแต่ละ Part ในล็อตนี้": "Details of each Part in this lot",
+  "ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)": "Progress by operation (terminal)",
+  "นำเข้า Release จาก Excel": "Import Release from Excel",
+  "รายวัน × เครื่องจักร (กก. / จำนวน / เวลา ต่อวัน)": "Daily × Machine (kg / qty / time per day)",
+  "แยกตามขั้นตอนการทำงาน": "By operation",
+  "Part No. × ขั้นตอน (จำนวนชิ้น)": "Part No. × Operation (pieces)",
+  "กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง": "Press Ctrl+Z to undo table edits",
+  "สถานีของคุณ": "Your station", "เลือกโหมดสแกน": "Select scan mode",
+  "สแกนที่ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ (จะซิงค์อัตโนมัติเมื่อเน็ตกลับ)": "Scans not yet uploaded (auto-sync when back online)",
+  "ค้นหา Release Order / Part / หมายเหตุ": "Search Release Order / Part / Remark",
+  "เช่น P-009": "e.g. P-009", "เช่น P-009 (ไม่บังคับ)": "e.g. P-009 (optional)",
+  "เช่น admin": "e.g. admin", "เช่น M-001": "e.g. M-001", "เช่น PRJ001": "e.g. PRJ001",
+  "เช่น สายการผลิตชิ้นส่วน A": "e.g. Part line A", "P-ตัวเลข": "P-number",
+  "รายละเอียด": "Details", "จากวันที่": "From", "ถึงวันที่": "To",
+  "ค้นหา Release ที่เคยปล่อยงาน หรือกด": "Search released lots, or press",
+  "เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ": "to release new work (paste from Excel) · tap a row for progress, edit, or delete",
 };
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
@@ -130,6 +150,13 @@ const RULES = [
   [/^เลือก\s+(.+)$/, (m) => `Selected ${m[1]}`],
   [/^Part\s*\((\d[\d,]*)\)$/, (m) => `Part (${m[1]})`],
   [/^Release\s*\((\d[\d,]*)\)$/, (m) => `Release (${m[1]})`],
+  [/^โปรเจคทั้งหมด\s*\((.+)\)$/, (m) => `All projects (${m[1]})`],
+  [/^ป้ายที่จะพิมพ์\s*\((.+)\)$/, (m) => `Labels to print (${m[1]})`],
+  [/^ชิ้นงานในล็อตนี้\s*\((.+)\)$/, (m) => `Pieces in this lot (${m[1]})`],
+  [/^ความคืบหน้า\s*—\s*(.+)$/, (m) => `Progress — ${m[1]}`],
+  [/^ความสามารถของเครื่อง\s*—\s*(.+)$/, (m) => `Machine capabilities — ${m[1]}`],
+  [/^แก้ไขพนักงาน\s*—\s*(.+)$/, (m) => `Edit employee — ${m[1]}`],
+  [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
   [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
 ];
 
