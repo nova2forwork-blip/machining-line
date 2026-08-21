@@ -13,6 +13,7 @@ import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
+import { useLang } from "./i18n-dom.js";
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
@@ -29,6 +30,23 @@ const CHART = {
   grid: "#e1e9e5", muted: "#6d7d76", tooltipBg: "#ffffff", tooltipBorder: "#e1e9e5",
   text: "#142420", accent: "#10b981", success: "#22c55e",
 };
+
+// ปุ่มสลับภาษา ไทย/EN (แปลทั้งแอปด้วย i18n-dom)
+function LangToggle() {
+  const [lang, setLang] = useLang();
+  return (
+    <div className="lang-toggle" style={{ display: "flex", gap: 0, border: "1px solid var(--border-soft, #e1e9e5)", borderRadius: 999, overflow: "hidden", marginBottom: 10 }}>
+      {[["th", "ไทย"], ["en", "EN"]].map(([v, label]) => (
+        <button key={v} onClick={() => setLang(v)}
+          style={{ flex: 1, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, padding: "6px 0",
+            background: lang === v ? "var(--accent, #10b981)" : "transparent",
+            color: lang === v ? "#fff" : "var(--muted, #6d7d76)", fontFamily: "inherit" }}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
@@ -366,6 +384,7 @@ function Shell({ user, onLogout }) {
           </div>
         ))}
         <div className="sidebar-footer">
+          <LangToggle />
           <div className="user-chip">
             <div className="user-avatar">{(user.name || "U").slice(0, 1)}</div>
             <div>
