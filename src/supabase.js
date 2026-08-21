@@ -1,659 +1,437 @@
-import { createClient } from "@supabase/supabase-js";
-import {
-  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
-  setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
-} from "./offline.js";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import "./dashboard.css";
+import { getScanLogsBetween, supabase } from "./supabase.js";
+import { machineOpMatrix } from "./metrics.js";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
-// ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
-const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL || "";
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+// ─── helpers ──────────────────────────────────────────────────────────────
+const fmtInt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
+const fmtKg = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const pad = (n) => String(n).padStart(2, "0");
+function fmtHrs(secs, L = "th") {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}:${pad(m)} ${L === "en" ? "h" : "ชม."}` : `${m} ${L === "en" ? "m" : "น."}`;
+}
+function fmtClock(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function fmtDateLoc(d, L) {
+  return d.toLocaleDateString(L === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+function timeOf(iso) { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
-if (!SUPABASE_URL || !SUPABASE_ANON) {
-  console.error(
-    "❌  ยังไม่ได้ตั้งค่า Supabase!\n" +
-    "    สร้างไฟล์ .env.local แล้วใส่:\n" +
-    "    VITE_SUPABASE_URL=...\n" +
-    "    VITE_SUPABASE_ANON_KEY=..."
+// ─── สองภาษา ไทย/อังกฤษ ─────────────────────────────────────────────────────
+const STR = {
+  th: {
+    subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
+    kpiPieces: "ชิ้นที่ผลิตวันนี้", unitPieces: "ชิ้น",
+    kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
+    kpiTime: "เวลาเดินเครื่องรวม",
+    kpiScans: "จำนวนครั้งที่บันทึก", unitTimes: "ครั้ง",
+    machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
+    noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
+    hourly: "การผลิตรายชั่วโมง · วันนี้ (กก.)", waitingData: "รอข้อมูลการผลิต…",
+    liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
+    finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
+    booting: "กำลังเชื่อมต่อสายการผลิต…",
+  },
+  en: {
+    subtitle: "Live Production Monitor", live: "LIVE",
+    kpiPieces: "Pieces Produced Today", unitPieces: "pcs",
+    kpiWeight: "Total Weight Today", unitKg: "kg",
+    kpiTime: "Total Machine Time",
+    kpiScans: "Records Logged", unitTimes: "times",
+    machines: "Machines · Today", machineUnit: "machines",
+    noWork: "No work yet today — waiting for the first scan…",
+    hourly: "Hourly Production · Today (kg)", waitingData: "Waiting for production data…",
+    liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
+    finished: "Finished", inProcess: "In Process",
+    booting: "Connecting to the production line…",
+  },
+};
+
+// ช่วง "วันนี้" ตามเวลาไทย (Asia/Bangkok, UTC+7) → คืน ISO from/to
+function bangkokTodayRange() {
+  const now = new Date();
+  const bkk = new Date(now.getTime() + 7 * 3600 * 1000);
+  const startUtcMs = Date.UTC(bkk.getUTCFullYear(), bkk.getUTCMonth(), bkk.getUTCDate(), 0, 0, 0) - 7 * 3600 * 1000;
+  return { from: new Date(startUtcMs).toISOString(), to: new Date().toISOString() };
+}
+
+// ─── ตัวเลขวิ่ง count-up (ease-out) ─────────────────────────────────────────
+function CountNumber({ value, format = fmtInt, className = "" }) {
+  const [disp, setDisp] = useState(value);
+  const fromRef = useRef(value);
+  const rafRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current, to = Number(value) || 0;
+    if (from === to) { setDisp(to); return; }
+    const dur = 850; let start = 0;
+    const step = (ts) => {
+      if (!start) start = ts;
+      const p = Math.min((ts - start) / dur, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisp(from + (to - from) * eased);
+      if (p < 1) rafRef.current = requestAnimationFrame(step);
+      else fromRef.current = to;
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [value]);
+  return <span className={`dash-num ${className}`}>{format(disp)}</span>;
+}
+
+const keyOf = (l) => `${l.part_unit_id || "?"}|${l.scanned_at}|${l.operation?.name || "?"}|${l.quantity}`;
+
+export default function Dashboard() {
+  const [logs, setLogs] = useState([]);
+  const [booted, setBooted] = useState(false);
+  const [now, setNow] = useState(new Date());
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("mls-dash-lang") === "en" ? "en" : "th"; } catch { return "th"; }
+  });
+  const t = STR[lang];
+  const setLangSave = (l) => { setLang(l); try { localStorage.setItem("mls-dash-lang", l); } catch { /* ignore */ } };
+  const [fresh, setFresh] = useState(new Set());       // key ของสแกนใหม่ (ไฮไลต์ฟีด)
+  const [hit, setHit] = useState(new Set());           // ชื่อเครื่องที่เพิ่งมีงานเข้า (แฟลชการ์ด)
+  const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
+  const hitTimer = useRef(0);
+  const hourlyRef = useRef([]);                        // อ้างอิงข้อมูลกราฟคงที่ (กันรีอนิเมชันซ้ำ)
+
+  const fetchNow = useCallback(async () => {
+    const { from, to } = bangkokTodayRange();
+    let data;
+    try {
+      data = await getScanLogsBetween(from, to);
+    } catch {
+      // ดึงข้อมูลพลาด (เน็ต/DB) → อย่าค้างสปินเนอร์ ปล่อยให้โพลรอบหน้าลองใหม่
+      setBooted(true);
+      return;
+    }
+    const rows = Array.isArray(data) ? data : [];
+    setLogs(rows);
+    setBooted(true);
+
+    // ตรวจสแกนใหม่ (เทียบกับรอบก่อน) — รอบแรกถือว่า "เห็นแล้วทั้งหมด" ไม่แฟลช
+    const keys = new Set(rows.map(keyOf));
+    if (seenRef.current) {
+      const freshKeys = new Set();
+      const hitMachines = new Set();
+      for (const l of rows) {
+        const k = keyOf(l);
+        if (!seenRef.current.has(k)) { freshKeys.add(k); if (l.machine?.name) hitMachines.add(l.machine.name); }
+      }
+      if (freshKeys.size) {
+        setFresh(freshKeys);
+        setHit(hitMachines);
+        clearTimeout(hitTimer.current);
+        hitTimer.current = setTimeout(() => { setHit(new Set()); setFresh(new Set()); }, 1600);
+      }
+    }
+    seenRef.current = keys;
+  }, []);
+
+  // จอโชว์ไม่มีคนกด → มีเวอร์ชันใหม่ก็รีโหลดเงียบๆ เอง (หน่วง 4 วิ กันจังหวะกำลังอัปเดต)
+  const updateReady = useUpdateReady();
+  useEffect(() => {
+    if (!updateReady) return;
+    const t = setTimeout(() => applyUpdate(), 4000);
+    return () => clearTimeout(t);
+  }, [updateReady]);
+
+  // โหลดรอบแรก + โพลทุก 5 วิ (near real-time) + นาฬิกาเดินทุก 1 วิ
+  useEffect(() => {
+    fetchNow();
+    const poll = setInterval(fetchNow, 5000);
+    const clock = setInterval(() => setNow(new Date()), 1000);
+    return () => { clearInterval(poll); clearInterval(clock); clearTimeout(hitTimer.current); };
+  }, [fetchNow]);
+
+  // เรียลไทม์: มีงานหน้าเครื่องเข้ามาปุ๊บ ดึงใหม่ทันที (ถ้าเปิด replication ไว้)
+  useEffect(() => {
+    let ch;
+    try {
+      ch = supabase
+        .channel("dash-machine-records")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "machine_records" }, () => fetchNow())
+        .subscribe();
+    } catch { /* ถ้าไม่รองรับ realtime ก็ยังมี poll 5 วิ */ }
+    return () => { try { ch && supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, [fetchNow]);
+
+  // ── สรุปตัวเลข ────────────────────────────────────────────────────────
+  // memo ตาม logs เท่านั้น — นาฬิกาเดินทุก 1 วิ ไม่ต้องคำนวณยอดทั้งวันใหม่ (เปลือง CPU
+  // บนจอเปิดทั้งวัน) · ค่าจริงเปลี่ยนแค่ตอนโพล 5 วิ
+  const { totalPieces, totalKg, totalSec, scanCount, machines, maxKg, feed } = useMemo(() => {
+    const tPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+    const tKg = logs.reduce((s, l) => s + (Number(l.weight) || 0), 0);
+    const tSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+    const matrix = machineOpMatrix(logs);
+    const mach = matrix.machines.map((m) => {
+      const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
+      return { name: m.name, op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
+    });
+    return {
+      totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
+      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: logs.slice(0, 9),
+    };
+  }, [logs]);
+
+  // ── กราฟการผลิตรายชั่วโมง (กก. ต่อ ชม.) ตามเวลาไทย ────────────────────
+  // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
+  // ไม่ควรทำให้กราฟรีเซ็ต/กระพริบใหม่) — Recharts จะขยับก็ต่อเมื่อค่าจริงเปลี่ยน
+  const HOUR = 3600 * 1000;
+  const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
+  const hourly = useMemo(() => {
+    const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
+    const perHourKg = new Array(24).fill(0);
+    for (const l of logs) perHourKg[bkkHour(l.scanned_at)] += Number(l.weight) || 0;
+    const active = logs.map((l) => bkkHour(l.scanned_at));
+    let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
+    startH = Math.min(startH, Math.max(0, curH - 3)); // โชว์อย่างน้อย ~4 จุด
+    const arr = [];
+    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, kg: Math.round(perHourKg[h] * 10) / 10 });
+    // คงอ้างอิงเดิมถ้าค่าเท่าเดิม → กราฟไม่รีอนิเมชันซ้ำทุกโพล/ทุกวินาที
+    if (JSON.stringify(arr) === JSON.stringify(hourlyRef.current)) return hourlyRef.current;
+    hourlyRef.current = arr;
+    return arr;
+  }, [logs, curH]);
+
+  if (!booted) {
+    return (
+      <div className="dash-boot">
+        <div className="spin" />
+        <div style={{ fontSize: "2vh" }}>{t.booting}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dash">
+      {/* ── header ── */}
+      <div className="dash-head">
+        <div className="dash-title">
+          MACHINING LINE
+          <span className="sub">{t.subtitle}</span>
+        </div>
+        <div className="dash-headright">
+          <div className="dash-langsel">
+            <button className={lang === "th" ? "on" : ""} onClick={() => setLangSave("th")}>ไทย</button>
+            <button className={lang === "en" ? "on" : ""} onClick={() => setLangSave("en")}>EN</button>
+          </div>
+          <div className="dash-live"><span className="dot" /> {t.live}</div>
+          <div style={{ textAlign: "right" }}>
+            <div className="dash-clock dash-num">{fmtClock(now)}</div>
+            <div className="dash-date">{fmtDateLoc(now, lang)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── KPI hero row ── */}
+      <div className="dash-kpi-row">
+        <Kpi label={t.kpiPieces} value={totalPieces} format={fmtInt} unit={t.unitPieces} flash={hit.size > 0} />
+        <Kpi label={t.kpiWeight} value={totalKg} format={fmtKg} unit={t.unitKg} flash={hit.size > 0} />
+        <Kpi label={t.kpiTime} value={totalSec} format={(v) => fmtHrs(v, lang)} unit="" flash={hit.size > 0} />
+        <Kpi label={t.kpiScans} value={scanCount} format={fmtInt} unit={t.unitTimes} flash={hit.size > 0} />
+      </div>
+
+      {/* ── แถบอนิเมชันสายการผลิต (เหนือ Machines) ── */}
+      <MachineLine />
+
+      {/* ── main: machine cards + chart ── */}
+      <div className="dash-main">
+        <div className="dash-panel">
+          <div className="dash-panel-h"><span>{t.machines}</span><span style={{ color: "var(--dash-green)" }}>{machines.length} {t.machineUnit}</span></div>
+          {machines.length === 0 ? (
+            <div className="dash-empty">{t.noWork}</div>
+          ) : (
+            <div className="dash-machines">
+              {machines.map((m) => (
+                <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
+                  <div className="name">{m.name}{m.op ? <span className="op">{m.op}</span> : null}</div>
+                  <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
+                  <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
+                  <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="dash-panel">
+          <div className="dash-panel-h"><span>{t.hourly}</span></div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {hourly.length === 0 ? (
+              <div className="dash-empty">{t.waitingData}</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourly} margin={{ top: 12, right: 18, left: 4, bottom: 4 }}>
+                  <defs>
+                    <linearGradient id="dashArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#14e39a" stopOpacity={0.55} />
+                      <stop offset="100%" stopColor="#14e39a" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#24302a" vertical={false} />
+                  <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
+                    tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
+                  <YAxis stroke="#24302a" tickLine={false} width={56}
+                    tick={{ fill: "#9db1a8", fontSize: 13 }}
+                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  <Area type="monotone" dataKey="kg" stroke="#14e39a" strokeWidth={3}
+                    fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
+                    activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
+                    animationDuration={900} isAnimationActive />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── live feed ── */}
+      <div className="dash-feed dash-panel">
+        <div className="dash-panel-h"><span>{t.liveFeed}</span></div>
+        {feed.length === 0 ? (
+          <div className="dash-empty">{t.waitingScan}</div>
+        ) : (
+          <div className="dash-feed-list">
+            {feed.map((l) => {
+              const finished = String(l.status).toLowerCase() === "finished";
+              return (
+                <div key={keyOf(l)} className={`dash-feed-item ${fresh.has(keyOf(l)) ? "fresh" : ""}`}>
+                  <div className="part">{l.part_unit?.part_master?.part_no || "—"}</div>
+                  <div className="qty">+{fmtInt(l.quantity)}</div>
+                  <div className="line2">
+                    <span className="chip">{l.machine?.name || "—"}</span>
+                    {l.operation?.name ? <span>{l.operation.name}</span> : null}
+                    <span className={finished ? "st-fin" : "st-inp"}>{finished ? t.finished : t.inProcess}</span>
+                  </div>
+                  <div className="time dash-num">{timeOf(l.scanned_at)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
+// ─── แถบอนิเมชัน "สายการผลิตกำลังทำงาน" (SVG ในตัว: สายพานวิ่ง + แขนกล + ชิ้นงาน) ──
+const MLINE_SVG = `
+<svg class="mline" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Production line running">
+  <defs>
+    <linearGradient id="mlSteel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a473f"/><stop offset="1" stop-color="#212c27"/></linearGradient>
+    <linearGradient id="mlAlu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8ede9"/><stop offset="1" stop-color="#9fb0a7"/></linearGradient>
+  </defs>
+  <style>
+    .mline{width:100%;height:100%;display:block}
+    .ml-belt{animation:mlBelt 1s linear infinite}
+    @keyframes mlBelt{to{stroke-dashoffset:-32}}
+    .ml-parts g{animation:mlPart 6s linear infinite}
+    @keyframes mlPart{0%{transform:translateX(0);opacity:0}6%{opacity:1}88%{opacity:1}100%{transform:translateX(956px);opacity:0}}
+    .ml-a{animation:mlArrow 1.2s ease-in-out infinite}.ml-a.a2{animation-delay:.2s}.ml-a.a3{animation-delay:.4s}
+    @keyframes mlArrow{0%,100%{opacity:.2}50%{opacity:1}}
+    .ml-scr{animation:mlScr 2.4s ease-in-out infinite}@keyframes mlScr{0%,100%{opacity:.9}50%{opacity:.4}}
+    .ml-led{animation:mlLed 1.4s steps(1) infinite}.ml-led.l2{animation-delay:.7s}
+    @keyframes mlLed{0%,60%{opacity:1}61%,100%{opacity:.2}}
+    .ml-spark{transform-origin:273px 122px;animation:mlSpark .16s steps(2) infinite}
+    @keyframes mlSpark{0%{opacity:.9}50%{opacity:.25}100%{opacity:.8}}
+    .ml-box{animation:mlBox 6s ease-in-out infinite}@keyframes mlBox{0%,68%{opacity:0;transform:translateX(-12px)}80%{opacity:1;transform:translateX(0)}100%{opacity:1}}
+  </style>
 
-// อ่าน session token (ออกโดย verify_login, เก็บโดย auth.setSession) — แนบไปกับทุก
-// การเขียน เพื่อให้ DB ตรวจ token + role ก่อนอนุญาต (ดู migration-2-rls-lockdown.sql)
-function authToken() {
-  try { return JSON.parse(localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session"))?.token || null; }
-  catch { return null; }
-}
+  <!-- flow arrows (infeed) -->
+  <g fill="none" stroke="#14e39a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path class="ml-a a1" d="M16 100 l16 14 -16 14"/><path class="ml-a a2" d="M42 100 l16 14 -16 14"/><path class="ml-a a3" d="M68 100 l16 14 -16 14"/>
+  </g>
 
-// ── Generic table helpers ───────────────────────────────────────────────────
-// อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
-// (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
+  <!-- conveyor belt -->
+  <rect x="95" y="120" width="1010" height="22" rx="11" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <line class="ml-belt" x1="108" y1="131" x2="1092" y2="131" stroke="#14e39a" stroke-width="3" stroke-dasharray="16 16" stroke-linecap="round" opacity="0.55"/>
+  <g fill="#0d1310"><rect x="150" y="142" width="10" height="34" rx="2"/><rect x="430" y="142" width="10" height="34" rx="2"/><rect x="720" y="142" width="10" height="34" rx="2"/><rect x="1010" y="142" width="10" height="34" rx="2"/></g>
 
-export async function listRows(table, { order, ascending = true, filters } = {}) {
-  // แบ่งหน้าเอง (page 1000) — กันเพดาน 1,000 แถวของ PostgREST ที่ตัดข้อมูลเงียบๆ (H5)
-  const pageSize = 1000; let from = 0; let all = [];
-  for (;;) {
-    let q = supabase.from(table).select("*");
-    if (filters) { for (const [col, val] of Object.entries(filters)) q = q.eq(col, val); }
-    if (order) q = q.order(order, { ascending });
-    q = q.range(from, from + pageSize - 1);
-    const { data, error } = await q;
-    if (error) { console.warn("listRows error", table, error); return all; }
-    all = all.concat(data || []);
-    if (!data || data.length < pageSize) break;
-    from += pageSize;
-  }
-  return all;
-}
+  <!-- parts moving on belt -->
+  <g class="ml-parts">
+    <g style="animation-delay:0s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-2s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+    <g style="animation-delay:-4s">
+      <rect x="120" y="100" width="168" height="18" rx="2" fill="url(#mlAlu)" stroke="#828f88" stroke-width="0.7"/>
+      <rect x="126" y="103" width="156" height="12" rx="1" fill="#7fd6c0" opacity="0.30"/>
+      <line x1="162" y1="100" x2="162" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="204" y1="100" x2="204" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <line x1="246" y1="100" x2="246" y2="118" stroke="#79877f" stroke-width="1.2"/>
+      <rect x="120" y="100" width="168" height="2.6" rx="1" fill="#14e39a" opacity="0.5"/>
+    </g>
+  </g>
 
-export async function insertRow(table, row) {
-  const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
-  if (error) { console.warn("insertRow error", table, error); throw error; }
-  return data;
-}
+  <!-- Machine A: cutting -->
+  <g>
+    <rect x="228" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="242" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="246" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="250" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="266" cy="104" r="4.5" fill="#ffc23d"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 273 122" to="360 273 122" dur="0.5s" repeatCount="indefinite"/>
+      <circle cx="273" cy="122" r="16" fill="#c2c8d0" stroke="#0d1310" stroke-width="2"/><circle cx="273" cy="122" r="16" fill="none" stroke="#0d1310" stroke-width="3" stroke-dasharray="3 5"/><circle cx="273" cy="122" r="4" fill="#14e39a"/>
+    </g>
+    <g class="ml-spark" fill="#ffb02e"><path d="M266 122 l-9 -5 M266 124 l-11 2 M266 126 l-8 6"/><circle cx="255" cy="120" r="1.6"/><circle cx="252" cy="127" r="1.4"/></g>
+  </g>
 
-export async function insertRows(table, rows) {
-  const { data, error } = await supabase.rpc("authz_insert_many", { p_token: authToken(), p_tbl: table, p_payload: rows });
-  if (error) { console.warn("insertRows error", table, error); throw error; }
-  return data || [];
-}
+  <!-- Robot arm 1 (pick & place) -->
+  <rect x="404" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="3.4s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="-22 421 100; 8 421 100; -22 421 100"/>
+    <rect x="416" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="406" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="404" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="432" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="421" cy="100" r="9" fill="#14e39a"/>
 
-export async function updateRow(table, id, patch) {
-  const { data, error } = await supabase.rpc("authz_update", { p_token: authToken(), p_tbl: table, p_id: id, p_payload: patch });
-  if (error) { console.warn("updateRow error", table, error); throw error; }
-  return data;
-}
+  <!-- Machine B: drilling -->
+  <g>
+    <rect x="556" y="46" width="90" height="76" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="570" y="58" width="62" height="28" rx="4" fill="#0b1512"/><rect class="ml-scr" x="574" y="62" width="54" height="20" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="578" cy="104" r="4.5" fill="#22e07a"/><circle class="ml-led l2" cx="594" cy="104" r="4.5" fill="#ffc23d"/>
+    <rect x="598" y="88" width="6" height="8" fill="#39473f"/>
+    <g><animateTransform attributeName="transform" attributeType="XML" type="translate" dur="1.1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" values="0 0; 0 16; 0 0"/><rect x="599" y="96" width="4" height="20" fill="#aeb6bd"/></g>
+  </g>
 
-// Bulk update: apply the same patch to every row matching the given filters.
-// Used e.g. to propagate a release's edited weight/length down to all its part_units.
-export async function updateRows(table, filters, patch) {
-  const { data, error } = await supabase.rpc("authz_update_where", { p_token: authToken(), p_tbl: table, p_filters: filters, p_payload: patch });
-  if (error) { console.warn("updateRows error", table, error); throw error; }
-  return data || 0; // จำนวนแถวที่อัปเดต
-}
+  <!-- Robot arm 2 -->
+  <rect x="734" y="100" width="34" height="44" rx="6" fill="url(#mlSteel)" stroke="#0d1310"/>
+  <g><animateTransform attributeName="transform" attributeType="XML" type="rotate" dur="2.9s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1" values="14 751 100; -16 751 100; 14 751 100"/>
+    <rect x="746" y="40" width="10" height="62" rx="5" fill="#46564d"/><rect x="736" y="30" width="30" height="14" rx="4" fill="#2c3a34"/><rect x="734" y="26" width="6" height="16" rx="2" fill="#39473f"/><rect x="762" y="26" width="6" height="16" rx="2" fill="#39473f"/>
+  </g>
+  <circle cx="751" cy="100" r="9" fill="#14e39a"/>
 
-export async function deleteRow(table, id) {
-  const { error } = await supabase.rpc("authz_delete", { p_token: authToken(), p_tbl: table, p_id: id });
-  if (error) { console.warn("deleteRow error", table, error); throw error; }
-}
+  <!-- Output machine + boxes -->
+  <g>
+    <rect x="980" y="52" width="94" height="70" rx="9" fill="url(#mlSteel)" stroke="#0d1310"/>
+    <rect x="994" y="64" width="66" height="26" rx="4" fill="#0b1512"/><rect class="ml-scr" x="998" y="68" width="58" height="18" rx="2" fill="#14e39a"/>
+    <circle class="ml-led l1" cx="998" cy="106" r="4.5" fill="#22e07a"/>
+  </g>
+  <g class="ml-box" style="animation-delay:0s"><rect x="1096" y="96" width="40" height="26" rx="3" fill="#2c3a34" stroke="#0d1310"/><rect x="1096" y="106" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+  <g class="ml-box" style="animation-delay:-3s"><rect x="1096" y="70" width="40" height="24" rx="3" fill="#33413a" stroke="#0d1310"/><rect x="1096" y="79" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
+</svg>`;
 
-// Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
-export async function deleteRows(table, ids) {
-  if (!ids || ids.length === 0) return;
-  const { error } = await supabase.rpc("authz_delete_many", { p_token: authToken(), p_tbl: table, p_ids: ids });
-  if (error) { console.warn("deleteRows error", table, error); throw error; }
-}
-
-// ออกจากระบบ — ยกเลิก token ฝั่ง DB (เรียกก่อน clearSession)
-export async function logoutSession() {
-  const t = authToken();
-  if (t) { try { await supabase.rpc("logout", { p_token: t }); } catch (_) { /* ignore */ } }
-}
-
-// เปิด/ปิดการใช้งานพนักงาน (admin เท่านั้น) — ผ่าน RPC
-export async function setEmployeeActive(id, active) {
-  const { error } = await supabase.rpc("set_employee_active", { p_token: authToken(), p_id: id, p_active: active });
-  if (error) { console.warn("set_employee_active error", error); throw error; }
-}
-
-// Delete a release entirely, along with every part_unit it created and any
-// scan_logs recorded against those units (FK constraints require deleting
-// children before parents). Caller is responsible for warning the user first
-// if any of those units have already been scanned — this does not check.
-export async function deleteReleaseCascade(releaseId) {
-  // cascade (scan_logs → part_units → releases) ทำใน RPC เดียว = atomic + ตรวจสิทธิ์
-  const { error } = await supabase.rpc("authz_delete_release", { p_token: authToken(), p_release_id: releaseId });
-  if (error) { console.warn("deleteReleaseCascade error", error); throw error; }
-}
-
-// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
-export async function deleteCap(machineId, operationId) {
-  const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
-  if (error) { console.warn("deleteCap error", error); throw error; }
-}
-
-const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
-
-// หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
-// ออนไลน์ = ถามฐานข้อมูล + เก็บลงแคชไว้ใช้ออฟไลน์ · ออฟไลน์/เน็ตมีปัญหา = อ่านจากแคช
-export async function findUnitByQr(qrCode) {
-  const qr = String(qrCode || "").trim();
-  if (!qr) return null;
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return await getCachedUnit(qr);                       // ออฟไลน์ → แคชอย่างเดียว
-  }
-  const { data, error } = await supabase
-    .from("part_units").select(UNIT_SELECT).eq("qr_code", qr).maybeSingle();
-  if (error) {
-    console.warn("findUnitByQr error", error);
-    return (await getCachedUnit(qr)) || null;             // เน็ตสะดุด → ลองแคช
-  }
-  if (data) cacheUnit(data);                              // เก็บไว้ใช้ตอนเน็ตหลุด
-  return data;
+function MachineLine() {
+  return <div className="dash-panel dash-line" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
 }
 
-// โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
-// จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
-export async function prefetchUnitsForOffline(limit = 4000) {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
-  const pageSize = 1000; let from = 0; let total = 0;
-  for (; from < limit;) {
-    const { data, error } = await supabase
-      .from("part_units").select(UNIT_SELECT)
-      .order("created_at", { ascending: false })
-      .range(from, Math.min(from + pageSize, limit) - 1);
-    if (error) { console.warn("prefetchUnits error", error); break; }
-    if (!data || !data.length) break;
-    await cacheUnitsBulk(data);
-    total += data.length;
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return total;
-}
-
-// จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
-// ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
-//   ออนไลน์ = ยอดจริงจาก DB + งานที่ยังค้างคิว (ยังไม่ซิงค์) แล้ว snapshot ไว้
-//   ออฟไลน์ = snapshot ล่าสุด + งานที่ค้างคิว
-export async function getReleaseProgress(releaseId, operationId = null) {
-  if (!releaseId) return 0;
-  // นับ "แยกตามขั้นตอน (operation) ของเครื่องนี้" — เครื่องตัด/เจาะ/บาก มีตัวนับของตัวเอง
-  // ยึดตามเครื่องจักรเป็นหลัก: เจาะไปกี่ชิ้น OF จำนวนสั่ง โดยไม่รวมยอดของขั้นตอนอื่น
-  const key = releaseId + (operationId ? "|" + operationId : "");
-  // สเตชันนี้ทำ operation เดียว → งานค้างคิวทั้งหมดคือ operation นี้อยู่แล้ว
-  const queued = queuedQtyForRelease(releaseId);
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return (await getCachedProgress(key)) + queued;
-  }
-  let q = supabase.from("machine_records").select("quantity").eq("release_id", releaseId);
-  if (operationId) q = q.eq("operation_id", operationId);   // เฉพาะขั้นตอนของเครื่องนี้
-  const { data, error } = await q;
-  if (error) {
-    console.warn("getReleaseProgress error", error);
-    return (await getCachedProgress(key)) + queued;
-  }
-  const done = (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-  setCachedProgress(key, done);                           // snapshot ไว้ใช้ออฟไลน์ (แยกตาม operation)
-  return done + queued;
-}
-
-// ประวัติการสแกนทั้งหมดของชิ้นเดียว
-export async function getUnitHistory(partUnitId) {
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name,code)")
-    .eq("part_unit_id", partUnitId)
-    .order("scanned_at", { ascending: true });
-  if (error) {
-    console.warn("getUnitHistory error", error);
-    return [];
-  }
-  return data || [];
-}
-
-// part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
-export async function getAllUnitsFull(statusFilter) {
-  // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
-  const pageSize = 1000; let from = 0; let all = [];
-  for (;;) {
-    let q = supabase
-      .from("part_units")
-      .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
-      .order("created_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (statusFilter) q = q.eq("status", statusFilter);
-    const { data, error } = await q;
-    if (error) { console.warn("getAllUnitsFull error", error); break; }
-    all = all.concat(data || []);
-    if (!data || data.length < pageSize) break;
-    from += pageSize;
-  }
-  return all;
-}
-
-// ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
-// (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
-// Caller ต้องแจ้งเตือนผู้ใช้ก่อนเสมอ — ฟังก์ชันนี้ไม่เช็คว่ามีการสแกนไปแล้วหรือยัง
-export async function deleteProjectCascade(projectId) {
-  // cascade (scan_logs → part_units → releases → part_master → projects) ใน RPC เดียว
-  const { error } = await supabase.rpc("authz_delete_project", { p_token: authToken(), p_project_id: projectId });
-  if (error) { console.warn("deleteProjectCascade error", error); throw error; }
-}
-
-// ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
-export async function getProjectImpact(projectId) {
-  const { data: pm } = await supabase.from("part_master").select("id").eq("project_id", projectId);
-  const partIds = (pm || []).map((p) => p.id);
-  if (partIds.length === 0) return { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0 };
-
-  const { data: rel } = await supabase.from("releases").select("id").in("part_master_id", partIds);
-  const releaseIds = (rel || []).map((r) => r.id);
-  if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
-
-  const { data: units } = await supabase.from("part_units").select("status").in("release_id", releaseIds);
-  const unitList = units || [];
-  return {
-    partCount: partIds.length,
-    releaseCount: releaseIds.length,
-    unitCount: unitList.length,
-    scannedCount: unitList.filter((u) => u.status !== "released").length,
-  };
-}
-export async function getReleasesFull() {
-  const { data, error } = await supabase
-    .from("releases")
-    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name)), employee:employees(name, code)")
-    .order("release_date", { ascending: false });
-  if (error) {
-    console.warn("getReleasesFull error", error);
-    return [];
-  }
-  return data || [];
-}
-
-// สถิติ part_units (total / finished / in_progress) จัดกลุ่มตาม release_id
-// ใช้ในหน้า Release Detail แสดงความคืบหน้าต่อ Part
-export async function getUnitStatsByReleaseIds(releaseIds) {
-  if (!releaseIds || releaseIds.length === 0) return {};
-  // นับที่ฝั่ง DB (group by) — ไม่ติดเพดาน 1,000 แถวเหมือนการดึงมานับใน browser
-  const { data, error } = await supabase.rpc("release_unit_stats", { p_release_ids: releaseIds });
-  if (error) { console.warn("release_unit_stats error", error); return {}; }
-  const stats = {};
-  for (const r of data || []) {
-    stats[r.release_id] = {
-      total: Number(r.total) || 0,
-      finished: Number(r.finished) || 0,
-      inProgress: Number(r.in_progress) || 0,
-    };
-  }
-  return stats;
-}
-
-// ความคืบหน้า "แยกตามขั้นตอน" ต่อ Release (จากงานหน้าเครื่อง machine_records)
-// คืน { <release_id>: [ {op, seq, done, finished}, ... ] } — ดู release_op_progress RPC
-export async function getReleaseOpProgress(releaseIds) {
-  if (!releaseIds || releaseIds.length === 0) return {};
-  const { data, error } = await supabase.rpc("release_op_progress", { p_release_ids: releaseIds });
-  if (error) { console.warn("release_op_progress error", error); return {}; }
-  return data || {};
-}
-
-// ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
-// คืน { <project_id>: { finished, weight } }
-export async function getProjectStationProgress() {
-  const { data, error } = await supabase.rpc("project_station_progress");
-  if (error) { console.warn("project_station_progress error", error); return {}; }
-  return data || {};
-}
-
-// ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
-// จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
-export async function getEmployees() {
-  const { data, error } = await supabase
-    .from("employees")
-    .select("id, code, name, role, active, department_id, machine_id, operation_id, created_at")
-    .order("code", { ascending: true });
-  if (error) { console.warn("getEmployees error", error); return []; }
-  return data || [];
-}
-
-// ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
-
-// บันทึกการสแกน 1 ครั้งแบบ atomic — เครื่อง/ขั้นตอน/พนักงาน ดึงจาก session token ฝั่ง DB
-// (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
-export async function recordScan({ unitId }) {
-  const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
-  if (error) { console.warn("record_scan error", error); return { ok: false, reason: "error", message: error.message }; }
-  return data || { ok: false, reason: "error" };
-}
-
-// ── Offline scan queue (localStorage) — โหมดหน้าเครื่องกันสแกนหายเมื่อเน็ตสะดุด ────
-const SCAN_Q_KEY = "mls-scan-queue";
-const scanQListeners = new Set();
-function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || []; } catch { return []; } }
-// เขียนคิวลง localStorage แบบ "ไม่โยน error" — ถ้าที่เก็บเต็ม (quota/โหมดส่วนตัว) จะ
-// warn + แจ้ง event แทนที่จะทำให้ flush ค้าง (ดู B4 ในรายงานคุณภาพ) · คืน true=สำเร็จ
-function qWrite(a) {
-  try {
-    localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a));
-    scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} });
-    return true;
-  } catch (e) {
-    console.warn("qWrite failed (storage full?)", e);
-    try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ }
-    return false;
-  }
-}
-export function scanQueueCount() { return qRead().length; }
-export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
-// รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
-function queuedQtyForRelease(releaseId) {
-  if (!releaseId) return 0;
-  return qRead().reduce((s, it) =>
-    s + (it.release_id === releaseId ? (Number(it.machineWork?.p_quantity) || 0) : 0), 0);
-}
-function isNetworkErr(error) {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
-  return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
-}
-
-// ── คิว "ซิงค์ไม่สำเร็จถาวร" — งานที่ทำออฟไลน์แล้วพอจะซิงค์ กลับเจอว่า QR/ล็อตถูกลบ
-//    หรือถูกแก้ฝั่งออฟฟิศ (not_found ฯลฯ) → ไม่ทิ้งเงียบ เก็บไว้ให้แจ้ง/ลองใหม่ได้
-const REJECT_Q_KEY = "mls-scan-rejected";
-const rejectListeners = new Set();
-function rjRead() { try { return JSON.parse(localStorage.getItem(REJECT_Q_KEY)) || []; } catch { return []; } }
-function rjWrite(a) { localStorage.setItem(REJECT_Q_KEY, JSON.stringify(a)); rejectListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
-function pushRejected(item, reason) {
-  const a = rjRead();
-  if (item.qid && a.some((r) => r.qid === item.qid)) return;   // กันซ้ำในคิว rejected (bug: overlapping flush)
-  a.push({ ...item, reason, rejectedAt: Date.now() }); rjWrite(a);
-}
-export function rejectedQueueCount() { return rjRead().length; }
-export function onRejectedQueue(cb) { rejectListeners.add(cb); return () => rejectListeners.delete(cb); }
-export function listRejected() { return rjRead(); }
-// เอากลับเข้าคิวลองซิงค์ใหม่ (เช่นหลังออฟฟิศกู้ล็อตคืน)
-export function retryRejected() {
-  const rj = rjRead(); if (!rj.length) return;
-  const q = qRead();
-  for (const it of rj) { const { reason, rejectedAt, ...orig } = it; q.push(orig); }
-  qWrite(q); rjWrite([]); flushScanQueue();
-}
-export function clearRejected() { rjWrite([]); }
-
-// สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
-export async function recordScanByQr(qr, { allowQueue = true } = {}) {
-  const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
-  if (error) {
-    if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ qr, qid: newClientId(), ts: Date.now() });
-      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
-      return { ok: true, queued: true };
-    }
-    console.warn("record_scan_by_qr error", error);
-    return { ok: false, reason: "error", message: error.message };
-  }
-  return data || { ok: false, reason: "error" };
-}
-
-// พยายามส่งคิวที่ค้างขึ้น server (เรียกตอนเน็ตกลับ/เป็นระยะ)
-// ⚠️ ปลอดภัยต่อการเรียกซ้อน: มี guard กันรันพร้อมกัน + เอาออกจากคิวตาม "qid" (ไม่ทับของ
-//    ที่ถูก enqueue ระหว่างซิงค์) — กันงานออฟไลน์หายจากการเขียนทับคิว
-let _flushing = false;
-export async function flushScanQueue() {
-  if (_flushing) return;
-  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-  // ให้ทุก item มี qid (migrate ของเก่าที่ยังไม่มี) เพื่อเอาออกแบบเจาะจงตอนจบ
-  let a = qRead();
-  if (a.length === 0) return;
-  let migrated = false;
-  a = a.map((it) => (it.qid ? it : (migrated = true, { ...it, qid: newClientId() })));
-  if (migrated) qWrite(a);
-
-  _flushing = true;
-  const done = new Set();          // qid ที่จัดการเสร็จแล้ว (สำเร็จ/ถูก reject) → เอาออกจากคิว
-  const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (นับเฉพาะ error รอบนี้)
-  const rejects = [];
-  const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
-  try {
-    for (const item of a) {
-      let data, error;
-      if (item.machineWork) {
-        ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
-      } else {
-        ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
-      }
-      if (error) {
-        // แยก "เน็ต/DB สะดุด" (retry) ออกจาก "พลาดถาวร" (วนไม่จบ) — H3
-        if (typeof navigator !== "undefined" && navigator.onLine === false) continue; // ออฟไลน์ = ไม่ถือเป็นครั้ง
-        const at = (Number(item.attempts) || 0) + 1;
-        if (at >= MAX_ATTEMPTS) { rejects.push({ item, reason: "retry_exhausted" }); done.add(item.qid); }
-        else bumped.set(item.qid, at);                            // ยังไม่ถึงเพดาน → คงไว้ retry (บันทึกจำนวนครั้ง)
-        continue;
-      }
-      if (data && data.ok === false) {
-        if (data.reason === "unauthorized") continue;             // token หมดอายุ → คงไว้รอ login
-        rejects.push({ item, reason: data.reason });              // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
-        done.add(item.qid);
-        continue;
-      }
-      done.add(item.qid);                                         // ok / deduped = สำเร็จ
-    }
-  } finally {
-    // ★ ปลดล็อกก่อนเสมอ — กันค้างถาวรถ้าเขียน localStorage พลาด (B4)
-    _flushing = false;
-    try {
-      // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
-      // + อัปเดตจำนวนครั้งที่ลองพลาด (attempts) ของ item ที่ยังคงอยู่
-      const cur = qRead();
-      qWrite(cur.filter((it) => !done.has(it.qid))
-                .map((it) => (bumped.has(it.qid) ? { ...it, attempts: bumped.get(it.qid) } : it)));
-      for (const r of rejects) pushRejected(r.item, r.reason);    // pushRejected กันซ้ำด้วย qid แล้ว
-    } catch (e) { console.warn("flush finalize failed", e); }
-  }
-}
-
-if (typeof window !== "undefined") {
-  window.addEventListener("online", () => { flushScanQueue(); });
-  setInterval(() => { if (qRead().length) flushScanQueue(); }, 15000);
-}
-
-// สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
-// rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
-// คืน { releasesCreated, partsCreated, unitsCreated }
-export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows }) {
-  const { data, error } = await supabase.rpc("create_release_batch", {
-    p_token: authToken(),
-    p_project_id: projectId,
-    p_release_order: releaseOrder || null,
-    p_release_date: releaseDate || null,
-    p_released_by: releasedBy || null,
-    p_make_qr: !!makeQr,
-    p_rows: rows,
-  });
-  if (error) {
-    console.warn("create_release_batch error", error);
-    throw error;
-  }
-  return data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
-}
-
-// สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
-// ส่ง id=null เพื่อสร้างใหม่, password="" เพื่อไม่เปลี่ยนรหัสตอนแก้ไข
-export async function upsertEmployee(emp) {
-  const { data, error } = await supabase.rpc("upsert_employee", {
-    p_token: authToken(),
-    p_id: emp.id || null,
-    p_code: emp.code,
-    p_name: emp.name,
-    p_password: emp.password || "",
-    p_role: emp.role || "operator",
-    p_department_id: emp.department_id || null,
-    p_machine_id: emp.machine_id || null,
-    p_operation_id: emp.operation_id || null,
-    p_active: emp.active ?? true,
-  });
-  if (error) {
-    console.warn("upsert_employee error", error);
-    throw error;
-  }
-  return data; // uuid
-}
-
-// คำนวณสถานะชิ้นงานย้อนหลังของ Part หนึ่ง (หลังตั้ง/แก้ Routing) — คืน { updated, finished }
-export async function recalcPartStatus(partMasterId) {
-  const { data, error } = await supabase.rpc("recalc_part_status", { p_token: authToken(), p_part_master_id: partMasterId });
-  if (error) { console.warn("recalc_part_status error", error); throw error; }
-  return data || { updated: 0, finished: 0 };
-}
-
-// ── สำรองข้อมูล (Backup / Export) ────────────────────────────────────────
-// ดึงข้อมูล "ทุกตารางหลัก" ออกมาเป็นก้อน JSON เดียว เพื่อดาวน์โหลดเก็บเอง
-// (สำรองอีกชั้นนอกเหนือจากแบ็คอัพอัตโนมัติของ Supabase) — อ่านอย่างเดียว ไม่แก้ข้อมูล
-// หมายเหตุ: ไม่รวม employees — คอลัมน์ password_hash ถูกซ่อนจาก anon (security-hardening)
-//   ทำให้ select * ล้มเหลว/ได้ 0 แถว และนำเข้ากลับก็ชน NOT NULL · จัดการพนักงานที่ Setup
-export const BACKUP_TABLES = [
-  "projects", "part_master", "releases", "part_units",
-  "scan_logs", "machine_records", "operations", "machines",
-  "machine_operations", "departments",
-];
-
-export async function exportAllData(onProgress) {
-  const tables = {};
-  const counts = {};
-  for (let i = 0; i < BACKUP_TABLES.length; i++) {
-    const t = BACKUP_TABLES[i];
-    if (onProgress) onProgress({ table: t, index: i, total: BACKUP_TABLES.length });
-    const rows = await listRows(t);
-    tables[t] = rows;
-    counts[t] = rows.length;
-  }
-  return {
-    _meta: {
-      app: "machining-line-system",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      counts,
-      totalRows: Object.values(counts).reduce((a, b) => a + b, 0),
-    },
-    tables,
-  };
-}
-
-// ── จุดกู้คืนในแอป (Restore Points) — ผ่าน RPC (ตรวจ admin ฝั่ง DB) ─────────
-export async function ensureDailyBackup() {
-  const { data, error } = await supabase.rpc("ensure_daily_backup", { p_token: authToken() });
-  if (error) { console.warn("ensure_daily_backup", error); return null; }
-  return data;
-}
-export async function listBackups() {
-  const { data, error } = await supabase.rpc("list_backups", { p_token: authToken() });
-  if (error) { console.warn("list_backups", error); throw error; }
-  return data || [];
-}
-export async function snapshotAllProjects(kind = "manual") {
-  const { data, error } = await supabase.rpc("snapshot_all_projects", { p_token: authToken(), p_kind: kind });
-  if (error) { console.warn("snapshot_all_projects", error); throw error; }
-  return data;
-}
-export async function snapshotProject(projectId, kind = "manual") {
-  const { data, error } = await supabase.rpc("snapshot_project", { p_token: authToken(), p_project_id: projectId, p_kind: kind });
-  if (error) { console.warn("snapshot_project", error); throw error; }
-  return data;
-}
-export async function restoreBackup(backupId, mode = "merge") {
-  const { data, error } = await supabase.rpc("restore_backup", { p_token: authToken(), p_backup_id: backupId, p_mode: mode });
-  if (error) { console.warn("restore_backup", error); throw error; }
-  return data;
-}
-// นำเข้าไฟล์สำรอง (JSON ที่ดาวน์โหลดไว้) กลับเข้าระบบ — เติมเฉพาะที่หายไป (merge)
-export async function importBackup(tables, mode = "merge") {
-  const { data, error } = await supabase.rpc("import_backup", { p_token: authToken(), p_data: tables, p_mode: mode });
-  if (error) { console.warn("import_backup", error); throw error; }
-  return data;
-}
-
-// รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
-export async function getProjectSummary() {
-  const { data, error } = await supabase.rpc("project_summary");
-  if (error) { console.warn("project_summary error", error); return []; }
-  return data || [];
-}
-export async function getPartSummary() {
-  const { data, error } = await supabase.rpc("part_summary");
-  if (error) { console.warn("part_summary error", error); return []; }
-  return data || [];
-}
-
-// scan log ทั้งหมดในช่วงเวลา สำหรับรายงาน — รวม scan_logs (สำนักงาน) +
-// machine_records (หน้าเครื่อง) ผ่าน RPC report_logs (ดู migration-station-report-merge.sql)
-// คืน array รูปทรงเดียวกับ scan_logs เดิม (machine/operation/employee/part_unit ซ้อน) → metrics.js ใช้ต่อได้เลย
-export async function getScanLogsBetween(fromIso, toIso) {
-  const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
-  if (error) { console.warn("report_logs error", error); return []; }
-  return data || [];
-}
-
-// ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
-// ดึงบันทึกงานของ "เครื่องของ token นี้" เฉพาะวันนี้ + ยอดรวมประจำวัน (จาก DB)
-// คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
-// (เครื่อง/พนักงานดึงจาก session token ฝั่ง DB — client ปลอมไม่ได้)
-export async function getMachineDay() {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return offlineMachineDay();                           // ออฟไลน์ → snapshot + งานค้างคิว
-  }
-  const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
-  if (error) {
-    console.warn("machine_day error", error);
-    return offlineMachineDay();                           // เน็ตสะดุด → ใช้ snapshot แทนจอเปล่า
-  }
-  if (data && data.ok !== false) setDaySnapshot(data);    // เก็บ snapshot ล่าสุดไว้ใช้ออฟไลน์
-  return data || { ok: false };
-}
-
-// สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
-async function offlineMachineDay() {
-  const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
-  const q = qRead().filter((it) => it.machineWork);
-  if (!q.length) return { ...snap, offline: true };
-  const daily = { ...(snap.daily || { quantity: 0, weight: 0, process_seconds: 0 }) };
-  const records = Array.isArray(snap.records) ? [...snap.records] : [];
-  let item = records.length;
-  for (const it of q) {
-    const mw = it.machineWork;
-    daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
-    daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
-    records.push({
-      id: "q-" + (it.ts || item), item: ++item,
-      qty: Number(mw.p_quantity) || 0, status: mw.p_status,
-      process_seconds: Number(mw.p_process_seconds) || 0,
-      materials_length: mw.p_material_length, pending: true,   // ธง = ยังไม่ซิงค์
-    });
-  }
-  return { ok: true, daily, records, offline: true };
-}
-
-// heartbeat: บอกเซิร์ฟเวอร์ว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน) +
-// เช็คว่าถูก superseded (โดนเข้าแทน) หรือยัง · fail-safe: error = ถือว่ายังปกติ
-export async function sessionHeartbeat() {
-  const t = authToken(); if (!t) return { ok: false };
-  try {
-    const { data, error } = await supabase.rpc("session_heartbeat", { p_token: t });
-    if (error) return { ok: false };
-    return data || { ok: false };
-  } catch { return { ok: false }; }
-}
-
-// บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
-// • p_client_id = UUID ต่อการบันทึก (สร้างครั้งเดียว) → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
-// • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
-// คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
-export async function recordMachineWork(
-  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt },
-  { allowQueue = true } = {}
-) {
-  const payload = {
-    p_token: authToken(),
-    p_qr: String(qr || "").trim(),
-    p_quantity: Number(quantity) || 0,
-    p_material_length: materialLengthMm == null || materialLengthMm === "" ? null : Number(materialLengthMm),
-    p_process_seconds: Number(processSeconds) || 0,
-    p_status: status || "inprocess",
-    p_client_id: clientId || newClientId(),               // idempotency key (คงเดิมทุกครั้งที่ลองซิงค์)
-    p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
-  };
-  const { data, error } = await supabase.rpc("record_machine_work", payload);
-  if (error) {
-    if (allowQueue && isNetworkErr(error)) {
-      // เก็บ release_id ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number ออฟไลน์
-      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, qid: payload.p_client_id, ts: Date.now() });
-      // ★ ถ้าเขียนคิวไม่ได้ (ที่เก็บเต็ม/โหมดส่วนตัว) อย่าบอกว่าสำเร็จ — งานจะหายเงียบ
-      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
-      return { ok: true, queued: true };
-    }
-    console.warn("record_machine_work error", error);
-    return { ok: false, reason: "error", message: error.message };
-  }
-  return data || { ok: false, reason: "error" };
+function Kpi({ label, value, format, unit, flash }) {
+  return (
+    <div className={`dash-kpi ${flash ? "flash" : ""}`}>
+      <div className="lbl">{label}</div>
+      <div className="val"><CountNumber value={value} format={format} />{unit ? <span className="unit">{unit}</span> : null}</div>
+    </div>
+  );
 }
