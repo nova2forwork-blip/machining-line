@@ -100,7 +100,14 @@ export default function Dashboard() {
 
   const fetchNow = useCallback(async () => {
     const { from, to } = bangkokTodayRange();
-    const data = await getScanLogsBetween(from, to);
+    let data;
+    try {
+      data = await getScanLogsBetween(from, to);
+    } catch {
+      // ดึงข้อมูลพลาด (เน็ต/DB) → อย่าค้างสปินเนอร์ ปล่อยให้โพลรอบหน้าลองใหม่
+      setBooted(true);
+      return;
+    }
     const rows = Array.isArray(data) ? data : [];
     setLogs(rows);
     setBooted(true);
