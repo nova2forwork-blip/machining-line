@@ -544,6 +544,12 @@ export async function restoreBackup(backupId, mode = "merge") {
   if (error) { console.warn("restore_backup", error); throw error; }
   return data;
 }
+// นำเข้าไฟล์สำรอง (JSON ที่ดาวน์โหลดไว้) กลับเข้าระบบ — เติมเฉพาะที่หายไป (merge)
+export async function importBackup(tables, mode = "merge") {
+  const { data, error } = await supabase.rpc("import_backup", { p_token: authToken(), p_data: tables, p_mode: mode });
+  if (error) { console.warn("import_backup", error); throw error; }
+  return data;
+}
 
 // รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
 export async function getProjectSummary() {
