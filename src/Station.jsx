@@ -144,6 +144,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   const toastRef = useRef(null);
   const [pending, setPending] = useState(scanQueueCount());
   const [rejected, setRejected] = useState(rejectedQueueCount());
+  const [storageFull, setStorageFull] = useState(false);   // ที่เก็บเต็ม — โชว์แถบค้างจนกว่าจะบันทึกได้
 
   // ── load today's records for this machine ──────────────────────────────
   const reload = useCallback(async () => {
@@ -202,10 +203,12 @@ function MachineStation({ user, onLogout, onKicked }) {
   }, []);
 
   // แจ้งเตือนถ้าที่เก็บข้อมูลเต็ม (เขียนคิวไม่ได้) — งานอาจไม่ถูกบันทึก (B4)
+  // โชว์เป็นแถบค้าง (ไม่ใช่ toast วูบเดียว) เพราะเป็นเหตุการณ์ข้อมูลหาย ต้องเห็นตลอด
   useEffect(() => {
-    const onFull = () => flash("⚠ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก แจ้งผู้ดูแลระบบ", "warn");
+    const onFull = () => { setStorageFull(true); errorBeep(); };
     window.addEventListener("mls-storage-full", onFull);
     return () => window.removeEventListener("mls-storage-full", onFull);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ขอสิทธิ์กล้องครั้งเดียวตอนแตะจอครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ ไม่ได้ผ่านหน้าล็อกอิน)
@@ -239,8 +242,9 @@ function MachineStation({ user, onLogout, onKicked }) {
   function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; }
   useEffect(() => () => stopTimer(), []);
 
-  function resetAll() {
-    stopTimer(); setElapsed(0); setMaterialLen(""); setUnit(null); setProgress(null); setQty(0);
+  function resetAll(keepLen = false) {
+    stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setQty(0);
+    if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStep(STEP.IDLE);
   }
 
@@ -250,7 +254,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   const prevStepRef = useRef(STEP.REC);
   function onRecord() {
     if (step === STEP.IDLE) {
-      if (!matReady) { flash("กรอกความยาววัสดุ (Material Lenght) ก่อน", "warn"); return; }
+      if (!matReady) { flash("กรอกความยาววัสดุ (Material Length) ก่อน", "warn"); return; }
       startTimer();
       setStep(STEP.REC);
     } else if (step !== STEP.CANCEL) {
@@ -267,6 +271,8 @@ function MachineStation({ user, onLogout, onKicked }) {
   // ── SCAN ──────────────────────────────────────────────────────────────
   // เสียงเตือน "ครั้งเดียว" ตอนสแกน/กดผิด (ไม่ค้าง ไม่วนซ้ำ)
   function errorBeep() { beep(320, 240, 0.32); vibrate([90, 60, 90]); }
+  function okBeep() { beep(1180, 80, 0.20); vibrate(45); }         // เสียงสั้นสูง = บันทึกสำเร็จ (ต่างจาก error ชัดเจน)
+  function tickBeep() { beep(880, 45, 0.14); }                     // เสียงเบาๆ = สแกนเจอชิ้นงาน
 
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
@@ -284,7 +290,8 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (!qr) return false;
     setBusy(true);
     const u = await findUnitByQr(qr);
-    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR นี้ในระบบ — กรอกใหม่", "warn"); return false; }
+    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR นี้ในระบบ — สแกนใหม่ หรือพิมพ์รหัสด้านล่าง", "warn"); return false; }
+    tickBeep();   // เสียงเบายืนยันว่าสแกนเจอชิ้นงาน (ต่างจาก error)
     // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
     // done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
     // ยึดตามเครื่องจักร: ตัด/เจาะ/บาก นับแยกกัน (ไม่รวมยอดข้ามขั้นตอน)
@@ -332,9 +339,11 @@ function MachineStation({ user, onLogout, onKicked }) {
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
         return;
       }
+      setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
       if (res.queued) {
+        okBeep();
         flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
-        resetAll();
+        resetAll(true);        // เก็บความยาววัสดุไว้ (มักเท่าเดิมทั้งชุด)
         return;
       }
       // update table + daily from server response
@@ -345,8 +354,9 @@ function MachineStation({ user, onLogout, onKicked }) {
       } else {
         reload();
       }
+      okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
       flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
-      resetAll();
+      resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
     } finally {
       setBusy(false);
       savingRef.current = false;
@@ -365,6 +375,13 @@ function MachineStation({ user, onLogout, onKicked }) {
   return (
     <div className="stn-shell">
       {pending > 0 && <div className="stn-pending">⏳ ค้างซิงค์ {pending}</div>}
+      {storageFull && (
+        <div className="stn-rejected" onClick={() => setStorageFull(false)}
+          style={{ background: "#b91c1c" }}
+          title="ที่เก็บข้อมูลในเครื่องเต็ม">
+          ⛔ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)
+        </div>
+      )}
       {rejected > 0 && (
         <div className="stn-rejected" onClick={retryRejected}
           title="แตะเพื่อลองซิงค์อีกครั้ง (หลังออฟฟิศกู้/แก้ข้อมูลแล้ว)">
@@ -390,7 +407,7 @@ function MachineStation({ user, onLogout, onKicked }) {
               <tr>
                 <th>ITEM</th><th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
                 <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th>
-                <th>LENGHT<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
+                <th>LENGTH<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
                 <th>INVENTORY<br />CODE</th><th>PROCESS<br />TIME</th><th>STATUS</th>
               </tr>
             </thead>
@@ -460,16 +477,18 @@ function MachineStation({ user, onLogout, onKicked }) {
           <div className="stn-control">
             <div className="stn-ctl-main">
               <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
-              <div className={`stn-mat${recording ? " live" : ""}`}>
-                <div className="lbl">Material Lenght</div>
+              <div className={`stn-mat${recording ? " live" : ""}`}
+                style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
+                <div className="lbl">Material Length {step === STEP.IDLE && !matReady ? "· กรอกก่อน" : ""}</div>
                 <input
                   inputMode="numeric" disabled={recording}
                   value={materialLen} placeholder="0"
                   onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
                 />
               </div>
+              {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
-                disabled={busy || (step === STEP.IDLE && !matReady)}>
+                disabled={busy}>
                 <span>{recording ? "STOP" : "START"}</span><span className="stn-rec-dot" />
               </button>
               <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
@@ -593,7 +612,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
         <div style={{ marginBottom: 8 }}>
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
         </div>
-        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGHT</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
+        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
       </div>
     );
   }
