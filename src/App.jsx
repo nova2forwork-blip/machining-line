@@ -825,6 +825,14 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
     if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code)"); return; }
+    // กันจำนวนติดลบ/ทศนิยม/ใหญ่ผิดปกติ (เว้นว่าง = 1) — จำนวนชิ้นต้องเป็นจำนวนเต็มบวก
+    const badRow = validRows.find((r) => {
+      const raw = String(r.qty ?? "").trim();
+      if (raw === "") return false;              // เว้นว่าง = 1 (อนุญาต)
+      const q = Number(raw);
+      return !Number.isInteger(q) || q < 1 || q > 1000000;
+    });
+    if (badRow) { setErr(`จำนวนของ Part "${badRow.code || "-"}" ไม่ถูกต้อง — ต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป`); return; }
 
     setBusy(true); setErr(""); setProgress("กำลังบันทึกทั้งใบ...");
     try {
