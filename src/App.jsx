@@ -13,7 +13,7 @@ import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { useLang } from "./i18n-dom.js";
+import { useLang } from "./i18ndom.js";
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
@@ -35,10 +35,10 @@ const CHART = {
 function LangToggle() {
   const [lang, setLang] = useLang();
   return (
-    <div className="lang-toggle" style={{ display: "flex", gap: 0, border: "1px solid var(--border-soft, #e1e9e5)", borderRadius: 999, overflow: "hidden", marginBottom: 10 }}>
+    <div className="lang-toggle" style={{ display: "inline-flex", gap: 0, border: "1px solid var(--border-soft, #e1e9e5)", borderRadius: 999, overflow: "hidden", marginBottom: 10, alignSelf: "flex-start" }}>
       {[["th", "ไทย"], ["en", "EN"]].map(([v, label]) => (
         <button key={v} onClick={() => setLang(v)}
-          style={{ flex: 1, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, padding: "6px 0",
+          style={{ border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, padding: "3px 10px", lineHeight: 1.4,
             background: lang === v ? "var(--accent, #10b981)" : "transparent",
             color: lang === v ? "#fff" : "var(--muted, #6d7d76)", fontFamily: "inherit" }}>
           {label}
