@@ -8,6 +8,8 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, recalcPartStatus,
+  exportAllData, BACKUP_TABLES,
+  ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
@@ -3768,6 +3770,7 @@ function SetupPage() {
     { key: "parts", label: "Part Master / Routing" },
     { key: "employees", label: "พนักงาน" },
     { key: "departments", label: "แผนก" },
+    { key: "backup", label: "สำรองข้อมูล" },
   ];
   return (
     <div>
@@ -3785,6 +3788,276 @@ function SetupPage() {
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
       {tab === "parts" && <PartMasterCrud />}
+      {tab === "backup" && <><RestorePointsCard /><BackupCard /></>}
+    </div>
+  );
+}
+
+// ─── จุดกู้คืนในแอป: ดูสแนปช็อตย้อนหลัง 30 วัน แยกโปรเจค + กดกู้คืนได้เลย ────────
+function RestoreModal({ backup, onClose, onDone }) {
+  const [mode, setMode] = useState(null);   // 'merge' | 'replace'
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const code = backup.project_code || "";
+
+  async function run() {
+    setBusy(true); setErr("");
+    try {
+      const res = await restoreBackup(backup.id, mode);
+      onDone(res, mode);
+    } catch (e) {
+      setErr("กู้คืนไม่สำเร็จ: " + (e?.message || e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="กู้คืนข้อมูลโปรเจค" sub={`${code} — ${backup.project_name || ""} · จุดกู้คืนวันที่ ${fmtDT(backup.taken_at)}`} onClose={onClose} locked={busy}>
+      {!mode ? (
+        <>
+          <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, marginBottom: 14 }}>
+            เลือกวิธีกู้คืนสำหรับโปรเจคนี้ (สแนปช็อตนี้มี {fmtNum(backup.total_rows)} แถว):
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <button onClick={() => setMode("merge")}
+              style={{ textAlign: "left", cursor: "pointer", padding: "14px 16px", borderRadius: 10, border: "1px solid var(--border-soft, #e1e9e5)", background: "var(--surface-2, #f6faf8)", fontFamily: "inherit" }}>
+              <div style={{ fontWeight: 700, color: "var(--accent-dk)", marginBottom: 4 }}>กู้เฉพาะที่หายไป (แนะนำ)</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                คืนเฉพาะ Part / Release / QR ที่ถูกลบไป — <b>ข้อมูลเดิมและงานที่สแกนใหม่ทั้งหมดยังอยู่ครบ</b> ไม่ทับข้อมูลปัจจุบัน
+              </div>
+            </button>
+            <button onClick={() => setMode("replace")}
+              style={{ textAlign: "left", cursor: "pointer", padding: "14px 16px", borderRadius: 10, border: "1px solid var(--danger-hi, #d64545)", background: "var(--surface-2, #f6faf8)", fontFamily: "inherit" }}>
+              <div style={{ fontWeight: 700, color: "var(--danger-hi)", marginBottom: 4 }}>ย้อนทั้งโปรเจคกลับวันนั้น</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                โครงโปรเจคกลับเป็นสภาพวันนั้นเป๊ะ — <b style={{ color: "var(--danger-hi)" }}>การสแกนที่เกิดหลังวันนั้นบนโปรเจคนี้จะหายไป</b> (ต้องพิมพ์รหัสยืนยัน)
+              </div>
+            </button>
+          </div>
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <Btn type="button" variant="ghost" onClick={onClose}>ยกเลิก</Btn>
+          </div>
+        </>
+      ) : mode === "merge" ? (
+        <>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7, marginBottom: 16 }}>
+            ยืนยันกู้คืนแบบ <b style={{ color: "var(--accent-dk)" }}>เฉพาะที่หายไป</b> — ระบบจะเติมข้อมูลที่ถูกลบกลับมา
+            โดยไม่แตะข้อมูลปัจจุบันและการสแกนใหม่ทั้งหมด
+          </div>
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+          <div className="modal-actions">
+            <Btn type="button" variant="ghost" onClick={() => setMode(null)} disabled={busy}>ย้อนกลับ</Btn>
+            <Btn type="button" variant="accent" onClick={run} disabled={busy}>{busy ? "กำลังกู้คืน..." : "ยืนยันกู้คืน"}</Btn>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7, marginBottom: 8, color: "var(--danger-hi)", fontWeight: 600 }}>
+            ⚠ ย้อนทั้งโปรเจคกลับไปวันนั้น — การสแกนที่เกิดหลัง {fmtDT(backup.taken_at)} บนโปรเจคนี้จะหายไปถาวร
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
+            พิมพ์รหัสโปรเจค <b style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{code}</b> เพื่อยืนยัน
+          </div>
+          <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={code} autoFocus />
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 8 }}>{err}</div>}
+          <div className="modal-actions" style={{ marginTop: 14 }}>
+            <Btn type="button" variant="ghost" onClick={() => { setMode(null); setConfirmText(""); }} disabled={busy}>ย้อนกลับ</Btn>
+            <Btn type="button" variant="accent" onClick={run} disabled={busy || confirmText.trim() !== code}
+              style={{ background: confirmText.trim() === code ? "var(--danger-hi)" : undefined, borderColor: "var(--danger-hi)" }}>
+              {busy ? "กำลังย้อนข้อมูล..." : "ยืนยันย้อนทั้งโปรเจค"}
+            </Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function RestorePointsCard() {
+  const [rows, setRows] = useState(null);   // null = loading
+  const [err, setErr] = useState("");
+  const [projFilter, setProjFilter] = useState("");
+  const [restoring, setRestoring] = useState(null);   // backup ที่กำลังจะกู้คืน
+  const [snapBusy, setSnapBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      await ensureDailyBackup();          // สำรองอัตโนมัติของวันนี้ (ถ้ายังไม่มี)
+      setRows(await listBackups());
+      setErr("");
+    } catch (e) {
+      setRows([]);
+      setErr("โหลดจุดกู้คืนไม่สำเร็จ — ตรวจว่ารัน migration-project-backups.sql ใน Supabase แล้วหรือยัง (" + (e?.message || e) + ")");
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function snapshotNow() {
+    setSnapBusy(true); setMsg("");
+    try {
+      const n = await snapshotAllProjects("manual");
+      setMsg(`สร้างจุดกู้คืนแล้ว ${fmtNum(n)} โปรเจค`);
+      await load();
+    } catch (e) {
+      setErr("สร้างจุดกู้คืนไม่สำเร็จ: " + (e?.message || e));
+    }
+    setSnapBusy(false);
+  }
+
+  const projects = rows ? [...new Map(rows.filter(r => r.project_code).map(r => [r.project_code, r.project_name])).entries()] : [];
+  const shown = rows ? rows.filter(r => !projFilter || r.project_code === projFilter) : [];
+
+  return (
+    <>
+      <Card title="จุดกู้คืนในแอป (ย้อนหลัง 30 วัน)">
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, marginBottom: 14 }}>
+          ระบบเก็บ <b>สแนปช็อตอัตโนมัติทุกวัน</b> แยกตามโปรเจค เก็บย้อนหลัง 30 วัน — admin กดกู้คืนได้เองในแอป
+          โดยเลือกได้ว่าจะ <b>กู้เฉพาะที่หายไป</b> (งานสแกนใหม่ยังอยู่) หรือ <b>ย้อนทั้งโปรเจค</b> กลับไปวันนั้น
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+          <Btn variant="accent" onClick={snapshotNow} disabled={snapBusy}>
+            <Icon name="plus" size={14} />{snapBusy ? "กำลังสร้าง..." : "สร้างจุดกู้คืนตอนนี้"}
+          </Btn>
+          <Btn variant="ghost" size="sm" onClick={load}><Icon name="refresh" size={13} /> รีเฟรช</Btn>
+          {projects.length > 0 && (
+            <div style={{ minWidth: 220 }}>
+              <Select value={projFilter} onChange={(e) => setProjFilter(e.target.value)}
+                options={projects.map(([code, name]) => ({ value: code, label: `${code} — ${name}` }))} />
+            </div>
+          )}
+        </div>
+
+        {msg && <div style={{ color: "var(--success)", fontSize: 13, marginBottom: 10 }}>✓ {msg}</div>}
+        {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
+
+        {rows === null ? (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+        ) : shown.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="clock" size={30} />
+            <div className="empty-state-title">{projFilter ? "โปรเจคนี้ยังไม่มีจุดกู้คืน" : "ยังไม่มีจุดกู้คืน"}</div>
+            <div className="empty-state-sub">กด “สร้างจุดกู้คืนตอนนี้” เพื่อสำรองครั้งแรก</div>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>วันที่/เวลา</th><th>โปรเจค</th><th>ชนิด</th><th>จำนวนแถว</th><th></th></tr></thead>
+              <tbody>
+                {shown.map((b) => (
+                  <tr key={b.id}>
+                    <td style={{ whiteSpace: "nowrap" }}>{fmtDT(b.taken_at)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{b.project_code} — {b.project_name}</td>
+                    <td>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 999,
+                        background: b.kind === "auto" ? "var(--surface-3)" : "var(--accent)", color: b.kind === "auto" ? "var(--muted)" : "#fff" }}>
+                        {b.kind === "auto" ? "อัตโนมัติ" : "สร้างเอง"}
+                      </span>
+                    </td>
+                    <td>{fmtNum(b.total_rows)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <Btn variant="ghost" size="sm" onClick={() => setRestoring(b)}>
+                        <Icon name="refresh" size={13} /> กู้คืน
+                      </Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {restoring && (
+        <RestoreModal
+          backup={restoring}
+          onClose={() => setRestoring(null)}
+          onDone={(res, mode) => {
+            setRestoring(null);
+            setMsg(mode === "replace"
+              ? "ย้อนทั้งโปรเจคกลับเรียบร้อยแล้ว"
+              : "กู้คืนข้อมูลที่หายไปเรียบร้อยแล้ว");
+            load();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── สำรองข้อมูล: ดาวน์โหลดข้อมูลทุกตารางเป็นไฟล์ JSON เก็บเอง ─────────────────
+function BackupCard() {
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(null);   // { table, index, total }
+  const [last, setLast] = useState(null);           // { at, totalRows, name }
+  const [err, setErr] = useState("");
+
+  async function download() {
+    setBusy(true); setErr(""); setProgress(null);
+    try {
+      const dump = await exportAllData((p) => setProgress(p));
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+      const name = `mls-backup-${stamp}.json`;
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setLast({ at: now, totalRows: dump._meta.totalRows, name, counts: dump._meta.counts });
+    } catch (e) {
+      setErr("สำรองข้อมูลไม่สำเร็จ: " + (e?.message || e));
+    }
+    setBusy(false); setProgress(null);
+  }
+
+  return (
+    <div>
+      <Card title="สำรองข้อมูล (ดาวน์โหลดเก็บเอง)">
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, marginBottom: 14 }}>
+          กดปุ่มด้านล่างเพื่อดึงข้อมูล<b>ทุกตารางหลัก</b> (โปรเจค · Part · Release · QR · ประวัติสแกน · งานหน้าเครื่อง · พนักงาน ฯลฯ)
+          ออกมาเป็นไฟล์ <b>JSON</b> ไฟล์เดียว เก็บไว้ในเครื่อง/ไดรฟ์ของคุณเองได้ เป็นการสำรองอีกชั้นนอกเหนือจากแบ็คอัพอัตโนมัติของฐานข้อมูล
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.7, marginBottom: 16, padding: "10px 12px", background: "var(--surface-2, #f6faf8)", borderRadius: 8, border: "1px solid var(--border-soft, #e1e9e5)" }}>
+          💡 <b>แนะนำ:</b> เวลาทำงาน 8:00–17:00 น. — ควรดาวน์โหลดสำรอง<b>ช่วงหลังเลิกงาน (~18:00–21:00)</b> ของทุกวันทำงาน
+          เพราะข้อมูลของวันนั้นครบและนิ่งแล้ว · และควรกดสำรองเพิ่มก่อนนำเข้า Excel ชุดใหญ่ หรือก่อนลบโปรเจค/Release
+        </div>
+
+        {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
+
+        <Btn variant="accent" onClick={download} disabled={busy}>
+          <Icon name="box" size={15} />
+          {busy
+            ? (progress ? `กำลังดึง ${progress.table} (${progress.index + 1}/${progress.total})...` : "กำลังเตรียมข้อมูล...")
+            : "ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)"}
+        </Btn>
+
+        {last && (
+          <div style={{ marginTop: 16, fontSize: 13, color: "var(--text)" }}>
+            <div style={{ color: "var(--success)", fontWeight: 600, marginBottom: 4 }}>
+              ✓ สำรองข้อมูลล่าสุดสำเร็จ — {fmtNum(last.totalRows)} แถว
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              ไฟล์: {last.name} · เวลา {fmtDT(last.at.toISOString())}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card title="ตารางที่รวมอยู่ในไฟล์สำรอง">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {BACKUP_TABLES.map((t) => (
+            <span key={t} className="chip" style={{ fontFamily: "var(--font-mono)", fontSize: 12, cursor: "default" }}>{t}</span>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
+          ไฟล์นี้ใช้กู้คืน/นำเข้ากลับได้โดยทีมพัฒนา (โครงสร้างเป็น JSON มาตรฐาน แยกตามชื่อตาราง)
+        </div>
+      </Card>
     </div>
   );
 }
