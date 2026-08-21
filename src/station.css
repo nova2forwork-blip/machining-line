@@ -394,3 +394,20 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-carry { opacity: 1; transform: translateX(186px) translateY(40px); }
   .stn-walker { opacity: 0; }
 }
+
+/* ── ปุ่มเลือกขั้นตอน (ตัด/เจาะ/บาก) บนหน้าเครื่อง ──────────────────────────── */
+.stn-oppick {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; background: #10161c; border-bottom: 1px solid #223040;
+}
+.stn-oppick-lbl { color: #8aa0b4; font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+.stn-oppick-btn {
+  appearance: none; border: 2px solid #2c3e50; background: #16202b; color: #cdd9e5;
+  font-size: 18px; font-weight: 800; padding: 10px 22px; border-radius: 12px;
+  cursor: pointer; font-family: inherit; line-height: 1; letter-spacing: .02em;
+  transition: transform .08s ease, background .12s ease, border-color .12s ease;
+}
+.stn-oppick-btn:active { transform: scale(.96); }
+.stn-oppick-btn.sel { background: #14e39a; border-color: #14e39a; color: #06251a; }
+.stn-oppick-hint { color: #f0b429; font-size: 14px; font-weight: 700; }
+.stn-oppick.one .stn-oppick-btn.sel { font-size: 16px; padding: 7px 16px; }
