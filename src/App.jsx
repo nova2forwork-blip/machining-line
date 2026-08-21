@@ -1754,7 +1754,7 @@ function ReleasePage({ user, goTo }) {
                 );
               })}
               {!loading && groups.length === 0 && (
-                <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
+                <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
                   {hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม"}
                 </td></tr>
               )}
