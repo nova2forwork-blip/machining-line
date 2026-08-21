@@ -32,7 +32,9 @@ async function checkVersion() {
     const res = await fetch(`/?_v=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) return;
     const html = await res.text();
-    const m = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/i);
+    // รองรับทั้งลำดับ type="module" ... src และ src ... type="module" (กัน Vite สลับลำดับ attribute)
+    const m = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/i)
+           || html.match(/<script[^>]+src="([^"]+)"[^>]+type="module"/i);
     if (!m) return;
     const latest = new URL(m[1], location.href).pathname;
     if (baselineBundle && latest && latest !== baselineBundle) markUpdateReady();
