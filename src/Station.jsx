@@ -406,14 +406,14 @@ function MachineStation({ user, onLogout, onKicked }) {
             <thead>
               <tr>
                 <th>ITEM</th><th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
-                <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th>
+                <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BALANCE</th>
                 <th>LENGTH<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
                 <th>INVENTORY<br />CODE</th><th>PROCESS<br />TIME</th><th>STATUS</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={14}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
+                <tr className="stn-empty-row"><td colSpan={15}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
               )}
               {rows.map((r, i) => {
                 const fin = String(r.status).toLowerCase() === "finished";
@@ -430,6 +430,9 @@ function MachineStation({ user, onLogout, onKicked }) {
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
                       ? `${String(r.process_cum).padStart(4, "0")}/${String(r.req).padStart(4, "0")}` : "-"}</td>
+                    {/* BALANCE = คงเหลือ (REQ − PROCESS) · ติดลบ = ทำเกิน (สแปร์) */}
+                    <td className={r.process_cum != null && r.req != null && (r.req - r.process_cum) <= 0 ? "stn-st-fin" : ""}>
+                      {r.process_cum != null && r.req != null ? fmt(r.req - r.process_cum) : "-"}</td>
                     <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
                     <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
                     <td>{r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
