@@ -2233,6 +2233,7 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
         duplicate: `ผ่านขั้นตอน "${operation?.name || ""}" ไปแล้ว — ไม่บันทึกซ้ำ`,
         no_station: "บัญชีนี้ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ — แจ้ง Admin",
         unauthorized: "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่",
+        storage_full: "ที่เก็บข้อมูลในเครื่องเต็ม — บันทึกไม่สำเร็จ ลบข้อมูล/แอปอื่นแล้วลองใหม่",
         error: "บันทึกไม่สำเร็จ" + (res.message ? ": " + res.message : ""),
       };
       const tone = res.reason === "duplicate" ? "warning" : "danger";
@@ -2636,6 +2637,12 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedKey, effScope, units.length]);
 
+  // ป้าย QR ที่ต้องเรนเดอร์ "ซ่อน" เพิ่มตอนพิมพ์ (เฉพาะใบที่เลือกแต่ไม่อยู่ในพรีวิว 600 ใบแรก)
+  //   ★ ไม่เรนเดอร์ล่วงหน้าทั้งหมดตอนค้นหา → เลิกจอค้างเวลาล็อตใหญ่ (หมื่นใบ)
+  const [printHidden, setPrintHidden] = useState([]);
+  const [preparingPrint, setPreparingPrint] = useState(false);
+  const pendingPrintRef = useRef(null);
+
   function toggle(id) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
@@ -2651,6 +2658,34 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   function doPrint() {
     const picked = displayed.filter((u) => selected.has(u.id));
     if (!picked.length) { alert("กรุณาเลือกอย่างน้อย 1 ใบ"); return; }
+    // ใบที่เลือกแต่ไม่อยู่ในพรีวิว 600 ใบแรก ต้องเรนเดอร์ QR ซ่อนก่อน (printLabels อ่านจาก DOM)
+    const first600 = new Set(displayed.slice(0, 600).map((u) => u.id));
+    const needHidden = picked.filter((u) => !first600.has(u.id));
+    if (needHidden.length) {
+      pendingPrintRef.current = picked;
+      setPreparingPrint(true);
+      setPrintHidden(needHidden);        // เรนเดอร์เสร็จแล้ว effect จะสั่งพิมพ์ต่อ
+      return;
+    }
+    runPrint(picked);
+  }
+
+  // เมื่อ QR ซ่อนถูกเรนเดอร์ครบใน DOM แล้ว → สั่งพิมพ์ (แล้วเก็บกวาด)
+  useEffect(() => {
+    if (!preparingPrint || !pendingPrintRef.current) return;
+    const picked = pendingPrintRef.current;
+    pendingPrintRef.current = null;
+    // รอ 1 เฟรมให้ DOM วาด QR ที่เพิ่งเพิ่มเสร็จก่อนพิมพ์
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => {
+      runPrint(picked);
+      setPreparingPrint(false);
+      setPrintHidden([]);                // เคลียร์ QR ซ่อนออกจาก DOM หลังพิมพ์
+    }));
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printHidden, preparingPrint]);
+
+  function runPrint(picked) {
     const { w, h } = currentSize();
     // เติมข้อมูลลงแต่ละป้าย: อ้างอิง Release ของแต่ละใบเอง (รองรับหลายพาร์ท)
     const chosen = picked.map((u) => {
@@ -2785,7 +2820,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             </label>
             <div className="qr-toolbar-print">
               <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
-              <Btn variant="accent" onClick={doPrint}><Icon name="printer" size={15} />พิมพ์ ({fmtNum(selected.size)})</Btn>
+              <Btn variant="accent" onClick={doPrint} disabled={preparingPrint}>
+                <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `พิมพ์ (${fmtNum(selected.size)})`}
+              </Btn>
             </div>
           </div>
 
@@ -2804,14 +2841,14 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 );
               })}
             </div>
+            {/* QR ซ่อนสำหรับพิมพ์ — เรนเดอร์เฉพาะตอนกดพิมพ์ (ไม่ทำล่วงหน้าตอนค้นหา กันจอค้าง) */}
+            {printHidden.length > 0 && (
+              <div style={{ display: "none" }}>
+                {printHidden.map((u) => <QRCodeSVG key={u.id} id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />)}
+              </div>
+            )}
             {displayed.length > 600 && (
-              <>
-                {/* ใบที่เกิน 600 (พรีวิว) — ยังเรนเดอร์ QR ซ่อนไว้ เพื่อให้พิมพ์ครบทุกใบ */}
-                <div style={{ display: "none" }}>
-                  {displayed.slice(600).map((u) => <QRCodeSVG key={u.id} id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />)}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 2px", textAlign: "center" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
-              </>
+              <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 2px", textAlign: "center" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
             )}
           </div>
 
