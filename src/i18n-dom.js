@@ -174,6 +174,72 @@ const DICT = {
   "รายละเอียด": "Details", "จากวันที่": "From", "ถึงวันที่": "To",
   "ค้นหา Release ที่เคยปล่อยงาน หรือกด": "Search released lots, or press",
   "เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ": "to release new work (paste from Excel) · tap a row for progress, edit, or delete",
+
+  // ═══ หน้าเครื่องจักร (Station / Machine terminal) ═══════════════════════════
+  // — หน้าล็อกอิน —
+  "หน้าเครื่อง — เข้าสู่ระบบ": "Machine Terminal — Sign in",
+  "ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)": "Sign in with this machine's account (the account bound to it)",
+  "รหัสเครื่อง / พนักงาน": "Machine / employee code",
+  "จอนี้สำหรับติดหน้าเครื่องจักร (แนวนอน)": "This screen mounts on the machine (landscape)",
+  "ไปหน้าปกติ (สำนักงาน) →": "Go to the normal (office) page →",
+  "เช่น CT-001": "e.g. CT-001",
+  "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง": "Machine/employee code or password is incorrect",
+  "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้":
+    "This account hasn't signed in on this device yet — sign in once while online, then it can work offline next time",
+  "บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่": "This account was signed in on another device — please sign in again",
+  // — บัญชีไม่ได้ผูกเครื่อง —
+  "บัญชีนี้ยังไม่ได้ผูกเครื่องจักร": "This account isn't bound to a machine",
+  "หน้าเครื่องต้องใช้บัญชีที่กำหนด \"เครื่องจักรประจำ\" ไว้ที่ Setup → พนักงาน":
+    "The terminal needs an account with an assigned machine (Setup → Employees)",
+  "แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน": "Ask an Admin to set a machine for this account first",
+  "ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →": "Go to the office page (sign in again as Admin) →",
+  // — ปุ่มเลือกขั้นตอน —
+  "ขั้นตอน:": "Operation:",
+  "← แตะเลือกก่อนสแกน": "← tap to select before scanning",
+  // — มุมบน / รหัสเครื่อง —
+  "⏻ ออก": "⏻ Exit", "⛶ เต็มจอ": "⛶ Fullscreen", "เต็มจอ": "Fullscreen",
+  "— ไม่มีเครื่อง —": "— No machine —",
+  // — แถบเตือน —
+  "⏳ ค้างซิงค์": "⏳ Pending sync",
+  "⛔ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)":
+    "⛔ Storage full — work may not be saved! Close other apps / clear browser data and retry · notify admin (tap to hide)",
+  "ที่เก็บข้อมูลในเครื่องเต็ม": "Device storage is full",
+  "⚠️ ซิงค์ไม่สำเร็จ": "⚠️ Sync failed",
+  "— QR ถูกลบ/แก้ฝั่งออฟฟิศ · แตะเพื่อลองใหม่": "— QR deleted/edited at office · tap to retry",
+  "แตะเพื่อลองซิงค์อีกครั้ง (หลังออฟฟิศกู้/แก้ข้อมูลแล้ว)": "Tap to retry sync (after office restores/fixes data)",
+  // — ตาราง —
+  "ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย": "No records today — start your first job",
+  "ยังไม่ซิงค์ — รอเน็ตกลับมา": "Not synced yet — waiting for connection",
+  "โหลดข้อมูลไม่สำเร็จ": "Failed to load data",
+  // — พื้นที่ทำงาน (WorkArea) —
+  "พร้อมเริ่มงาน — กรอก": "Ready — enter",
+  "แล้วกด": "then press", "เพื่อเริ่มจับเวลา": "to start the timer",
+  "● กำลังบันทึกเวลา": "● Recording time",
+  "กด": "Press", "เพื่อสแกนชิ้นงาน": "to scan a part",
+  "ยกเลิกการบันทึก?": "Cancel this recording?",
+  "เวลาที่จับไว้ (": "The elapsed time (",
+  ") จะถูกล้างและเริ่มใหม่": ") will be cleared and the timer restarts",
+  // — กล้องสแกน —
+  "หรือพิมพ์รหัส QR": "Or type QR code", "ตกลง": "OK",
+  "✕ ปิดกล้อง / ยกเลิก": "✕ Close camera / Cancel", "ปิดกล้อง": "Close camera",
+  "เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้": "Can't open camera — type the QR code below instead",
+  // — แถบอัปเดต —
+  "● มีเวอร์ชันใหม่ — กดอัปเดตเมื่อพร้อม": "● New version available — update when ready",
+  "● มีเวอร์ชันใหม่ · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่": "● New version available · you're offline, reconnect and retry",
+  "อัปเดต": "Update",
+  // — ข้อความแจ้งเตือน (toast/flash) —
+  "กด START ก่อนเริ่มสแกน": "Press START before scanning",
+  "เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน": "Select an operation (cut/drill/notch) before scanning",
+  "ไม่พบ QR นี้ในระบบ — สแกนใหม่ หรือพิมพ์รหัสด้านล่าง": "This QR isn't in the system — scan again or type the code below",
+  "เลือกสถานะ In Process หรือ Finished": "Select status: In Process or Finished",
+  "ระบุจำนวนมากกว่า 0": "Enter a quantity greater than 0",
+  "จำนวนต้องเป็นจำนวนเต็ม": "Quantity must be a whole number",
+  "จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)": "Too many (max 100,000 per record)",
+  "กรอกความยาววัสดุ (Material Length) ก่อน": "Enter Material Length first",
+  "เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ": "Connection dropped — queued, will sync automatically",
+  "บันทึกแล้ว ✓ พร้อมงานถัดไป": "Saved ✓ ready for the next job",
+  "บันทึกไม่สำเร็จ": "Save failed",
+  "บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก": "Account used on another device — syncing pending work before exit",
 };
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
