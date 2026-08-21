@@ -592,6 +592,23 @@ export async function getMachineDay() {
   return data || { ok: false };
 }
 
+// รายการขั้นตอนที่เครื่องนี้ทำได้ (สำหรับปุ่มเลือกขั้นตอนบนหน้าเครื่อง)
+// เก็บ cache ไว้ใช้ตอนออฟไลน์ด้วย (localStorage)
+const MOPS_KEY = "mls-machine-ops";
+export async function getMachineOps() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
+  }
+  const { data, error } = await supabase.rpc("machine_ops", { p_token: authToken() });
+  if (error) {
+    console.warn("machine_ops error", error);
+    try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
+  }
+  const list = data || [];
+  try { localStorage.setItem(MOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+  return list;
+}
+
 // สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
 async function offlineMachineDay() {
   const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
@@ -630,7 +647,7 @@ export async function sessionHeartbeat() {
 // • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
 // คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
 export async function recordMachineWork(
-  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt },
+  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt, operationId },
   { allowQueue = true } = {}
 ) {
   const payload = {
@@ -642,6 +659,7 @@ export async function recordMachineWork(
     p_status: status || "inprocess",
     p_client_id: clientId || newClientId(),               // idempotency key (คงเดิมทุกครั้งที่ลองซิงค์)
     p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
+    p_operation_id: operationId || null,                   // ขั้นตอนที่เลือกบนจอ (null = ใช้ของบัญชี)
   };
   const { data, error } = await supabase.rpc("record_machine_work", payload);
   if (error) {
