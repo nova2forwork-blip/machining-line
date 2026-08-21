@@ -367,7 +367,8 @@ export async function recordScanByQr(qr, { allowQueue = true } = {}) {
   const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ qr, qid: newClientId(), ts: Date.now() }); qWrite(a);
+      const a = qRead(); a.push({ qr, qid: newClientId(), ts: Date.now() });
+      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
     }
     console.warn("record_scan_by_qr error", error);
@@ -646,7 +647,9 @@ export async function recordMachineWork(
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
       // เก็บ release_id ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number ออฟไลน์
-      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, qid: payload.p_client_id, ts: Date.now() }); qWrite(a);
+      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, qid: payload.p_client_id, ts: Date.now() });
+      // ★ ถ้าเขียนคิวไม่ได้ (ที่เก็บเต็ม/โหมดส่วนตัว) อย่าบอกว่าสำเร็จ — งานจะหายเงียบ
+      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
     }
     console.warn("record_machine_work error", error);
