@@ -271,6 +271,9 @@ function MachineStation({ user, onLogout, onKicked }) {
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
     warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
+    // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
+    // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
+    setUnit(null); setProgress(null); setQty(0); setStatus(null);
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
