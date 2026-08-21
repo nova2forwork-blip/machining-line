@@ -1188,6 +1188,31 @@ function groupReleases(list) {
   return Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
+// ── ตัวช่วยกลาง: คำนวณ "จำนวนเสร็จ" ของกลุ่ม Release ให้ทุกหน้าตรงกัน ──────────
+//   นิยามเดียว (ใช้เหมือนกันทั้ง Projects, รายการ Release, รายละเอียด Release):
+//   เสร็จ = max( เสร็จจากสแกนสำนักงาน (part_units.status),
+//                เสร็จจากขั้นตอนสุดท้ายของงานหน้าเครื่อง (machine_records) )  ไม่เกินจำนวนสั่ง
+//   → เลิกขัดกันเอง (เดิมพอมีงานหน้าเครื่องแม้แถวเดียว จะทิ้งยอดสำนักงานทันที = 400/400 กลายเป็น 0%)
+function computeGroupProgress(releases, unitStats, opProg, totalQty) {
+  const by = new Map();
+  for (const r of releases) {
+    for (const o of (opProg?.[r.id] || [])) {
+      const k = o.op || "ไม่ระบุ";
+      const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0 };
+      e.done += Number(o.done) || 0; e.finished += Number(o.finished) || 0;
+      by.set(k, e);
+    }
+  }
+  const opAgg = Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
+  const lastOp = opAgg.length ? opAgg[opAgg.length - 1] : null;
+  const stationFinished = lastOp ? Math.min(lastOp.finished, totalQty) : 0;
+  const officeFinished = releases.reduce((s, r) => s + (unitStats?.[r.id]?.finished || 0), 0);
+  const finished = Math.min(Math.max(officeFinished, stationFinished), totalQty);
+  // งานหน้าเครื่องเป็น "ตัวหลัก" เมื่อยอดหน้าเครื่อง ≥ ยอดสำนักงาน และมากกว่า 0
+  const stationDrove = stationFinished > 0 && stationFinished >= officeFinished;
+  return { finished, officeFinished, stationFinished, opAgg, lastOp, stationDrove };
+}
+
 // ── Mini progress bar (inline, no extra deps) ───────────────────────────────
 function ProgressBar({ pct, finished, total }) {
   const p = Math.min(100, Math.max(0, pct));
@@ -1423,35 +1448,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     } catch { loadStats(); }
   }
 
-  // รวมความคืบหน้า "แยกตามขั้นตอน" ของทั้ง Release Order (งานหน้าเครื่อง) — ตัด/เจาะ/บาก
-  const opAgg = (() => {
-    const by = new Map();
-    for (const r of releases) {
-      for (const o of opProg[r.id] || []) {
-        const k = o.op || "ไม่ระบุ";
-        const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0 };
-        e.done += Number(o.done) || 0; e.finished += Number(o.finished) || 0;
-        by.set(k, e);
-      }
-    }
-    return Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
-  })();
-
-  // รวมทุก Part ใน Release Order นี้
-  // ★ B3: ให้ "เสร็จแล้ว (ภาพรวม)" ตรงกับงานหน้าเครื่อง — ถ้ามีงานหน้าเครื่อง (opAgg)
-  //   ใช้ยอด "เสร็จของขั้นตอนสุดท้าย (most-downstream)" เป็นตัวแทน "ชิ้นที่เสร็จจริง"
-  //   ถ้าไม่มี ค่อย fallback ไปที่ part_units.status (งานสแกนฝั่งสำนักงาน)
+  // ★ ใช้ตัวช่วยกลาง computeGroupProgress → นิยาม "เสร็จ" เดียวกับหน้า Projects และ
+  //   รายการ Release (max ระหว่างสแกนสำนักงาน กับขั้นตอนสุดท้ายหน้าเครื่อง) — เลิกขัดกันเอง
   const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
-  const stationOn = opAgg.length > 0;
-  const lastOp = stationOn ? opAgg[opAgg.length - 1] : null;
-  const officeFinished = releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0), 0);
-  const totalFinished = stationOn ? Math.min(lastOp.finished, totalQty) : officeFinished;
-  const totalInProgress = stationOn
+  const { finished: totalFinished, opAgg, lastOp, stationDrove } =
+    computeGroupProgress(releases, unitStats, opProg, totalQty);
+  const totalInProgress = stationDrove
     ? Math.max(0, Math.min(lastOp.done, totalQty) - totalFinished)
     : releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
   const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
   const avgW = totalQty > 0 ? totalWeight / totalQty : 0;
-  const finishedWeight = stationOn
+  const finishedWeight = stationDrove
     ? totalFinished * avgW
     : releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
 
@@ -1506,7 +1513,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
                 น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
               </div>
-              {stationOn && (
+              {stationDrove && lastOp && (
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
                   * นับจากขั้นตอนสุดท้าย ({lastOp.op}) ของงานหน้าเครื่อง
                 </div>
@@ -3360,7 +3367,9 @@ function MachinesSummaryPage() {
 //   ใช้ ReleaseGroupDetail ตัวเดียวกับหน้า Release Production เพื่อให้รายละเอียดเหมือนกัน
 function ProjectReleasesView({ project, user, goTo, onBack }) {
   const [groups, setGroups] = useState(null);   // null = กำลังโหลด
-  const [stats, setStats] = useState({});       // release_id → { total, finished, ... }
+  const [stats, setStats] = useState({});       // release_id → { total, finished, ... } (สแกนสำนักงาน)
+  const [opProg, setOpProg] = useState({});     // release_id → [{op,seq,done,finished}] (งานหน้าเครื่อง)
+  const [statsReady, setStatsReady] = useState(false);
   const [viewGroup, setViewGroup] = useState(null);
 
   const load = useCallback(async () => {
@@ -3368,8 +3377,12 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     const mine = all.filter((r) => r.part_master?.project_id === project.id);
     setGroups(groupReleases(mine));
     const ids = mine.map((r) => r.id);
-    if (ids.length) getUnitStatsByReleaseIds(ids).then(setStats);
-    else setStats({});
+    setStatsReady(false);
+    if (ids.length) {
+      // โหลดทั้งสแกนสำนักงาน + งานหน้าเครื่อง เพื่อคำนวณ %เสร็จ ให้ตรงกับหน้าอื่น
+      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+        .then(([s, op]) => { setStats(s); setOpProg(op || {}); setStatsReady(true); });
+    } else { setStats({}); setOpProg({}); setStatsReady(true); }
   }, [project.id]);
   useEffect(() => { load(); }, [load]);
 
@@ -3411,10 +3424,10 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
               <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th></tr></thead>
               <tbody>
                 {groups.map((g) => {
-                  const gFinished = g.releases.reduce((s, r) => s + (stats[r.id]?.finished || 0), 0);
                   const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
+                  // ★ นิยาม "เสร็จ" เดียวกับหน้า Projects และรายละเอียด Release (max สำนักงาน/หน้าเครื่อง)
+                  const { finished: gFinished } = computeGroupProgress(g.releases, stats, opProg, gTotal);
                   const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
-                  const ready = g.releases.every((r) => r.id in stats);
                   return (
                     <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
                       <td data-label="วันที่">{fmtDT(g.date)}</td>
@@ -3422,7 +3435,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
                       <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
                       <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
                       <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
-                        {ready && gPct !== null ? (
+                        {statsReady && gPct !== null ? (
                           <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
                         ) : (
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
