@@ -3337,6 +3337,7 @@ function MachinesSummaryPage() {
                 <th>เครื่องจักร</th>
                 {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
                 <th>รวมทุกขั้นตอน</th>
+                <th>น้ำหนักรวม (กก.)</th>
                 <th>เวลาเดินเครื่อง</th>
               </tr>
             </thead>
@@ -3354,14 +3355,13 @@ function MachinesSummaryPage() {
                       </td>
                     );
                   })}
-                  <td style={{ fontWeight: 600 }}>
-                    {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
-                  </td>
+                  <td style={{ fontWeight: 600 }}>{m.total.count} ชิ้น</td>
+                  <td style={{ fontWeight: 600, color: "var(--accent-dk)" }}>{m.total.weight ? fmtNum(m.total.weight) : "—"}</td>
                   <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
                 </tr>
               ))}
               {matrix.machines.length === 0 && (
-                <tr><td colSpan={matrix.opNames.length + 3} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
+                <tr><td colSpan={matrix.opNames.length + 4} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
               )}
             </tbody>
           </table>
