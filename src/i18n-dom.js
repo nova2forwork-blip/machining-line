@@ -62,6 +62,8 @@ const DICT = {
   "ยืนยันย้อนทั้งโปรเจค": "Confirm full revert", "กำลังย้อนข้อมูล...": "Reverting…",
   "ย้อนกลับ": "Back", "ยังไม่มีจุดกู้คืน": "No restore points yet",
   "โปรเจคนี้ยังไม่มีจุดกู้คืน": "No restore points for this project",
+  "นำเข้าไฟล์สำรอง (กู้คืนจากไฟล์ JSON)": "Import backup (restore from JSON file)",
+  "เลือกไฟล์สำรอง แล้วนำเข้า": "Choose backup file & import", "กำลังนำเข้า...": "Importing…",
   "เลขที่ Release Order": "Release Order no.", "เลขที่ Release Order *": "Release Order no. *",
   "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Done", "เสร็จ": "Done", "ทำแล้ว": "Done",
   "กำลังทำ": "In progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
