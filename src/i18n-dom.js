@@ -122,6 +122,18 @@ const DICT = {
   // Release detail / progress modal
   "กลับไปหน้า Release": "Back to Releases", "โหลดความคืบหน้าล่าสุด": "Load latest progress",
   "กลับไปหน้า Projects": "Back to Projects",
+  // หัวข้อ + คำอธิบายแต่ละหน้า (2 ภาษา)
+  "พิมพ์ QR / ป้าย": "Print QR / Labels", "สแกนหน้าเครื่องจักร": "Scan at machine",
+  "เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค · แตะแถวเพื่อดู Release และ Part ในโปรเจคนั้น":
+    "Add / edit / delete projects + view progress by project · tap a row to see releases and parts",
+  "Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด":
+    "All releases in this project · tap a row to view parts and details",
+  "สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก": "Scan summary by period and selected Part",
+  "ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 2×2 ซม.":
+    "Find a lot you released before and reprint labels anytime — default size 2×2 cm",
+  "ค้นหา Release ที่เคยปล่อยงาน หรือกด \"เพิ่ม Release\" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ":
+    "Search past releases, or press \"Add Release\" to release new work (paste from Excel) · tap a row to view progress, edit, or delete",
+  "เลือกโหมดให้ตรงกับวิธีใช้งาน แล้วกด \"เริ่มสแกน\"": "Choose the mode that fits, then press \"Start scan\"",
   "ปล่อยงาน (Release)": "Release Production", "ตั้งค่า": "Setup", "รายงานข้อมูลสแกน": "Scan Report",
   "สรุปภาพรวม": "Overview", "สรุปเครื่องจักร": "Machines Summary", "สรุป Part": "Parts Summary",
   "ผู้ดูแลระบบ (Admin)": "Administrator", "หัวหน้างาน": "Supervisor", "พนักงาน": "Operator",
