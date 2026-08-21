@@ -8,7 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, recalcPartStatus,
-  exportAllData, BACKUP_TABLES,
+  exportAllData,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
@@ -4106,16 +4106,6 @@ function BackupCard() {
         )}
       </Card>
 
-      <Card title="ตารางที่รวมอยู่ในไฟล์สำรอง">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {BACKUP_TABLES.map((t) => (
-            <span key={t} className="chip" style={{ fontFamily: "var(--font-mono)", fontSize: 12, cursor: "default" }}>{t}</span>
-          ))}
-        </div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
-          ไฟล์นี้ใช้ดาวน์โหลดเก็บ และนำเข้ากลับได้ด้วยปุ่มด้านบน (โครงสร้างเป็น JSON มาตรฐาน แยกตามชื่อตาราง)
-        </div>
-      </Card>
     </div>
   );
 }
