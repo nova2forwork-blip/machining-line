@@ -128,10 +128,16 @@ export function printLabels(units, opts = {}) {
 </head><body>
 <div class="grid">${labelCells}</div>
 <script>
-  // พิมพ์ตอนโหลดเสร็จ · หลังเซฟ/ปิดกล่องพิมพ์ ให้ "ปิดหน้าต่างนี้เอง"
-  // กันหน้าต่างพิมพ์ค้างซ้อนกันหลายชั้นเมื่อสั่งพิมพ์หลายครั้ง
-  window.onafterprint = () => { try { window.close(); } catch (e) {} };
-  window.onload = () => { setTimeout(() => { window.print(); }, 120); };
+  // ปิดหน้าต่างนี้เองทั้งตอนกด "Save" และ "Cancel" — กันหน้าต่างพิมพ์ค้างซ้อนกัน
+  var closed = false;
+  function closeSelf(){ if (closed) return; closed = true; try { window.close(); } catch (e) {} }
+  window.onafterprint = closeSelf;               // ยิงเมื่อปิดกล่องพิมพ์ (เซฟหรือยกเลิก)
+  window.onload = function () {
+    setTimeout(function () {
+      window.print();                            // Chrome จะค้างตรงนี้จนกว่าจะปิดกล่อง
+      setTimeout(closeSelf, 300);                // เผื่อ onafterprint ไม่ยิง (เช่นกด Cancel) → ปิดเอง
+    }, 120);
+  };
 </script>
 </body></html>`;
 
