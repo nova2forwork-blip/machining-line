@@ -3350,7 +3350,7 @@ function MachinesSummaryPage() {
                     return (
                       <td key={op}>
                         {cell
-                          ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                          ? <span>{cell.count} ชิ้น</span>
                           : <span style={{ color: "var(--surface-3)" }}>—</span>}
                       </td>
                     );
