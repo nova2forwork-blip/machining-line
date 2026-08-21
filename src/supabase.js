@@ -490,10 +490,12 @@ export async function recalcPartStatus(partMasterId) {
 // ── สำรองข้อมูล (Backup / Export) ────────────────────────────────────────
 // ดึงข้อมูล "ทุกตารางหลัก" ออกมาเป็นก้อน JSON เดียว เพื่อดาวน์โหลดเก็บเอง
 // (สำรองอีกชั้นนอกเหนือจากแบ็คอัพอัตโนมัติของ Supabase) — อ่านอย่างเดียว ไม่แก้ข้อมูล
+// หมายเหตุ: ไม่รวม employees — คอลัมน์ password_hash ถูกซ่อนจาก anon (security-hardening)
+//   ทำให้ select * ล้มเหลว/ได้ 0 แถว และนำเข้ากลับก็ชน NOT NULL · จัดการพนักงานที่ Setup
 export const BACKUP_TABLES = [
   "projects", "part_master", "releases", "part_units",
   "scan_logs", "machine_records", "operations", "machines",
-  "machine_operations", "employees", "departments",
+  "machine_operations", "departments",
 ];
 
 export async function exportAllData(onProgress) {
