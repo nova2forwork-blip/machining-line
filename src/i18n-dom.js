@@ -65,8 +65,8 @@ const DICT = {
   "นำเข้าไฟล์สำรอง (กู้คืนจากไฟล์ JSON)": "Import backup (restore from JSON file)",
   "เลือกไฟล์สำรอง แล้วนำเข้า": "Choose backup file & import", "กำลังนำเข้า...": "Importing…",
   "เลขที่ Release Order": "Release Order no.", "เลขที่ Release Order *": "Release Order no. *",
-  "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Done", "เสร็จ": "Done", "ทำแล้ว": "Done",
-  "กำลังทำ": "In progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
+  "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Finished", "เสร็จ": "Finished", "ทำแล้ว": "Done",
+  "กำลังทำ": "In Progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
   "เสร็จแล้ว (ภาพรวม)": "Done (overall)", "ยังไม่มี Release": "No releases yet", "ยังไม่มีโปรเจค": "No projects yet",
 
   // สถานะ / ข้อความ
@@ -121,6 +121,15 @@ const DICT = {
 
   // Release detail / progress modal
   "กลับไปหน้า Release": "Back to Releases", "โหลดความคืบหน้าล่าสุด": "Load latest progress",
+  "กลับไปหน้า Projects": "Back to Projects",
+  "ปล่อยงาน (Release)": "Release Production", "ตั้งค่า": "Setup", "รายงานข้อมูลสแกน": "Scan Report",
+  "สรุปภาพรวม": "Overview", "สรุปเครื่องจักร": "Machines Summary", "สรุป Part": "Parts Summary",
+  "ผู้ดูแลระบบ (Admin)": "Administrator", "หัวหน้างาน": "Supervisor", "พนักงาน": "Operator",
+  "จำนวน (นับต่อขั้นตอน)": "Count (per operation)", "จำนวนที่บันทึก · นับต่อขั้นตอน": "Recorded · per operation",
+  "ยังไม่มี Release ในโปรเจคนี้": "No releases in this project",
+  "ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก": "Create the first release on the Release Production page",
+  "ยังไม่มี Part — เพิ่มที่ Setup › Part Master": "No parts yet — add them in Setup › Part Master",
+  "ยังไม่มีข้อมูลการปล่อยงาน": "No release data yet",
   "จำนวนทั้งหมด": "Total qty", "ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น": "Pieces done per operation",
   "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้": "No terminal work recorded for this part",
   "กดเพื่อดูความคืบหน้าแยกขั้นตอน": "Tap to view per-operation progress",
