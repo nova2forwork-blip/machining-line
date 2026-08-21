@@ -26,8 +26,8 @@ const STR = {
     subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
     kpiPieces: "ชิ้นที่ผลิตวันนี้", unitPieces: "ชิ้น",
     kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
-    kpiTime: "เวลาเดินเครื่องรวม",
-    kpiScans: "จำนวนครั้งที่บันทึก", unitTimes: "ครั้ง",
+    kpiTime: "เวลาเดินเครื่องรวม (หน้าเครื่อง)",
+    kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
     machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
     noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
     hourly: "การผลิตรายชั่วโมง · วันนี้ (กก.)", waitingData: "รอข้อมูลการผลิต…",
@@ -39,13 +39,13 @@ const STR = {
     subtitle: "Live Production Monitor", live: "LIVE",
     kpiPieces: "Pieces Produced Today", unitPieces: "pcs",
     kpiWeight: "Total Weight Today", unitKg: "kg",
-    kpiTime: "Total Machine Time",
-    kpiScans: "Records Logged", unitTimes: "times",
+    kpiTime: "Machine Time · logged",
+    kpiScans: "Scans Today", unitTimes: "scans",
     machines: "Machines · Today", machineUnit: "machines",
     noWork: "No work yet today — waiting for the first scan…",
     hourly: "Hourly Production · Today (kg)", waitingData: "Waiting for production data…",
     liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
-    finished: "Finished", inProcess: "In Process",
+    finished: "Finished", inProcess: "In Progress",
     booting: "Connecting to the production line…",
   },
 };
@@ -336,9 +336,13 @@ const MLINE_SVG = `
     .ml-scr{animation:mlScr 2.4s ease-in-out infinite}@keyframes mlScr{0%,100%{opacity:.9}50%{opacity:.4}}
     .ml-led{animation:mlLed 1.4s steps(1) infinite}.ml-led.l2{animation-delay:.7s}
     @keyframes mlLed{0%,60%{opacity:1}61%,100%{opacity:.2}}
-    .ml-spark{transform-origin:273px 122px;animation:mlSpark .16s steps(2) infinite}
-    @keyframes mlSpark{0%{opacity:.9}50%{opacity:.25}100%{opacity:.8}}
+    .ml-spark{transform-origin:273px 122px;animation:mlSpark .5s ease-in-out infinite}
+    @keyframes mlSpark{0%,100%{opacity:.75}50%{opacity:.4}}
     .ml-box{animation:mlBox 6s ease-in-out infinite}@keyframes mlBox{0%,68%{opacity:0;transform:translateX(-12px)}80%{opacity:1;transform:translateX(0)}100%{opacity:1}}
+    /* เคารพผู้ใช้ที่ตั้งค่า "ลดการเคลื่อนไหว" + กันจอ 24 ชม.ล้าตา = ปิดอนิเมชันตกแต่ง */
+    @media (prefers-reduced-motion: reduce){
+      .ml-belt,.ml-parts g,.ml-a,.ml-scr,.ml-led,.ml-spark,.ml-box{animation:none !important}
+    }
   </style>
 
   <!-- flow arrows (infeed) -->
