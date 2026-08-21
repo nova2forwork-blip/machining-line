@@ -9,7 +9,7 @@ import {
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, recalcPartStatus,
   exportAllData, BACKUP_TABLES,
-  ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup,
+  ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
@@ -3990,6 +3990,42 @@ function BackupCard() {
   const [progress, setProgress] = useState(null);   // { table, index, total }
   const [last, setLast] = useState(null);           // { at, totalRows, name }
   const [err, setErr] = useState("");
+  // นำเข้าไฟล์สำรอง
+  const fileRef = useRef(null);
+  const [impBusy, setImpBusy] = useState(false);
+  const [impErr, setImpErr] = useState("");
+  const [impResult, setImpResult] = useState(null); // { inserted, total, name }
+
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";              // ให้เลือกไฟล์เดิมซ้ำได้
+    if (!file) return;
+    setImpErr(""); setImpResult(null);
+    let dump;
+    try {
+      dump = JSON.parse(await file.text());
+    } catch {
+      setImpErr("อ่านไฟล์ไม่ได้ — ต้องเป็นไฟล์ .json ที่ดาวน์โหลดจากปุ่มสำรองข้อมูลเท่านั้น");
+      return;
+    }
+    const tables = dump?.tables;
+    if (!tables || typeof tables !== "object") {
+      setImpErr("รูปแบบไฟล์ไม่ถูกต้อง (ไม่พบส่วน tables) — ใช้ไฟล์ที่ดาวน์โหลดจากแอปนี้");
+      return;
+    }
+    const rows = Object.values(tables).reduce((s, arr) => s + (Array.isArray(arr) ? arr.length : 0), 0);
+    if (!confirm(`นำเข้าไฟล์ "${file.name}" (${fmtNum(rows)} แถว)?\n\nระบบจะ "เติมเฉพาะข้อมูลที่หายไป" กลับเข้าระบบ — ของเดิมและงานที่ทำใหม่ทั้งหมดจะไม่ถูกทับ`)) return;
+
+    setImpBusy(true);
+    try {
+      const res = await importBackup(tables, "merge");
+      const inserted = Object.values(res?.inserted || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      setImpResult({ inserted, byTable: res?.inserted || {}, name: file.name });
+    } catch (e2) {
+      setImpErr("นำเข้าไม่สำเร็จ: " + (e2?.message || e2) + " — ตรวจว่ารัน migration-backup-import.sql ใน Supabase แล้วหรือยัง");
+    }
+    setImpBusy(false);
+  }
 
   async function download() {
     setBusy(true); setErr(""); setProgress(null);
@@ -4045,6 +4081,31 @@ function BackupCard() {
         )}
       </Card>
 
+      <Card title="นำเข้าไฟล์สำรอง (กู้คืนจากไฟล์ JSON)">
+        <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, marginBottom: 14 }}>
+          เลือกไฟล์ <b>.json</b> ที่เคยดาวน์โหลดไว้ เพื่อนำข้อมูลกลับเข้าระบบ — ระบบจะ <b>เติมเฉพาะข้อมูลที่หายไป</b> (id ที่ยังไม่มี)
+          <b> ไม่ทับของเดิมและงานที่ทำใหม่</b> เหมาะกับกรณีเผลอลบข้อมูลแล้วอยากได้กลับมา
+        </div>
+
+        <input ref={fileRef} type="file" accept=".json,application/json" onChange={onPickFile} style={{ display: "none" }} />
+        <Btn variant="accent" onClick={() => fileRef.current?.click()} disabled={impBusy}>
+          <Icon name="folder" size={15} />{impBusy ? "กำลังนำเข้า..." : "เลือกไฟล์สำรอง แล้วนำเข้า"}
+        </Btn>
+
+        {impErr && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 12, lineHeight: 1.6 }}>{impErr}</div>}
+        {impResult && (
+          <div style={{ marginTop: 14, fontSize: 13 }}>
+            <div style={{ color: "var(--success)", fontWeight: 600, marginBottom: 4 }}>
+              ✓ นำเข้าสำเร็จ — เพิ่มข้อมูลที่หายไปกลับมา {fmtNum(impResult.inserted)} แถว
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              จากไฟล์: {impResult.name}
+              {impResult.inserted === 0 && " · (ข้อมูลในไฟล์มีอยู่ในระบบครบแล้ว ไม่มีอะไรต้องเติม)"}
+            </div>
+          </div>
+        )}
+      </Card>
+
       <Card title="ตารางที่รวมอยู่ในไฟล์สำรอง">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {BACKUP_TABLES.map((t) => (
@@ -4052,7 +4113,7 @@ function BackupCard() {
           ))}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
-          ไฟล์นี้ใช้กู้คืน/นำเข้ากลับได้โดยทีมพัฒนา (โครงสร้างเป็น JSON มาตรฐาน แยกตามชื่อตาราง)
+          ไฟล์นี้ใช้ดาวน์โหลดเก็บ และนำเข้ากลับได้ด้วยปุ่มด้านบน (โครงสร้างเป็น JSON มาตรฐาน แยกตามชื่อตาราง)
         </div>
       </Card>
     </div>
