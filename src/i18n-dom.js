@@ -182,6 +182,8 @@ const DICT = {
   "แยกตามขั้นตอนการทำงาน": "By operation",
   "Part No. × ขั้นตอน (จำนวนชิ้น)": "Part No. × Operation (pieces)",
   "Release × Part × ขั้นตอน": "Release × Part × Operation",
+  "เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)": "Machine × Operation (workload + avg/day)",
+  "เฉลี่ย/วัน": "Avg/day",
   "รวม (ชิ้น)": "Total (pcs)", "น้ำหนัก (กก.)": "Weight (kg)", "เสร็จ (ชิ้น)": "Finished (pcs)",
   "กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง": "Press Ctrl+Z to undo table edits",
   "สถานีของคุณ": "Your station", "เลือกโหมดสแกน": "Select scan mode",
