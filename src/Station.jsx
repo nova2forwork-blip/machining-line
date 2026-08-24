@@ -317,12 +317,16 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
     // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
     if (step === STEP.PART && unit && (status || qty > 1)) {
-      if (!confirm("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?")) return;
+      if (!confirm(t("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?",
+                     "This scanned piece isn't saved yet — scanning again will discard it. Continue?"))) return;
     }
     warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
     // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
     // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
-    setUnit(null); setProgress(null); setQty(0); setStatus(null);
+    // ★ ล้าง client_id ด้วย — สแกนชิ้นใหม่ = การบันทึกครั้งใหม่ ถ้าไม่ล้างจะ reuse ตัวเดิม
+    //   (เคส: บันทึกชิ้น A พลาดแบบไม่ใช่เน็ต แต่ DB commit แล้ว → กด SCAN ชิ้น B → B โดน dedup หาย)
+    clientIdRef.current = null;
+    setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null);
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
@@ -361,9 +365,11 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (!Number.isInteger(qty)) { flash("จำนวนต้องเป็นจำนวนเต็ม", "warn"); return; }
     if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
     // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
-    if (qty > 2000 && !confirm(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`)) return;
+    if (qty > 2000 && !confirm(t(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`,
+                                 `${qty.toLocaleString()} pieces in a single record is unusually large — confirm?`))) return;
     // ชิ้นนี้เคยทำขั้นตอนนี้ไปแล้ว → ยืนยันกันสแกนซ้ำโดยไม่ตั้งใจ (ยอมได้ถ้าเป็น rework จริง)
-    if (dupCount > 0 && !confirm(`ชิ้นนี้เคยบันทึกขั้นตอนนี้ไปแล้ว ${dupCount} ครั้ง — ยืนยันทำซ้ำ (rework) หรือไม่?`)) return;
+    if (dupCount > 0 && !confirm(t(`ชิ้นนี้เคยบันทึกขั้นตอนนี้ไปแล้ว ${dupCount} ครั้ง — ยืนยันทำซ้ำ (rework) หรือไม่?`,
+                                   `This piece already recorded this step ${dupCount}× — confirm rework?`))) return;
     doSave();
   }
 
@@ -538,11 +544,11 @@ function MachineStation({ user, onLogout, onKicked }) {
                         : "-"}</td>
                     <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
                     <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
-                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง */}
-                    <td style={r.materials_length != null && r.length_mm != null && r.materials_length < r.length_mm
+                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง (Number() กันค่าเป็น string) */}
+                    <td style={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
                         ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
-                      title={r.materials_length != null && r.length_mm != null && r.materials_length < r.length_mm
-                        ? "ความยาววัสดุสั้นกว่าความยาวชิ้นงาน" : undefined}>
+                      title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
+                        ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
                       {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
                     <td className="l">{r.inventory_code || "-"}</td>
                     <td>{hms(r.process_seconds)}</td>
