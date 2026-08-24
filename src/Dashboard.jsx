@@ -290,7 +290,7 @@ export default function Dashboard() {
             <div className="dash-machines">
               {machines.map((m) => (
                 <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
-                  <div className="name">{m.name}{m.op ? <span className="op">{m.op}</span> : null}</div>
+                  <div className="name">{m.name}{m.op ? <span className="op">{opLabel(m.op, lang)}</span> : null}</div>
                   <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
                   <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
                   <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div>
