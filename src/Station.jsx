@@ -134,6 +134,8 @@ function StationLogin({ onLogin, notice }) {
 const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "part", READY: "ready", SAVE: "save" };
 
 function MachineStation({ user, onLogout, onKicked }) {
+  const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
+  const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
@@ -513,7 +515,7 @@ function MachineStation({ user, onLogout, onKicked }) {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={14}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
+                <tr className="stn-empty-row"><td colSpan={14}>{t("ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย", "No records today — start your first job")}</td></tr>
               )}
               {rows.map((r, i) => {
                 const fin = String(r.status).toLowerCase() === "finished";
@@ -545,7 +547,7 @@ function MachineStation({ user, onLogout, onKicked }) {
                     <td className="l">{r.inventory_code || "-"}</td>
                     <td>{hms(r.process_seconds)}</td>
                     <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
-                      {fin ? "Finished" : "In Process"}
+                      {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
                     </td>
                   </tr>
                 );
@@ -557,15 +559,15 @@ function MachineStation({ user, onLogout, onKicked }) {
         {/* bottom-left: daily report */}
         <div className="stn-daily">
           <div className="stn-daily-head">
-            <h2>DAILY REPORT</h2>
+            <h2>{t("รายงานประจำวัน", "DAILY REPORT")}</h2>
             <div className="stn-date">{todayISOdate()}</div>
           </div>
           <div className="stn-kpis">
-            <div className="stn-kpi"><div className="lbl">Daily Quantity</div>
-              <div className="val">{fmt(daily.quantity)} pcs</div></div>
-            <div className="stn-kpi"><div className="lbl">Daily Weight</div>
-              <div className="val">{fmt(daily.weight)} kg</div></div>
-            <div className="stn-kpi"><div className="lbl">Daily Process Time</div>
+            <div className="stn-kpi"><div className="lbl">{t("จำนวนวันนี้", "Daily Quantity")}</div>
+              <div className="val">{fmt(daily.quantity)} {t("ชิ้น", "pcs")}</div></div>
+            <div className="stn-kpi"><div className="lbl">{t("น้ำหนักวันนี้", "Daily Weight")}</div>
+              <div className="val">{fmt(daily.weight)} {t("กก.", "kg")}</div></div>
+            <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
               <div className="val mono">{hms(daily.process_seconds)}</div></div>
           </div>
           {loadErr && <div className="stn-err">{loadErr}</div>}
@@ -578,7 +580,7 @@ function MachineStation({ user, onLogout, onKicked }) {
               step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
               status={status} setStatus={setStatus} busy={busy}
               onDecoded={onDecoded} confirmCancel={confirmCancel} confirmPart={confirmPart}
-              closeScan={closeScan} rescan={rescan}
+              closeScan={closeScan} rescan={rescan} dupCount={dupCount}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
@@ -588,7 +590,7 @@ function MachineStation({ user, onLogout, onKicked }) {
               <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
               <div className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
-                <div className="lbl">Material Length {step === STEP.IDLE && !matReady ? "· กรอกก่อน" : ""}</div>
+                <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· กรอกก่อน", "· fill first") : ""}</div>
                 <input
                   inputMode="numeric" disabled={recording}
                   value={materialLen} placeholder="0"
@@ -598,18 +600,18 @@ function MachineStation({ user, onLogout, onKicked }) {
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
                 disabled={busy}>
-                <span>{recording ? "CANCEL" : "START"}</span><span className="stn-rec-dot" />
+                <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
               <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
                 <div className="row1">
-                  <span>SCAN</span>
+                  <span>{t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
                 </div>
-                <div className="qty">Quantity <b>{qty}</b> piece</div>
+                <div className="qty">{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</div>
               </button>
             </div>
             <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
-              <span>ออกจากระบบ</span>
+              <span>{t("ออกจากระบบ", "Log out")}</span>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9" /></svg>
             </button>
           </div>
@@ -714,14 +716,17 @@ function StationAnim() {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan }) {
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0 }) {
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
   if (step === STEP.IDLE) {
     return (
       <div className="stn-hint">
         <div style={{ marginBottom: 8 }}>
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
         </div>
-        พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา
+        {t(<>พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา</>,
+           <>Ready — enter <b>MATERIAL LENGTH</b><br />then press <b>START</b> to begin timing</>)}
       </div>
     );
   }
@@ -730,8 +735,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
       <div>
         <StationAnim />
         <div className="stn-hint">
-          <div className="big">● กำลังบันทึกเวลา</div>
-          กด <b>SCAN</b> เพื่อสแกนชิ้นงาน
+          <div className="big">{t("● กำลังบันทึกเวลา", "● Recording time")}</div>
+          {t(<>กด <b>SCAN</b> เพื่อสแกนชิ้นงาน</>, <>Press <b>SCAN</b> to scan a piece</>)}
         </div>
       </div>
     );
@@ -739,11 +744,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
   if (step === STEP.CANCEL) {
     return (
       <div className="stn-confirm">
-        <h3>ยกเลิกการบันทึก?</h3>
-        <p>เวลาที่จับไว้ ({hms(elapsed)}) จะถูกล้างและเริ่มใหม่</p>
+        <h3>{t("ยกเลิกการบันทึก?", "Cancel recording?")}</h3>
+        <p>{t(`เวลาที่จับไว้ (${hms(elapsed)}) จะถูกล้างและเริ่มใหม่`,
+              `The elapsed time (${hms(elapsed)}) will be cleared and restarted`)}</p>
         <div className="stn-row-btns">
-          <button className="stn-pill yes" onClick={() => confirmCancel(true)}>YES</button>
-          <button className="stn-pill no" onClick={() => confirmCancel(false)}>NO</button>
+          <button className="stn-pill yes" onClick={() => confirmCancel(true)}>{t("ใช่", "YES")}</button>
+          <button className="stn-pill no" onClick={() => confirmCancel(false)}>{t("ไม่", "NO")}</button>
         </div>
       </div>
     );
@@ -790,16 +796,16 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
               <div className="stn-lbl-of">
-                <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>ลำดับ </span>
+                <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ลำดับ", "No.")} </span>
                 {progress?.offline ? `~${ofText}` : ofText}
               </div>
-              {isOver ? <div className="stn-lbl-rework">เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)</div> : null}
-              {dupCount > 0 ? <div className="stn-lbl-dup">{`⚠ ชิ้นนี้เคยทำขั้นตอนนี้แล้ว ${dupCount} ครั้ง`}</div> : null}
-              {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
+              {isOver ? <div className="stn-lbl-rework">{t("เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)", "Over ordered qty (spare / extra)")}</div> : null}
+              {dupCount > 0 ? <div className="stn-lbl-dup">{t(`⚠ ชิ้นนี้เคยทำขั้นตอนนี้แล้ว ${dupCount} ครั้ง`, `⚠ This piece already ran this step ${dupCount}×`)}</div> : null}
+              {progress?.offline ? <div className="stn-lbl-approx">{t("ประมาณการ · ออฟไลน์", "estimate · offline")}</div> : null}
             </div>
           </div>
         </div>
-        <div className="stn-qty-lbl">QUANTITY</div>
+        <div className="stn-qty-lbl">{t("จำนวน", "QUANTITY")}</div>
         <div className="stn-qty-stepper">
           <button onClick={() => setQty(Math.max(0, qty - 1))}>−</button>
           <input inputMode="numeric" value={qty}
@@ -807,11 +813,11 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
         <div className="stn-row-btns" style={{ marginBottom: 14 }}>
-          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>In Process</button>
-          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>Finished</button>
+          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>{t("กำลังทำ", "In Process")}</button>
+          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>{t("เสร็จแล้ว", "Finished")}</button>
         </div>
         <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={rescan} disabled={busy}>Cancel</button>
+          <button className="stn-pill no" onClick={rescan} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
           <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
