@@ -3364,7 +3364,8 @@ function ReportPage() {
                 <tr>
                   <th>เครื่องจักร</th>
                   {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
-                  <th>รวม</th>
+                  <th>รวม (ชิ้น)</th>
+                  <th>น้ำหนัก (กก.)</th>
                   <th>เวลาเดินเครื่อง</th>
                   <th>เฉลี่ย/วัน</th>
                 </tr>
@@ -3379,15 +3380,12 @@ function ReportPage() {
                         const cell = m.ops[op];
                         return (
                           <td key={op}>
-                            {cell
-                              ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
-                              : <span style={{ color: "var(--surface-3)" }}>—</span>}
+                            {cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>}
                           </td>
                         );
                       })}
-                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
-                      </td>
+                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{m.total.count.toLocaleString()} ชิ้น</td>
+                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—"}</td>
                       <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>
                         {dm
