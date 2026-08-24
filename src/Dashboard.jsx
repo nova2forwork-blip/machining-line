@@ -257,10 +257,10 @@ export default function Dashboard() {
           <span className="sub">{t.subtitle}</span>
         </div>
         <div className="dash-headright">
-          <div className="dash-langsel">
-            <button className={lang === "th" ? "on" : ""} onClick={() => setLangSave("th")}>ไทย</button>
-            <button className={lang === "en" ? "on" : ""} onClick={() => setLangSave("en")}>EN</button>
-          </div>
+          <button className="dash-lang-btn" onClick={() => setLangSave(lang === "th" ? "en" : "th")}
+            title="สลับภาษา / Switch language">
+            {lang === "th" ? "EN" : "ไทย"}
+          </button>
           <div className="dash-live"><span className="dot" /> {t.live}</div>
           <div style={{ textAlign: "right" }}>
             <div className="dash-clock dash-num">{fmtClock(now)}</div>
