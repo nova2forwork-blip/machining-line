@@ -30,7 +30,7 @@ const STR = {
     kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
     machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
     noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
-    hourly: "การผลิตรายชั่วโมง · วันนี้ (ชิ้น)", waitingData: "รอข้อมูลการผลิต…",
+    hourly: "การผลิตรายชั่วโมง · วันนี้", waitingData: "รอข้อมูลการผลิต…",
     liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
     finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
     booting: "กำลังเชื่อมต่อสายการผลิต…",
@@ -43,7 +43,7 @@ const STR = {
     kpiScans: "Scans Today", unitTimes: "scans",
     machines: "Machines · Today", machineUnit: "machines",
     noWork: "No work yet today — waiting for the first scan…",
-    hourly: "Hourly Production · Today (pcs)", waitingData: "Waiting for production data…",
+    hourly: "Hourly Production · Today", waitingData: "Waiting for production data…",
     liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
     finished: "Finished", inProcess: "In Progress",
     booting: "Connecting to the production line…",
@@ -191,14 +191,19 @@ export default function Dashboard() {
   const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
   const hourly = useMemo(() => {
     const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
-    const perHour = new Array(24).fill(0);
-    for (const l of logs) perHour[bkkHour(l.scanned_at)] += Number(l.quantity) || 0;   // นับ "จำนวนชิ้น" ต่อชั่วโมง
+    const perHour = new Array(24).fill(0);      // จำนวนชิ้น (นับต่อขั้นตอน)
+    const perHourKg = new Array(24).fill(0);    // น้ำหนัก (กก.)
+    for (const l of logs) {
+      const h = bkkHour(l.scanned_at);
+      perHour[h] += Number(l.quantity) || 0;
+      perHourKg[h] += Number(l.weight) || 0;
+    }
     const active = logs.map((l) => bkkHour(l.scanned_at));
     let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
     startH = Math.min(startH, Math.max(0, curH - 3)); // โชว์อย่างน้อย ~4 จุด
     const arr = [];
-    // เส้นเดียวปกติ — ทุกชั่วโมงรวมชั่วโมงปัจจุบัน (ยอดสะสมเท่าที่ทำได้ถึงตอนนี้)
-    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, pcs: perHour[h] });
+    // 2 เส้น: ชิ้น (แกนซ้าย) + น้ำหนัก (แกนขวา) · รวมชั่วโมงปัจจุบัน (ยอดสะสมถึงตอนนี้)
+    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, pcs: perHour[h], kg: Math.round(perHourKg[h] * 10) / 10 });
     // คงอ้างอิงเดิมถ้าค่าเท่าเดิม → กราฟไม่รีอนิเมชันซ้ำทุกโพล/ทุกวินาที
     if (JSON.stringify(arr) === JSON.stringify(hourlyRef.current)) return hourlyRef.current;
     hourlyRef.current = arr;
@@ -284,13 +289,19 @@ export default function Dashboard() {
         </div>
 
         <div className="dash-panel">
-          <div className="dash-panel-h"><span>{t.hourly}</span></div>
+          <div className="dash-panel-h" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>{t.hourly}</span>
+            <span style={{ display: "flex", gap: "1.4vh", fontSize: "1.35vh", fontWeight: 700 }}>
+              <span style={{ color: "#14e39a" }}>● {lang === "th" ? "ชิ้น" : "pcs"}</span>
+              <span style={{ color: "#ffc23d" }}>● {lang === "th" ? "น้ำหนัก (กก.)" : "weight (kg)"}</span>
+            </span>
+          </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             {hourly.length === 0 ? (
               <div className="dash-empty">{t.waitingData}</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hourly} margin={{ top: 12, right: 18, left: 4, bottom: 4 }}>
+                <AreaChart data={hourly} margin={{ top: 12, right: 8, left: 4, bottom: 4 }}>
                   <defs>
                     <linearGradient id="dashArea" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#14e39a" stopOpacity={0.55} />
@@ -300,13 +311,20 @@ export default function Dashboard() {
                   <CartesianGrid stroke="#24302a" vertical={false} />
                   <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
                     tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
-                  <YAxis stroke="#24302a" tickLine={false} width={56}
-                    tick={{ fill: "#9db1a8", fontSize: 13 }}
+                  {/* แกนซ้าย = ชิ้น (เขียว) · แกนขวา = น้ำหนัก กก. (เหลือง) — สเกลต่างกันจึงแยกแกน */}
+                  <YAxis yAxisId="pcs" stroke="#24302a" tickLine={false} width={42}
+                    tick={{ fill: "#14e39a", fontSize: 12 }}
                     tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  <Area type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
+                  <YAxis yAxisId="kg" orientation="right" stroke="#24302a" tickLine={false} width={46}
+                    tick={{ fill: "#ffc23d", fontSize: 12 }}
+                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  <Area yAxisId="pcs" type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
                     fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
                     activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
                     connectNulls={false} animationDuration={900} isAnimationActive />
+                  <Area yAxisId="kg" type="monotone" dataKey="kg" stroke="#ffc23d" strokeWidth={2.5}
+                    fill="none" dot={{ r: 3, fill: "#ffc23d", strokeWidth: 0 }}
+                    connectNulls={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
