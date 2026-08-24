@@ -118,4 +118,103 @@ export function partOpMatrix(logs) {
     const fin      = String(l.status).toLowerCase() === "finished" ? pcs : 0;
     opNames.add(op);
 
-    const key = `${releaseOrder}
+    const key = `${releaseOrder} ${partNo}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, { releaseOrder, partNo, partName, total: { count: 0, weight: 0, finished: 0 }, ops: {} });
+    }
+    const entry = byKey.get(key);
+    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
+    entry.ops[op].count  += pcs;
+    entry.ops[op].weight += wt;
+    entry.total.count    += pcs;
+    entry.total.weight   += wt;
+    entry.total.finished += fin;
+  }
+
+  const parts = Array.from(byKey.values()).sort(
+    (a, b) => (a.releaseOrder || "").localeCompare(b.releaseOrder || "", undefined, { numeric: true })
+              || (b.total.count - a.total.count)
+  );
+  return { parts, opNames: Array.from(opNames).sort() };
+}
+
+// ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────
+// ต้องมีคอลัมน์ part_units.steps_done (ดู migration) — ชิ้น 10 กก. ทำ 2/4 ขั้น
+// นับเป็นงานคืบหน้า 5 กก. ให้ภาพความคืบหน้าที่ละเอียดกว่าการนับหัวชิ้น
+export function weightedProgress(units) {
+  let done = 0;
+  let material = 0;
+  for (const u of units || []) {
+    const total = (u.part_master?.routing || []).length;
+    const unitW = w(u.weight, u.part_master?.unit_weight);
+    material += unitW;
+    if (total > 0) {
+      const steps = Number(u.steps_done ?? (u.status === "finished" ? total : 0));
+      done += unitW * Math.min(steps / total, 1);
+    } else if (u.status === "finished") {
+      done += unitW;
+    }
+  }
+  return { done, material, pct: material > 0 ? (done / material) * 100 : 0 };
+}
+
+// ── 6) machine × day matrix (กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง) ─────────────
+// ตอบคำถาม "เครื่องนี้ทำได้กี่กิโล/กี่ชิ้น/ใช้เวลาเท่าไร ต่อวัน"
+// ใช้เขตเวลาไทย (Asia/Bangkok) ในการตัดวัน เพื่อให้ตรงกับ Daily Report หน้าเครื่อง
+// คืน:
+//   {
+//     machines: [{ name, days:{ 'YYYY-MM-DD':{count,weight,seconds} },
+//                  total:{count,weight,seconds}, dayCount, avg:{count,weight,seconds} }],
+//     days: [รายการวันที่ทั้งหมดที่พบ เรียงจากเก่า→ใหม่],
+//   }
+function bangkokDay(iso) {
+  if (!iso) return "-";
+  // แปลงเป็นเวลาไทยแล้วตัดเป็น YYYY-MM-DD (ไม่พึ่ง locale ของเครื่องผู้ใช้)
+  const d = new Date(iso);
+  const t = new Date(d.getTime() + 7 * 3600 * 1000);
+  return t.toISOString().slice(0, 10);
+}
+export function machineDailyMatrix(logs) {
+  const byMachine = new Map();
+  const days = new Set();
+  for (const l of logs || []) {
+    const m = l.machine?.name || "ไม่ระบุ";
+    const day = bangkokDay(l.scanned_at);
+    days.add(day);
+    if (!byMachine.has(m)) {
+      byMachine.set(m, { name: m, days: {}, total: { count: 0, weight: 0, seconds: 0 } });
+    }
+    const e = byMachine.get(m);
+    e.days[day] = e.days[day] || { count: 0, weight: 0, seconds: 0 };
+    const pcs = q(l), wt = w(l.weight, l.part_unit?.part_master?.unit_weight), s = sec(l);
+    e.days[day].count += pcs; e.days[day].weight += wt; e.days[day].seconds += s;
+    e.total.count += pcs; e.total.weight += wt; e.total.seconds += s;
+  }
+  const machines = Array.from(byMachine.values()).map((e) => {
+    const dayCount = Object.keys(e.days).length || 1;   // จำนวน "วันที่มีงาน" (เฉลี่ยจากวันที่ทำจริง)
+    return {
+      ...e,
+      dayCount,
+      avg: {
+        count: e.total.count / dayCount,
+        weight: e.total.weight / dayCount,
+        seconds: e.total.seconds / dayCount,
+      },
+    };
+  }).sort((a, b) => b.total.weight - a.total.weight);
+  return { machines, days: Array.from(days).sort() };
+}
+
+// ── 7) ตรวจ Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น (กก. จะกลายเป็น 0 เงียบๆ) ──────
+// คืนรายชื่อ Part No. ที่มีงาน (quantity > 0) แต่คำนวณน้ำหนักได้ 0
+export function missingWeightParts(logs) {
+  const bad = new Map();
+  for (const l of logs || []) {
+    if (q(l) <= 0) continue;
+    const wt = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    if (wt > 0) continue;
+    const partNo = l.part_unit?.part_master?.part_no || "ไม่ระบุ";
+    bad.set(partNo, (bad.get(partNo) || 0) + q(l));
+  }
+  return Array.from(bad.entries()).map(([partNo, pieces]) => ({ partNo, pieces }));
+}
