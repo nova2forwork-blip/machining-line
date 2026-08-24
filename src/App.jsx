@@ -78,6 +78,7 @@ function useTableSort(defaultKey = null, defaultDir = "asc") {
     if (k === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setKey(k); setDir("asc"); }
   };
+  const set = (k) => { setKey(k || null); setDir("asc"); };   // เลือกจาก dropdown (มือถือ)
   const sortRows = (rows, accessors) => {
     if (!key || !accessors || !accessors[key]) return rows;
     const acc = accessors[key];
@@ -94,16 +95,30 @@ function useTableSort(defaultKey = null, defaultDir = "asc") {
     if (dir === "desc") arr.reverse();
     return arr;
   };
-  return { key, dir, toggle, sortRows };
+  return { key, dir, toggle, set, sortRows };
 }
-// หัวคอลัมน์ที่กดเรียงได้ (โชว์ลูกศร ▲/▼ ตัวที่กำลังเรียง)
+// หัวคอลัมน์ที่กดเรียงได้ (โชว์ลูกศร ▲/▼ ตัวที่กำลังเรียง) — เดสก์ท็อป
 function SortTh({ k, sort, children, style }) {
   const active = sort.key === k;
   return (
     <th onClick={() => sort.toggle(k)} style={{ cursor: "pointer", userSelect: "none", ...style }} title="กดเพื่อเรียงลำดับ">
       {children}
-      <span style={{ marginLeft: 5, fontSize: 9, opacity: active ? 0.95 : 0.3 }}>{active ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+      <span style={{ marginLeft: 5, fontSize: 11, opacity: active ? 1 : 0.5 }}>{active ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
     </th>
+  );
+}
+// ตัวเลือกเรียงลำดับสำหรับมือถือ/แท็บเล็ต (หัวตารางถูกซ่อนตอนเป็นการ์ด) — โชว์เฉพาะ ≤820px
+function SortControl({ sort, options }) {
+  return (
+    <div className="sort-mobile">
+      <span>เรียงโดย</span>
+      <select value={sort.key || ""} onChange={(e) => sort.set(e.target.value)}>
+        <option value="">— ค่าเริ่มต้น —</option>
+        {options.map((o) => <option key={o.k} value={o.k}>{o.label}</option>)}
+      </select>
+      <button type="button" onClick={() => sort.key && sort.toggle(sort.key)} disabled={!sort.key}
+        title="สลับ น้อย↔มาก" aria-label="สลับทิศทางการเรียง">{sort.dir === "asc" ? "▲ น้อย→มาก" : "▼ มาก→น้อย"}</button>
+    </div>
   );
 }
 
@@ -1653,6 +1668,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       )}
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
+        <SortControl sort={sort} options={[
+          { k: "part_no", label: "Part No." }, { k: "part_name", label: "ชื่อ Part" }, { k: "qty", label: "จำนวน" },
+          { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" },
+          { k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }, { k: "len", label: "ความยาว/ชิ้น" },
+        ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead>
@@ -1689,7 +1709,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
                     <td data-label="Part No." style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_master?.part_no || "-"}</td>
                     <td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_master?.part_name || "-"}</td>
-                    <td data-label="จำนวน">{r.qty}</td>
+                    <td data-label="จำนวน">{fmtNum(r.qty)}</td>
                     <td data-label="เสร็จแล้ว">
                       {statsLoading ? (
                         <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
@@ -1845,6 +1865,10 @@ function ReleasePage({ user, goTo }) {
       </Card>
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
+        <SortControl sort={sort} options={[
+          { k: "date", label: "วันที่" }, { k: "project", label: "โปรเจค" }, { k: "order", label: "Release Order" },
+          { k: "parts", label: "Part No." }, { k: "qty", label: "จำนวน" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
+        ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead><tr>
@@ -3547,6 +3571,10 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
         </div>
       </div>
       <Card title={groups ? `Release ทั้งหมด (${groups.length})` : "Release ทั้งหมด"}>
+        <SortControl sort={sort} options={[
+          { k: "date", label: "วันที่" }, { k: "order", label: "Release Order" }, { k: "parts", label: "Part No." },
+          { k: "qty", label: "จำนวน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
+        ]} />
         {groups === null ? (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
         ) : groups.length === 0 ? (
@@ -3671,6 +3699,10 @@ function ProjectsPage({ user, goTo }) {
         )}
       </div>
       <Card title={`โปรเจคทั้งหมด (${projects.length})`}>
+        <SortControl sort={sort} options={[
+          { k: "code", label: "รหัส" }, { k: "name", label: "ชื่อโปรเจค" }, { k: "total", label: "ปล่อยงาน" },
+          { k: "finished", label: "เสร็จแล้ว" }, { k: "pct", label: "% เสร็จ" }, { k: "weight", label: "น้ำหนักวัสดุ" },
+        ]} />
         {loading ? (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
         ) : projects.length === 0 ? (
@@ -3757,8 +3789,12 @@ function PartsSummaryPage() {
     <div>
       <div className="page-head"><div className="page-title">สรุป Part</div></div>
       <Card title="สรุปแยกตามชนิด Part (สะสมทั้งหมด)">
+        <SortControl sort={sort} options={[
+          { k: "part_no", label: "Part No." }, { k: "part_name", label: "ชื่อ Part" },
+          { k: "total", label: "ปล่อยงาน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "weight", label: "น้ำหนักวัสดุ" },
+        ]} />
         <div className="table-wrap tall-scroll">
-          <table className="data-table">
+          <table className="data-table responsive-cards">
             <thead><tr>
               <SortTh k="part_no" sort={sort}>Part No.</SortTh>
               <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
@@ -3771,7 +3807,7 @@ function PartsSummaryPage() {
                 part_no: (r) => r.part_no || "", part_name: (r) => r.part_name || "",
                 total: (r) => Number(r.total) || 0, finished: (r) => Number(r.finished) || 0, weight: (r) => Number(r.weight) || 0,
               }).map((r) => (
-                <tr key={r.id}><td style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td><td>{fmtNum(r.total)}</td><td style={{ fontWeight: 600, color: r.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(r.finished)}</td><td>{fmtNum(r.weight)}</td></tr>
+                <tr key={r.id}><td data-label="Part No." style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_name}</td><td data-label="ปล่อยงาน">{fmtNum(r.total)}</td><td data-label="เสร็จแล้ว" style={{ fontWeight: 600, color: r.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(r.finished)}</td><td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(r.weight)}</td></tr>
               ))}
               {rows.length === 0 && (
                 <tr><td colSpan={5}>
@@ -4458,8 +4494,12 @@ function MachineCrud() {
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         เครื่องหนึ่งทำได้หลายขั้นตอน — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
       </div>
+      <SortControl sort={sort} options={[
+        { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่องจักร" },
+        { k: "type", label: "ประเภท" }, { k: "caps", label: "ขั้นตอนที่ทำได้" },
+      ]} />
       <div className="table-wrap tall-scroll">
-        <table className="data-table">
+        <table className="data-table responsive-cards">
           <thead><tr>
             <SortTh k="code" sort={sort}>รหัสเครื่อง</SortTh>
             <SortTh k="name" sort={sort}>ชื่อเครื่องจักร</SortTh>
@@ -4475,13 +4515,15 @@ function MachineCrud() {
               const names = capNames(r.id);
               return (
                 <tr key={r.id}>
-                  <td>{r.code}</td><td>{r.name}</td><td>{r.type || "-"}</td>
-                  <td>
+                  <td data-label="รหัสเครื่อง">{r.code}</td>
+                  <td data-label="ชื่อเครื่องจักร">{r.name}</td>
+                  <td data-label="ประเภท">{r.type || "-"}</td>
+                  <td data-label="ขั้นตอนที่ทำได้">
                     {names.length > 0
                       ? names.join(" · ")
                       : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td data-label="" style={{ whiteSpace: "nowrap" }}>
                     <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
                   </td>
                 </tr>
@@ -4591,7 +4633,16 @@ function SimpleCrud({ table, fields }) {
     await insertRow(table, form);
     setForm({}); load();
   }
-  async function remove(id) { if (confirm("ลบรายการนี้?")) { await deleteRow(table, id); load(); } }
+  async function remove(id) {
+    if (!confirm("ลบรายการนี้?")) return;
+    try {
+      await deleteRow(table, id);
+      load();
+    } catch (e) {
+      // FK: ถ้ามีเครื่อง/งานอ้างอิงอยู่ (เช่น ขั้นตอนที่เครื่องใช้/มีการสแกน) จะลบไม่ได้ — แจ้งชัด ไม่เงียบ
+      alert("ลบไม่ได้ — รายการนี้ถูกใช้งานอยู่ (มีเครื่องจักร/งาน/การสแกนอ้างอิงถึง)\nต้องเอาการอ้างอิงออกก่อน หรือปล่อยไว้เพื่อรักษาประวัติ");
+    }
+  }
 
   return (
     <Card title="เพิ่มรายการใหม่">
