@@ -2699,6 +2699,7 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 // เนื้อหา Finished Part (สถิติ + ตาราง) — ใช้ซ้ำได้ทั้งหน้าเดี่ยวและฝังใน Report
 function FinishedPartSection() {
   const [units, setUnits] = useState([]);
+  const sort = useTableSort();
   useEffect(() => { getAllUnitsFull("finished").then(setUnits); }, []);
   const totalWeight = units.reduce((s, u) => s + Number(u.weight || u.part_master?.unit_weight || 0), 0);
   return (
@@ -2717,9 +2718,20 @@ function FinishedPartSection() {
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>QR</th><th>Part</th><th>โปรเจค</th><th>น้ำหนัก</th><th>ความยาว</th></tr></thead>
+              <thead><tr>
+                <SortTh k="qr" sort={sort}>QR</SortTh>
+                <SortTh k="part" sort={sort}>Part</SortTh>
+                <SortTh k="proj" sort={sort}>โปรเจค</SortTh>
+                <SortTh k="weight" sort={sort}>น้ำหนัก</SortTh>
+                <SortTh k="len" sort={sort}>ความยาว</SortTh>
+              </tr></thead>
               <tbody>
-                {units.map((u) => (
+                {sort.sortRows(units, {
+                  qr: (u) => u.qr_code || "", part: (u) => u.part_master?.part_no || "",
+                  proj: (u) => u.part_master?.projects?.name || "",
+                  weight: (u) => Number(u.weight || u.part_master?.unit_weight || 0),
+                  len: (u) => Number(u.length_mm || u.part_master?.default_length_mm || 0),
+                }).map((u) => (
                   <tr key={u.id}>
                     <td style={{ fontFamily: "var(--font-mono)" }}>{u.qr_code}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{u.part_master?.part_no} — {u.part_master?.part_name}</td>
@@ -3273,6 +3285,21 @@ function ReportPage() {
   const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
   const partMatrix = partOpMatrix(filteredLogs); // ตารางแยก Part No. × ขั้นตอน
   const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
+  // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
+  const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน
+  const sortP = useTableSort();   // ตาราง Release × Part × ขั้นตอน
+  const dmByName = (name) => dailyMatrix.machines.find((x) => x.name === name);
+  const machineAcc = {
+    name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
+    time: (m) => m.total.seconds,
+    avgKg: (m) => dmByName(m.name)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name)?.avg.count || 0,
+  };
+  matrix.opNames.forEach((op) => { machineAcc[`op:${op}`] = (m) => m.ops[op]?.count || 0; });
+  const partAcc = {
+    release: (p) => p.releaseOrder, part_no: (p) => p.partNo, part_name: (p) => p.partName,
+    total: (p) => p.total.count, weight: (p) => p.total.weight, finished: (p) => p.total.finished,
+  };
+  partMatrix.opNames.forEach((op) => { partAcc[`op:${op}`] = (p) => p.ops[op]?.count || 0; });
   const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
   const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
 
@@ -3362,17 +3389,17 @@ function ReportPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>เครื่องจักร</th>
-                  {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
-                  <th>รวม (ชิ้น)</th>
-                  <th>น้ำหนัก (กก.)</th>
-                  <th>เวลาเดินเครื่อง</th>
-                  <th>เฉลี่ย กก./วัน</th>
-                  <th>เฉลี่ย ชิ้น/วัน</th>
+                  <SortTh k="name" sort={sortM}>เครื่องจักร</SortTh>
+                  {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortM} key={op}>{op}</SortTh>)}
+                  <SortTh k="total" sort={sortM}>รวม (ชิ้น)</SortTh>
+                  <SortTh k="weight" sort={sortM}>น้ำหนัก (กก.)</SortTh>
+                  <SortTh k="time" sort={sortM}>เวลาเดินเครื่อง</SortTh>
+                  <SortTh k="avgKg" sort={sortM}>เฉลี่ย กก./วัน</SortTh>
+                  <SortTh k="avgPcs" sort={sortM}>เฉลี่ย ชิ้น/วัน</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {matrix.machines.map((m) => {
+                {sortM.sortRows(matrix.machines, machineAcc).map((m) => {
                   const dm = dailyMatrix.machines.find((x) => x.name === m.name);
                   return (
                     <tr key={m.name}>
@@ -3417,17 +3444,17 @@ function ReportPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Release</th>
-                  <th>Part No.</th>
-                  <th>ชื่อ Part</th>
-                  {partMatrix.opNames.map((op) => <th key={op}>{op}</th>)}
-                  <th>รวม (ชิ้น)</th>
-                  <th>น้ำหนัก (กก.)</th>
-                  <th>เสร็จ (ชิ้น)</th>
+                  <SortTh k="release" sort={sortP}>Release</SortTh>
+                  <SortTh k="part_no" sort={sortP}>Part No.</SortTh>
+                  <SortTh k="part_name" sort={sortP}>ชื่อ Part</SortTh>
+                  {partMatrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortP} key={op}>{op}</SortTh>)}
+                  <SortTh k="total" sort={sortP}>รวม (ชิ้น)</SortTh>
+                  <SortTh k="weight" sort={sortP}>น้ำหนัก (กก.)</SortTh>
+                  <SortTh k="finished" sort={sortP}>เสร็จ (ชิ้น)</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {partMatrix.parts.map((p) => (
+                {sortP.sortRows(partMatrix.parts, partAcc).map((p) => (
                   <tr key={`${p.releaseOrder} ${p.partNo}`}>
                     <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.releaseOrder}</td>
                     <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partNo}</td>
