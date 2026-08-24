@@ -4151,6 +4151,41 @@ function BackupCard() {
   );
 }
 
+// ── ซิงค์ "ขั้นตอนที่เครื่องทำได้" (machine_operations) ให้ตรงกับที่เลือก ──────────
+// ความสามารถผูกกับ "เครื่องจักร" (ไม่ใช่พนักงาน) — หน้าเครื่องอ่านตารางนี้ไปทำปุ่มเลือกขั้นตอน
+// ตั้งได้ทั้งจากแท็บเครื่องจักร (ความสามารถ) และจากฟอร์มพนักงาน (ขั้นตอนประจำ) — แหล่งข้อมูลเดียวกัน
+async function syncMachineOps(machineId, selectedIds, caps) {
+  if (!machineId) return;
+  const current = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
+  const sel = new Set(selectedIds);
+  const toAdd = [...sel].filter((id) => !current.has(id));
+  const toRemove = [...current].filter((id) => !sel.has(id));
+  if (toAdd.length) {
+    await insertRows("machine_operations", toAdd.map((operation_id) => ({ machine_id: machineId, operation_id })));
+  }
+  for (const operation_id of toRemove) await deleteCap(machineId, operation_id);
+}
+
+// ปุ่มแตะเลือกขั้นตอนได้หลายอัน (chip) — ใช้ทั้งฟอร์มเพิ่ม/แก้ไขพนักงาน
+function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
+  return (
+    <div>
+      <div className="chip-row">
+        {operations.map((o) => (
+          <span key={o.id} onClick={() => onToggle(o.id)}
+            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
+        ))}
+        {operations.length === 0 && (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>
+        )}
+      </div>
+      {!machineChosen && selected.size > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 4 }}>เลือกเครื่องจักรก่อน จึงจะบันทึกหลายขั้นตอนได้</div>
+      )}
+    </div>
+  );
+}
+
 // เครื่องจักร + ความสามารถ (ทำขั้นตอนไหนได้บ้าง) — ใช้ตรวจตอนสแกนว่าเครื่องนี้
 // ทำขั้นตอนนั้นได้จริง และให้หน้ารายงานแยกน้ำหนักของเครื่องออกเป็นราย-ขั้นตอนได้
 function MachineCapModal({ machine, operations, caps, onClose, onSaved }) {
@@ -4327,22 +4362,38 @@ function SimpleCrud({ table, fields }) {
   );
 }
 
-function EmployeeEditModal({ employee, departments, machines, operations, onClose, onSaved }) {
+function EmployeeEditModal({ employee, departments, machines, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useState({
     name: employee.name,
     department_id: employee.department_id || "",
     role: employee.role,
     machine_id: employee.machine_id || "",
-    operation_id: employee.operation_id || "",
     password: "", // เว้นว่าง = ไม่เปลี่ยนรหัสผ่าน
   });
+  // ขั้นตอนประจำ = เลือกได้หลายอัน · ค่าเริ่มต้นดึงจาก "ความสามารถของเครื่อง" ที่ผูกอยู่
+  // (ถ้าเครื่องยังไม่มีความสามารถ แต่มี operation_id เดิม → ใช้ค่านั้นเป็นตัวเริ่ม)
+  const capsForMachine = (mid) => {
+    const ids = new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id));
+    if (ids.size === 0 && employee.operation_id && mid === (employee.machine_id || "")) ids.add(employee.operation_id);
+    return ids;
+  };
+  const [opSel, setOpSel] = useState(() => capsForMachine(employee.machine_id || ""));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  function chooseMachine(mid) {
+    setForm((f) => ({ ...f, machine_id: mid }));
+    setOpSel(capsForMachine(mid));   // ย้ายเครื่อง → โหลดความสามารถของเครื่องใหม่มาแสดง
+  }
+  function toggleOp(id) {
+    setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   async function save() {
     if (!form.name.trim()) { setErr("กรอกชื่อให้ครบ"); return; }
     setBusy(true); setErr("");
     try {
+      const opIds = [...opSel];
       // บันทึกผ่าน RPC — DB จัดการ bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
       await upsertEmployee({
         id: employee.id,
@@ -4352,9 +4403,11 @@ function EmployeeEditModal({ employee, departments, machines, operations, onClos
         role: form.role,
         department_id: form.department_id || null,
         machine_id: form.machine_id || null,
-        operation_id: form.operation_id || null,
+        operation_id: opIds[0] || null,   // ตัวแรก = ขั้นตอนตั้งต้น (fallback ตอนสแกน)
         active: employee.active,
       });
+      // ซิงค์ความสามารถของเครื่องให้ตรงกับที่เลือก (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้)
+      await syncMachineOps(form.machine_id, opIds, caps);
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + e.message);
@@ -4371,16 +4424,17 @@ function EmployeeEditModal({ employee, departments, machines, operations, onClos
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
           options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
-        <Field label="เครื่องจักรประจำ *"><Select value={form.machine_id} onChange={(e) => setForm({ ...form, machine_id: e.target.value })}
+        <Field label="เครื่องจักรประจำ *"><Select value={form.machine_id} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
-        <Field label="ขั้นตอนประจำ *"><Select value={form.operation_id} onChange={(e) => setForm({ ...form, operation_id: e.target.value })}
-          options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
+        <Field label="ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *">
+          <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
+        </Field>
       </div>
       <Field label="ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)">
         <Input type="password" value={form.password} autoComplete="new-password"
           onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
       </Field>
-      {(!form.machine_id || !form.operation_id) && (
+      {(!form.machine_id || opSel.size === 0) && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
           * ถ้าไม่ตั้งเครื่องจักร/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้
         </div>
@@ -4399,26 +4453,41 @@ function EmployeeCrud() {
   const [departments, setDepartments] = useState([]);
   const [machines, setMachines] = useState([]);
   const [operations, setOperations] = useState([]);
+  const [caps, setCaps] = useState([]);
   const [form, setForm] = useState({ role: "operator" });
+  const [opSel, setOpSel] = useState(new Set());   // ขั้นตอนประจำ (เลือกได้หลายอัน)
   const [editing, setEditing] = useState(null);
   const load = useCallback(async () => {
     setRows(await getEmployees());
     setDepartments(await listRows("departments", { order: "name" }));
     setMachines(await listRows("machines", { order: "code" }));
     setOperations(await listRows("operations", { order: "seq" }));
+    setCaps(await listRows("machine_operations"));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // เลือกเครื่อง → ดึงความสามารถเดิมของเครื่องนั้นมาแสดง (กันเผลอลบทิ้งตอนบันทึก)
+  function chooseMachine(mid) {
+    setForm((f) => ({ ...f, machine_id: mid }));
+    setOpSel(new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id)));
+  }
+  function toggleOp(id) {
+    setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   async function add() {
     if (!form.code || !form.name || !form.password) { alert("กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ"); return; }
     try {
+      const opIds = [...opSel];
       // สร้างผ่าน RPC — DB hash ด้วย bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
       await upsertEmployee({
         code: form.code, name: form.name, password: form.password, role: form.role,
         department_id: form.department_id || null,
-        machine_id: form.machine_id || null, operation_id: form.operation_id || null,
+        machine_id: form.machine_id || null, operation_id: opIds[0] || null,
       });
-      setForm({ role: "operator" }); load();
+      // ตั้งความสามารถของเครื่อง (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้)
+      await syncMachineOps(form.machine_id, opIds, caps);
+      setForm({ role: "operator" }); setOpSel(new Set()); load();
     } catch (e) {
       alert(isDuplicateError(e) ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว` : "เพิ่มพนักงานไม่สำเร็จ: " + e.message);
     }
@@ -4439,13 +4508,14 @@ function EmployeeCrud() {
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
           options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
-        <Field label="เครื่องจักรประจำ"><Select value={form.machine_id} onChange={(e) => setForm({ ...form, machine_id: e.target.value })}
+        <Field label="เครื่องจักรประจำ"><Select value={form.machine_id || ""} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
-        <Field label="ขั้นตอนประจำ"><Select value={form.operation_id} onChange={(e) => setForm({ ...form, operation_id: e.target.value })}
-          options={operations.map((o) => ({ value: o.id, label: o.name }))} /></Field>
+        <Field label="ขั้นตอนประจำ (เลือกได้หลายขั้นตอน)">
+          <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
+        </Field>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข")
+        พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง
       </div>
       <Btn variant="accent" onClick={add}>เพิ่มพนักงาน</Btn>
       <div className="table-wrap" style={{ marginTop: 16 }}>
@@ -4458,7 +4528,12 @@ function EmployeeCrud() {
                 <td>{departments.find((d) => d.id === r.department_id)?.name || "-"}</td>
                 <td>{ROLE_LABELS[r.role] || r.role}</td>
                 <td>{machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
-                <td>{operations.find((o) => o.id === r.operation_id)?.name || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
+                <td>{(() => {
+                  const ids = new Set(caps.filter((c) => c.machine_id === r.machine_id).map((c) => c.operation_id));
+                  let names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
+                  if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [o.name]; }
+                  return names.length ? names.join(", ") : <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>;
+                })()}</td>
                 <td>
                   <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
                     <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
@@ -4472,7 +4547,7 @@ function EmployeeCrud() {
       </div>
       {editing && (
         <EmployeeEditModal
-          employee={editing} departments={departments} machines={machines} operations={operations}
+          employee={editing} departments={departments} machines={machines} operations={operations} caps={caps}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
         />
