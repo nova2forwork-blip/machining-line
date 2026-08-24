@@ -214,6 +214,20 @@ export async function getUnitHistory(partUnitId) {
   return data || [];
 }
 
+// นับว่าชิ้นนี้ (part_unit) เคยถูกบันทึก "ขั้นตอนนี้" ไปแล้วกี่ครั้ง — ใช้เตือน rework ตอนสแกน
+// คืน 0 เมื่อไม่มี/ออฟไลน์/ผิดพลาด (ไม่บล็อกการทำงาน — แค่ข้อมูลเสริมสำหรับเตือน)
+export async function countUnitOpRecords(partUnitId, operationId) {
+  if (!partUnitId || !operationId) return 0;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  const { count, error } = await supabase
+    .from("machine_records")
+    .select("id", { count: "exact", head: true })
+    .eq("part_unit_id", partUnitId)
+    .eq("operation_id", operationId);
+  if (error) { console.warn("countUnitOpRecords error", error); return 0; }
+  return count || 0;
+}
+
 // part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
 export async function getAllUnitsFull(statusFilter) {
   // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
