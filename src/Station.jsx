@@ -523,10 +523,10 @@ function MachineStation({ user, onLogout, onKicked }) {
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
                       ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
-                    {/* BALANCE = QTY − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
-                    <td className={r.qty != null && r.req != null && (r.qty - r.req) >= 0 ? "stn-st-fin" : ""}>
-                      {r.qty != null && r.req != null
-                        ? ((r.qty - r.req) > 0 ? `+${fmt(r.qty - r.req)}` : fmt(r.qty - r.req))
+                    {/* BALANCE = ยอดสะสมที่ทำแล้ว (PROCESS) − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
+                    <td className={r.process_cum != null && r.req != null && (r.process_cum - r.req) >= 0 ? "stn-st-fin" : ""}>
+                      {r.process_cum != null && r.req != null
+                        ? ((r.process_cum - r.req) > 0 ? `+${fmt(r.process_cum - r.req)}` : fmt(r.process_cum - r.req))
                         : "-"}</td>
                     <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
                     <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
