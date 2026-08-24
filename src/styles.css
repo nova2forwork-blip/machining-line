@@ -300,6 +300,15 @@ table.data-table td {
 }
 table.data-table tbody tr:hover { background: var(--surface-2); }
 
+/* ตารางยาว: ล็อกหัวตาราง (sticky) + สกอร์บาร์ในตัว — เลื่อนเฉพาะตาราง หัวคอลัมน์ค้างไว้ */
+.table-wrap.tall-scroll { max-height: 68vh; overflow: auto; }
+.table-wrap.tall-scroll table.data-table th {
+  position: sticky; top: 0; z-index: 3;
+  box-shadow: 0 1px 0 var(--border);   /* เส้นใต้หัวตาราง (border หายตอน sticky + border-collapse) */
+}
+/* มือถือ: การ์ด (responsive-cards) ซ่อนหัวตารางอยู่แล้ว → ปล่อยเลื่อนทั้งหน้าตามปกติ */
+@media (max-width: 600px) { .table-wrap.tall-scroll { max-height: none; overflow: visible; } }
+
 /* ── Modal (quick-create Project / Part) ─────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(20,36,32,.45);
