@@ -97,6 +97,16 @@ export async function setEmployeeActive(id, active) {
   if (error) { console.warn("set_employee_active error", error); throw error; }
 }
 
+// ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
+//   คืน { ok:true, unbound, deleted_records } เมื่อสำเร็จ
+//   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
+//   force=true = ยืนยันลบทั้งประวัติงานของเครื่องนี้ (ตัวเลขในรายงานจะหาย)
+export async function deleteMachine(id, force = false) {
+  const { data, error } = await supabase.rpc("authz_delete_machine", { p_token: authToken(), p_id: id, p_force: !!force });
+  if (error) { console.warn("authz_delete_machine error", error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
 // ลบพนักงาน (admin เท่านั้น) — ผ่าน RPC
 //   คืน { ok:true, detached } เมื่อลบสำเร็จ
 //   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
