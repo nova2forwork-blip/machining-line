@@ -3432,7 +3432,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
         ) : (
           <div className="table-wrap">
             <table className="data-table responsive-cards">
-              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th></tr></thead>
+              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>เสร็จแล้ว</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th></tr></thead>
               <tbody>
                 {groups.map((g) => {
                   const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
@@ -3445,6 +3445,9 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
                       <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
                       <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
                       <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
+                      <td data-label="เสร็จแล้ว" style={{ fontWeight: 700, color: statsReady && gFinished > 0 ? "var(--success)" : "var(--muted)" }}>
+                        {statsReady ? `${fmtNum(gFinished)} ชิ้น` : "—"}
+                      </td>
                       <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
                         {statsReady && gPct !== null ? (
                           <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
