@@ -116,6 +116,8 @@ body.dash-body {
 .dash-feed-item .chip { background: var(--dash-line); color: var(--dash-ink); padding: .15vh .8vh; border-radius: 999px; font-weight: 600; }
 .dash-feed-item .st-fin { color: var(--dash-good); font-weight: 700; }
 .dash-feed-item .st-inp { color: var(--dash-warn); font-weight: 700; }
+/* ขั้นตอน (Cut/Drill...) ใช้สีเหลืองแบบเดียวกับสถานะเดิม + ดันไปท้ายแถว (ตำแหน่งที่สถานะเคยอยู่) */
+.dash-feed-item .op { color: var(--dash-warn); font-weight: 700; margin-left: auto; }
 .dash-feed-item .time { font-size: 1.3vh; color: var(--dash-muted); text-align: right; }
 .dash-empty { color: var(--dash-muted); font-size: 1.7vh; text-align: center; padding: 4vh 0; }
 
