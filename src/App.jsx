@@ -1650,7 +1650,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       )}
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
-        <div className="table-wrap">
+        <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead>
               <tr>
@@ -1842,7 +1842,7 @@ function ReleasePage({ user, goTo }) {
       </Card>
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
-        <div className="table-wrap">
+        <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead><tr>
               <SortTh k="date" sort={sort}>วันที่</SortTh>
@@ -3553,7 +3553,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             <div className="empty-state-sub">ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก</div>
           </div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap tall-scroll">
             <table className="data-table responsive-cards">
               <thead><tr>
                 <SortTh k="date" sort={sort}>วันที่</SortTh>
@@ -3677,7 +3677,7 @@ function ProjectsPage({ user, goTo }) {
             <div className="empty-state-sub">กด “เพิ่มโปรเจค” เพื่อสร้างโปรเจคแรก</div>
           </div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap tall-scroll">
             <table className="data-table responsive-cards">
               <thead><tr>
                 <SortTh k="code" sort={sort}>รหัส</SortTh>
@@ -3753,7 +3753,7 @@ function PartsSummaryPage() {
     <div>
       <div className="page-head"><div className="page-title">สรุป Part</div></div>
       <Card title="สรุปแยกตามชนิด Part (สะสมทั้งหมด)">
-        <div className="table-wrap">
+        <div className="table-wrap tall-scroll">
           <table className="data-table">
             <thead><tr>
               <SortTh k="part_no" sort={sort}>Part No.</SortTh>
@@ -4454,7 +4454,7 @@ function MachineCrud() {
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         เครื่องหนึ่งทำได้หลายขั้นตอน — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap tall-scroll">
         <table className="data-table">
           <thead><tr>
             <SortTh k="code" sort={sort}>รหัสเครื่อง</SortTh>
