@@ -7,7 +7,7 @@ import {
   deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
-  logoutSession, setEmployeeActive, deleteEmployee, recalcPartStatus,
+  logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus,
   exportAllData,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -4265,7 +4265,32 @@ function MachineCrud() {
       setErr(isDuplicateError(e) ? `รหัสเครื่อง "${form.code}" มีอยู่แล้ว` : "เกิดข้อผิดพลาด: " + e.message);
     }
   }
-  async function remove(id) { if (confirm("ลบเครื่องนี้?")) { await deleteRow("machines", id); load(); } }
+  async function remove(id) {
+    const m = rows.find((r) => r.id === id);
+    if (!confirm(`ลบเครื่อง "${m ? `${m.code} — ${m.name}` : id}" ?`)) return;
+    try {
+      let res = await deleteMachine(id, false);
+      if (res && res.ok === false && res.reason === "has_records") {
+        const ok = confirm(
+          `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
+          `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
+          `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`
+        );
+        if (!ok) return;
+        res = await deleteMachine(id, true);
+      }
+      if (res && res.ok === false) {
+        alert(res.reason === "bad_request" ? "ลบไม่สำเร็จ" : "ลบไม่สำเร็จ: " + res.reason);
+        return;
+      }
+      if (res && res.ok && res.unbound > 0) {
+        alert(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`);
+      }
+      load();
+    } catch (e) {
+      alert("ลบไม่สำเร็จ: " + (e?.message || e));
+    }
+  }
 
   function capNames(machineId) {
     const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
