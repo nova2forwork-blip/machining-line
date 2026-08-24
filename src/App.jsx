@@ -1308,8 +1308,11 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
 
 // ── Mini progress bar (inline, no extra deps) ───────────────────────────────
 function ProgressBar({ pct, finished, total }) {
-  const p = Math.min(100, Math.max(0, pct));
-  const color = p === 100 ? "var(--success)" : p > 0 ? "var(--accent-dk)" : "var(--border)";
+  // "เสร็จจริง" = ชิ้นครบ (ไม่ใช่แค่ % ปัดขึ้นถึง 100) — กัน 199/200 = 99.5% ปัดเป็น 100% เขียว
+  const complete = (finished != null && total != null && total > 0) ? finished >= total : pct >= 100;
+  let p = Math.min(100, Math.max(0, pct));
+  if (!complete && p >= 100) p = 99;   // ยังไม่ครบ อย่าเพิ่งโชว์ 100%
+  const color = complete ? "var(--success)" : p > 0 ? "var(--accent-dk)" : "var(--border)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 160 }}>
       <div style={{ flex: 1, height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -3696,7 +3699,8 @@ function ProjectsPage({ user, goTo }) {
                   weight: (p) => statMap[p.id]?.weight || 0,
                 }).map((p) => {
                   const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
-                  const pct = s.total ? Math.round((s.finished / s.total) * 100) : 0;
+                  const done = s.total > 0 && s.finished >= s.total;   // ครบจริง
+                  const pct = s.total ? (done ? 100 : Math.min(99, Math.round((s.finished / s.total) * 100))) : 0;
                   return (
                     <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้">
                       <td data-label="รหัส" style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
@@ -3706,7 +3710,7 @@ function ProjectsPage({ user, goTo }) {
                       <td data-label="% เสร็จ">
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
-                            <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? "var(--success)" : "var(--accent)" }} />
+                            <div style={{ width: `${pct}%`, height: "100%", background: done ? "var(--success)" : "var(--accent)" }} />
                           </div>
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{pct}%</span>
                         </div>
