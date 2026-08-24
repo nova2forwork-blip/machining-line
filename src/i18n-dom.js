@@ -85,6 +85,9 @@ const DICT = {
     "Employees without an assigned machine/operation can't scan (you can set it later via \"Edit\") · select multiple operations if this machine does more than one",
   "รหัสเครื่อง": "Machine code", "ชื่อเครื่องจักร": "Machine name", "รหัสพนักงาน": "Employee code",
   "ขั้นตอนที่ทำได้": "Operations", "ขั้นตอนที่เครื่องนี้ทำได้": "Operations this machine can do",
+  "แก้ชื่อและประเภทงานได้ · รหัสเครื่องแก้ไม่ได้ (เป็นตัวระบุตัวตน)": "Edit name and work type · machine code can't be changed (it's the identifier)",
+  "ประเภทงาน (คำอธิบาย · ไม่บังคับ)": "Work type (description · optional)",
+  "เช่น CUTTING / NOTCHING": "e.g. CUTTING / NOTCHING",
   "ไม่จำกัด (ยังไม่ตั้ง)": "Unlimited (not set)", "ประเภทงาน": "Work type",
   "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ": "Add machine + capabilities",
   "รหัสผ่านเริ่มต้น": "Default password", "ใช้งาน": "Active", "ปิดใช้งาน": "Disabled",
@@ -268,6 +271,7 @@ const RULES = [
   [/^ความคืบหน้า\s*—\s*(.+)$/, (m) => `Progress — ${m[1]}`],
   [/^ความสามารถของเครื่อง\s*—\s*(.+)$/, (m) => `Machine capabilities — ${m[1]}`],
   [/^แก้ไขพนักงาน\s*—\s*(.+)$/, (m) => `Edit employee — ${m[1]}`],
+  [/^แก้ไขเครื่องจักร\s*—\s*(.+)$/, (m) => `Edit machine — ${m[1]}`],
   [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
   [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
 ];
