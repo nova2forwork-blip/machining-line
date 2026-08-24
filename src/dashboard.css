@@ -56,12 +56,14 @@ body.dash-body {
 .dash-headright { display: flex; align-items: center; gap: 2.4vh; }
 .dash-live { display: flex; align-items: center; gap: .9vh; font-size: 1.7vh; font-weight: 700; letter-spacing: .14em; color: var(--dash-good); }
 .dash-live .dot { width: 1.3vh; height: 1.3vh; border-radius: 50%; background: var(--dash-good); box-shadow: 0 0 0 0 rgba(34,224,122,.7); animation: dashPulse 1.6s infinite; }
-.dash-langsel { display: flex; gap: 0; border: 1px solid var(--dash-line); border-radius: 999px; overflow: hidden; }
-.dash-langsel button {
-  background: transparent; color: var(--dash-ink-2); border: none; cursor: pointer;
-  font-size: 1.5vh; font-weight: 700; padding: 0.7vh 1.6vh; font-family: inherit;
+/* ปุ่มสลับภาษา — ปุ่มเดียวโชว์ภาษาที่จะสลับไป (แบบเดียวกับหน้าเครื่อง/สำนักงาน) */
+.dash-lang-btn {
+  appearance: none; cursor: pointer; font-family: inherit;
+  background: transparent; color: var(--dash-green); border: 1.5px solid var(--dash-green);
+  font-size: 1.5vh; font-weight: 800; letter-spacing: .03em; line-height: 1;
+  padding: 0.7vh 1.6vh; border-radius: 0.9vh;
 }
-.dash-langsel button.on { background: var(--dash-green); color: #05271b; }
+.dash-lang-btn:active { transform: scale(.95); }
 .dash-clock { font-size: 3.4vh; font-weight: 800; letter-spacing: .02em; }
 .dash-date { font-size: 1.5vh; color: var(--dash-ink-2); text-align: right; }
 
