@@ -47,7 +47,7 @@ const DICT = {
   "สร้าง Part": "Create Part", "Part ใหม่": "New Part", "สร้างใหม่": "New", "มีอยู่แล้ว": "Exists",
   "แก้ไขโปรเจค": "Edit Project", "เพิ่มโปรเจคใหม่": "Add new project", "ลบโปรเจคนี้": "Delete this project",
   "แก้ไข Release": "Edit Release", "บันทึก Release": "Save Release", "ปล่อยงาน": "Released", "ปล่อยงาน (ชิ้น)": "Released (pcs)",
-  "ลบ Part นี้": "Delete this Part", "ลบ Release นี้": "Delete this Release",
+  "ลบ Part นี้": "Delete this Part", "ลบ Release นี้": "Delete this Release", "ลบพนักงานนี้": "Delete this employee",
   "สำรองข้อมูล": "Backup", "สำรองข้อมูล (ดาวน์โหลดเก็บเอง)": "Backup (download your own copy)",
   "ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)": "Download backup file (JSON)",
   "ตารางที่รวมอยู่ในไฟล์สำรอง": "Tables included in the backup",
