@@ -3351,11 +3351,14 @@ function ReportPage() {
         </div>
       </Card>
 
-      <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงานที่ประมวลผล)">
+      <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)">
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          แต่ละเครื่องทำขั้นตอนอะไรไปเท่าไร (ชิ้น·กก.) + เวลาเดินเครื่อง + เฉลี่ย/วัน ในตารางเดียว · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง
+        </div>
         {matrix.machines.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap tall-scroll">
             <table className="data-table">
               <thead>
                 <tr>
@@ -3363,82 +3366,43 @@ function ReportPage() {
                   {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
                   <th>รวม</th>
                   <th>เวลาเดินเครื่อง</th>
-                </tr>
-              </thead>
-              <tbody>
-                {matrix.machines.map((m) => (
-                  <tr key={m.name}>
-                    <td style={{ fontWeight: 600 }}>{m.name}</td>
-                    {matrix.opNames.map((op) => {
-                      const cell = m.ops[op];
-                      return (
-                        <td key={op}>
-                          {cell
-                            ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
-                            : <span style={{ color: "var(--surface-3)" }}>—</span>}
-                        </td>
-                      );
-                    })}
-                    <td style={{ fontWeight: 600 }}>
-                      {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
-                    </td>
-                    <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10 }}>
-          เครื่องที่ทำได้หลายขั้นตอนจะเห็นน้ำหนักแยกรายขั้นตอนในคอลัมน์ต่างๆ — ตัวเลขนี้คือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ
-        </div>
-      </Card>
-
-      <Card title="รายวัน × เครื่องจักร (กก. / จำนวน / เวลา ต่อวัน)">
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          แต่ละเครื่องทำได้กี่กิโล/กี่ชิ้น และใช้เวลาเท่าไร ในแต่ละวัน · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง
-        </div>
-        {dailyMatrix.machines.length === 0 ? (
-          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
-        ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>เครื่องจักร</th>
-                  {dailyMatrix.days.map((d) => <th key={d}>{d.slice(5)}</th>)}
-                  <th>รวม</th>
                   <th>เฉลี่ย/วัน</th>
                 </tr>
               </thead>
               <tbody>
-                {dailyMatrix.machines.map((m) => (
-                  <tr key={m.name}>
-                    <td style={{ fontWeight: 600 }}>{m.name}</td>
-                    {dailyMatrix.days.map((d) => {
-                      const c = m.days[d];
-                      return (
-                        <td key={d} style={{ whiteSpace: "nowrap" }}>
-                          {c
-                            ? <span>{fmtNum(c.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(c.count)} ชิ้น · {fmtHrs(c.seconds)}</span></span>
-                            : <span style={{ color: "var(--surface-3)" }}>—</span>}
-                        </td>
-                      );
-                    })}
-                    <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {fmtNum(m.total.weight)} กก.<br /><span style={{ color: "var(--muted)", fontWeight: 400, fontSize: 11 }}>{fmtNum(m.total.count)} ชิ้น · {fmtHrs(m.total.seconds)}</span>
-                    </td>
-                    <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk, #0a7)" }}>
-                      {fmtNum(m.avg.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(m.avg.count)} ชิ้น · {fmtHrs(m.avg.seconds)}</span>
-                    </td>
-                  </tr>
-                ))}
+                {matrix.machines.map((m) => {
+                  const dm = dailyMatrix.machines.find((x) => x.name === m.name);
+                  return (
+                    <tr key={m.name}>
+                      <td style={{ fontWeight: 600 }}>{m.name}</td>
+                      {matrix.opNames.map((op) => {
+                        const cell = m.ops[op];
+                        return (
+                          <td key={op}>
+                            {cell
+                              ? <span>{cell.count} ชิ้น{cell.weight ? <span style={{ color: "var(--muted)" }}> · {fmtNum(cell.weight)} กก.</span> : null}</span>
+                              : <span style={{ color: "var(--surface-3)" }}>—</span>}
+                          </td>
+                        );
+                      })}
+                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {m.total.count} ชิ้น{m.total.weight ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(m.total.weight)} กก.</span> : null}
+                      </td>
+                      <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
+                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>
+                        {dm
+                          ? <span>{fmtNum(dm.avg.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(dm.avg.count)} ชิ้น · {fmtHrs(dm.avg.seconds)}</span></span>
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
-          หมายเหตุ: <b>เวลาเดินเครื่อง</b> คือเวลาที่จับจากการกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาที่เครื่องเปิดจริง) ใช้ดูแนวโน้มภาระงาน
+          ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)
         </div>
       </Card>
 
