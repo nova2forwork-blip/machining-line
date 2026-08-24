@@ -99,6 +99,18 @@ export default function Dashboard() {
   });
   const t = STR[lang];
   const setLangSave = (l) => { setLang(l); try { localStorage.setItem("mls-dash-lang", l); } catch { /* ignore */ } };
+  // เปิด-ปิดเส้นกราฟ (ชิ้น / น้ำหนัก) — กดที่ legend
+  const [series, setSeries] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mls-dash-series") || "") || { pcs: true, kg: true }; } catch { return { pcs: true, kg: true }; }
+  });
+  const toggleSeries = (which) => {
+    setSeries((s) => {
+      const next = { ...s, [which]: !s[which] };
+      if (!next.pcs && !next.kg) return s;       // ต้องเหลืออย่างน้อย 1 เส้น
+      try { localStorage.setItem("mls-dash-series", JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [fresh, setFresh] = useState(new Set());       // key ของสแกนใหม่ (ไฮไลต์ฟีด)
   const [hit, setHit] = useState(new Set());           // ชื่อเครื่องที่เพิ่งมีงานเข้า (แฟลชการ์ด)
   const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
@@ -291,9 +303,17 @@ export default function Dashboard() {
         <div className="dash-panel">
           <div className="dash-panel-h" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span>{t.hourly}</span>
-            <span style={{ display: "flex", gap: "1.4vh", fontSize: "1.35vh", fontWeight: 700 }}>
-              <span style={{ color: "#14e39a" }}>● {lang === "th" ? "ชิ้น" : "pcs"}</span>
-              <span style={{ color: "#ffc23d" }}>● {lang === "th" ? "น้ำหนัก (กก.)" : "weight (kg)"}</span>
+            <span style={{ display: "flex", gap: "1.2vh", fontSize: "1.35vh", fontWeight: 700 }}>
+              <button type="button" onClick={() => toggleSeries("pcs")} title={lang === "th" ? "กดเพื่อเปิด/ปิดเส้น" : "Click to toggle line"}
+                style={{ background: "none", border: "none", cursor: "pointer", font: "inherit", padding: "0 .4vh",
+                  color: series.pcs ? "#14e39a" : "#5b6b64", opacity: series.pcs ? 1 : 0.7,
+                  textDecoration: series.pcs ? "none" : "line-through" }}>
+                ● {lang === "th" ? "ชิ้น" : "pcs"}</button>
+              <button type="button" onClick={() => toggleSeries("kg")} title={lang === "th" ? "กดเพื่อเปิด/ปิดเส้น" : "Click to toggle line"}
+                style={{ background: "none", border: "none", cursor: "pointer", font: "inherit", padding: "0 .4vh",
+                  color: series.kg ? "#ffc23d" : "#5b6b64", opacity: series.kg ? 1 : 0.7,
+                  textDecoration: series.kg ? "none" : "line-through" }}>
+                ● {lang === "th" ? "น้ำหนัก (กก.)" : "weight (kg)"}</button>
             </span>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
@@ -311,20 +331,28 @@ export default function Dashboard() {
                   <CartesianGrid stroke="#24302a" vertical={false} />
                   <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
                     tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
-                  {/* แกนซ้าย = ชิ้น (เขียว) · แกนขวา = น้ำหนัก กก. (เหลือง) — สเกลต่างกันจึงแยกแกน */}
-                  <YAxis yAxisId="pcs" stroke="#24302a" tickLine={false} width={42}
-                    tick={{ fill: "#14e39a", fontSize: 12 }}
-                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  <YAxis yAxisId="kg" orientation="right" stroke="#24302a" tickLine={false} width={46}
-                    tick={{ fill: "#ffc23d", fontSize: 12 }}
-                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  <Area yAxisId="pcs" type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
-                    fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
-                    activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
-                    connectNulls={false} animationDuration={900} isAnimationActive />
-                  <Area yAxisId="kg" type="monotone" dataKey="kg" stroke="#ffc23d" strokeWidth={2.5}
-                    fill="none" dot={{ r: 3, fill: "#ffc23d", strokeWidth: 0 }}
-                    connectNulls={false} isAnimationActive={false} />
+                  {/* แกนซ้าย = ชิ้น (เขียว) · แกนขวา = น้ำหนัก กก. (เหลือง) — เปิด/ปิดได้จาก legend */}
+                  {series.pcs && (
+                    <YAxis yAxisId="pcs" stroke="#24302a" tickLine={false} width={42}
+                      tick={{ fill: "#14e39a", fontSize: 12 }}
+                      tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  )}
+                  {series.kg && (
+                    <YAxis yAxisId="kg" orientation="right" stroke="#24302a" tickLine={false} width={46}
+                      tick={{ fill: "#ffc23d", fontSize: 12 }}
+                      tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
+                  )}
+                  {series.pcs && (
+                    <Area yAxisId="pcs" type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
+                      fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
+                      activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
+                      connectNulls={false} animationDuration={900} isAnimationActive />
+                  )}
+                  {series.kg && (
+                    <Area yAxisId="kg" type="monotone" dataKey="kg" stroke="#ffc23d" strokeWidth={2.5}
+                      fill="none" dot={{ r: 3, fill: "#ffc23d", strokeWidth: 0 }}
+                      connectNulls={false} isAnimationActive={false} />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             )}
