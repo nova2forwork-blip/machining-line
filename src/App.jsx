@@ -191,20 +191,18 @@ const CHART = {
   text: "#142420", accent: "#10b981", success: "#22c55e",
 };
 
-// ปุ่มสลับภาษา ไทย/EN (แปลทั้งแอปด้วย i18n-dom)
+// ปุ่มสลับภาษา ไทย/EN — ปุ่มเดียวโชว์ภาษาที่จะสลับไป (แบบเดียวกับหน้าเครื่อง)
 function LangToggle() {
   const [lang, setLang] = useLang();
   return (
-    <div className="lang-toggle" style={{ display: "inline-flex", gap: 0, border: "1px solid var(--border-soft, #e1e9e5)", borderRadius: 999, overflow: "hidden", marginBottom: 10, alignSelf: "flex-start" }}>
-      {[["th", "ไทย"], ["en", "EN"]].map(([v, label]) => (
-        <button key={v} onClick={() => setLang(v)}
-          style={{ border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, padding: "3px 10px", lineHeight: 1.4,
-            background: lang === v ? "var(--accent, #10b981)" : "transparent",
-            color: lang === v ? "#fff" : "var(--muted, #6d7d76)", fontFamily: "inherit" }}>
-          {label}
-        </button>
-      ))}
-    </div>
+    <button className="lang-toggle-btn" onClick={() => setLang(lang === "th" ? "en" : "th")}
+      title="สลับภาษา / Switch language"
+      style={{ appearance: "none", cursor: "pointer", fontFamily: "inherit",
+        fontSize: 13, fontWeight: 800, lineHeight: 1, letterSpacing: ".03em",
+        padding: "5px 12px", borderRadius: 8, marginBottom: 10, alignSelf: "flex-start",
+        border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent, #10b981)" }}>
+      {lang === "th" ? "EN" : "ไทย"}
+    </button>
   );
 }
 
@@ -3286,7 +3284,8 @@ function ReportPage() {
   const partMatrix = partOpMatrix(filteredLogs); // ตารางแยก Part No. × ขั้นตอน
   const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
   // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
-  const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน
+  const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
+  const sortW = useTableSort();   // ตารางปริมาณงานที่แต่ละเครื่องประมวลผล
   const sortP = useTableSort();   // ตาราง Release × Part × ขั้นตอน
   const dmByName = (name) => dailyMatrix.machines.find((x) => x.name === name);
   const machineAcc = {
@@ -3529,15 +3528,15 @@ function MachinesSummaryPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>เครื่องจักร</th>
-                {matrix.opNames.map((op) => <th key={op}>{op}</th>)}
-                <th>รวมทุกขั้นตอน</th>
-                <th>น้ำหนักรวม (กก.)</th>
-                <th>เวลาเดินเครื่อง</th>
+                <SortTh k="name" sort={sortW}>เครื่องจักร</SortTh>
+                {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortW} key={op}>{op}</SortTh>)}
+                <SortTh k="total" sort={sortW}>รวมทุกขั้นตอน</SortTh>
+                <SortTh k="weight" sort={sortW}>น้ำหนักรวม (กก.)</SortTh>
+                <SortTh k="time" sort={sortW}>เวลาเดินเครื่อง</SortTh>
               </tr>
             </thead>
             <tbody>
-              {matrix.machines.map((m) => (
+              {sortW.sortRows(matrix.machines, machineAcc).map((m) => (
                 <tr key={m.name}>
                   <td style={{ fontWeight: 600 }}>{m.name}</td>
                   {matrix.opNames.map((op) => {
