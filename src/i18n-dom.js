@@ -181,6 +181,8 @@ const DICT = {
   "รายวัน × เครื่องจักร (กก. / จำนวน / เวลา ต่อวัน)": "Daily × Machine (kg / qty / time per day)",
   "แยกตามขั้นตอนการทำงาน": "By operation",
   "Part No. × ขั้นตอน (จำนวนชิ้น)": "Part No. × Operation (pieces)",
+  "Release × Part × ขั้นตอน": "Release × Part × Operation",
+  "รวม (ชิ้น)": "Total (pcs)", "น้ำหนัก (กก.)": "Weight (kg)", "เสร็จ (ชิ้น)": "Finished (pcs)",
   "กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง": "Press Ctrl+Z to undo table edits",
   "สถานีของคุณ": "Your station", "เลือกโหมดสแกน": "Select scan mode",
   "สแกนที่ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ (จะซิงค์อัตโนมัติเมื่อเน็ตกลับ)": "Scans not yet uploaded (auto-sync when back online)",
