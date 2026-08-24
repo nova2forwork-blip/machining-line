@@ -523,12 +523,19 @@ function MachineStation({ user, onLogout, onKicked }) {
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
                       ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
-                    {/* BALANCE = คงเหลือ (REQ − PROCESS) · ติดลบ = ทำเกิน (สแปร์) */}
-                    <td className={r.process_cum != null && r.req != null && (r.req - r.process_cum) <= 0 ? "stn-st-fin" : ""}>
-                      {r.process_cum != null && r.req != null ? fmt(r.req - r.process_cum) : "-"}</td>
+                    {/* BALANCE = QTY − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
+                    <td className={r.qty != null && r.req != null && (r.qty - r.req) >= 0 ? "stn-st-fin" : ""}>
+                      {r.qty != null && r.req != null
+                        ? ((r.qty - r.req) > 0 ? `+${fmt(r.qty - r.req)}` : fmt(r.qty - r.req))
+                        : "-"}</td>
                     <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
                     <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
-                    <td>{r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
+                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง */}
+                    <td style={r.materials_length != null && r.length_mm != null && r.materials_length < r.length_mm
+                        ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
+                      title={r.materials_length != null && r.length_mm != null && r.materials_length < r.length_mm
+                        ? "ความยาววัสดุสั้นกว่าความยาวชิ้นงาน" : undefined}>
+                      {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
                     <td className="l">{r.inventory_code || "-"}</td>
                     <td>{hms(r.process_seconds)}</td>
                     <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
