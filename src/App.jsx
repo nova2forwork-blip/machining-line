@@ -3442,50 +3442,44 @@ function ReportPage() {
         </div>
       </Card>
 
-      <Card title="Part No. × ขั้นตอน (จำนวนชิ้น)">
+      <Card title="Release × Part × ขั้นตอน">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          แต่ละแถวคือเบอร์ Part — คอลัมน์คือขั้นตอนการทำงาน — ตัวเลขในช่องคือจำนวนชิ้นที่ผ่านขั้นตอนนั้น (งานหน้าเครื่องนับตามจำนวนที่กรอก)
+          แต่ละแถว = Part ในแต่ละ Release · คอลัมน์ขั้นตอน = จำนวนชิ้นที่ผ่านขั้นตอนนั้น · <b>น้ำหนัก</b> แยกคอลัมน์ · <b>เสร็จ</b> = ชิ้นที่กด Finished
         </div>
         {partMatrix.parts.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap tall-scroll">
             <table className="data-table">
               <thead>
                 <tr>
+                  <th>Release</th>
                   <th>Part No.</th>
                   <th>ชื่อ Part</th>
                   {partMatrix.opNames.map((op) => <th key={op}>{op}</th>)}
-                  <th>รวม</th>
+                  <th>รวม (ชิ้น)</th>
+                  <th>น้ำหนัก (กก.)</th>
+                  <th>เสร็จ (ชิ้น)</th>
                 </tr>
               </thead>
               <tbody>
                 {partMatrix.parts.map((p) => (
-                  <tr key={p.partNo}>
+                  <tr key={`${p.releaseOrder} ${p.partNo}`}>
+                    <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.releaseOrder}</td>
                     <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partNo}</td>
                     <td style={{ color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partName}</td>
                     {partMatrix.opNames.map((op) => {
                       const cell = p.ops[op];
                       return (
                         <td key={op}>
-                          {cell ? (
-                            <span>
-                              {cell.count.toLocaleString()} ชิ้น
-                              {cell.weight > 0 && (
-                                <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtNum(cell.weight)} กก.</span>
-                              )}
-                            </span>
-                          ) : (
-                            <span style={{ color: "var(--surface-3)" }}>—</span>
-                          )}
+                          {cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>}
                         </td>
                       );
                     })}
-                    <td style={{ fontWeight: 600 }}>
-                      {p.total.count.toLocaleString()} ชิ้น
-                      {p.total.weight > 0 && (
-                        <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtNum(p.total.weight)} กก.</span>
-                      )}
+                    <td style={{ fontWeight: 600 }}>{p.total.count.toLocaleString()} ชิ้น</td>
+                    <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{p.total.weight > 0 ? `${fmtNum(p.total.weight)} กก.` : "—"}</td>
+                    <td style={{ fontWeight: 700, color: p.total.finished > 0 ? "var(--success)" : "var(--muted)" }}>
+                      {p.total.finished > 0 ? `${p.total.finished.toLocaleString()} ชิ้น` : "—"}
                     </td>
                   </tr>
                 ))}
