@@ -7,7 +7,7 @@ import {
   deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
-  logoutSession, setEmployeeActive, recalcPartStatus,
+  logoutSession, setEmployeeActive, deleteEmployee, recalcPartStatus,
   exportAllData,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -4415,6 +4415,35 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
     setBusy(false);
   }
 
+  async function del() {
+    if (!confirm(`ลบพนักงาน "${employee.code} — ${employee.name}" ?`)) return;
+    setBusy(true); setErr("");
+    try {
+      let res = await deleteEmployee(employee.id, false);
+      if (res && res.ok === false && res.reason === "has_records") {
+        setBusy(false);
+        const ok = confirm(
+          `พนักงานคนนี้มีประวัติงานหน้าเครื่อง ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
+          `แนะนำให้ "ปิดใช้งาน" แทนการลบ เพื่อเก็บชื่อผู้ทำไว้ในประวัติ\n\n` +
+          `ถ้ายืนยันลบ: ตัวเลขการผลิตจะยังอยู่ครบ แต่ประวัติจะไม่ระบุว่าใครเป็นคนทำ\n\nยืนยันลบ?`
+        );
+        if (!ok) return;
+        setBusy(true);
+        res = await deleteEmployee(employee.id, true);
+      }
+      if (res && res.ok === false) {
+        if (res.reason === "self") setErr("ลบบัญชีตัวเองไม่ได้ — ให้บัญชี Admin อื่นลบให้");
+        else setErr("ลบไม่สำเร็จ");
+        setBusy(false);
+        return;
+      }
+      onSaved();
+    } catch (e) {
+      setErr("ลบไม่สำเร็จ: " + e.message);
+    }
+    setBusy(false);
+  }
+
   return (
     <Modal title={`แก้ไขพนักงาน — ${employee.code}`} sub="ตั้งเครื่องจักร/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง" onClose={onClose}>
       <div className="grid-2">
@@ -4440,9 +4469,14 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         </div>
       )}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
-      <div className="modal-actions">
-        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-        <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+      <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+        <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>
+          ลบพนักงานนี้
+        </Btn>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+        </div>
       </div>
     </Modal>
   );
