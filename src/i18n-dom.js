@@ -77,6 +77,12 @@ const DICT = {
   // เครื่องจักร / setup
   "เครื่องจักรประจำ": "Assigned machine", "ขั้นตอนประจำ": "Assigned operation",
   "เครื่องจักรประจำ *": "Assigned machine *", "ขั้นตอนประจำ *": "Assigned operation *",
+  "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน)": "Assigned operations (select multiple)",
+  "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *": "Assigned operations (select multiple) *",
+  "เลือกเครื่องจักรก่อน จึงจะบันทึกหลายขั้นตอนได้": "Select a machine first to save multiple operations",
+  "ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ \"ขั้นตอนงาน\" ก่อน": "No operations yet — add them in the \"Workflow\" tab first",
+  "พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม \"แก้ไข\") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง":
+    "Employees without an assigned machine/operation can't scan (you can set it later via \"Edit\") · select multiple operations if this machine does more than one",
   "รหัสเครื่อง": "Machine code", "ชื่อเครื่องจักร": "Machine name", "รหัสพนักงาน": "Employee code",
   "ขั้นตอนที่ทำได้": "Operations", "ขั้นตอนที่เครื่องนี้ทำได้": "Operations this machine can do",
   "ไม่จำกัด (ยังไม่ตั้ง)": "Unlimited (not set)", "ประเภทงาน": "Work type",
