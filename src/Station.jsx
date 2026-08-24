@@ -8,6 +8,7 @@ import {
   findUnitByQr, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
+  countUnitOpRecords,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -150,6 +151,7 @@ function MachineStation({ user, onLogout, onKicked }) {
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
   const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
+  const [dupCount, setDupCount] = useState(0);   // ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วกี่ครั้ง (เตือน rework)
   const [qty, setQty] = useState(0);
   const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
   const [busy, setBusy] = useState(false);
@@ -275,7 +277,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   useEffect(() => () => stopTimer(), []);
 
   function resetAll(keepLen = false) {
-    stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setQty(0);
+    stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStep(STEP.IDLE);
     clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
@@ -323,7 +325,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
-  function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setQty(0); setStatus(null); setStep(STEP.SCAN); }
+  function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
   // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
   async function onDecoded(qr) {
     if (!qr) return false;
@@ -338,8 +340,11 @@ function MachineStation({ user, onLogout, onKicked }) {
     //   อย่าเอายอด "รวมทุกขั้นตอน" มาโชว์ (จะหลอกให้หยุดงานก่อนครบ) → โชว์เป็นไม่ทราบแทน
     const opId = op?.id || user.operation?.id || null;
     const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
+    // ★ ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วหรือยัง — ใช้เตือน rework ก่อนบันทึกซ้ำ (0 เมื่อออฟไลน์)
+    const dup = opId ? await countUnitOpRecords(u.id, opId) : 0;
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     setBusy(false);
+    setDupCount(dup);
     setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
     setUnit(u);
     if (qty === 0) setQty(1);
@@ -355,6 +360,8 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
     // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
     if (qty > 2000 && !confirm(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`)) return;
+    // ชิ้นนี้เคยทำขั้นตอนนี้ไปแล้ว → ยืนยันกันสแกนซ้ำโดยไม่ตั้งใจ (ยอมได้ถ้าเป็น rework จริง)
+    if (dupCount > 0 && !confirm(`ชิ้นนี้เคยบันทึกขั้นตอนนี้ไปแล้ว ${dupCount} ครั้ง — ยืนยันทำซ้ำ (rework) หรือไม่?`)) return;
     doSave();
   }
 
@@ -498,7 +505,7 @@ function MachineStation({ user, onLogout, onKicked }) {
           <table className="stn-rec">
             <thead>
               <tr>
-                <th>ITEM</th><th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
+                <th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
                 <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BALANCE</th>
                 <th>LENGTH<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
                 <th>INVENTORY<br />CODE</th><th>PROCESS<br />TIME</th><th>STATUS</th>
@@ -506,7 +513,7 @@ function MachineStation({ user, onLogout, onKicked }) {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={15}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
+                <tr className="stn-empty-row"><td colSpan={14}>ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย</td></tr>
               )}
               {rows.map((r, i) => {
                 const fin = String(r.status).toLowerCase() === "finished";
@@ -514,7 +521,6 @@ function MachineStation({ user, onLogout, onKicked }) {
                 return (
                   <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
                     title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
-                    <td>{r.item != null ? String(r.item).padStart(3, "0") : pad(i + 1)}</td>
                     <td>{r.mdf_no || "-"}</td>
                     <td>{r.rel_no || "-"}</td>
                     <td className="l">{r.part_no || "-"}</td>
@@ -788,6 +794,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 {progress?.offline ? `~${ofText}` : ofText}
               </div>
               {isOver ? <div className="stn-lbl-rework">เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)</div> : null}
+              {dupCount > 0 ? <div className="stn-lbl-dup">{`⚠ ชิ้นนี้เคยทำขั้นตอนนี้แล้ว ${dupCount} ครั้ง`}</div> : null}
               {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
             </div>
           </div>
