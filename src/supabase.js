@@ -97,6 +97,17 @@ export async function setEmployeeActive(id, active) {
   if (error) { console.warn("set_employee_active error", error); throw error; }
 }
 
+// ลบพนักงาน (admin เท่านั้น) — ผ่าน RPC
+//   คืน { ok:true, detached } เมื่อลบสำเร็จ
+//   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
+//   คืน { ok:false, reason:'self' } เมื่อพยายามลบบัญชีตัวเอง
+//   force=true = ยืนยันลบทั้งที่มีประวัติ (ประวัติงานยังอยู่ แต่ตัดชื่อผู้ทำออก)
+export async function deleteEmployee(id, force = false) {
+  const { data, error } = await supabase.rpc("authz_delete_employee", { p_token: authToken(), p_id: id, p_force: !!force });
+  if (error) { console.warn("authz_delete_employee error", error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
 // Delete a release entirely, along with every part_unit it created and any
 // scan_logs recorded against those units (FK constraints require deleting
 // children before parents). Caller is responsible for warning the user first
