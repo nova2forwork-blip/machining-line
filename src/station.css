@@ -271,6 +271,7 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-lbl-of { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--st-line); align-self: stretch; text-align: right; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
 .stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
 .stn-lbl-rework { font-size: 10.5px; color: var(--st-alert); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+.stn-lbl-dup { font-size: 10.5px; color: var(--st-red, #e11d1d); font-weight: 700; margin-top: 2px; white-space: nowrap; }
 
 /* popup แจ้งเวอร์ชันใหม่ (หน้าเครื่อง) — การ์ดมุมขวาล่าง กดอัปเดตเอง */
 .stn-update {
