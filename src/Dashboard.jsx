@@ -30,7 +30,7 @@ const STR = {
     kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
     machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
     noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
-    hourly: "การผลิตรายชั่วโมง · วันนี้ (กก.)", waitingData: "รอข้อมูลการผลิต…",
+    hourly: "การผลิตรายชั่วโมง · วันนี้ (ชิ้น)", waitingData: "รอข้อมูลการผลิต…",
     liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
     finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
     booting: "กำลังเชื่อมต่อสายการผลิต…",
@@ -43,7 +43,7 @@ const STR = {
     kpiScans: "Scans Today", unitTimes: "scans",
     machines: "Machines · Today", machineUnit: "machines",
     noWork: "No work yet today — waiting for the first scan…",
-    hourly: "Hourly Production · Today (kg)", waitingData: "Waiting for production data…",
+    hourly: "Hourly Production · Today (pcs)", waitingData: "Waiting for production data…",
     liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
     finished: "Finished", inProcess: "In Progress",
     booting: "Connecting to the production line…",
@@ -191,21 +191,14 @@ export default function Dashboard() {
   const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
   const hourly = useMemo(() => {
     const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
-    const perHourKg = new Array(24).fill(0);
-    for (const l of logs) perHourKg[bkkHour(l.scanned_at)] += Number(l.weight) || 0;
+    const perHour = new Array(24).fill(0);
+    for (const l of logs) perHour[bkkHour(l.scanned_at)] += Number(l.quantity) || 0;   // นับ "จำนวนชิ้น" ต่อชั่วโมง
     const active = logs.map((l) => bkkHour(l.scanned_at));
     let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
     startH = Math.min(startH, Math.max(0, curH - 3)); // โชว์อย่างน้อย ~4 จุด
     const arr = [];
-    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, kg: Math.round(perHourKg[h] * 10) / 10 });
-    // ★ ชั่วโมงล่าสุด = ยังทำไม่ครบชั่วโมง → แยกเป็น "เส้นประ (กำลังดำเนินการ)"
-    //   เพื่อไม่ให้ดูเหมือนการผลิตดิ่งลง · เส้นทึบหยุดที่ชั่วโมงที่จบแล้ว
-    if (arr.length >= 2) {
-      const last = arr.length - 1;
-      arr[last].kgLive = arr[last].kg;          // จุดชั่วโมงปัจจุบัน (เส้นประ)
-      arr[last - 1].kgLive = arr[last - 1].kg;  // ต่อเส้นประจากจุดก่อนหน้า
-      arr[last].kg = null;                        // เส้นทึบไม่ลากถึงชั่วโมงที่ยังไม่ครบ
-    }
+    // เส้นเดียวปกติ — ทุกชั่วโมงรวมชั่วโมงปัจจุบัน (ยอดสะสมเท่าที่ทำได้ถึงตอนนี้)
+    for (let h = startH; h <= curH; h++) arr.push({ hour: `${pad(h)}:00`, pcs: perHour[h] });
     // คงอ้างอิงเดิมถ้าค่าเท่าเดิม → กราฟไม่รีอนิเมชันซ้ำทุกโพล/ทุกวินาที
     if (JSON.stringify(arr) === JSON.stringify(hourlyRef.current)) return hourlyRef.current;
     hourlyRef.current = arr;
@@ -310,24 +303,14 @@ export default function Dashboard() {
                   <YAxis stroke="#24302a" tickLine={false} width={56}
                     tick={{ fill: "#9db1a8", fontSize: 13 }}
                     tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  <Area type="monotone" dataKey="kg" stroke="#14e39a" strokeWidth={3}
+                  <Area type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
                     fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
                     activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
                     connectNulls={false} animationDuration={900} isAnimationActive />
-                  {/* ชั่วโมงล่าสุด (ยังไม่ครบ) — เส้นประ ไม่มีพื้น เพื่อบอกว่า "กำลังดำเนินการ" */}
-                  <Area type="monotone" dataKey="kgLive" stroke="#14e39a" strokeWidth={3}
-                    strokeDasharray="5 6" fill="none" connectNulls={false}
-                    dot={{ r: 4, fill: "#0b0f0d", stroke: "#22e07a", strokeWidth: 2 }}
-                    isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
-          {hourly.some((p) => p.kgLive != null) && (
-            <div style={{ fontSize: "1.25vh", color: "#9db1a8", padding: "2px 4px 0", textAlign: "right" }}>
-              ┄┄ {lang === "th" ? "ชั่วโมงล่าสุด · กำลังดำเนินการ (ยังไม่ครบชั่วโมง)" : "current hour · in progress (partial)"}
-            </div>
-          )}
         </div>
       </div>
 
