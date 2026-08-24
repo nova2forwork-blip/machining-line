@@ -156,13 +156,13 @@
 
 /* ── Records table ───────────────────────────────────────────── */
 .stn-table { border-bottom: 2px solid var(--st-line); overflow: auto; min-width: 0; }
-table.stn-rec { border-collapse: collapse; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 10px; white-space: nowrap; }
+table.stn-rec { border-collapse: collapse; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; white-space: nowrap; }
 table.stn-rec th {
-  font-family: 'IBM Plex Sans Thai', sans-serif; font-weight: 600; font-size: 8.5px; color: #111;
-  text-align: center; padding: 3px 4px; border-bottom: 1.5px solid var(--st-line);
-  line-height: 1.1; text-transform: uppercase; position: sticky; top: 0; background: var(--st-paper);
+  font-family: 'IBM Plex Sans Thai', sans-serif; font-weight: 600; font-size: 10.5px; color: #111;
+  text-align: center; padding: 4px 5px; border-bottom: 1.5px solid var(--st-line);
+  line-height: 1.15; text-transform: uppercase; position: sticky; top: 0; background: var(--st-paper);
 }
-table.stn-rec td { padding: 2px 5px; text-align: center; border-bottom: 1px solid #e6e9ee; color: #1a1d22; }
+table.stn-rec td { padding: 3px 6px; text-align: center; border-bottom: 1px solid #e6e9ee; color: #1a1d22; }
 table.stn-rec td.l { text-align: left; }
 table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background: var(--st-tint); }
 .stn-st-fin { color: var(--st-green); font-weight: 600; }
