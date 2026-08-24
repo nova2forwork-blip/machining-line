@@ -410,11 +410,35 @@ function MachineStation({ user, onLogout, onKicked }) {
     }
   }
 
-  // scroll table to newest row when it changes
+  // ล็อกตารางไว้ที่ 6 แถว (สูง = หัวตาราง + 6 แถว) เกินกว่านั้นเลื่อนดูของเก่าได้
+  // แถวใช้ฟอนต์ vh (ปรับตามจอ) จึงวัดความสูงจริงด้วย JS แล้วตั้ง maxHeight ให้ตรง 6 แถวเป๊ะ
   const tableRef = useRef(null);
+  const ROWS_VISIBLE = 6;
+  const lockTableHeight = useCallback(() => {
+    const el = tableRef.current; if (!el) return;
+    const table = el.querySelector("table.stn-rec"); if (!table) return;
+    const thead = table.querySelector("thead");
+    const bodyRows = table.querySelectorAll("tbody tr");
+    if (bodyRows.length > ROWS_VISIBLE) {
+      const headH = thead ? thead.offsetHeight : 0;
+      let rowsH = 0;
+      for (let i = 0; i < ROWS_VISIBLE; i++) rowsH += bodyRows[i].offsetHeight || 0;
+      el.style.maxHeight = (headH + rowsH + 2) + "px";   // +2 กันเส้นขอบล่างโดนตัด
+    } else {
+      el.style.maxHeight = "";                            // ≤ 6 แถว → ไม่ต้องล็อก
+    }
+  }, []);
   useEffect(() => {
-    if (tableRef.current) tableRef.current.scrollTop = tableRef.current.scrollHeight;
-  }, [rows.length]);
+    lockTableHeight();
+    if (tableRef.current) tableRef.current.scrollTop = tableRef.current.scrollHeight;   // เลื่อนไปแถวล่าสุด
+  }, [rows, lockTableHeight]);
+  // จอหมุน/เปลี่ยนขนาด → ฟอนต์ vh เปลี่ยน ต้องคำนวณความสูงใหม่
+  useEffect(() => {
+    const on = () => lockTableHeight();
+    window.addEventListener("resize", on);
+    window.addEventListener("orientationchange", on);
+    return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
+  }, [lockTableHeight]);
 
   const recording = step !== STEP.IDLE;
   const scanArmed = qty > 0 && !!unit;
