@@ -154,6 +154,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);   // กันกด OK ซ้ำระหว่างบันทึก (re-entrancy)
+  const clientIdRef = useRef(null);  // ★ client_id คงเดิมตลอด "การบันทึกครั้งเดียว" (รวมตอน retry) กันบันทึกซ้ำ
   const [toast, setToast] = useState(null);   // { text, tone }
   const toastRef = useRef(null);
   const [pending, setPending] = useState(scanQueueCount());
@@ -190,9 +191,10 @@ function MachineStation({ user, onLogout, onKicked }) {
       setMachineOps(ops);
       setOp((cur) => {
         if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังทำได้ → คงเดิม
-        if (user.operation && ops.some((o) => o.id === user.operation.id)) return user.operation; // ใช้ขั้นตอนประจำบัญชี
         if (ops.length === 1) return ops[0];                               // ทำได้ขั้นตอนเดียว → เลือกให้เลย
-        return cur;                                                        // ทำได้หลายขั้นตอน → ให้คนงานแตะเลือก
+        if (ops.length === 0) return user.operation || cur;               // ไม่ได้ตั้งความสามารถ → ใช้ขั้นตอนประจำบัญชี
+        // ★ ทำได้หลายขั้นตอน → บังคับให้แตะเลือกเอง (ไม่ default จากบัญชี กันบันทึกผิดขั้นตอนเงียบๆ)
+        return null;
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -276,6 +278,7 @@ function MachineStation({ user, onLogout, onKicked }) {
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setQty(0);
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStep(STEP.IDLE);
+    clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
   }
 
   // ── START / STOP (RECORD) ───────────────────────────────────────────────
@@ -320,7 +323,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
-  function rescan() { setUnit(null); setProgress(null); setQty(0); setStatus(null); setStep(STEP.SCAN); }
+  function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setQty(0); setStatus(null); setStep(STEP.SCAN); }
   // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
   async function onDecoded(qr) {
     if (!qr) return false;
@@ -360,6 +363,12 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (savingRef.current) return;      // กันกด OK รัวๆ → บันทึกซ้ำ (re-entrancy)
     savingRef.current = true;
     setBusy(true);
+    // สร้าง client_id ครั้งเดียวต่อการบันทึกชิ้นนี้ · ถ้ากด OK ซ้ำ (retry หลังพลาด) ใช้ตัวเดิม
+    // → ฝั่ง DB dedup ด้วย client_id ได้ กันบันทึกซ้ำแม้ error ที่ไม่ใช่เน็ต (เช่น insert สำเร็จแต่ตอบกลับพลาด)
+    if (!clientIdRef.current) {
+      clientIdRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID() : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    }
     try {
       const res = await recordMachineWork({
         qr: unit.qr_code,
@@ -369,6 +378,7 @@ function MachineStation({ user, onLogout, onKicked }) {
         status,
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
         operationId: op?.id || null,  // ★ ขั้นตอนที่เลือกบนจอ
+        clientId: clientIdRef.current, // ★ คงเดิมตอน retry
       });
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
@@ -488,7 +498,7 @@ function MachineStation({ user, onLogout, onKicked }) {
                     <td>{fmt(r.qty)}</td>
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
-                      ? `${String(r.process_cum).padStart(4, "0")}/${String(r.req).padStart(4, "0")}` : "-"}</td>
+                      ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
                     {/* BALANCE = คงเหลือ (REQ − PROCESS) · ติดลบ = ทำเกิน (สแปร์) */}
                     <td className={r.process_cum != null && r.req != null && (r.req - r.process_cum) <= 0 ? "stn-st-fin" : ""}>
                       {r.process_cum != null && r.req != null ? fmt(r.req - r.process_cum) : "-"}</td>
