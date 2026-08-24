@@ -83,6 +83,13 @@ function CountNumber({ value, format = fmtInt, className = "" }) {
 
 const keyOf = (l) => `${l.part_unit_id || "?"}|${l.scanned_at}|${l.operation?.name || "?"}|${l.quantity}`;
 
+// ชื่อขั้นตอน ไทย→อังกฤษ (สำหรับ dashboard เมื่อเลือกภาษา EN)
+const OP_EN = {
+  "ตัด": "Cut", "เจาะ": "Drill", "บาก": "Notch", "พับ": "Bend", "เชื่อม": "Weld", "ประกอบ": "Assemble",
+  "กัด": "Milling", "เฉือน": "Shearing", "ปั๊ม": "Punching", "ต๊าป": "Tapping", "เซาะร่อง": "Grooving", "ผ่า": "Ripping",
+};
+const opLabel = (name, lang) => (lang === "en" ? (OP_EN[name] || name) : name);
+
 export default function Dashboard() {
   const [logs, setLogs] = useState([]);
   const [booted, setBooted] = useState(false);
@@ -332,15 +339,13 @@ export default function Dashboard() {
         ) : (
           <div className="dash-feed-list">
             {feed.map((l) => {
-              const finished = String(l.status).toLowerCase() === "finished";
               return (
                 <div key={keyOf(l)} className={`dash-feed-item ${fresh.has(keyOf(l)) ? "fresh" : ""}`}>
                   <div className="part">{l.part_unit?.part_master?.part_no || "—"}</div>
                   <div className="qty">+{fmtInt(l.quantity)}</div>
                   <div className="line2">
                     <span className="chip">{l.machine?.name || "—"}</span>
-                    {l.operation?.name ? <span>{l.operation.name}</span> : null}
-                    <span className={finished ? "st-fin" : "st-inp"}>{finished ? t.finished : t.inProcess}</span>
+                    {l.operation?.name ? <span className="op">{opLabel(l.operation.name, lang)}</span> : null}
                   </div>
                   <div className="time dash-num">{timeOf(l.scanned_at)}</div>
                 </div>
