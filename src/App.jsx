@@ -24,6 +24,8 @@ import { useLang } from "./i18n-dom.js";
 //   • dropdown / ปุ่มเลือก (chip) / ตัวเพิ่ม-ลด ที่ไม่มี undo ในตัว → ใช้ตัวนี้ย้อน
 const _undoers = [];              // ฟอร์มที่ลงทะเบียนไว้ (ท้ายสุด = แก้ล่าสุด)
 let _undoKeyOn = false;
+let _editSeq = 0;                 // ลำดับการแก้ไข (นับขึ้นเรื่อยๆ) — ใช้กันย้อนฟอร์มที่ซ่อนหลัง modal
+const _modalStack = [];           // _editSeq ตอนที่แต่ละ modal เปิด (ล่าสุด = บนสุด)
 function _installUndoKey() {
   if (_undoKeyOn || typeof window === "undefined") return;
   _undoKeyOn = true;
@@ -35,8 +37,10 @@ function _installUndoKey() {
       (tag === "INPUT" && !/^(checkbox|radio|button|submit|reset|range|file|color)$/i.test(a.type || "")) ||
       tag === "TEXTAREA" || (a && a.isContentEditable);
     if (isText) return;           // อยู่ในช่องพิมพ์ → ให้เบราว์เซอร์ undo ตัวอักษรเอง
+    // ถ้ามี modal เปิดอยู่ → ย้อนได้เฉพาะฟอร์มที่ "แก้หลังจาก modal เปิด" (กันเผลอย้อนฟอร์มพื้นหลัง)
+    const gate = _modalStack.length ? _modalStack[_modalStack.length - 1] : -1;
     for (let i = _undoers.length - 1; i >= 0; i--) {
-      if (_undoers[i].canUndo()) { e.preventDefault(); _undoers[i].undo(); return; }
+      if (_undoers[i].canUndo() && (_undoers[i].seq || 0) > gate) { e.preventDefault(); _undoers[i].undo(); return; }
     }
   });
 }
@@ -48,6 +52,8 @@ function useUndoable(initial) {
   const set = useCallback((updater) => {
     const idx = _undoers.indexOf(api.current);   // ทำเครื่องหมายว่าแก้ล่าสุด → ย้ายไปท้ายสแตก
     if (idx >= 0) { _undoers.splice(idx, 1); _undoers.push(api.current); }
+    api.current.seq = ++_editSeq;                // จำลำดับการแก้ล่าสุดของฟอร์มนี้
+    try { window.dispatchEvent(new Event("mls-undo-available")); } catch { /* ignore */ }
     setState((prev) => {
       hist.current = [...hist.current, prev].slice(-50);
       return typeof updater === "function" ? updater(prev) : updater;
@@ -120,6 +126,52 @@ function SortControl({ sort, options }) {
         title="สลับ น้อย↔มาก" aria-label="สลับทิศทางการเรียง">{sort.dir === "asc" ? "▲ น้อย→มาก" : "▼ มาก→น้อย"}</button>
     </div>
   );
+}
+
+// ── Toast แจ้งเตือนแบบไม่บล็อกหน้าจอ (แทน alert) ──────────────────────────────
+function mlsToast(text, tone = "info") {
+  try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text, tone } })); } catch { /* ignore */ }
+}
+function Toaster() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let idc = 0;
+    const on = (e) => {
+      const id = ++idc;
+      setItems((s) => [...s, { id, text: e.detail.text, tone: e.detail.tone || "info" }]);
+      const ttl = e.detail.tone === "error" ? 6000 : e.detail.tone === "warn" ? 4500 : 3400;
+      setTimeout(() => setItems((s) => s.filter((x) => x.id !== id)), ttl);
+    };
+    window.addEventListener("mls-toast", on);
+    return () => window.removeEventListener("mls-toast", on);
+  }, []);
+  if (!items.length) return null;
+  return (
+    <div className="mls-toaster">
+      {items.map((it) => (
+        <div key={it.id} className={`mls-toast ${it.tone}`} role="status"
+          onClick={() => setItems((s) => s.filter((x) => x.id !== it.id))} title="แตะเพื่อปิด">{it.text}</div>
+      ))}
+    </div>
+  );
+}
+
+// ── ป้ายบอกว่ากด Ctrl+Z ย้อนได้ (โผล่ครั้งแรกที่มีการแก้ไขในเซสชัน) ──────────────
+function UndoHint() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const on = () => {
+      let seen = false; try { seen = sessionStorage.getItem("mls-undo-hint") === "1"; } catch { /* ignore */ }
+      if (seen) return;
+      try { sessionStorage.setItem("mls-undo-hint", "1"); } catch { /* ignore */ }
+      setShow(true);
+      setTimeout(() => setShow(false), 4500);
+    };
+    window.addEventListener("mls-undo-available", on);
+    return () => window.removeEventListener("mls-undo-available", on);
+  }, []);
+  if (!show) return null;
+  return <div className="mls-undo-hint" onClick={() => setShow(false)}>↶ กด Ctrl+Z เพื่อย้อนการแก้ไข</div>;
 }
 
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
@@ -311,6 +363,13 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, locked]);
+
+  // ลงทะเบียน modal ในสแตก (สำหรับ Ctrl+Z: ย้อนได้เฉพาะฟอร์มในหน้าต่างนี้ ไม่ย้อนฟอร์มพื้นหลัง)
+  useEffect(() => {
+    _modalStack.push(_editSeq);
+    return () => { _modalStack.pop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function pulse() {
     setShake(true);
@@ -1542,7 +1601,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       if (next.length === 0) { onBack(); return; } // ลบหมดทั้งกลุ่ม → กลับหน้ารายการ
       loadStats(next);
     } catch (e) {
-      alert("ลบไม่สำเร็จ: " + e.message);
+      mlsToast("ลบไม่สำเร็จ: " + e.message, "error");
     }
     setBusyId(null);
   }
@@ -1618,7 +1677,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>กำลังโหลด...</div>
           ) : (
             <>
-              <div style={{ fontSize: 22, fontWeight: 700, color: pctOverall === 100 ? "var(--success)" : "var(--text)" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: (totalQty > 0 && totalFinished >= totalQty) ? "var(--success)" : "var(--text)" }}>
                 {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(totalQty)} ชิ้น</span>
               </div>
               <ProgressBar pct={pctOverall} finished={totalFinished} total={totalQty} />
@@ -1939,10 +1998,11 @@ function ReleasePage({ user, goTo }) {
           onSaved={async ({ releaseOrder, releasesCreated, partsCreated, unitsCreated }) => {
             setShowAdd(false);
             await load();
-            alert(
+            mlsToast(
               `บันทึก ${releaseOrder} สำเร็จ: ${releasesCreated} รายการ Part` +
               (unitsCreated ? ` · สร้าง QR ${unitsCreated} ใบ` : "") +
-              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : "")
+              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : ""),
+              "success"
             );
           }}
         />
@@ -1956,11 +2016,12 @@ function ReleasePage({ user, goTo }) {
           onClose={() => setShowImport(false)}
           onImported={async ({ unitsCreated, releasesCreated, partsCreated }) => {
             await load();
-            alert(
+            mlsToast(
               `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${unitsCreated} QR)` +
               (partsCreated > 0
-                ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ\n\n⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
-                : "")
+                ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ · ⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
+                : ""),
+              partsCreated > 0 ? "warn" : "success"
             );
           }}
         />
@@ -2808,7 +2869,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   }
   function doPrint() {
     const picked = displayed.filter((u) => selected.has(u.id));
-    if (!picked.length) { alert("กรุณาเลือกอย่างน้อย 1 ใบ"); return; }
+    if (!picked.length) { mlsToast("กรุณาเลือกอย่างน้อย 1 ใบ", "warn"); return; }
     // ใบที่เลือกแต่ไม่อยู่ในพรีวิว 600 ใบแรก ต้องเรนเดอร์ QR ซ่อนก่อน (printLabels อ่านจาก DOM)
     const first600 = new Set(displayed.slice(0, 600).map((u) => u.id));
     const needHidden = picked.filter((u) => !first600.has(u.id));
@@ -3863,7 +3924,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
 
     if (impact.scannedCount > 0) {
       const typed = prompt(msg);
-      if (typed !== project.code) { if (typed !== null) alert("รหัสโปรเจคไม่ตรง ยกเลิกการลบ"); return; }
+      if (typed !== project.code) { if (typed !== null) mlsToast("รหัสโปรเจคไม่ตรง ยกเลิกการลบ", "warn"); return; }
     } else if (!confirm(msg)) {
       return;
     }
@@ -4584,7 +4645,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       }
       if (res && res.ok === false) { setErr(res.reason === "bad_request" ? "ลบไม่สำเร็จ" : "ลบไม่สำเร็จ: " + res.reason); setBusy(false); return; }
       if (res && res.ok && res.unbound > 0) {
-        alert(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`);
+        mlsToast(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`, "info");
       }
       onSaved();
     } catch (e) {
@@ -4640,7 +4701,7 @@ function SimpleCrud({ table, fields }) {
       load();
     } catch (e) {
       // FK: ถ้ามีเครื่อง/งานอ้างอิงอยู่ (เช่น ขั้นตอนที่เครื่องใช้/มีการสแกน) จะลบไม่ได้ — แจ้งชัด ไม่เงียบ
-      alert("ลบไม่ได้ — รายการนี้ถูกใช้งานอยู่ (มีเครื่องจักร/งาน/การสแกนอ้างอิงถึง)\nต้องเอาการอ้างอิงออกก่อน หรือปล่อยไว้เพื่อรักษาประวัติ");
+      mlsToast("ลบไม่ได้ — รายการนี้ถูกใช้งานอยู่ (มีเครื่องจักร/งาน/การสแกนอ้างอิงถึง) · ต้องเอาการอ้างอิงออกก่อน หรือปล่อยไว้เพื่อรักษาประวัติ", "error");
     }
   }
 
@@ -4821,7 +4882,7 @@ function EmployeeCrud() {
   }
 
   async function add() {
-    if (!form.code || !form.name || !form.password) { alert("กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ"); return; }
+    if (!form.code || !form.name || !form.password) { mlsToast("กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ", "warn"); return; }
     try {
       const opIds = [...opSel];
       // สร้างผ่าน RPC — DB hash ด้วย bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
@@ -4834,12 +4895,12 @@ function EmployeeCrud() {
       await syncMachineOps(form.machine_id, opIds, caps);
       setForm({ role: "operator" }); setOpSel(new Set()); load();
     } catch (e) {
-      alert(isDuplicateError(e) ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว` : "เพิ่มพนักงานไม่สำเร็จ: " + e.message);
+      mlsToast(isDuplicateError(e) ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว` : "เพิ่มพนักงานไม่สำเร็จ: " + e.message, "error");
     }
   }
   async function toggle(r) {
     try { await setEmployeeActive(r.id, !r.active); load(); }
-    catch (e) { alert("เปลี่ยนสถานะไม่สำเร็จ: " + e.message); }
+    catch (e) { mlsToast("เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "error"); }
   }
 
   return (
@@ -4912,7 +4973,7 @@ function PartMasterCrud() {
   useEffect(() => { load(); }, [load]);
 
   async function add() {
-    if (!form.part_no || !form.project_id) { alert("กรอกโปรเจคและรหัส Part ให้ครบ"); return; }
+    if (!form.part_no || !form.project_id) { mlsToast("กรอกโปรเจคและรหัส Part ให้ครบ", "warn"); return; }
     await insertRow("part_master", {
       project_id: form.project_id, part_no: form.part_no, part_name: form.part_name || form.part_no,
       material: form.material, unit_weight: Number(form.unit_weight || 0),
@@ -4932,7 +4993,7 @@ function PartMasterCrud() {
       ]);
     } catch { /* ถ้าเช็คไม่ได้ ให้ทำ flow ปลอดภัยด้านล่างต่อ */ }
     if (rels.length > 0 || units.length > 0) {
-      alert(`ลบ Part "${r?.part_no || ""}" ไม่ได้ — ยังมี ${fmtNum(rels.length)} Release และ ${fmtNum(units.length)} ชิ้น (QR) ผูกอยู่\n\nให้ลบ Release ของ Part นี้ก่อน (ที่หน้า "ปล่อยงาน (Release)") แล้วจึงลบ Part ได้`);
+      mlsToast(`ลบ Part "${r?.part_no || ""}" ไม่ได้ — ยังมี ${fmtNum(rels.length)} Release และ ${fmtNum(units.length)} ชิ้น (QR) ผูกอยู่ · ให้ลบ Release ของ Part นี้ก่อน (ที่หน้า "ปล่อยงาน (Release)") แล้วจึงลบ Part ได้`, "error");
       return;
     }
     if (confirm(`ลบ Part "${r?.part_no || ""}"?\n(ยังไม่มี Release/ชิ้นงานผูกอยู่ — ลบได้ปลอดภัย)`)) {
@@ -5069,5 +5130,5 @@ export default function App() {
   const content = !user
     ? <Login onLogin={setUser} />
     : goStation ? null : <Shell user={user} onLogout={logout} />;
-  return <ErrorBoundary><UpdateBanner />{content}</ErrorBoundary>;
+  return <ErrorBoundary><UpdateBanner />{content}<Toaster /><UndoHint /></ErrorBoundary>;
 }
