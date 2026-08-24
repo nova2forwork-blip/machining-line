@@ -69,6 +69,44 @@ function useUndoable(initial) {
   return [state, set];
 }
 
+// ── ตารางเรียงลำดับตามหัวข้อ (คลิกหัวคอลัมน์เพื่อเรียง) ─────────────────────────
+// useTableSort เก็บ key+ทิศทาง · sortRows เรียงจาก "ค่าจริง" (ตัวเลข/วันที่) ไม่ใช่ข้อความที่โชว์
+function useTableSort(defaultKey = null, defaultDir = "asc") {
+  const [key, setKey] = useState(defaultKey);
+  const [dir, setDir] = useState(defaultDir);
+  const toggle = (k) => {
+    if (k === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setKey(k); setDir("asc"); }
+  };
+  const sortRows = (rows, accessors) => {
+    if (!key || !accessors || !accessors[key]) return rows;
+    const acc = accessors[key];
+    const arr = [...(rows || [])];
+    arr.sort((a, b) => {
+      let va = acc(a), vb = acc(b);
+      const na = va == null, nb = vb == null;
+      if (na && nb) return 0;
+      if (na) return 1;               // ค่าว่างไปท้ายเสมอ
+      if (nb) return -1;
+      if (typeof va === "number" && typeof vb === "number") return va - vb;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+    });
+    if (dir === "desc") arr.reverse();
+    return arr;
+  };
+  return { key, dir, toggle, sortRows };
+}
+// หัวคอลัมน์ที่กดเรียงได้ (โชว์ลูกศร ▲/▼ ตัวที่กำลังเรียง)
+function SortTh({ k, sort, children, style }) {
+  const active = sort.key === k;
+  return (
+    <th onClick={() => sort.toggle(k)} style={{ cursor: "pointer", userSelect: "none", ...style }} title="กดเพื่อเรียงลำดับ">
+      {children}
+      <span style={{ marginLeft: 5, fontSize: 9, opacity: active ? 0.95 : 0.3 }}>{active ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+    </th>
+  );
+}
+
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
@@ -1452,6 +1490,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
   const [editing, setEditing] = useState(null);   // release ที่กำลังแก้ไข
   const [busyId, setBusyId] = useState(null);     // release ที่กำลังลบ
+  const sort = useTableSort();
 
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
   const totalQty = releases.reduce((s, r) => s + (r.qty || 0), 0);
@@ -1615,14 +1654,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <table className="data-table responsive-cards">
             <thead>
               <tr>
-                <th>Part No.</th>
-                <th>ชื่อ Part</th>
-                <th>จำนวน</th>
-                <th>เสร็จแล้ว</th>
-                <th>ความคืบหน้า</th>
-                <th>น้ำหนัก/ชิ้น</th>
-                <th>น้ำหนักรวม</th>
-                <th>ความยาว/ชิ้น</th>
+                <SortTh k="part_no" sort={sort}>Part No.</SortTh>
+                <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
+                <SortTh k="qty" sort={sort}>จำนวน</SortTh>
+                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
+                <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
+                <SortTh k="uw" sort={sort}>น้ำหนัก/ชิ้น</SortTh>
+                <SortTh k="tw" sort={sort}>น้ำหนักรวม</SortTh>
+                <SortTh k="len" sort={sort}>ความยาว/ชิ้น</SortTh>
                 <th>หมายเหตุ</th>
                 {canEdit && <th>จัดการ</th>}
                 <th>พิมพ์</th>
@@ -1630,7 +1669,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </tr>
             </thead>
             <tbody>
-              {releases.map((r) => {
+              {sort.sortRows(releases, {
+                part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
+                qty: (r) => Number(r.qty) || 0,
+                finished: (r) => unitStats[r.id]?.finished ?? 0,
+                progress: (r) => { const t = unitStats[r.id]?.total ?? r.qty; return t > 0 ? (unitStats[r.id]?.finished ?? 0) / t : 0; },
+                uw: (r) => Number(r.unit_weight) || 0,
+                tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
+                len: (r) => Number(r.length_mm) || 0,
+              }).map((r) => {
                 const st = unitStats[r.id] || null;
                 const finished = st?.finished ?? 0;
                 const total = st?.total ?? r.qty;
@@ -1708,6 +1755,7 @@ function ReleasePage({ user, goTo }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
+  const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
 
@@ -1796,9 +1844,30 @@ function ReleasePage({ user, goTo }) {
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <div className="table-wrap">
           <table className="data-table responsive-cards">
-            <thead><tr><th>วันที่</th><th>โปรเจค</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th><th>หมายเหตุ</th></tr></thead>
+            <thead><tr>
+              <SortTh k="date" sort={sort}>วันที่</SortTh>
+              <SortTh k="project" sort={sort}>โปรเจค</SortTh>
+              <SortTh k="order" sort={sort}>Release Order</SortTh>
+              <SortTh k="parts" sort={sort}>Part No.</SortTh>
+              <SortTh k="qty" sort={sort}>จำนวน</SortTh>
+              <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
+              <SortTh k="weight" sort={sort}>น้ำหนักรวม</SortTh>
+              <th>หมายเหตุ</th>
+            </tr></thead>
             <tbody>
-              {groups.map((g) => {
+              {sort.sortRows(groups, {
+                date: (g) => new Date(g.date).getTime() || 0,
+                project: (g) => g.projectCode || "",
+                order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
+                parts: (g) => g.releases.length,
+                qty: (g) => g.totalQty || 0,
+                weight: (g) => g.totalWeight || 0,
+                progress: (g) => {
+                  const t = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
+                  const f = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.finished || 0), 0);
+                  return t > 0 ? f / t : 0;
+                },
+              }).map((g) => {
                 // รวม stats ของทุก release ในกลุ่มนี้
                 const gFinished = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.finished || 0), 0);
                 const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
@@ -3435,6 +3504,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   const [opProg, setOpProg] = useState({});     // release_id → [{op,seq,done,finished}] (งานหน้าเครื่อง)
   const [statsReady, setStatsReady] = useState(false);
   const [viewGroup, setViewGroup] = useState(null);
+  const sort = useTableSort();
 
   const load = useCallback(async () => {
     const all = await getReleasesFull();
@@ -3485,9 +3555,28 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
         ) : (
           <div className="table-wrap">
             <table className="data-table responsive-cards">
-              <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวน</th><th>เสร็จแล้ว</th><th>ความคืบหน้า</th><th>น้ำหนักรวม</th></tr></thead>
+              <thead><tr>
+                <SortTh k="date" sort={sort}>วันที่</SortTh>
+                <SortTh k="order" sort={sort}>Release Order</SortTh>
+                <SortTh k="parts" sort={sort}>Part No.</SortTh>
+                <SortTh k="qty" sort={sort}>จำนวน</SortTh>
+                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
+                <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
+                <SortTh k="weight" sort={sort}>น้ำหนักรวม</SortTh>
+              </tr></thead>
               <tbody>
-                {groups.map((g) => {
+                {sort.sortRows(groups, {
+                  date: (g) => new Date(g.date).getTime() || 0,
+                  order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
+                  parts: (g) => g.releases.length,
+                  qty: (g) => g.totalQty || 0,
+                  weight: (g) => g.totalWeight || 0,
+                  finished: (g) => computeGroupProgress(g.releases, stats, opProg, g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0)).finished,
+                  progress: (g) => {
+                    const t = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
+                    return t > 0 ? computeGroupProgress(g.releases, stats, opProg, t).finished / t : 0;
+                  },
+                }).map((g) => {
                   const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
                   // ★ นิยาม "เสร็จ" เดียวกับหน้า Projects และรายละเอียด Release (max สำนักงาน/หน้าเครื่อง)
                   const { finished: gFinished } = computeGroupProgress(g.releases, stats, opProg, gTotal);
@@ -3529,6 +3618,7 @@ function ProjectsPage({ user, goTo }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);    // { project, impact }
   const [viewProject, setViewProject] = useState(null); // โปรเจคที่กดเข้าไปดู Release อยู่
+  const sort = useTableSort("code");
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -3590,10 +3680,21 @@ function ProjectsPage({ user, goTo }) {
           <div className="table-wrap">
             <table className="data-table responsive-cards">
               <thead><tr>
-                <th>รหัส</th><th>ชื่อโปรเจค</th><th>ปล่อยงาน (ชิ้น)</th><th>เสร็จแล้ว</th><th>% เสร็จ</th><th>น้ำหนักวัสดุ (กก.)</th>{canEdit && <th></th>}
+                <SortTh k="code" sort={sort}>รหัส</SortTh>
+                <SortTh k="name" sort={sort}>ชื่อโปรเจค</SortTh>
+                <SortTh k="total" sort={sort}>ปล่อยงาน (ชิ้น)</SortTh>
+                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
+                <SortTh k="pct" sort={sort}>% เสร็จ</SortTh>
+                <SortTh k="weight" sort={sort}>น้ำหนักวัสดุ (กก.)</SortTh>{canEdit && <th></th>}
               </tr></thead>
               <tbody>
-                {projects.map((p) => {
+                {sort.sortRows(projects, {
+                  code: (p) => p.code, name: (p) => p.name,
+                  total: (p) => statMap[p.id]?.total || 0,
+                  finished: (p) => statMap[p.id]?.finished || 0,
+                  pct: (p) => { const s = statMap[p.id]; return s?.total ? s.finished / s.total : 0; },
+                  weight: (p) => statMap[p.id]?.weight || 0,
+                }).map((p) => {
                   const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
                   const pct = s.total ? Math.round((s.finished / s.total) * 100) : 0;
                   return (
@@ -3646,6 +3747,7 @@ function ProjectsPage({ user, goTo }) {
 function PartsSummaryPage() {
   // รวมยอดฝั่ง DB ผ่าน RPC (เรียงตามจำนวนมาก→น้อยมาจาก DB แล้ว) — แก้ H6
   const [rows, setRows] = useState([]);
+  const sort = useTableSort();
   useEffect(() => { getPartSummary().then(setRows); }, []);
   return (
     <div>
@@ -3653,9 +3755,18 @@ function PartsSummaryPage() {
       <Card title="สรุปแยกตามชนิด Part (สะสมทั้งหมด)">
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>Part No.</th><th>ชื่อ Part</th><th>ปล่อยงาน</th><th>เสร็จแล้ว</th><th>น้ำหนักวัสดุ (กก.)</th></tr></thead>
+            <thead><tr>
+              <SortTh k="part_no" sort={sort}>Part No.</SortTh>
+              <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
+              <SortTh k="total" sort={sort}>ปล่อยงาน</SortTh>
+              <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
+              <SortTh k="weight" sort={sort}>น้ำหนักวัสดุ (กก.)</SortTh>
+            </tr></thead>
             <tbody>
-              {rows.map((r) => (
+              {sort.sortRows(rows, {
+                part_no: (r) => r.part_no || "", part_name: (r) => r.part_name || "",
+                total: (r) => Number(r.total) || 0, finished: (r) => Number(r.finished) || 0, weight: (r) => Number(r.weight) || 0,
+              }).map((r) => (
                 <tr key={r.id}><td style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td><td>{fmtNum(r.total)}</td><td style={{ fontWeight: 600, color: r.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(r.finished)}</td><td>{fmtNum(r.weight)}</td></tr>
               ))}
               {rows.length === 0 && (
@@ -4304,9 +4415,9 @@ function MachineCrud() {
   const [operations, setOperations] = useState([]);
   const [caps, setCaps] = useState([]);
   const [form, setForm] = useUndoable({});
-  const [editingCaps, setEditingCaps] = useState(null);
-  const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข ชื่อ/ประเภท
+  const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข (ชื่อ/ประเภท/ความสามารถ/ลบ)
   const [err, setErr] = useState("");
+  const sort = useTableSort("code");
 
   const load = useCallback(async () => {
     setRows(await listRows("machines", { order: "code" }));
@@ -4325,33 +4436,6 @@ function MachineCrud() {
       setErr(isDuplicateError(e) ? `รหัสเครื่อง "${form.code}" มีอยู่แล้ว` : "เกิดข้อผิดพลาด: " + e.message);
     }
   }
-  async function remove(id) {
-    const m = rows.find((r) => r.id === id);
-    if (!confirm(`ลบเครื่อง "${m ? `${m.code} — ${m.name}` : id}" ?`)) return;
-    try {
-      let res = await deleteMachine(id, false);
-      if (res && res.ok === false && res.reason === "has_records") {
-        const ok = confirm(
-          `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
-          `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
-          `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`
-        );
-        if (!ok) return;
-        res = await deleteMachine(id, true);
-      }
-      if (res && res.ok === false) {
-        alert(res.reason === "bad_request" ? "ลบไม่สำเร็จ" : "ลบไม่สำเร็จ: " + res.reason);
-        return;
-      }
-      if (res && res.ok && res.unbound > 0) {
-        alert(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`);
-      }
-      load();
-    } catch (e) {
-      alert("ลบไม่สำเร็จ: " + (e?.message || e));
-    }
-  }
-
   function capNames(machineId) {
     const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
     const names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
@@ -4368,13 +4452,22 @@ function MachineCrud() {
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        เครื่องหนึ่งทำได้หลายขั้นตอน — กด "ความสามารถ" เพื่อเลือกว่าเครื่องนี้ทำอะไรได้บ้าง ระบบจะใช้ตรวจตอนสแกน
+        เครื่องหนึ่งทำได้หลายขั้นตอน — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
       </div>
       <div className="table-wrap">
         <table className="data-table">
-          <thead><tr><th>รหัสเครื่อง</th><th>ชื่อเครื่องจักร</th><th>ประเภท</th><th>ขั้นตอนที่ทำได้</th><th></th></tr></thead>
+          <thead><tr>
+            <SortTh k="code" sort={sort}>รหัสเครื่อง</SortTh>
+            <SortTh k="name" sort={sort}>ชื่อเครื่องจักร</SortTh>
+            <SortTh k="type" sort={sort}>ประเภท</SortTh>
+            <SortTh k="caps" sort={sort}>ขั้นตอนที่ทำได้</SortTh>
+            <th></th>
+          </tr></thead>
           <tbody>
-            {rows.map((r) => {
+            {sort.sortRows(rows, {
+              code: (r) => r.code, name: (r) => r.name, type: (r) => r.type || "",
+              caps: (r) => capNames(r.id).join(", "),
+            }).map((r) => {
               const names = capNames(r.id);
               return (
                 <tr key={r.id}>
@@ -4385,9 +4478,7 @@ function MachineCrud() {
                       : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>แก้ไข</span>
-                    <span onClick={() => setEditingCaps(r)} style={{ color: "var(--accent-dk)", cursor: "pointer", marginRight: 12 }}>ความสามารถ</span>
-                    <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span>
+                    <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
                   </td>
                 </tr>
               );
@@ -4395,16 +4486,9 @@ function MachineCrud() {
           </tbody>
         </table>
       </div>
-      {editingCaps && (
-        <MachineCapModal
-          machine={editingCaps} operations={operations} caps={caps}
-          onClose={() => setEditingCaps(null)}
-          onSaved={async () => { setEditingCaps(null); await load(); }}
-        />
-      )}
       {editing && (
         <MachineEditModal
-          machine={editing}
+          machine={editing} operations={operations} caps={caps}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
         />
@@ -4413,24 +4497,58 @@ function MachineCrud() {
   );
 }
 
-// แก้ไข ชื่อ / ประเภทงาน ของเครื่องจักร (รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
-function MachineEditModal({ machine, onClose, onSaved }) {
+// แก้ไขเครื่องจักร — ชื่อ / ประเภท / ขั้นตอนที่ทำได้ (ความสามารถ) + ลบ · ในที่เดียว
+// (ต้องกด "แก้ไข" ก่อนถึงจะลบหรือแก้ความสามารถได้ · รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
+function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
+  const [opSel, setOpSel] = useUndoable(() => new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id)));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  function toggleOp(id) { setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+
   async function save() {
     if (!form.name.trim()) { setErr("กรอกชื่อเครื่องให้ครบ"); return; }
     setBusy(true); setErr("");
     try {
       await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
+      await syncMachineOps(machine.id, [...opSel], caps);   // บันทึกความสามารถไปพร้อมกัน
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
     }
     setBusy(false);
   }
+
+  async function del() {
+    if (!confirm(`ลบเครื่อง "${machine.code} — ${machine.name}" ?`)) return;
+    setBusy(true); setErr("");
+    try {
+      let res = await deleteMachine(machine.id, false);
+      if (res && res.ok === false && res.reason === "has_records") {
+        setBusy(false);
+        const ok = confirm(
+          `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
+          `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
+          `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`
+        );
+        if (!ok) return;
+        setBusy(true);
+        res = await deleteMachine(machine.id, true);
+      }
+      if (res && res.ok === false) { setErr(res.reason === "bad_request" ? "ลบไม่สำเร็จ" : "ลบไม่สำเร็จ: " + res.reason); setBusy(false); return; }
+      if (res && res.ok && res.unbound > 0) {
+        alert(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`);
+      }
+      onSaved();
+    } catch (e) {
+      setErr("ลบไม่สำเร็จ: " + (e?.message || e));
+    }
+    setBusy(false);
+  }
+
   return (
-    <Modal title={`แก้ไขเครื่องจักร — ${machine.code}`} sub="แก้ชื่อและประเภทงานได้ · รหัสเครื่องแก้ไม่ได้ (เป็นตัวระบุตัวตน)" onClose={onClose}>
+    <Modal title={`แก้ไขเครื่องจักร — ${machine.code}`} sub="แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้" onClose={onClose}>
       <div className="grid-2">
         <Field label="รหัสเครื่อง"><Input value={machine.code} disabled /></Field>
         <Field label="ชื่อเครื่องจักร"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -4438,10 +4556,21 @@ function MachineEditModal({ machine, onClose, onSaved }) {
       <Field label="ประเภทงาน (คำอธิบาย · ไม่บังคับ)">
         <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
       </Field>
+      <Field label="ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)">
+        <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={true} />
+      </Field>
+      {opSel.size === 0 && (
+        <div style={{ fontSize: 12, color: "var(--warning)", marginBottom: 8 }}>
+          ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้สแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ
+        </div>
+      )}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
-      <div className="modal-actions">
-        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-        <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+      <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+        <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>ลบเครื่องนี้</Btn>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+        </div>
       </div>
     </Modal>
   );
