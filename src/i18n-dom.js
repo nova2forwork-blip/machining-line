@@ -288,6 +288,7 @@ const RULES = [
   [/^แก้ไขเครื่องจักร\s*—\s*(.+)$/, (m) => `Edit machine — ${m[1]}`],
   [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
   [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
+  [/^⚠\s*ชิ้นนี้เคยทำขั้นตอนนี้แล้ว\s+(\d+)\s*ครั้ง$/, (m) => `⚠ This piece already ran this step ${m[1]}×`],
 ];
 
 function toEN(trimmed) {
