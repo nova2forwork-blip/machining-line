@@ -199,7 +199,7 @@ function LangToggle() {
       title="สลับภาษา / Switch language"
       style={{ appearance: "none", cursor: "pointer", fontFamily: "inherit",
         fontSize: 13, fontWeight: 800, lineHeight: 1, letterSpacing: ".03em",
-        padding: "5px 12px", borderRadius: 8, marginBottom: 10, alignSelf: "flex-start",
+        padding: "5px 12px", borderRadius: 8,
         border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent, #10b981)" }}>
       {lang === "th" ? "EN" : "ไทย"}
     </button>
@@ -551,13 +551,13 @@ function Shell({ user, onLogout }) {
           </div>
         ))}
         <div className="sidebar-footer">
-          <LangToggle />
           <div className="user-chip">
             <div className="user-avatar">{(user.name || "U").slice(0, 1)}</div>
             <div>
               <div className="user-name">{user.name}</div>
               <div className="user-role">{ROLE_LABELS[user.role] || user.role}</div>
             </div>
+            <div style={{ marginLeft: "auto" }}><LangToggle /></div>
           </div>
           <div className="nav-item logout-item" onClick={onLogout}><Icon name="logout" size={17} />ออกจากระบบ</div>
         </div>
