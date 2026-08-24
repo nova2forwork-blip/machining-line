@@ -74,15 +74,28 @@ function onChunkError(e) {
   let tries = 0;
   try { tries = Number(sessionStorage.getItem("mls-load-retry") || "0"); } catch { /* ignore */ }
   const s = document.getElementById("boot-splash");
+  const reloadNow = () => { try { location.reload(); } catch { /* ignore */ } };
+  // ครั้งแรก = อาจแค่เน็ตกระตุก → reload เฉยๆ (คงแคชออฟไลน์ไว้)
+  // ครั้งที่ 2+ = น่าจะ chunk ค้างไม่ตรงเวอร์ชัน → ล้างแคช service worker + ถอน SW ก่อน reload (กัน loop)
+  const hardHeal = tries >= 1;
+  const go = () => {
+    if (!hardHeal) return reloadNow();
+    const cc = (window.caches && caches.keys)
+      ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
+      : Promise.resolve();
+    const sw = (navigator.serviceWorker && navigator.serviceWorker.getRegistrations)
+      ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {})
+      : Promise.resolve();
+    Promise.all([cc, sw]).finally(reloadNow);
+  };
   if (tries < 3) {
     try { sessionStorage.setItem("mls-load-retry", String(tries + 1)); } catch { /* ignore */ }
-    setTimeout(() => { try { location.reload(); } catch { /* ignore */ } }, 2500);
+    setTimeout(go, 2500);
   } else {
     if (s) s.innerHTML = '<div style="color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6">โหลดแอปไม่สำเร็จ<br>กำลังลองใหม่อัตโนมัติ…</div>';
     // จอเปิดทิ้ง 24 ชม. (เช่น Dashboard/หน้าเครื่อง) — อย่าหยุดถาวร ลองใหม่เป็นระยะจนกว่าจะสำเร็จ
-    // รีเซ็ตตัวนับก่อน เพื่อให้รอบถัดไปได้ retry เร็ว 3 ครั้งอีกชุด
     try { sessionStorage.removeItem("mls-load-retry"); } catch { /* ignore */ }
-    setTimeout(() => { try { location.reload(); } catch { /* ignore */ } }, 30000);
+    setTimeout(go, 30000);
   }
 }
 
