@@ -1,387 +1,426 @@
-// ─── 2 ภาษา (ไทย/อังกฤษ) แบบครอบทั้งแอปสำนักงาน ──────────────────────────────
-// วิธี: แปลที่ระดับ DOM (text node + placeholder/title) ด้วยพจนานุกรม เมื่อสลับเป็น EN
-//   → ไม่ต้องแก้ JSX ทีละจุด (มีข้อความ ~250 จุด) และเพิ่มคำแปลได้ง่ายแค่เติมใน DICT
-//   คำที่ยังไม่มีคำแปลจะคงเป็นไทย (graceful) · MutationObserver คอยแปลของที่เพิ่ง render
-import { useState, useEffect } from "react";
-
-const THAI = /[฀-๿]/;
-
-// ── พจนานุกรม ไทย → อังกฤษ (คีย์ = ข้อความไทยที่ตัดช่องว่างหัวท้ายแล้ว) ──────────
-const DICT = {
-  // ทั่วไป / ปุ่ม
-  "ยกเลิก": "Cancel", "บันทึก": "Save", "ลบ": "Delete", "แก้ไข": "Edit", "เพิ่ม": "Add",
-  "ปิด": "Close", "รีเฟรช": "Refresh", "ค้นหา": "Search", "ล้าง": "Clear", "รวม": "Total",
-  "จำนวน": "Qty", "จำนวนรวม": "Total qty", "จำนวนทั้งหมด": "Total qty", "จำนวนชิ้น": "Pieces",
-  "ชื่อ": "Name", "รหัส": "Code", "วันที่": "Date", "สถานะ": "Status", "หมายเหตุ": "Remark",
-  "ประเภท": "Type", "ลำดับ": "Order", "สิทธิ์": "Role", "สิทธิ์การใช้งาน": "Role",
-  "แผนก": "Department", "ชื่อแผนก": "Department name", "ความสามารถ": "Capabilities",
-  "กำลังโหลด...": "Loading…", "กำลังบันทึก...": "Saving…", "กำลังสร้าง...": "Creating…",
-  "กำลังลบ...": "Deleting…", "กำลังนำเข้า...": "Importing…", "กำลังอัปเดต…": "Updating…",
-  "กำลังเข้าสู่ระบบ...": "Signing in…", "กำลังบันทึกทั้งใบ...": "Saving all…", "กำลังนำเข้าทั้งใบ...": "Importing all…",
-  "— เลือก —": "— Select —", "ยกเลิกทั้งหมด": "Deselect all", "เลือกทั้งหมด": "Select all",
-  "เพิ่มเติม": "More", "จัดการ": "Manage", "รายงาน": "Reports", "ขั้นตอนงาน": "Workflow",
-  "เพิ่มแถว": "Add row", "ลบแถว": "Delete row", "เพิ่มรายการใหม่": "Add new item",
-  "หน้าแรก": "Home", "กลับหน้าแรก": "Back to home", "ดูขั้นตอน": "View steps",
-
-  // เมนู / หัวข้อหลัก
-  "โปรเจค": "Projects", "เครื่องจักร": "Machine", "หน้าเครื่อง": "Machine terminal", "มือถือ": "Mobile",
-  "พิมพ์ QR": "Print QR", "พิมพ์ QR / ป้าย": "Print QR / Labels", "รายงาน": "Reports",
-  "Report (ข้อมูลสแกน)": "Report (scans)", "ระบบบันทึกการทำงานเครื่องจักร": "Machine production logging",
-  "ออกจากระบบ": "Log out", "เข้าสู่ระบบ": "Sign in", "รหัสผ่าน": "Password",
-  "พนักงาน": "Employees", "พนักงานหน้าเครื่อง": "Machine operator", "หัวหน้างาน": "Supervisor",
-
-  // น้ำหนัก / ความยาว / หน่วย
-  "น้ำหนัก": "Weight", "ความยาว": "Length", "วัสดุ": "Material",
-  "น้ำหนัก/ชิ้น": "Weight/pc", "น้ำหนักรวม": "Total weight", "ความยาว/ชิ้น": "Length/pc",
-  "น้ำหนัก/ชิ้น (กก.)": "Weight/pc (kg)", "ความยาว/ชิ้น (มม.)": "Length/pc (mm)",
-  "น้ำหนักวัสดุ (กก.)": "Material weight (kg)", "น้ำหนักวัสดุ": "Material weight",
-  "เวลาเดินเครื่อง": "Machine time", "เฉลี่ย/วัน": "Avg/day",
-  "ชิ้น": "pcs", "กก.": "kg", "มม.": "mm", "ใบ": "labels", "พาร์ท": "parts", "Part": "parts",
-  "ยาว (มม.)": "Length (mm)", "Length (มม.)": "Length (mm)", "กว้าง (มม.)": "Width (mm)", "สูง (มม.)": "Height (mm)",
-
-  // Part / Release / โปรเจค
-  "ชื่อ Part": "Part name", "รหัส Part": "Part code", "รหัส Part *": "Part code *",
-  "ชื่อโปรเจค": "Project name", "รหัสโปรเจค": "Project code", "ชื่อโปรเจค *": "Project name *", "รหัสโปรเจค *": "Project code *",
-  "เพิ่ม Release": "Add Release", "เพิ่ม Part": "Add Part", "เพิ่มโปรเจค": "Add Project",
-  "สร้างโปรเจคใหม่": "New Project", "สร้างโปรเจค": "Create Project", "โปรเจคใหม่": "New Project",
-  "สร้าง Part": "Create Part", "Part ใหม่": "New Part", "สร้างใหม่": "New", "มีอยู่แล้ว": "Exists",
-  "แก้ไขโปรเจค": "Edit Project", "เพิ่มโปรเจคใหม่": "Add new project", "ลบโปรเจคนี้": "Delete this project",
-  "แก้ไข Release": "Edit Release", "บันทึก Release": "Save Release", "ปล่อยงาน": "Released", "ปล่อยงาน (ชิ้น)": "Released (pcs)",
-  "ลบ Part นี้": "Delete this Part", "ลบ Release นี้": "Delete this Release", "ลบพนักงานนี้": "Delete this employee",
-  "สำรองข้อมูล": "Backup", "สำรองข้อมูล (ดาวน์โหลดเก็บเอง)": "Backup (download your own copy)",
-  "ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)": "Download backup file (JSON)",
-  "ตารางที่รวมอยู่ในไฟล์สำรอง": "Tables included in the backup",
-  "กำลังเตรียมข้อมูล...": "Preparing data…",
-  "จุดกู้คืนในแอป (ย้อนหลัง 30 วัน)": "In-app restore points (last 30 days)",
-  "สร้างจุดกู้คืนตอนนี้": "Create restore point now", "กำลังสร้าง...": "Creating…",
-  "กู้คืน": "Restore", "กู้คืนข้อมูลโปรเจค": "Restore project data",
-  "อัตโนมัติ": "Auto", "สร้างเอง": "Manual", "ชนิด": "Type", "จำนวนแถว": "Rows", "วันที่/เวลา": "Date/Time",
-  "กู้เฉพาะที่หายไป (แนะนำ)": "Restore missing only (recommended)",
-  "ย้อนทั้งโปรเจคกลับวันนั้น": "Revert entire project to that day",
-  "ยืนยันกู้คืน": "Confirm restore", "กำลังกู้คืน...": "Restoring…",
-  "ยืนยันย้อนทั้งโปรเจค": "Confirm full revert", "กำลังย้อนข้อมูล...": "Reverting…",
-  "ย้อนกลับ": "Back", "ยังไม่มีจุดกู้คืน": "No restore points yet",
-  "โปรเจคนี้ยังไม่มีจุดกู้คืน": "No restore points for this project",
-  "นำเข้าไฟล์สำรอง (กู้คืนจากไฟล์ JSON)": "Import backup (restore from JSON file)",
-  "เลือกไฟล์สำรอง แล้วนำเข้า": "Choose backup file & import", "กำลังนำเข้า...": "Importing…",
-  "เลขที่ Release Order": "Release Order no.", "เลขที่ Release Order *": "Release Order no. *",
-  "จำนวน (ชิ้น)": "Qty (pcs)", "% เสร็จ": "% done", "เสร็จแล้ว": "Finished", "เสร็จ": "Finished", "ทำแล้ว": "Done",
-  "กำลังทำ": "In Progress", "ยังไม่เริ่ม": "Not started", "ความคืบหน้า": "Progress",
-  "เสร็จแล้ว (ภาพรวม)": "Done (overall)", "ยังไม่มี Release": "No releases yet", "ยังไม่มีโปรเจค": "No projects yet",
-
-  // สถานะ / ข้อความ
-  "มีเวอร์ชันใหม่ของระบบ": "A new version is available", "อัปเดตเดี๋ยวนี้": "Update now",
-  "ยังไม่ตั้ง": "Not set", "ยังไม่ได้กำหนด Routing สำหรับ Part นี้": "No routing set for this part",
-  "ไม่บังคับ": "Optional", "ปิด": "Close", "ใช่": "Yes", "ไม่ใช่": "No", "ทั้งหมด": "All",
-
-  // เครื่องจักร / setup
-  "เครื่องจักรประจำ": "Assigned machine", "ขั้นตอนประจำ": "Assigned operation",
-  "เครื่องจักรประจำ *": "Assigned machine *", "ขั้นตอนประจำ *": "Assigned operation *",
-  "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน)": "Assigned operations (select multiple)",
-  "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *": "Assigned operations (select multiple) *",
-  "เลือกเครื่องจักรก่อน จึงจะบันทึกหลายขั้นตอนได้": "Select a machine first to save multiple operations",
-  "ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ \"ขั้นตอนงาน\" ก่อน": "No operations yet — add them in the \"Workflow\" tab first",
-  "พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม \"แก้ไข\") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง":
-    "Employees without an assigned machine/operation can't scan (you can set it later via \"Edit\") · select multiple operations if this machine does more than one",
-  "รหัสเครื่อง": "Machine code", "ชื่อเครื่องจักร": "Machine name", "รหัสพนักงาน": "Employee code",
-  "ขั้นตอนที่ทำได้": "Operations", "ขั้นตอนที่เครื่องนี้ทำได้": "Operations this machine can do",
-  "แก้ชื่อและประเภทงานได้ · รหัสเครื่องแก้ไม่ได้ (เป็นตัวระบุตัวตน)": "Edit name and work type · machine code can't be changed (it's the identifier)",
-  "แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้": "Edit name/type · select operations · or delete — machine code can't be changed",
-  "ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)": "Operations this machine can do (select multiple)",
-  "ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้สแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ": "None selected = unlimited (any operation) — select at least 1 to enable checking",
-  "ลบเครื่องนี้": "Delete this machine", "กดเพื่อเรียงลำดับ": "Click to sort",
-  "เรียงโดย": "Sort by", "— ค่าเริ่มต้น —": "— Default —",
-  "▲ น้อย→มาก": "▲ Low→High", "▼ มาก→น้อย": "▼ High→Low", "สลับ น้อย↔มาก": "Toggle low↔high",
-  "↶ กด Ctrl+Z เพื่อย้อนการแก้ไข": "↶ Press Ctrl+Z to undo edits",
-  "เครื่องหนึ่งทำได้หลายขั้นตอน — กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง": "A machine can do several operations — press \"Edit\" to set name/type, choose operations, or delete",
-  "ประเภทงาน (คำอธิบาย · ไม่บังคับ)": "Work type (description · optional)",
-  "เช่น CUTTING / NOTCHING": "e.g. CUTTING / NOTCHING",
-  "ไม่จำกัด (ยังไม่ตั้ง)": "Unlimited (not set)", "ประเภทงาน": "Work type",
-  "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ": "Add machine + capabilities",
-  "รหัสผ่านเริ่มต้น": "Default password", "ใช้งาน": "Active", "ปิดใช้งาน": "Disabled",
-  "ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)": "Set new password (blank = keep)",
-
-  // Report
-  "สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก": "Scan summary by period and selected Part",
-  "ช่วงเวลาที่ต้องการดู": "Period to view", "ช่วงเวลาด่วน": "Quick range", "รายเดือน": "Monthly",
-  "กำหนดเอง (จาก–ถึง)": "Custom (from–to)", "วันนี้": "Today", "7 วันล่าสุด": "Last 7 days",
-  "30 วันล่าสุด": "Last 30 days", "12 เดือนล่าสุด": "Last 12 months", "จากวันที่": "From", "ถึงวันที่": "To",
-  "จำนวนชิ้นที่ทำ · รวมทุกขั้นตอน": "Pieces done · all operations", "งาน/ล็อตที่มีความเคลื่อนไหว": "Active lots",
-  "น้ำหนักวัสดุ · นับต่อชิ้น (กก.)": "Material weight · per piece (kg)",
-  "ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)": "Processed workload · all ops (kg)",
-  "เวลาเดินเครื่องรวม (จับจากหน้าเครื่อง)": "Total machine time (from terminal)",
-  "เครื่องจักร × ขั้นตอน (ปริมาณงานที่ประมวลผล)": "Machine × operation (processed workload)",
-  "ปริมาณงานที่แต่ละเครื่องประมวลผล": "Workload processed by each machine",
-  "รวมทุกขั้นตอน": "All operations", "ปริมาณงานที่ประมวลผล": "Processed workload",
-  "สรุปแยกตามชนิด Part (สะสมทั้งหมด)": "Summary by Part (cumulative)",
-  "Finished Part — ชิ้นงานที่เสร็จสมบูรณ์": "Finished Parts — completed pieces",
-
-  // Machines/Parts summary + Projects page
-  "เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค": "Add / edit / delete projects + progress by project",
-  "ยังไม่มีการสแกนในช่วงเวลานี้": "No scans in this period",
-  "แต่ละเครื่องทำได้กี่กิโล/กี่ชิ้น และใช้เวลาเท่าไร ในแต่ละวัน ·": "kg/pieces/time per machine, per day ·",
-  "คิดจากเฉพาะวันที่มีงานจริง": "based on days with activity only", "หมายเหตุ:": "Note:",
-
-  // QR labels
-  "พิมพ์ QR / ป้าย": "Print QR / Labels", "เลือกล็อตที่ต้องการพิมพ์": "Select lot to print",
-  "ค้นหา QR": "Search QR", "ป้ายที่จะพิมพ์": "Labels to print", "ชนิดป้าย": "Label type",
-  "ขนาดป้าย": "Label size", "รูปแบบการพิมพ์": "Print mode", "แสดงรหัสใต้ QR": "Show code under QR",
-  "ป้ายรายชิ้น · รันเบอร์ 1 OF N (ชิ้นใหญ่)": "Per-piece · running 1 OF N (large)",
-  "ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)": "Lot label · 1 per part (small)",
-  "1 ป้าย/หน้า · เท่าจริง": "1 label/page · actual size", "หลายป้าย/แผ่น A4": "Many/sheet A4",
-  "ไม่พบชิ้นงาน (QR) ในตัวกรองนี้": "No pieces (QR) match this filter",
-  "ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต": "Filter changed — press “Search QR” to update",
-  "ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด": "No lots match — press “Clear” to see all",
-  "ค้นหา Part No. / Release Order / โปรเจค / วันที่...": "Search Part No. / Release Order / Project / date…",
-  "นำเข้าจาก Excel (หลาย Part)": "Import from Excel (multi-Part)", "ล้างตัวกรอง": "Clear filters",
-  "กรุณาเลือกอย่างน้อย 1 ใบ": "Please select at least 1 label",
-
-  // Release detail / progress modal
-  "กลับไปหน้า Release": "Back to Releases", "โหลดความคืบหน้าล่าสุด": "Load latest progress",
-  "กลับไปหน้า Projects": "Back to Projects", "น้ำหนักรวม (กก.)": "Total weight (kg)",
-  // ชื่อขั้นตอน (operation) — แปลในตาราง/ป้ายเมื่อสลับ EN
-  "ตัด": "Cut", "เจาะ": "Drill", "บาก": "Notch", "พับ": "Bend", "เชื่อม": "Weld", "ประกอบ": "Assemble", "ไม่ระบุ": "Unspecified",
-  // หัวข้อ + คำอธิบายแต่ละหน้า (2 ภาษา)
-  "พิมพ์ QR / ป้าย": "Print QR / Labels", "สแกนหน้าเครื่องจักร": "Scan at machine",
-  "เพิ่ม / แก้ไข / ลบ โปรเจค + ดูความคืบหน้าแยกตามโปรเจค · แตะแถวเพื่อดู Release และ Part ในโปรเจคนั้น":
-    "Add / edit / delete projects + view progress by project · tap a row to see releases and parts",
-  "Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด":
-    "All releases in this project · tap a row to view parts and details",
-  "สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก": "Scan summary by period and selected Part",
-  "ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 2×2 ซม.":
-    "Find a lot you released before and reprint labels anytime — default size 2×2 cm",
-  "ค้นหา Release ที่เคยปล่อยงาน หรือกด \"เพิ่ม Release\" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ":
-    "Search past releases, or press \"Add Release\" to release new work (paste from Excel) · tap a row to view progress, edit, or delete",
-  "เลือกโหมดให้ตรงกับวิธีใช้งาน แล้วกด \"เริ่มสแกน\"": "Choose the mode that fits, then press \"Start scan\"",
-  "ปล่อยงาน (Release)": "Release Production", "ตั้งค่า": "Setup", "รายงานข้อมูลสแกน": "Scan Report",
-  "สรุปภาพรวม": "Overview", "สรุปเครื่องจักร": "Machines Summary", "สรุป Part": "Parts Summary",
-  "ผู้ดูแลระบบ (Admin)": "Administrator",
-  "จำนวน (นับต่อขั้นตอน)": "Count (per operation)", "จำนวนที่บันทึก · นับต่อขั้นตอน": "Recorded · per operation",
-  "ยังไม่มี Release ในโปรเจคนี้": "No releases in this project",
-  "ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก": "Create the first release on the Release Production page",
-  "ยังไม่มี Part — เพิ่มที่ Setup › Part Master": "No parts yet — add them in Setup › Part Master",
-  "ยังไม่มีข้อมูลการปล่อยงาน": "No release data yet",
-  "จำนวนทั้งหมด": "Total qty", "ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น": "Pieces done per operation",
-  "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้": "No terminal work recorded for this part",
-  "กดเพื่อดูความคืบหน้าแยกขั้นตอน": "Tap to view per-operation progress",
-  "ชิ้นที่เสร็จทั้งหมด": "Total finished", "รายการชิ้นงานที่เสร็จสมบูรณ์": "Completed pieces list",
-  "ยังไม่มีชิ้นงานที่เสร็จสมบูรณ์": "No completed pieces yet",
-
-  // Setup
-  "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)": "Operation name (e.g. cut/drill/notch)",
-  "ยังไม่มีขั้นตอนงาน — ไปตั้งค่าที่ Setup ก่อน": "No operations — set them up in Setup first",
-  "จำนวนต้องมากกว่า 0": "Qty must be greater than 0",
-
-  // หัวข้อการ์ด / หัวข้อตาราง เพิ่มเติม
-  "ค้นหา Release": "Search Release",
-  "ประวัติการ Release ล่าสุด": "Recent Releases",
-  "รายละเอียดแต่ละ Part ในล็อตนี้": "Details of each Part in this lot",
-  "ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)": "Progress by operation (terminal)",
-  "นำเข้า Release จาก Excel": "Import Release from Excel",
-  "รายวัน × เครื่องจักร (กก. / จำนวน / เวลา ต่อวัน)": "Daily × Machine (kg / qty / time per day)",
-  "แยกตามขั้นตอนการทำงาน": "By operation",
-  "Part No. × ขั้นตอน (จำนวนชิ้น)": "Part No. × Operation (pieces)",
-  "Release × Part × ขั้นตอน": "Release × Part × Operation",
-  "เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)": "Machine × Operation (workload + avg/day)",
-  "เฉลี่ย/วัน": "Avg/day",
-  "รวม (ชิ้น)": "Total (pcs)", "น้ำหนัก (กก.)": "Weight (kg)", "เสร็จ (ชิ้น)": "Finished (pcs)",
-  "กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง": "Press Ctrl+Z to undo table edits",
-  "สถานีของคุณ": "Your station", "เลือกโหมดสแกน": "Select scan mode",
-  "สแกนที่ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ (จะซิงค์อัตโนมัติเมื่อเน็ตกลับ)": "Scans not yet uploaded (auto-sync when back online)",
-  "ค้นหา Release Order / Part / หมายเหตุ": "Search Release Order / Part / Remark",
-  "เช่น P-009": "e.g. P-009", "เช่น P-009 (ไม่บังคับ)": "e.g. P-009 (optional)",
-  "เช่น admin": "e.g. admin", "เช่น M-001": "e.g. M-001", "เช่น PRJ001": "e.g. PRJ001",
-  "เช่น สายการผลิตชิ้นส่วน A": "e.g. Part line A", "P-ตัวเลข": "P-number",
-  "รายละเอียด": "Details", "จากวันที่": "From", "ถึงวันที่": "To",
-  "ค้นหา Release ที่เคยปล่อยงาน หรือกด": "Search released lots, or press",
-  "เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ": "to release new work (paste from Excel) · tap a row for progress, edit, or delete",
-
-  // ═══ หน้าเครื่องจักร (Station / Machine terminal) ═══════════════════════════
-  // — หน้าล็อกอิน —
-  "หน้าเครื่อง — เข้าสู่ระบบ": "Machine Terminal — Sign in",
-  "ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)": "Sign in with this machine's account (the account bound to it)",
-  "รหัสเครื่อง / พนักงาน": "Machine / employee code",
-  "จอนี้สำหรับติดหน้าเครื่องจักร (แนวนอน)": "This screen mounts on the machine (landscape)",
-  "ไปหน้าปกติ (สำนักงาน) →": "Go to the normal (office) page →",
-  "เช่น CT-001": "e.g. CT-001",
-  "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง": "Machine/employee code or password is incorrect",
-  "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้":
-    "This account hasn't signed in on this device yet — sign in once while online, then it can work offline next time",
-  "บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่": "This account was signed in on another device — please sign in again",
-  // — บัญชีไม่ได้ผูกเครื่อง —
-  "บัญชีนี้ยังไม่ได้ผูกเครื่องจักร": "This account isn't bound to a machine",
-  "หน้าเครื่องต้องใช้บัญชีที่กำหนด \"เครื่องจักรประจำ\" ไว้ที่ Setup → พนักงาน":
-    "The terminal needs an account with an assigned machine (Setup → Employees)",
-  "แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน": "Ask an Admin to set a machine for this account first",
-  "ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →": "Go to the office page (sign in again as Admin) →",
-  // — ปุ่มเลือกขั้นตอน —
-  "ขั้นตอน:": "Operation:",
-  "← แตะเลือกก่อนสแกน": "← tap to select before scanning",
-  // — มุมบน / รหัสเครื่อง —
-  "⏻ ออก": "⏻ Exit", "⛶ เต็มจอ": "⛶ Fullscreen", "เต็มจอ": "Fullscreen",
-  "— ไม่มีเครื่อง —": "— No machine —",
-  // — แถบเตือน —
-  "⏳ ค้างซิงค์": "⏳ Pending sync",
-  "⛔ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)":
-    "⛔ Storage full — work may not be saved! Close other apps / clear browser data and retry · notify admin (tap to hide)",
-  "ที่เก็บข้อมูลในเครื่องเต็ม": "Device storage is full",
-  "⚠️ ซิงค์ไม่สำเร็จ": "⚠️ Sync failed",
-  "— QR ถูกลบ/แก้ฝั่งออฟฟิศ · แตะเพื่อลองใหม่": "— QR deleted/edited at office · tap to retry",
-  "แตะเพื่อลองซิงค์อีกครั้ง (หลังออฟฟิศกู้/แก้ข้อมูลแล้ว)": "Tap to retry sync (after office restores/fixes data)",
-  // — ตาราง —
-  "ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย": "No records today — start your first job",
-  "ยังไม่ซิงค์ — รอเน็ตกลับมา": "Not synced yet — waiting for connection",
-  "โหลดข้อมูลไม่สำเร็จ": "Failed to load data",
-  // — พื้นที่ทำงาน (WorkArea) —
-  "พร้อมเริ่มงาน — กรอก": "Ready — enter",
-  "แล้วกด": "then press", "เพื่อเริ่มจับเวลา": "to start the timer",
-  "● กำลังบันทึกเวลา": "● Recording time",
-  "กด": "Press", "เพื่อสแกนชิ้นงาน": "to scan a part",
-  "ยกเลิกการบันทึก?": "Cancel this recording?",
-  "เวลาที่จับไว้ (": "The elapsed time (",
-  ") จะถูกล้างและเริ่มใหม่": ") will be cleared and the timer restarts",
-  // — กล้องสแกน —
-  "หรือพิมพ์รหัส QR": "Or type QR code", "ตกลง": "OK",
-  "✕ ปิดกล้อง / ยกเลิก": "✕ Close camera / Cancel", "ปิดกล้อง": "Close camera",
-  "เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้": "Can't open camera — type the QR code below instead",
-  // — แถบอัปเดต —
-  "● มีเวอร์ชันใหม่ — กดอัปเดตเมื่อพร้อม": "● New version available — update when ready",
-  "● มีเวอร์ชันใหม่ · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่": "● New version available · you're offline, reconnect and retry",
-  "อัปเดต": "Update",
-  // — ข้อความแจ้งเตือน (toast/flash) —
-  "กด START ก่อนเริ่มสแกน": "Press START before scanning",
-  "เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน": "Select an operation (cut/drill/notch) before scanning",
-  "ไม่พบ QR นี้ในระบบ — สแกนใหม่ หรือพิมพ์รหัสด้านล่าง": "This QR isn't in the system — scan again or type the code below",
-  "เลือกสถานะ In Process หรือ Finished": "Select status: In Process or Finished",
-  "ระบุจำนวนมากกว่า 0": "Enter a quantity greater than 0",
-  "จำนวนต้องเป็นจำนวนเต็ม": "Quantity must be a whole number",
-  "จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)": "Too many (max 100,000 per record)",
-  "กรอกความยาววัสดุ (Material Length) ก่อน": "Enter Material Length first",
-  "เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ": "Connection dropped — queued, will sync automatically",
-  "บันทึกแล้ว ✓ พร้อมงานถัดไป": "Saved ✓ ready for the next job",
-  "บันทึกไม่สำเร็จ": "Save failed",
-  "บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก": "Account used on another device — syncing pending work before exit",
-};
-
-// ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
-const RULES = [
-  [/^ทั้งหมด\s+(.+?)\s+ชิ้น$/, (m) => `Total ${m[1]} pcs`],
-  [/^รวม\s+(.+?)\s+ชิ้น$/, (m) => `Total ${m[1]} pcs`],
-  [/^(.+?)\s+ชิ้น$/, (m) => `${m[1]} pcs`],
-  [/^(.+?)\s+พาร์ท$/, (m) => `${m[1]} parts`],
-  [/^(.+?)\s+Part$/, (m) => `${m[1]} parts`],
-  [/^(.+?)\s+ใบ$/, (m) => `${m[1]} labels`],
-  [/^(.+?)\s+กก\.$/, (m) => `${m[1]} kg`],
-  [/^(.+?)\s+มม\.$/, (m) => `${m[1]} mm`],
-  [/^(.+?)\s+เครื่อง$/, (m) => `${m[1]} machines`],
-  [/^(\d+)\s*ชม\.\s*(\d+)\s*น\.$/, (m) => `${m[1]} h ${m[2]} min`],   // เวลาเดินเครื่อง 2 ชม. 05 น.
-  [/^(\d+)\s*น\.$/, (m) => `${m[1]} min`],
-  [/^เลือก\s+(.+)$/, (m) => `Selected ${m[1]}`],
-  [/^Part\s*\((\d[\d,]*)\)$/, (m) => `Part (${m[1]})`],
-  [/^Release\s*\((\d[\d,]*)\)$/, (m) => `Release (${m[1]})`],
-  [/^โปรเจคทั้งหมด\s*\((.+)\)$/, (m) => `All projects (${m[1]})`],
-  [/^ป้ายที่จะพิมพ์\s*\((.+)\)$/, (m) => `Labels to print (${m[1]})`],
-  [/^ชิ้นงานในล็อตนี้\s*\((.+)\)$/, (m) => `Pieces in this lot (${m[1]})`],
-  [/^ความคืบหน้า\s*—\s*(.+)$/, (m) => `Progress — ${m[1]}`],
-  [/^ความสามารถของเครื่อง\s*—\s*(.+)$/, (m) => `Machine capabilities — ${m[1]}`],
-  [/^แก้ไขพนักงาน\s*—\s*(.+)$/, (m) => `Edit employee — ${m[1]}`],
-  [/^แก้ไขเครื่องจักร\s*—\s*(.+)$/, (m) => `Edit machine — ${m[1]}`],
-  [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
-  [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
-  [/^⚠\s*ชิ้นนี้เคยทำขั้นตอนนี้แล้ว\s+(\d+)\s*ครั้ง$/, (m) => `⚠ This piece already ran this step ${m[1]}×`],
-];
-
-function toEN(trimmed) {
-  if (DICT[trimmed] != null) return DICT[trimmed];
-  for (const [re, fn] of RULES) { const m = trimmed.match(re); if (m) return fn(m); }
-  return null;
+/* ═══════════════════════════════════════════════════════════════
+   MACHINE STATION (หน้าเครื่อง) — landscape terminal
+   Visual language taken from the client's PDF draft:
+   white paper, black hairline borders, RED for live / highlighted
+   values, mono numerals. Meant for a fixed tablet/monitor at the
+   machine, landscape orientation.
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* ── Clean blue theme (royal blue + white cards + soft lines) ── */
+  --st-ink: #17203a;        /* navy text */
+  --st-line: #e3e9f5;       /* soft hairline (แทนเส้นดำ) */
+  --st-line-soft: #eef2fb;
+  --st-paper: #ffffff;
+  --st-panel: #f4f7fe;
+  --st-muted: #6b7896;
+  /* --st-red = สีเน้น (ตอนนี้เป็นน้ำเงิน) ใช้กับ live/ปุ่ม/ไฮไลต์ทั้งหมด */
+  --st-red: #4361ee;
+  --st-red-dk: #2f49c8;
+  --st-red-hi: #5f7cff;
+  --st-tint: #e8ecff;
+  --st-green: #22c55e;
+  --st-alert: #ef4444;      /* แดงจริง — ใช้เฉพาะแจ้งเตือน error */
+  --st-shadow: 0 1px 2px rgba(40,60,120,.05), 0 10px 22px -14px rgba(40,60,120,.22);
 }
 
-// ── เครื่องมือแปล DOM ────────────────────────────────────────────────────────
-let LANG = "th";
-try { LANG = localStorage.getItem("mls-lang") === "en" ? "en" : "th"; } catch { /* ignore */ }
-const listeners = new Set();
-const origText = new Map();   // textNode -> ไทยต้นฉบับ
-const origAttr = new Map();   // el -> { placeholder?, title? }
-const touched = new Set();    // node/el ที่แปลไปแล้ว (ไว้ restore ตอนกลับเป็นไทย)
-let observer = null;
-let busy = false;             // กัน observer วนซ้ำระหว่างที่เราแก้เอง
-
-function translateTextNode(n) {
-  const raw = n.nodeValue; if (!raw) return;
-  const trimmed = raw.trim();
-  if (!trimmed || !THAI.test(trimmed)) return;   // ไม่มีไทย = ข้าม (แปลแล้ว/ตัวเลข)
-  const en = toEN(trimmed); if (en == null) return;
-  if (!origText.has(n)) { origText.set(n, raw); touched.add(n); }
-  const lead = raw.match(/^\s*/)[0], trail = raw.match(/\s*$/)[0];
-  n.nodeValue = lead + en + trail;
+.stn-body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #eef2fb;
+  color: var(--st-ink);
+  font-family: 'IBM Plex Sans Thai', 'Kanit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
 }
-function translateAttrs(el) {
-  for (const a of ["placeholder", "title"]) {
-    const v = el.getAttribute && el.getAttribute(a);
-    if (!v || !THAI.test(v)) continue;
-    const en = toEN(v.trim()); if (en == null) continue;
-    const cur = origAttr.get(el) || {};
-    if (cur[a] == null) { cur[a] = v; origAttr.set(el, cur); touched.add(el); }
-    el.setAttribute(a, en);
+.stn-mono { font-family: 'IBM Plex Mono', monospace; }
+
+/* ── Login (station) ─────────────────────────────────────────── */
+.stn-login-wrap {
+  flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.stn-login {
+  background: var(--st-paper); border: 1px solid var(--st-line); border-radius: 22px;
+  width: 100%; max-width: 380px; padding: 32px 28px;
+  box-shadow: 0 24px 54px -18px rgba(40,60,120,.28);
+}
+.stn-login h1 { font-size: 20px; font-weight: 700; margin: 0 0 2px; }
+.stn-login p { font-size: 12.5px; color: var(--st-muted); margin: 0 0 20px; }
+.stn-field { margin-bottom: 14px; }
+.stn-field label { display: block; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: #333; margin-bottom: 5px; }
+.stn-input {
+  width: 100%; border: 1px solid var(--st-line); border-radius: 12px; padding: 12px 14px;
+  font-size: 15px; font-family: inherit; outline: none; background: var(--st-panel); color: var(--st-ink);
+}
+.stn-input:focus { border-color: var(--st-red); background: #fff; box-shadow: 0 0 0 3px rgba(67,97,238,.15); }
+.stn-btn {
+  width: 100%; border: 1px solid var(--st-red); background: var(--st-red); color: #fff;
+  border-radius: 14px; padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+  box-shadow: 0 10px 22px -10px rgba(67,97,238,.6);
+}
+.stn-btn:hover { background: var(--st-red-hi); }
+.stn-btn:active { transform: scale(.99); }
+.stn-btn:disabled { opacity: .5; cursor: not-allowed; }
+.stn-err { color: var(--st-alert); font-size: 13px; margin-bottom: 12px; }
+.stn-notice { background: #fff4e5; border: 1px solid #ffd8a8; color: #9a5b00; font-size: 13px; font-weight: 600; border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; }
+.stn-login-foot { font-size: 11.5px; color: var(--st-muted); margin-top: 16px; text-align: center; line-height: 1.6; }
+.stn-link-normal { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--st-red-dk); text-decoration: underline; cursor: pointer; }
+
+/* ── Terminal frame ──────────────────────────────────────────── */
+/* เต็มจอทุกอุปกรณ์ (มือถือ/แท็บเล็ต/คอม) — ใช้ 100dvh กันแถบบราวเซอร์ดันจอเพี้ยน */
+.stn-shell {
+  flex: 1; display: flex; flex-direction: column; padding: 0; min-height: 0;
+  height: 100vh; height: 100dvh; overflow: hidden;
+}
+.stn-screen {
+  flex: 1; background: var(--st-paper); border: 2px solid var(--st-line); border-radius: 0;
+  display: grid; grid-template-columns: 25% 1fr; grid-template-rows: auto 1fr;
+  overflow: hidden; min-height: 0;
+}
+@media (max-width: 860px) { .stn-screen { grid-template-columns: 30% 1fr; } }
+
+/* บนมือถือ/แท็บเล็ตแนวตั้ง: บังคับเป็นแนวนอนเอง (กรณี OS ไม่ยอมล็อก orientation เช่น iOS)
+   หมุนทั้งจอ 90° ให้เนื้อหาเป็นแนวนอนเต็มพื้นที่ */
+@media (orientation: portrait) and (max-width: 1024px) {
+  html, body { overflow: hidden; }
+  .stn-shell {
+    position: fixed; top: 0; left: 0;
+    width: 100vh; height: 100vw;
+    transform-origin: top left;
+    transform: rotate(90deg) translateY(-100%);
+    -webkit-transform-origin: top left;
+    -webkit-transform: rotate(90deg) translateY(-100%);
   }
-}
-function walk(root) {
-  if (!root) return;
-  if (root.nodeType === 3) { translateTextNode(root); return; }
-  if (root.nodeType !== 1) return;
-  translateAttrs(root);
-  const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  let n; while ((n = tw.nextNode())) translateTextNode(n);
-  root.querySelectorAll && root.querySelectorAll("[placeholder],[title]").forEach(translateAttrs);
-}
-function restoreAll() {
-  for (const node of touched) {
-    if (node.nodeType === 3) { if (origText.has(node)) node.nodeValue = origText.get(node); }
-    else { const a = origAttr.get(node); if (a) { for (const k in a) node.setAttribute(k, a[k]); } }
-  }
-  origText.clear(); origAttr.clear(); touched.clear();
-}
-function applyLang() {
-  busy = true;
-  try {
-    if (LANG === "en") walk(document.body);
-    else restoreAll();
-  } finally { busy = false; }
-}
-function ensureObserver() {
-  if (observer) return;
-  observer = new MutationObserver((muts) => {
-    if (busy || LANG !== "en") return;
-    busy = true;
-    try {
-      for (const m of muts) {
-        if (m.type === "characterData") translateTextNode(m.target);
-        else m.addedNodes && m.addedNodes.forEach((nd) => walk(nd));
-      }
-    } finally { busy = false; }
-  });
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  /* หลังหมุนแล้ว "ความกว้างเนื้อหา" = 100vh — ปรับขนาดฟอนต์/ปุ่มด้วย vh ให้ได้สัดส่วนใหญ่พอดีจอ */
+  .stn-screen { grid-template-columns: 25% 1fr; }
+  .stn-work-wrap { grid-template-columns: 1fr 26vh; }
+  .stn-code { font-size: 4.6vh; }
+  .stn-daily h2 { font-size: 2.2vh; }
+  .stn-daily .stn-date { font-size: 1.7vh; }
+  .stn-kpi .lbl { font-size: 1.7vh; }
+  .stn-kpi .val { font-size: 3.4vh; }
+  .stn-clock { font-size: 3.8vh; }
+  .stn-mat { border-radius: 2vh; padding: 1.4vh 1.8vh; }
+  .stn-mat .lbl { font-size: 1.35vh; }
+  .stn-mat input { font-size: 2.6vh; }
+  .stn-ctl-btn { font-size: 2.2vh; padding: 2.4vh 2vh; border-radius: 2vh; }
+  .stn-scan-cell .qty { font-size: 1.5vh; }
+  .stn-scan-cell .qty b { font-size: 2vh; }
+  .stn-rec-dot { width: 2.6vh; height: 2.6vh; }
+  .stn-exit { font-size: 2vh; padding: 2.3vh 1.6vh; }
+  .stn-hint { font-size: 2.1vh; max-width: 62vh; }
+  .stn-hint .big { font-size: 2.4vh; }
+  table.stn-rec th { font-size: 1.35vh; }
+  table.stn-rec td { font-size: 1.6vh; }
+  .stn-pill { font-size: 2vh; padding: 1.8vh 3vh; border-radius: 2vh; }
+  .stn-qty-lbl { font-size: 1.8vh; }
+  .stn-qty-num { font-size: 6vh; }
+  .stn-lbl-qr { width: 8vh; height: 8vh; }
+  .stn-lbl-num, .stn-lbl-name { font-size: 1.7vh; }
+  .stn-lbl-part { font-size: 3vh; }
+  .stn-lbl-mat, .stn-lbl-line, .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.5vh; }
+  .stn-lbl-of { font-size: 2.4vh; }
+  .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3.2vh; }
+  .stn-qty-stepper input { width: 16vh; font-size: 3.6vh; }
 }
 
-export function setLang(l) {
-  LANG = l === "en" ? "en" : "th";
-  try { localStorage.setItem("mls-lang", LANG); } catch { /* ignore */ }
-  applyLang();
-  listeners.forEach((f) => { try { f(LANG); } catch { /* ignore */ } });
-}
-export function getLang() { return LANG; }
-
-// เริ่มทำงานเมื่อ DOM พร้อม (เรียกจาก App.jsx ด้วยการ import)
-if (typeof window !== "undefined") {
-  const boot = () => { ensureObserver(); if (LANG === "en") applyLang(); };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
-  else setTimeout(boot, 0);
+@media (max-width: 600px) {
+  .stn-screen { grid-template-columns: 34% 1fr; }
+  .stn-code { font-size: clamp(18px, 7vw, 30px); padding: 8px; }
+  .stn-daily { padding: 12px 10px; }
+  .stn-kpi .val { font-size: 18px; }
+  .stn-clock { font-size: 22px; }
+  .stn-control { padding: 8px; gap: 8px; }
+  .stn-ctl-btn { padding: 9px 8px; font-size: 12px; }
+  .stn-mat input { font-size: 15px; }
 }
 
-// React hook สำหรับปุ่มสลับ
-export function useLang() {
-  const [l, setL] = useState(LANG);
-  useEffect(() => { listeners.add(setL); return () => listeners.delete(setL); }, []);
-  return [l, setLang];
+.stn-cell { border-right: 2px solid var(--st-line); border-bottom: 2px solid var(--st-line); min-width: 0; min-height: 0; }
+.stn-code {
+  display: flex; align-items: center; justify-content: center; padding: 12px; gap: 12px;
+  font-weight: 600; font-size: clamp(24px, 3.2vw, 44px); text-align: center;
 }
+.stn-code .stn-logout {
+  position: absolute; top: 14px; left: 16px; font-size: 12px; color: var(--st-muted);
+  border: 1px solid var(--st-line-soft); background: #fff; border-radius: 5px; padding: 4px 10px; cursor: pointer;
+}
+.stn-code .stn-fs { left: auto; right: 16px; }
+/* ปุ่มออกจากระบบมุมบนซ้าย — ซ่อนบนแท็บเล็ต/จอใหญ่ (ใช้ปุ่มใหญ่ด้านล่าง), โผล่บนมือถือ */
+.stn-code .stn-toplogout { display: none; align-items: center; gap: 4px; color: var(--st-red-dk); border-color: #f2c2c2; background: #fff; font-weight: 600; z-index: 5; }
+@media (max-width: 600px) { .stn-code .stn-logout { top: 8px; left: 8px; padding: 3px 8px; } .stn-code .stn-fs { right: 8px; } .stn-code .stn-toplogout { display: inline-flex; } }
+/* ติดตั้ง PWA แล้ว (เปิดจากไอคอนโฮม) เต็มจออัตโนมัติอยู่แล้ว → ซ่อนปุ่ม "เต็มจอ" */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .stn-code .stn-fs { display: none; }
+}
+
+/* ── Records table ───────────────────────────────────────────── */
+.stn-table { border-bottom: 2px solid var(--st-line); overflow: auto; min-width: 0; }
+table.stn-rec { border-collapse: collapse; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; white-space: nowrap; }
+table.stn-rec th {
+  font-family: 'IBM Plex Sans Thai', sans-serif; font-weight: 600; font-size: 10.5px; color: #111;
+  text-align: center; padding: 4px 5px; border-bottom: 1.5px solid var(--st-line);
+  line-height: 1.15; text-transform: uppercase; position: sticky; top: 0; background: var(--st-paper);
+}
+table.stn-rec td { padding: 3px 6px; text-align: center; border-bottom: 1px solid #e6e9ee; color: #1a1d22; }
+table.stn-rec td.l { text-align: left; }
+table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background: var(--st-tint); }
+.stn-st-fin { color: var(--st-green); font-weight: 600; }
+.stn-st-inp { color: #1a1d22; }
+.stn-empty-row td { color: var(--st-muted); padding: 18px; }
+
+/* ── Daily report ────────────────────────────────────────────── */
+.stn-daily { border-right: 2px solid var(--st-line); padding: 18px 16px; display: flex; flex-direction: column; }
+.stn-daily-head { flex-shrink: 0; }
+.stn-daily h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.stn-daily .stn-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--st-muted); }
+/* กระจาย KPI เต็มความสูงคอลัมน์ให้สมดุล (ไม่กระจุกด้านบน) */
+.stn-kpis { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
+.stn-kpi { text-align: center; }
+.stn-kpi .lbl { font-size: 11.5px; letter-spacing: .05em; color: #2a2d31; text-transform: uppercase; }
+.stn-kpi .val { font-weight: 600; color: var(--st-red); line-height: 1.05; margin-top: 2px; font-size: clamp(20px, 2.6vw, 32px); }
+.stn-kpi .val.mono { font-family: 'IBM Plex Mono', monospace; }
+
+/* ── Work zone (work area + control column) ──────────────────── */
+.stn-work-wrap { display: grid; grid-template-columns: 1fr 220px; min-width: 0; min-height: 0; }
+@media (max-width: 860px) { .stn-work-wrap { grid-template-columns: 1fr 168px; } }
+.stn-work-area {
+  border-right: 2px solid var(--st-line); position: relative; padding: 14px;
+  display: flex; align-items: center; justify-content: center; text-align: center; min-width: 0; min-height: 0;
+}
+.stn-control { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+/* กระจายปุ่มควบคุมเต็มความสูง (ปุ่มออกอยู่ล่างสุด) */
+.stn-ctl-main { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; gap: 12px; }
+.stn-clock { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: clamp(24px, 3vw, 38px); text-align: right; letter-spacing: .02em; }
+.stn-clock.live { color: var(--st-red); }
+
+.stn-mat { border: 1px solid var(--st-line); border-radius: 14px; padding: 8px 12px; background: var(--st-paper); box-shadow: var(--st-shadow); }
+.stn-mat .lbl { font-size: 9px; letter-spacing: .04em; color: #333; text-transform: uppercase; }
+.stn-mat input { border: none; outline: none; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; text-align: right; background: transparent; color: var(--st-ink); }
+.stn-mat.live { border-color: var(--st-red); } .stn-mat.live input { color: var(--st-red); }
+.stn-mat input:disabled { color: #9aa0a8; }
+
+.stn-ctl-btn {
+  border: 1px solid var(--st-line); border-radius: 14px; background: var(--st-paper); cursor: pointer;
+  font-family: inherit; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 14px; font-size: 14px; font-weight: 600; color: var(--st-ink);
+  box-shadow: var(--st-shadow); transition: background .12s, box-shadow .15s, transform .1s;
+}
+.stn-ctl-btn:hover { background: var(--st-panel); }
+.stn-ctl-btn:active { transform: scale(.98); }
+.stn-ctl-btn:disabled { opacity: .4; cursor: not-allowed; }
+.stn-rec-dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--st-ink); background: var(--st-ink); flex-shrink: 0; }
+.stn-ctl-btn.recording { border-color: var(--st-red); color: var(--st-red); }
+.stn-ctl-btn.recording .stn-rec-dot { border-color: var(--st-red); background: var(--st-red); border-radius: 3px; width: 16px; height: 16px; animation: stnpulse 1s ease-in-out infinite; }
+@keyframes stnpulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.stn-scan-cell { flex-direction: column; align-items: stretch; gap: 4px; }
+.stn-scan-cell .row1 { display: flex; align-items: center; justify-content: space-between; }
+.stn-scan-cell .qty { font-size: 10px; color: #333; text-align: center; text-transform: uppercase; letter-spacing: .03em; }
+.stn-scan-cell .qty b { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: var(--st-ink); }
+.stn-scan-cell.armed { border-color: var(--st-red); color: var(--st-red); }
+.stn-scan-cell.armed .qty b { color: var(--st-red); }
+.stn-save-btn { justify-content: center; font-size: 16px; padding: 13px; }
+.stn-save-btn.armed { border-color: var(--st-red); color: var(--st-red); font-weight: 700; }
+/* ปุ่มออกจากระบบ — แถบเต็มความกว้าง ชิดขอบล่างสุดของจอ โทนแดงอ่อน */
+.stn-exit {
+  margin: auto -14px -12px; justify-content: center; gap: 8px;
+  color: var(--st-red-dk); background: #fdf3f3; font-weight: 600;
+  border: none; border-top: 1px solid #f0c9c9; border-radius: 0;
+  padding: 13px 12px calc(13px + env(safe-area-inset-bottom));
+}
+.stn-exit:hover { background: #fbe6e6; }
+.stn-exit svg { stroke: var(--st-red-dk); }
+@media (max-width: 600px) { .stn-exit { margin: auto -8px -8px; padding: 11px 10px calc(11px + env(safe-area-inset-bottom)); } }
+
+/* ── Work-area states ────────────────────────────────────────── */
+.stn-hint { color: var(--st-muted); font-size: 13.5px; line-height: 1.6; max-width: 300px; }
+.stn-hint b { color: #33383e; }
+.stn-hint .big { font-size: 15px; color: var(--st-red); font-weight: 600; margin-bottom: 8px; }
+
+.stn-cam { width: min(96%, 560px); max-height: 74vh; aspect-ratio: 1; position: relative; margin: 0 auto; background: #0d1512; border-radius: 12px; overflow: hidden; }
+.stn-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* แคนวาสวาดกรอบขาวเกาะรอบ QR ที่กล้องเจอ — object-fit ตรงกับ <video> เพื่อให้พิกัดตรงกัน */
+.stn-cam .stn-cam-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
+/* แถวที่ยังไม่ซิงค์ (ออฟไลน์) — จางลงเล็กน้อย + ขีดซ้ายสีเตือน */
+.stn-pending-row { opacity: .62; box-shadow: inset 3px 0 0 var(--st-alert); }
+
+.stn-cam-close { position: absolute; top: 10px; right: 10px; z-index: 4; width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.stn-cam-close:active { transform: scale(.92); }
+.stn-cam-manual { margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
+.stn-cam-manual input { width: 210px; }
+
+/* scanned-part panel */
+.stn-part-panel { width: 100%; max-width: 440px; }
+/* ป้ายกำกับตัวใหม่ — โครงเดียวกับป้ายพิมพ์ (QR ซ้าย | ข้อมูล 2 คอลัมน์) */
+.stn-part-label { border: 1.5px solid var(--st-ink); border-radius: 12px; display: flex; gap: 12px; padding: 12px 14px; text-align: left; margin-bottom: 14px; align-items: center; background: #fff; box-shadow: var(--st-shadow); }
+.stn-lbl-qr { width: 58px; height: 58px; flex-shrink: 0; border: 1.5px solid var(--st-line); border-radius: 4px; background: conic-gradient(#111 0 25%, #fff 0 50%, #111 0 75%, #fff 0); background-size: 13px 13px; }
+.stn-lbl-body { flex: 1; display: flex; gap: 12px; align-items: center; min-width: 0; }
+.stn-lbl-col { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.stn-lbl-col.left { flex: 1; }
+.stn-lbl-col.right { text-align: right; align-items: flex-end; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; }
+.stn-lbl-vline { width: 1px; align-self: stretch; margin: 4px 0; background: var(--st-line); flex-shrink: 0; }
+.stn-lbl-num { font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: #7a8296; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stn-lbl-name { font-size: 13px; font-family: 'IBM Plex Sans Thai', sans-serif; color: var(--st-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stn-lbl-part { font-size: 22px; font-weight: 700; letter-spacing: .02em; color: var(--st-ink); line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stn-lbl-mat { font-size: 11px; color: #666; }
+.stn-lbl-line { font-size: 11px; color: #444; white-space: nowrap; }
+/* ตาราง MDF/REL/REV — ตัว M R ตรงกัน คอลัมน์ค่าตรงกัน */
+.stn-lbl-kv { display: grid; grid-template-columns: auto auto; column-gap: 6px; row-gap: 1px; align-items: baseline; justify-content: end; }
+.stn-lbl-kv .k { font-size: 11px; color: #777; white-space: nowrap; text-align: left; }
+.stn-lbl-kv .v { font-size: 11px; color: var(--st-ink); font-weight: 700; white-space: nowrap; text-align: left; }
+.stn-lbl-of { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--st-line); align-self: stretch; text-align: right; font-size: 17px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--st-red); white-space: nowrap; }
+.stn-lbl-approx { font-size: 10px; color: var(--st-alert); font-weight: 600; margin-top: 1px; white-space: nowrap; }
+.stn-lbl-rework { font-size: 10.5px; color: var(--st-alert); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+.stn-lbl-dup { font-size: 10.5px; color: var(--st-red, #e11d1d); font-weight: 700; margin-top: 2px; white-space: nowrap; }
+
+/* popup แจ้งเวอร์ชันใหม่ (หน้าเครื่อง) — การ์ดมุมขวาล่าง กดอัปเดตเอง */
+.stn-update {
+  position: fixed; right: 2.2vh; bottom: 2.2vh; left: auto; top: auto; z-index: 9999;
+  display: flex; flex-direction: column; align-items: stretch; gap: 1.2vh;
+  width: 40vh; max-width: calc(100vw - 4vh);
+  background: #141a17; color: #fff;
+  border: 1px solid #24302a; border-left: 0.6vh solid #14e39a;
+  border-radius: 1.6vh; padding: 1.8vh 2vh; box-shadow: 0 1.2vh 3.6vh rgba(0, 0, 0, .5);
+  animation: stnUbIn .3s ease;
+}
+@keyframes stnUbIn { from { opacity: 0; transform: translateY(2vh); } to { opacity: 1; transform: translateY(0); } }
+.stn-update > span { font-size: 1.7vh; line-height: 1.5; font-weight: 600; }
+.stn-update button {
+  background: #14e39a; color: #05271b; border: none; border-radius: 1vh;
+  padding: 1.1vh 2vh; font-weight: 800; font-size: 1.8vh; cursor: pointer;
+}
+.stn-update button:disabled { opacity: .7; }
+.stn-qty-lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #333; }
+.stn-qty-stepper { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0 16px; }
+.stn-qty-stepper button { width: 46px; height: 46px; border: 1.5px solid var(--st-line); background: #fff; border-radius: 6px; font-size: 24px; cursor: pointer; line-height: 1; }
+.stn-qty-stepper input { width: 120px; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 28px; font-weight: 600; border: 1.5px solid var(--st-line); border-radius: 6px; padding: 8px; color: var(--st-red); outline: none; }
+.stn-row-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.stn-pill { border: 1px solid var(--st-line); background: #fff; border-radius: 14px; padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--st-ink); box-shadow: var(--st-shadow); }
+.stn-pill:active { transform: scale(.97); }
+.stn-pill.sel-fin { border-color: var(--st-green); color: var(--st-green); background: #eefaf0; }
+.stn-pill.sel-inp { border-color: var(--st-red); color: var(--st-red); background: var(--st-tint); }
+.stn-pill.ok { background: var(--st-red); color: #fff; border-color: var(--st-red); min-width: 120px; box-shadow: 0 8px 18px -8px rgba(67,97,238,.6); }
+.stn-pill.ok:disabled { opacity: .4; cursor: not-allowed; }
+.stn-pill.yes { background: var(--st-red); color: #fff; border-color: var(--st-red); min-width: 90px; }
+.stn-pill.no { background: #fff; min-width: 90px; }
+
+/* confirmation */
+.stn-confirm { border: 1px solid var(--st-line); border-radius: 18px; padding: 22px 26px; background: #fff; max-width: 360px; box-shadow: var(--st-shadow); }
+.stn-confirm h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+.stn-confirm p { margin: 0 0 18px; font-size: 12.5px; color: #444; line-height: 1.5; }
+
+/* toast */
+.stn-toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); color: #fff; padding: 9px 18px; border-radius: 22px; font-size: 13.5px; font-weight: 600; box-shadow: 0 6px 16px rgba(0,0,0,.25); white-space: nowrap; z-index: 20; animation: stnpop .18s ease; }
+.stn-toast.ok { background: var(--st-green); }
+.stn-toast.warn { background: var(--st-alert); }
+@keyframes stnpop { from { opacity: 0; transform: translateX(-50%) scale(.9); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+
+.stn-pending { position: fixed; top: 14px; right: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--st-red-dk); background: #fdeaea; border: 1px solid #f6c9c9; border-radius: 20px; padding: 3px 11px; z-index: 30; }
+/* แถบเตือน "ซิงค์ไม่สำเร็จถาวร" (QR ถูกลบ/แก้ฝั่งออฟฟิศ) — แตะเพื่อลองใหม่ */
+.stn-rejected { position: fixed; top: 44px; right: 16px; max-width: 60vw; font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 12px; font-weight: 600; color: #fff; background: var(--st-alert); border-radius: 12px; padding: 6px 12px; z-index: 31; cursor: pointer; box-shadow: 0 8px 18px -8px rgba(200,40,40,.6); }
+.stn-rejected:active { transform: scale(.98); }
+
+/* ── Ambient animation: พนักงานเดินมา "วางอลูมิเนียมบนเครื่องตัด" (ซ้าย→ขวา) ── */
+.stn-scene { width: min(90%, 600px); height: auto; display: block; margin: 2px auto 16px; }
+.stn-walker { animation: stn-walk 7s ease-in-out infinite; }
+.stn-bob    { transform-box: fill-box; animation: stn-bob 7s linear infinite; }        /* ตัวเด้งตามจังหวะเดิน */
+.stn-arm    { transform-box: fill-box; transform-origin: 4px 6px; animation: stn-arm 7s ease-in-out infinite; }
+.stn-carry  { animation: stn-carry 7s ease-in-out infinite; }
+.stn-shine  { animation: stn-shine 7s ease-in-out infinite; }                          /* ประกายวิ่งบนอลูมิเนียม */
+.stn-leg1, .stn-leg2 { transform-box: fill-box; transform-origin: 50% 0%; }
+.stn-leg1 { animation: stn-leg-a 7s linear infinite; }
+.stn-leg2 { animation: stn-leg-b 7s linear infinite; }
+.stn-saw  { transform-box: fill-box; transform-origin: 50% 50%; animation: stn-saw .8s linear infinite; }
+.stn-spark { transform-box: fill-box; transform-origin: 50% 50%; animation: stn-spark 7s ease-in-out infinite; }
+@keyframes stn-walk {
+  0%   { transform: translateX(-160px); opacity: 0; }
+  8%   { opacity: 1; }
+  46%  { transform: translateX(150px); opacity: 1; }   /* ถึงข้างเครื่อง */
+  86%  { transform: translateX(150px); opacity: 1; }   /* ยืนวางของ (ไม่เดินถอยหลัง) */
+  92%  { transform: translateX(150px); opacity: 0; }   /* จางหายอยู่กับที่ */
+  100% { transform: translateX(-160px); opacity: 0; }
+}
+@keyframes stn-bob {
+  0%,12%,24%,36%,46% { transform: translateY(0); }
+  6%,18%,30%,42% { transform: translateY(-3px); }
+  100% { transform: translateY(0); }
+}
+@keyframes stn-arm {
+  0%, 50% { transform: rotate(0deg); }     /* ยื่นแขนถือของ */
+  58%     { transform: rotate(88deg); }     /* วางเสร็จ → เอาแขนลงข้างตัว */
+  92%     { transform: rotate(88deg); }     /* แขนลงค้างไว้ */
+  100%    { transform: rotate(0deg); }      /* รีเซ็ตตอนมองไม่เห็น */
+}
+@keyframes stn-carry {
+  0%   { transform: translateX(-160px) translateY(0);   opacity: 0; }
+  8%   { opacity: 1; }
+  46%  { transform: translateX(150px) translateY(0);    opacity: 1; }   /* ยังถืออยู่ */
+  58%  { transform: translateX(186px) translateY(40px); opacity: 1; }   /* วางลงบนเครื่องตัด */
+  90%  { transform: translateX(186px) translateY(40px); opacity: 1; }
+  96%  { transform: translateX(186px) translateY(40px); opacity: 0; }
+  100% { transform: translateX(-160px) translateY(0);   opacity: 0; }
+}
+@keyframes stn-shine {
+  0%,10% { transform: translateX(0); opacity: 0; }
+  14% { opacity: .9; }
+  40% { transform: translateX(120px); opacity: .9; }
+  46%,100% { transform: translateX(140px); opacity: 0; }
+}
+@keyframes stn-leg-a {
+  0% { transform: rotate(18deg); }   6% { transform: rotate(-18deg); }
+  12% { transform: rotate(18deg); }  18% { transform: rotate(-18deg); }
+  24% { transform: rotate(18deg); }  30% { transform: rotate(-18deg); }
+  36% { transform: rotate(18deg); }  42% { transform: rotate(-18deg); }
+  46%, 100% { transform: rotate(0deg); }   /* ถึงที่แล้ว หยุดขยับ */
+}
+@keyframes stn-leg-b {
+  0% { transform: rotate(-18deg); }  6% { transform: rotate(18deg); }
+  12% { transform: rotate(-18deg); } 18% { transform: rotate(18deg); }
+  24% { transform: rotate(-18deg); } 30% { transform: rotate(18deg); }
+  36% { transform: rotate(-18deg); } 42% { transform: rotate(18deg); }
+  46%, 100% { transform: rotate(0deg); }
+}
+@keyframes stn-saw   { to { transform: rotate(360deg); } }
+@keyframes stn-spark {
+  0%,58% { opacity: 0; transform: scale(.5); }
+  61% { opacity: 1; transform: scale(1); }
+  65% { opacity: .25; transform: scale(.7); }
+  70% { opacity: 1; transform: scale(1.15); }
+  76% { opacity: .3; transform: scale(.8); }
+  84% { opacity: 1; transform: scale(1); }
+  90%,100% { opacity: 0; transform: scale(.5); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stn-walker, .stn-bob, .stn-arm, .stn-carry, .stn-shine, .stn-leg1, .stn-leg2, .stn-saw, .stn-spark { animation: none; }
+  .stn-carry { opacity: 1; transform: translateX(186px) translateY(40px); }
+  .stn-walker { opacity: 0; }
+}
+
+/* ── ปุ่มเลือกขั้นตอน (ตัด/เจาะ/บาก) บนหน้าเครื่อง ──────────────────────────── */
+.stn-oppick {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; background: #10161c; border-bottom: 1px solid #223040;
+}
+.stn-oppick-lbl { color: #8aa0b4; font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+.stn-oppick-btn {
+  appearance: none; border: 2px solid #2c3e50; background: #16202b; color: #cdd9e5;
+  font-size: 18px; font-weight: 800; padding: 10px 22px; border-radius: 12px;
+  cursor: pointer; font-family: inherit; line-height: 1; letter-spacing: .02em;
+  transition: transform .08s ease, background .12s ease, border-color .12s ease;
+}
+.stn-oppick-btn:active { transform: scale(.96); }
+.stn-oppick-btn.sel { background: #14e39a; border-color: #14e39a; color: #06251a; }
+.stn-oppick-hint { color: #f0b429; font-size: 14px; font-weight: 700; }
+.stn-oppick.one .stn-oppick-btn.sel { font-size: 16px; padding: 7px 16px; }
+
+/* ── ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง ────────────────────────────────────── */
+.stn-lang {
+  appearance: none; border: 1.5px solid #3a4a5a; background: #16202b; color: #cdd9e5;
+  font-size: 13px; font-weight: 800; padding: 5px 12px; border-radius: 8px;
+  cursor: pointer; font-family: inherit; line-height: 1; letter-spacing: .03em;
+}
+.stn-lang:active { transform: scale(.95); }
+/* บนจอเครื่อง วางมุมบนซ้ายของเซลล์รหัสเครื่อง (มุมขวามีปุ่ม "เต็มจอ" อยู่แล้ว)
+   จอใหญ่/แท็บเล็ต: ซ้ายบนว่าง (ปุ่มออกล่างขวา) · มือถือ <600px: ปุ่มออกโผล่ซ้ายบน → เลื่อนหลบ */
+.stn-code .stn-lang { position: absolute; top: 8px; left: 16px; z-index: 5; }
+@media (max-width: 600px) { .stn-code .stn-lang { left: 70px; top: 8px; } }
