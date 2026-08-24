@@ -3367,7 +3367,8 @@ function ReportPage() {
                   <th>รวม (ชิ้น)</th>
                   <th>น้ำหนัก (กก.)</th>
                   <th>เวลาเดินเครื่อง</th>
-                  <th>เฉลี่ย/วัน</th>
+                  <th>เฉลี่ย กก./วัน</th>
+                  <th>เฉลี่ย ชิ้น/วัน</th>
                 </tr>
               </thead>
               <tbody>
@@ -3387,9 +3388,10 @@ function ReportPage() {
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{m.total.count.toLocaleString()} ชิ้น</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—"}</td>
                       <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
+                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{dm ? `${fmtNum(dm.avg.weight)} กก.` : "—"}</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>
                         {dm
-                          ? <span>{fmtNum(dm.avg.weight)} กก.<br /><span style={{ color: "var(--muted)", fontSize: 11 }}>{fmtNum(dm.avg.count)} ชิ้น · {fmtHrs(dm.avg.seconds)}</span></span>
+                          ? <span>{fmtNum(dm.avg.count)} ชิ้น{dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(dm.avg.seconds)}</span> : null}</span>
                           : "—"}
                       </td>
                     </tr>
