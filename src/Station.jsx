@@ -259,7 +259,8 @@ function MachineStation({ user, onLogout, onKicked }) {
   function flash(text, tone = "ok") {
     setToast({ text, tone });
     clearTimeout(toastRef.current);
-    toastRef.current = setTimeout(() => setToast(null), 1900);
+    // ข้อความเตือน (warn) อยู่นานกว่า — กันคนงานละสายตาแล้วพลาดข้อความสำคัญ (เช่น "ไม่พบ QR")
+    toastRef.current = setTimeout(() => setToast(null), tone === "ok" ? 1900 : 4200);
   }
   useEffect(() => () => clearTimeout(toastRef.current), []);
 
@@ -307,6 +308,10 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
     // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
     if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
+    // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
+    if (step === STEP.PART && unit && (status || qty > 1)) {
+      if (!confirm("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?")) return;
+    }
     warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
     // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
     // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
@@ -546,7 +551,7 @@ function MachineStation({ user, onLogout, onKicked }) {
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
                 disabled={busy}>
-                <span>{recording ? "STOP" : "START"}</span><span className="stn-rec-dot" />
+                <span>{recording ? "CANCEL" : "START"}</span><span className="stn-rec-dot" />
               </button>
               <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
                 <div className="row1">
@@ -710,11 +715,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const done = progress?.done ?? 0;
     const startNo = done + 1;
     const endNo = done + Math.max(1, qty || 1);
+    // เลขลำดับป้ายสะสม (ไม่ใช่ progress) — ใส่ "#" + คำว่า "ลำดับ" กำกับ กันเข้าใจผิดว่าเป็นยอดทำ/ยอดสั่ง
     const ofText = noOp
-      ? (total != null ? `— OF ${fmt(total)}` : "—")
+      ? (total != null ? `— of ${fmt(total)}` : "—")
       : (total != null
-          ? `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} OF ${fmt(total)}`
-          : `${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`);
+          ? `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} of ${fmt(total)}`
+          : `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`);
     // ทำเกินจำนวนสั่งแล้ว → บันทึกต่อได้ปกติ (เช่น ตัดเผื่อเป็นสแปร์ หรือกลับไปเจาะเพิ่ม)
     const isOver = !noOp && total != null && done >= total;
     return (
@@ -736,7 +742,10 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
-              <div className="stn-lbl-of">{progress?.offline ? `~${ofText}` : ofText}</div>
+              <div className="stn-lbl-of">
+                <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>ลำดับ </span>
+                {progress?.offline ? `~${ofText}` : ofText}
+              </div>
               {isOver ? <div className="stn-lbl-rework">เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)</div> : null}
               {progress?.offline ? <div className="stn-lbl-approx">ประมาณการ · ออฟไลน์</div> : null}
             </div>
