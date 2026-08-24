@@ -10,6 +10,40 @@ const path = window.location.pathname.replace(/\/+$/, "").toLowerCase();
 const isStation = path === "/station" || path.startsWith("/station/");
 const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
 
+// ── auto-heal: render error จาก chunk ที่ไม่ตรงกัน (deploy ใหม่ทับของเก่า / แคชค้าง) ──
+//    เช่น React error #130 (component undefined) — ต่างจาก chunk "โหลดไม่ได้" (onChunkError)
+//    ตรงที่ chunk โหลดสำเร็จแต่ "เนื้อในไม่ตรงเวอร์ชัน" → เรนเดอร์แล้วพัง
+//    วิธีกู้: ล้าง cache ของ service worker + ถอน SW แล้วโหลดใหม่ "ครั้งเดียว" (กันวนซ้ำด้วย sessionStorage)
+//    ถ้าโหลดใหม่แล้วยัง error = ปล่อยให้เห็น error จริง (ไม่วนไม่รู้จบ)
+if (typeof window !== "undefined") {
+  const healOnce = () => {
+    let healed = false;
+    try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
+    if (healed) return;
+    try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ }
+    const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+    const clearCaches = () =>
+      (window.caches && caches.keys)
+        ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
+        : Promise.resolve();
+    const unregSW = () =>
+      (navigator.serviceWorker && navigator.serviceWorker.getRegistrations)
+        ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {})
+        : Promise.resolve();
+    Promise.all([clearCaches(), unregSW()]).finally(reload);
+  };
+  const looksStale = (msg) =>
+    /Minified React error #130|React error #130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported module|error loading dynamically/i.test(String(msg || ""));
+  window.addEventListener("error", (ev) => {
+    const msg = (ev && (ev.message || (ev.error && ev.error.message))) || "";
+    if (looksStale(msg)) healOnce();
+  });
+  window.addEventListener("unhandledrejection", (ev) => {
+    const msg = (ev && ev.reason && (ev.reason.message || ev.reason)) || "";
+    if (looksStale(msg)) healOnce();
+  });
+}
+
 // ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต + แจ้งเวอร์ชันใหม่ ──
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -23,7 +57,8 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 
 // ปิดหน้าโหลดชั่วคราว (boot-splash) หลังแอปเรนเดอร์แล้ว — เฟดออกนุ่มๆ กันจอมืด
 function hideBootSplash() {
-  try { sessionStorage.removeItem("mls-load-retry"); } catch { /* ignore */ }
+  // เรนเดอร์สำเร็จแล้ว → รีเซ็ตตัวกันวนของ auto-heal (เผื่อ deploy หน้าเจอปัญหาใหม่จะกู้ได้อีก)
+  try { sessionStorage.removeItem("mls-load-retry"); sessionStorage.removeItem("mls-healed"); } catch { /* ignore */ }
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const s = document.getElementById("boot-splash");
     if (!s) return;
