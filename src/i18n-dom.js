@@ -90,6 +90,8 @@ const DICT = {
   "ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)": "Operations this machine can do (select multiple)",
   "ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้สแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ": "None selected = unlimited (any operation) — select at least 1 to enable checking",
   "ลบเครื่องนี้": "Delete this machine", "กดเพื่อเรียงลำดับ": "Click to sort",
+  "เรียงโดย": "Sort by", "— ค่าเริ่มต้น —": "— Default —",
+  "▲ น้อย→มาก": "▲ Low→High", "▼ มาก→น้อย": "▼ High→Low", "สลับ น้อย↔มาก": "Toggle low↔high",
   "เครื่องหนึ่งทำได้หลายขั้นตอน — กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง": "A machine can do several operations — press \"Edit\" to set name/type, choose operations, or delete",
   "ประเภทงาน (คำอธิบาย · ไม่บังคับ)": "Work type (description · optional)",
   "เช่น CUTTING / NOTCHING": "e.g. CUTTING / NOTCHING",
@@ -267,6 +269,8 @@ const RULES = [
   [/^(.+?)\s+กก\.$/, (m) => `${m[1]} kg`],
   [/^(.+?)\s+มม\.$/, (m) => `${m[1]} mm`],
   [/^(.+?)\s+เครื่อง$/, (m) => `${m[1]} machines`],
+  [/^(\d+)\s*ชม\.\s*(\d+)\s*น\.$/, (m) => `${m[1]} h ${m[2]} min`],   // เวลาเดินเครื่อง 2 ชม. 05 น.
+  [/^(\d+)\s*น\.$/, (m) => `${m[1]} min`],
   [/^เลือก\s+(.+)$/, (m) => `Selected ${m[1]}`],
   [/^Part\s*\((\d[\d,]*)\)$/, (m) => `Part (${m[1]})`],
   [/^Release\s*\((\d[\d,]*)\)$/, (m) => `Release (${m[1]})`],
