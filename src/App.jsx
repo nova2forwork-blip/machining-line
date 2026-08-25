@@ -4858,6 +4858,8 @@ function EmployeeCrud() {
   const [form, setForm] = useUndoable({ role: "operator" });
   const [opSel, setOpSel] = useUndoable(new Set());   // ขั้นตอนประจำ (เลือกได้หลายอัน)
   const [editing, setEditing] = useState(null);
+  const [busy, setBusy] = useState(false);            // กำลังบันทึก — กันกดซ้ำ + โชว์สถานะ
+  const [msg, setMsg] = useState(null);               // { ok, text } แสดงผลในฟอร์ม (เห็นชัดกว่า toast มุมจอ)
   const load = useCallback(async () => {
     setRows(await getEmployees());
     setDepartments(await listRows("departments", { order: "name" }));
@@ -4877,21 +4879,38 @@ function EmployeeCrud() {
   }
 
   async function add() {
-    if (!form.code || !form.name || !form.password) { mlsToast("กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ", "warn"); return; }
+    if (busy) return;                                   // กันกดซ้ำระหว่างบันทึก
+    if (!form.code || !form.name || !form.password) {
+      const w = "กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ"; setMsg({ ok: false, text: w }); mlsToast(w, "warn"); return;
+    }
+    const opIds = [...opSel];
+    setBusy(true); setMsg({ ok: null, text: "กำลังบันทึก…" });
+    // ── ขั้นที่ 1: สร้างพนักงาน (ผ่าน RPC — DB hash bcrypt เอง client ไม่แตะ hash) ──
     try {
-      const opIds = [...opSel];
-      // สร้างผ่าน RPC — DB hash ด้วย bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
       await upsertEmployee({
         code: form.code, name: form.name, password: form.password, role: form.role,
         department_id: form.department_id || null,
         machine_id: form.machine_id || null, operation_id: opIds[0] || null,
       });
-      // ตั้งความสามารถของเครื่อง (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้)
-      await syncMachineOps(form.machine_id, opIds, caps);
-      setForm({ role: "operator" }); setOpSel(new Set()); load();
     } catch (e) {
-      mlsToast(isDuplicateError(e) ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว` : "เพิ่มพนักงานไม่สำเร็จ: " + e.message, "error");
+      // แสดง error จริงให้ครบ (เช่น RPC signature ไม่ตรง / unauthorized / รหัสซ้ำ)
+      const text = isDuplicateError(e)
+        ? `รหัสพนักงาน "${form.code}" มีอยู่แล้ว`
+        : "เพิ่มพนักงานไม่สำเร็จ: " + (e?.message || e?.code || JSON.stringify(e));
+      console.error("add employee failed", e);
+      setMsg({ ok: false, text }); mlsToast(text, "error"); setBusy(false); return;
     }
+    // ── ขั้นที่ 2: ตั้งความสามารถเครื่อง (งานรอง) — ถ้าพลาด พนักงานถูกสร้างแล้ว อย่าให้ดูเหมือนล้มเหลว ──
+    let warn = "";
+    try {
+      await syncMachineOps(form.machine_id, opIds, caps);
+    } catch (e) {
+      warn = ` (แต่ตั้งความสามารถเครื่องไม่สำเร็จ: ${e?.message || "error"} — แก้ได้ที่ปุ่ม "แก้ไข")`;
+      mlsToast(`เพิ่มพนักงานแล้ว${warn}`, "warn");
+    }
+    setMsg({ ok: true, text: `เพิ่มพนักงาน "${form.name}" สำเร็จ${warn}` });
+    if (!warn) mlsToast(`เพิ่มพนักงาน "${form.name}" สำเร็จ`, "info");
+    setForm({ role: "operator" }); setOpSel(new Set()); setBusy(false); load();
   }
   async function toggle(r) {
     try { await setEmployeeActive(r.id, !r.active); load(); }
@@ -4918,7 +4937,15 @@ function EmployeeCrud() {
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง
       </div>
-      <Btn variant="accent" onClick={add}>เพิ่มพนักงาน</Btn>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <Btn variant="accent" onClick={add} disabled={busy}>{busy ? "กำลังบันทึก…" : "เพิ่มพนักงาน"}</Btn>
+        {msg && (
+          <span style={{ fontSize: 13, fontWeight: 600,
+            color: msg.ok === true ? "var(--accent-dk, #0a7)" : msg.ok === false ? "var(--danger, #e11d1d)" : "var(--muted)" }}>
+            {msg.ok === true ? "✓ " : msg.ok === false ? "⚠ " : ""}{msg.text}
+          </span>
+        )}
+      </div>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
           <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>เครื่องจักรประจำ</th><th>ขั้นตอนประจำ</th><th>สถานะ</th><th></th></tr></thead>
