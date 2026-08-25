@@ -69,7 +69,7 @@
 
 /* ล็อกหน้าเครื่องไม่ให้เลื่อน/ล้นแนวนอนทุกกรณี (แนวนอนก็ล็อก ไม่ใช่แค่โหมดหมุนจอ)
    เนื้อในที่กว้าง (ตารางหลายคอลัมน์) ให้เลื่อนดูใน .stn-table เอง ไม่ดันทั้งหน้าทะลุจอ */
-html, body, #root { max-width: 100%; overflow-x: hidden; }
+html, body, #root { max-width: 100%; overflow-x: clip; }
 
 /* ── Terminal frame ──────────────────────────────────────────── */
 /* เต็มจอทุกอุปกรณ์ (มือถือ/แท็บเล็ต/คอม) — ใช้ 100dvh กันแถบบราวเซอร์ดันจอเพี้ยน */
@@ -90,7 +90,9 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   html, body { overflow: hidden; }
   .stn-shell {
     position: fixed; top: 0; left: 0;
+    /* dvh/dvw = ขนาดจอจริง (หักแถบ URL) → หมุนแล้วขอบไม่โดนแถบบราวเซอร์ตัด (เดิม 100vh/100vw ล้น) */
     width: 100vh; height: 100vw;
+    width: 100dvh; height: 100dvw;
     transform-origin: top left;
     transform: rotate(90deg) translateY(-100%);
     -webkit-transform-origin: top left;
@@ -127,6 +129,27 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   .stn-lbl-of { font-size: 2.4vh; }
   .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3.2vh; }
   .stn-qty-stepper input { width: 16vh; font-size: 3.6vh; }
+}
+
+/* มือถือแนวนอนจอเตี้ย (≤560px สูง) — จอไม่หมุน แต่พื้นที่แนวตั้งน้อย
+   ย่อปุ่ม/ตัวเลขด้วย vh + ให้แผงควบคุมเลื่อนได้ กัน START/SCAN/ปุ่มออกถูกตัดจนกดไม่ได้ */
+@media (orientation: landscape) and (max-height: 560px) {
+  .stn-code { font-size: clamp(20px, 7vh, 40px); }
+  .stn-daily { padding: 1vh 1.2vh; }
+  .stn-daily h2 { font-size: 2vh; }
+  .stn-daily .stn-date { font-size: 1.5vh; }
+  .stn-kpi .lbl { font-size: 1.5vh; }
+  .stn-kpi .val { font-size: 3vh; }
+  .stn-clock { font-size: 3.2vh; }
+  .stn-mat { padding: 1vh 1.4vh; border-radius: 1.4vh; }
+  .stn-mat .lbl { font-size: 1.4vh; }
+  .stn-mat input { font-size: 2.4vh; }
+  .stn-ctl-btn { font-size: 2vh; padding: 1.4vh; border-radius: 1.4vh; }
+  .stn-exit { font-size: 1.8vh; padding: 1.4vh 1.2vh; }
+  .stn-control { gap: 1vh; padding: 1vh; overflow-y: auto; }
+  table.stn-rec th { font-size: 1.5vh; }
+  table.stn-rec td { font-size: 1.7vh; }
+  .stn-hint { font-size: 1.9vh; }
 }
 
 @media (max-width: 600px) {
