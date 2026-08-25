@@ -131,35 +131,50 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-qty-stepper input { width: 16vh; font-size: 3.6vh; }
 }
 
-/* มือถือแนวนอนจอเตี้ย (≤560px สูง) — จอไม่หมุน แต่พื้นที่แนวตั้งน้อย
-   ย่อปุ่ม/ตัวเลขด้วย vh + ให้แผงควบคุมเลื่อนได้ กัน START/SCAN/ปุ่มออกถูกตัดจนกดไม่ได้ */
-@media (orientation: landscape) and (max-height: 560px) {
-  .stn-code { font-size: clamp(20px, 7vh, 40px); }
-  .stn-daily { padding: 1vh 1.2vh; }
-  .stn-daily h2 { font-size: 2vh; }
-  .stn-daily .stn-date { font-size: 1.5vh; }
-  .stn-kpi .lbl { font-size: 1.5vh; }
-  .stn-kpi .val { font-size: 3vh; }
-  .stn-clock { font-size: 3.2vh; }
-  .stn-mat { padding: 1vh 1.4vh; border-radius: 1.4vh; }
-  .stn-mat .lbl { font-size: 1.4vh; }
-  .stn-mat input { font-size: 2.4vh; }
-  .stn-ctl-btn { font-size: 2vh; padding: 1.4vh; border-radius: 1.4vh; }
-  .stn-exit { font-size: 1.8vh; padding: 1.4vh 1.2vh; }
-  .stn-control { gap: 1vh; padding: 1vh; overflow-y: auto; }
-  table.stn-rec th { font-size: 1.5vh; }
-  table.stn-rec td { font-size: 1.7vh; }
-  .stn-hint { font-size: 1.9vh; }
-  /* ย่อขั้นตอน "เลือกจำนวน/สถานะ/OK" ให้พอดีจอเตี้ย (พร้อม stn-work-area ที่เลื่อนได้เป็นตาข่ายกันเหนียว) */
-  .stn-work-area { padding: 8px; }
-  .stn-part-panel { max-width: 360px; }
-  .stn-part-label { margin-bottom: 1vh; }
-  .stn-lbl-qr { width: 7vh; height: 7vh; }
-  .stn-qty-lbl { font-size: 1.6vh; }
-  .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3vh; }
-  .stn-qty-stepper input { width: 13vh; font-size: 3.2vh; padding: 4px; }
-  .stn-row-btns { gap: 1vh; }
-  .stn-pill { font-size: 1.8vh; padding: 1.2vh 2.6vh; border-radius: 1.4vh; }
+/* มือถือแนวนอนจอเตี้ย (≤600px สูง) — พื้นที่แนวตั้งน้อย: ย่อ "ทุกอย่าง" ด้วย vh ให้พอดีจอ ไม่ต้องเลื่อน */
+@media (orientation: landscape) and (max-height: 600px) {
+  .stn-code { font-size: clamp(18px, 6vh, 36px); }
+  .stn-daily { padding: 0.8vh 1.2vh; }
+  .stn-daily h2 { font-size: 1.9vh; }
+  .stn-daily .stn-date { font-size: 1.4vh; margin-bottom: 0.6vh; }
+  .stn-kpi { padding: 0.6vh 0; }
+  .stn-kpi .lbl { font-size: 1.4vh; }
+  .stn-kpi .val { font-size: 2.6vh; }
+  /* ── คอลัมน์ควบคุมขวา (นาฬิกา + ความยาววัสดุ + START + SCAN + ออก) — ย่อให้ครบทุกปุ่มในจอ ── */
+  .stn-control { gap: 0.7vh; padding: 0.8vh; }
+  .stn-ctl-main { gap: 0.7vh; }
+  .stn-clock { font-size: 2.6vh; }
+  .stn-mat { padding: 0.6vh 1.1vh; border-radius: 1.2vh; }
+  .stn-mat .lbl { font-size: 1.2vh; }
+  .stn-mat input { font-size: 2vh; }
+  .stn-ctl-btn { font-size: 1.7vh; padding: 0.9vh 1.1vh; border-radius: 1.2vh; }
+  .stn-ctl-btn svg { width: 2.4vh; height: 2.4vh; }
+  .stn-scan-cell .qty { font-size: 1.3vh; }
+  .stn-scan-cell .qty b { font-size: 1.7vh; }
+  .stn-exit { font-size: 1.6vh; padding: 0.9vh 1vh; }
+  table.stn-rec th { font-size: 1.4vh; padding: 0.5vh 0.6vh; }
+  table.stn-rec td { font-size: 1.6vh; padding: 0.5vh 0.6vh; }
+  .stn-hint { font-size: 1.8vh; }
+  /* ★ จำกัดความสูงตารางด้านบน → เหลือที่ให้ขั้นตอนจำนวน/OK ด้านล่างพอดี ไม่ต้องเลื่อน */
+  .stn-table { max-height: 30vh; }
+  /* ── ขั้นตอน "เลือกจำนวน/สถานะ/OK" — ย่อจัดเต็มให้ครบในจอเดียว ── */
+  .stn-work-area { padding: 0.6vh; }   /* คง overflow-y:auto จาก base ไว้เป็นตาข่ายกันเหนียว (ปกติย่อจนพอดี ไม่ต้องเลื่อน) */
+  .stn-part-panel { max-width: 44vh; }
+  .stn-part-label { padding: 1vh 1.4vh; margin-bottom: 0.8vh; border-radius: 1.4vh; }
+  .stn-lbl-qr { display: none; }                 /* ซ่อน QR ตัวอย่าง (ประดับ) ประหยัดพื้นที่ */
+  .stn-lbl-part { font-size: 2.2vh; }
+  .stn-lbl-num, .stn-lbl-name, .stn-lbl-mat { font-size: 1.3vh; }
+  .stn-lbl-of { font-size: 1.9vh; }
+  .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.3vh; }
+  .stn-lbl-rework, .stn-lbl-dup, .stn-lbl-approx { font-size: 1.25vh; margin-top: 0.3vh; }
+  .stn-qty-lbl { font-size: 1.5vh; margin: 0.4vh 0; }
+  .stn-qty-stepper { margin-bottom: 0.6vh; }
+  .stn-qty-stepper button { width: 5.2vh; height: 5.2vh; font-size: 2.6vh; }
+  .stn-qty-stepper input { width: 12vh; font-size: 2.7vh; padding: 2px; }
+  .stn-status-row { margin-bottom: 0.8vh; }
+  .stn-row-btns { gap: 0.8vh; }
+  .stn-pill { font-size: 1.7vh; padding: 1vh 2.2vh; border-radius: 1.2vh; min-width: 20vh; }
+  .stn-pill.ok, .stn-pill.no, .stn-pill.yes { min-width: 16vh; }
 }
 
 @media (max-width: 600px) {
@@ -343,6 +358,7 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-qty-stepper button { width: 46px; height: 46px; border: 1.5px solid var(--st-line); background: #fff; border-radius: 6px; font-size: 24px; cursor: pointer; line-height: 1; }
 .stn-qty-stepper input { width: 120px; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 28px; font-weight: 600; border: 1.5px solid var(--st-line); border-radius: 6px; padding: 8px; color: var(--st-red); outline: none; }
 .stn-row-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.stn-status-row { margin-bottom: 14px; }   /* ระยะห่างแถวสถานะ↔OK (ย่อได้ในจอเตี้ย ผ่าน media query) */
 .stn-pill { border: 1px solid var(--st-line); background: #fff; border-radius: 14px; padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--st-ink); box-shadow: var(--st-shadow); }
 .stn-pill:active { transform: scale(.97); }
 .stn-pill.sel-fin { border-color: var(--st-green); color: var(--st-green); background: #eefaf0; }
