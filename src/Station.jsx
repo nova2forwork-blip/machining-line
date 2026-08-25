@@ -822,7 +822,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             onChange={(e) => setQty(Math.min(100000, Math.max(0, parseInt(e.target.value || "0", 10) || 0)))} />
           <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
-        <div className="stn-row-btns" style={{ marginBottom: 14 }}>
+        <div className="stn-row-btns stn-status-row">
           <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>{t("กำลังทำ", "In Process")}</button>
           <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>{t("เสร็จแล้ว", "Finished")}</button>
         </div>
