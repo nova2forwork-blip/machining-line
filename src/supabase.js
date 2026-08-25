@@ -154,6 +154,12 @@ export async function clearScansUnit(partUnitId, { preview = false } = {}) {
   if (error) { console.warn("clearScansUnit error", error); flagAuth(error); throw error; }
   return data;
 }
+// ล้างสแกน "ทั้งชุด Release" — ทุก Part ใน (project + release_order) เดียวกัน
+export async function clearScansReleaseGroup(projectId, releaseOrder, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_release_group", { p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder ?? null, p_preview: preview });
+  if (error) { console.warn("clearScansReleaseGroup error", error); flagAuth(error); throw error; }
+  return data;
+}
 
 const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
 
