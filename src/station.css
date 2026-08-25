@@ -159,8 +159,11 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
 }
 
 /* ── Records table ───────────────────────────────────────────── */
-.stn-table { border-bottom: 2px solid var(--st-line); overflow: auto; min-width: 0; }
+.stn-table { border-bottom: 2px solid var(--st-line); overflow: auto; min-width: 0; max-width: 100%; }
 table.stn-rec { border-collapse: collapse; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; white-space: nowrap; }
+/* จอเล็ก/มือถือ: ซ่อนคอลัมน์รอง (MDF/REL/REV/LENGTH/WEIGHT/INVENTORY/PROCESS TIME)
+   เหลือเฉพาะที่คนงานต้องดู (PART/QTY/REQ/PROCESS/BALANCE/MATERIALS/STATUS) → ตารางพอดีจอ ไม่ล้น */
+@media (max-width: 1024px) { table.stn-rec .stn-hide-sm { display: none; } }
 table.stn-rec th {
   font-family: 'IBM Plex Sans Thai', sans-serif; font-weight: 600; font-size: 10.5px; color: #111;
   text-align: center; padding: 4px 5px; border-bottom: 1.5px solid var(--st-line);
