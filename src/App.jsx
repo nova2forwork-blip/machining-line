@@ -2974,7 +2974,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           </Field>
           <Field label={`Part${hasFilter ? ` (${filteredReleases.length})` : ""}`}>
             <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
-              options={filteredReleases.map((r) => ({ value: r.id, label: `${fmtD(r.release_date)} — ${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
+              options={filteredReleases.map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
           </Field>
         </div>
 
