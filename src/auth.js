@@ -11,19 +11,21 @@ export async function hashPassword(pw) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export const ROLES = ["admin", "supervisor", "operator"];
+export const ROLES = ["admin", "office", "operator"];
 export const ROLE_LABELS = {
   admin: "ผู้ดูแลระบบ (Admin)",
-  supervisor: "หัวหน้างาน",
+  office: "พนักงานออฟฟิศ",
   operator: "พนักงานหน้าเครื่อง",
+  supervisor: "หัวหน้างาน (เดิม)",   // legacy — เผื่อมีข้อมูลเก่าจะได้ยังแสดง/ใช้สิทธิ์ได้
 };
 
 // ─── Role helpers (ใช้กัน UI ตามสิทธิ์ — ดู RBAC ใน App.jsx) ──────────────────
-// admin      = ทำได้ทุกอย่าง (Setup, จัดการ Release, ลบ)
-// supervisor = ดูรายงาน + จัดการ Release ได้ แต่แก้ Setup ระบบ (พนักงาน/เครื่อง) ไม่ได้
-// operator   = ปล่อยงาน/สแกน/พิมพ์ป้าย/ดูรายงานเท่านั้น
+// admin    = ทำได้ทุกอย่าง (Setup พนักงาน/เครื่อง, จัดการ Release, ลบ)
+// office   = ลงข้อมูล/สร้างโปรเจค + สร้าง & แก้ไข Release + ดูรายงาน · แต่เข้า Setup ระบบไม่ได้
+// operator = ปล่อยงาน/สแกน/พิมพ์ป้าย/ดูรายงานเท่านั้น
+// (supervisor = role เดิม ยังให้สิทธิ์เท่า office เพื่อ backward-compat)
 export function isAdmin(user)      { return user?.role === "admin"; }
-export function canManage(user)    { return user?.role === "admin" || user?.role === "supervisor"; }
+export function canManage(user)    { return user?.role === "admin" || user?.role === "office" || user?.role === "supervisor"; }
 
 function mapLoginRow(row) {
   return {
