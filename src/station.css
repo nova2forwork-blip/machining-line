@@ -75,10 +75,10 @@
 }
 .stn-screen {
   flex: 1; background: var(--st-paper); border: 2px solid var(--st-line); border-radius: 0;
-  display: grid; grid-template-columns: 25% 1fr; grid-template-rows: auto 1fr;
+  display: grid; grid-template-columns: 25% minmax(0, 1fr); grid-template-rows: auto 1fr;
   overflow: hidden; min-height: 0;
 }
-@media (max-width: 860px) { .stn-screen { grid-template-columns: 30% 1fr; } }
+@media (max-width: 860px) { .stn-screen { grid-template-columns: 30% minmax(0, 1fr); } }
 
 /* บนมือถือ/แท็บเล็ตแนวตั้ง: บังคับเป็นแนวนอนเอง (กรณี OS ไม่ยอมล็อก orientation เช่น iOS)
    หมุนทั้งจอ 90° ให้เนื้อหาเป็นแนวนอนเต็มพื้นที่ */
@@ -93,8 +93,8 @@
     -webkit-transform: rotate(90deg) translateY(-100%);
   }
   /* หลังหมุนแล้ว "ความกว้างเนื้อหา" = 100vh — ปรับขนาดฟอนต์/ปุ่มด้วย vh ให้ได้สัดส่วนใหญ่พอดีจอ */
-  .stn-screen { grid-template-columns: 25% 1fr; }
-  .stn-work-wrap { grid-template-columns: 1fr 26vh; }
+  .stn-screen { grid-template-columns: 25% minmax(0, 1fr); }
+  .stn-work-wrap { grid-template-columns: minmax(0, 1fr) 26vh; }
   .stn-code { font-size: 4.6vh; }
   .stn-daily h2 { font-size: 2.2vh; }
   .stn-daily .stn-date { font-size: 1.7vh; }
@@ -126,7 +126,7 @@
 }
 
 @media (max-width: 600px) {
-  .stn-screen { grid-template-columns: 34% 1fr; }
+  .stn-screen { grid-template-columns: 34% minmax(0, 1fr); }
   .stn-code { font-size: clamp(18px, 7vw, 30px); padding: 8px; }
   .stn-daily { padding: 12px 10px; }
   .stn-kpi .val { font-size: 18px; }
@@ -182,8 +182,8 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-kpi .val.mono { font-family: 'IBM Plex Mono', monospace; }
 
 /* ── Work zone (work area + control column) ──────────────────── */
-.stn-work-wrap { display: grid; grid-template-columns: 1fr 220px; min-width: 0; min-height: 0; }
-@media (max-width: 860px) { .stn-work-wrap { grid-template-columns: 1fr 168px; } }
+.stn-work-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 220px; min-width: 0; min-height: 0; }
+@media (max-width: 860px) { .stn-work-wrap { grid-template-columns: minmax(0, 1fr) 168px; } }
 .stn-work-area {
   border-right: 2px solid var(--st-line); position: relative; padding: 14px;
   display: flex; align-items: center; justify-content: center; text-align: center; min-width: 0; min-height: 0;
