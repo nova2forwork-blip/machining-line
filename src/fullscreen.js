@@ -72,6 +72,56 @@ export async function warmCameraPermission() {
   } catch { /* ผู้ใช้ปฏิเสธ/ไม่มีกล้อง — กล้องจะถูกขออีกทีตอนกด SCAN เท่านั้น */ }
 }
 
+// ── สตรีมกล้องถาวร: เปิดครั้งเดียว ใช้ซ้ำทุกครั้งที่กด SCAN ────────────────────
+// เดิม CameraScan เรียก getUserMedia + stop ทุกครั้งที่เปิด/ปิด → บางเครื่องเด้งขอสิทธิ์ซ้ำ
+//   และกล้องหน่วง (เปิดฮาร์ดแวร์ใหม่) ทุกครั้ง
+// แก้: เก็บสตรีมไว้ตัวเดียว เปิดครั้งแรกครั้งเดียว จากนั้นคืนตัวเดิมเสมอ — ปิดจริงตอนออกจากระบบ
+let _sharedStream = null;
+let _acquiring = null;
+function _streamAlive(s) { return !!s && s.getVideoTracks?.().some((t) => t.readyState === "live"); }
+
+async function _acquireRearStream() {
+  // เลือกกล้องหลังตัวหลัก (เลี่ยง ultrawide/tele) ถ้าทำได้ แล้ว fallback ไปตามลำดับ
+  let id = null;
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const back = devs.filter((d) => d.kind === "videoinput" && /back|rear|environment/i.test(d.label || ""));
+    id = (back.find((d) => !/ultra|wide|tele|0\.5x/i.test(d.label || "")) || back[0])?.deviceId || null;
+  } catch { /* ignore */ }
+  const tries = [
+    id ? { video: { deviceId: { exact: id } } } : null,
+    { video: { facingMode: { exact: "environment" } } },
+    { video: { facingMode: "environment" } },
+  ].filter(Boolean);
+  for (const c of tries) {
+    try { return await navigator.mediaDevices.getUserMedia(c); } catch { /* ลองแบบถัดไป */ }
+  }
+  return null;
+}
+
+// คืนสตรีมกล้องที่ใช้ร่วมกัน — ถ้ายังเปิดอยู่คืนตัวเดิม (ไม่เรียก getUserMedia ซ้ำ)
+export async function getSharedCameraStream() {
+  if (_streamAlive(_sharedStream)) return _sharedStream;
+  if (_acquiring) return _acquiring;                               // กันเรียกซ้อนตอนกำลังเปิด
+  _acquiring = (async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) return null;
+      markCamAsked();
+      const s = await _acquireRearStream();
+      _sharedStream = s;
+      _camWarmed = !!s;
+      return s;
+    } finally { _acquiring = null; }
+  })();
+  return _acquiring;
+}
+
+// ปิดกล้องถาวรจริงๆ (เรียกตอนออกจากระบบ/ปิดหน้าเครื่อง) — เลิกจับกล้อง คืนทรัพยากร
+export function releaseSharedCamera() {
+  try { _sharedStream?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+  _sharedStream = null;
+}
+
 // เรียกเต็มจอตอนผู้ใช้แตะจอครั้งแรก (fallback สำหรับคนที่ล็อกอินค้างไว้ ไม่มี gesture ตอนโหลด)
 // คืนฟังก์ชัน cleanup
 export function armFullscreenOnFirstTap() {
