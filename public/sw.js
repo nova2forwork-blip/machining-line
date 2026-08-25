@@ -4,7 +4,7 @@
 //   • static assets (js/css/รูป ที่ชื่อไฟล์มี hash จาก Vite) = cache-first (ปลอดภัยเพราะ
 //     deploy ใหม่ = ชื่อไฟล์ใหม่ ของเก่าไม่ชนกัน)
 //   • คำขอไป Supabase / ต่างโดเมน = ปล่อยผ่าน ไม่แคช (ข้อมูลสด/POST ต้องออนไลน์)
-const CACHE = "mls-shell-v2";   // ★ bump = activate จะลบแคชเก่า (กัน chunk ค้างไม่ตรงเวอร์ชัน → React #130)
+const CACHE = "mls-shell-v3";   // ★ bump = activate จะลบแคชเก่า (กัน chunk ค้างไม่ตรงเวอร์ชัน → React #130)
 const SHELL = ["/", "/index.html", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
