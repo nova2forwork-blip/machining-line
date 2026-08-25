@@ -10,7 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
   countUnitOpRecords,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang } from "./i18n-dom.js";
 
@@ -277,6 +277,8 @@ function MachineStation({ user, onLogout, onKicked }) {
   }
   function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; }
   useEffect(() => () => stopTimer(), []);
+  // ปิดกล้องถาวรตอนออกจากหน้าเครื่อง (ออกจากระบบ/ถูกเตะ) — ระหว่างใช้งานกล้องเปิดค้างไว้ตัวเดียว
+  useEffect(() => () => releaseSharedCamera(), []);
 
   function resetAll(keepLen = false) {
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
@@ -842,34 +844,23 @@ function CameraScan({ onDecoded, busy, onClose }) {
   const doneRef = useRef(false);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState("");
+  const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
 
   useEffect(() => {
+    if (!camOn) return;                          // ยังไม่กดเปิดกล้อง → ไม่แตะกล้องเลย
     doneRef.current = false;
     let cancelled = false;
 
-    async function pickRear() {
-      try {
-        const devs = await navigator.mediaDevices.enumerateDevices();
-        const back = devs.filter((d) => d.kind === "videoinput" && /back|rear|environment/i.test(d.label || ""));
-        const main = back.find((d) => !/ultra|wide|tele|0\.5x/i.test(d.label || "")) || back[0];
-        return main?.deviceId || null;
-      } catch { return null; }
-    }
     async function open() {
-      const id = await pickRear();
-      if (cancelled) return;
-      const tries = [
-        id ? { video: { deviceId: { exact: id } } } : null,
-        { video: { facingMode: { exact: "environment" } } },
-        { video: { facingMode: "environment" } },
-      ].filter(Boolean);
-      let stream = null;
-      for (const c of tries) { try { stream = await navigator.mediaDevices.getUserMedia(c); break; } catch { /* next */ } }
-      if (cancelled) { stream?.getTracks().forEach((t) => t.stop()); return; }
-      if (!stream) { setErr("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้"); return; }
+      // ★ ใช้สตรีมกล้องที่ใช้ร่วมกัน — เปิด/ขอสิทธิ์ครั้งเดียว จากนั้นทุกครั้งที่กด SCAN ใช้ตัวเดิม
+      const stream = await getSharedCameraStream();
+      if (cancelled) return;                       // ปิดหน้าไปก่อน — อย่าแตะกล้อง (สตรีมคงอยู่ให้ครั้งหน้า)
+      if (!stream) { setErr(t("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้", "Can't open camera — type the QR code below instead")); setCamOn(false); return; }
       streamRef.current = stream;
       const v = videoRef.current;
-      if (!v) { stream.getTracks().forEach((t) => t.stop()); return; }
+      if (!v) return;                              // ไม่ stop สตรีม — เก็บไว้ใช้ครั้งหน้า
       v.srcObject = stream;
       try { await v.play(); } catch { /* ignore */ }
       loop();
@@ -929,11 +920,14 @@ function CameraScan({ onDecoded, busy, onClose }) {
     return () => {
       cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      // ปิดกล้องจริงเมื่อกด "ปิดกล้อง" หรือออกจากหน้าสแกน — กดเปิดใหม่ไม่ถามสิทธิ์ (ให้ไปแล้ว)
+      const v = videoRef.current;
+      if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
       streamRef.current = null;
+      releaseSharedCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [camOn]);
 
   function submitManual(e) {
     e.preventDefault();
@@ -945,19 +939,30 @@ function CameraScan({ onDecoded, busy, onClose }) {
   return (
     <div>
       <div className="stn-cam">
-        <video ref={videoRef} playsInline muted />
-        <canvas ref={canvasRef} style={{ display: "none" }} />
-        <canvas ref={overlayRef} className="stn-cam-overlay" />
-        <button type="button" className="stn-cam-close" onClick={onClose} aria-label="ปิดกล้อง">✕</button>
+        {camOn ? (
+          <>
+            <video ref={videoRef} playsInline muted />
+            <canvas ref={canvasRef} style={{ display: "none" }} />
+            <canvas ref={overlayRef} className="stn-cam-overlay" />
+            <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
+          </>
+        ) : (
+          // กล้องยังไม่เปิด — กดเปิดเอง (ขอสิทธิ์ไปแล้ว จึงไม่ถามซ้ำ)
+          <button type="button" className="stn-cam-open" onClick={() => { setErr(""); setCamOn(true); }}>
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+            <span>{t("แตะเพื่อเปิดกล้อง", "Tap to open camera")}</span>
+          </button>
+        )}
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
       <form className="stn-cam-manual" onSubmit={submitManual}>
-        <input className="stn-input stn-mono" value={manual} placeholder="หรือพิมพ์รหัส QR"
+        <input className="stn-input stn-mono" value={manual} placeholder={t("หรือพิมพ์รหัส QR", "or type the QR code")}
           onChange={(e) => setManual(e.target.value)} />
-        <button className="stn-pill" type="submit" disabled={busy}>ตกลง</button>
+        <button className="stn-pill" type="submit" disabled={busy}>{t("ตกลง", "OK")}</button>
       </form>
-      <div style={{ marginTop: 10 }}>
-        <button type="button" className="stn-pill" onClick={onClose}>✕ ปิดกล้อง / ยกเลิก</button>
+      <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center" }}>
+        {camOn && <button type="button" className="stn-pill no" onClick={() => setCamOn(false)}>{t("พักกล้อง", "Pause camera")}</button>}
+        <button type="button" className="stn-pill" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
       </div>
     </div>
   );
