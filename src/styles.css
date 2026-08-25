@@ -45,7 +45,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+/* ล็อกหน้าจอไม่ให้ล้น/ทะลุแนวนอน — เนื้อห้ากว้าง (ตาราง ฯลฯ) ให้เลื่อนในกล่องตัวเอง ไม่ดันทั้งหน้า */
+html, body { margin: 0; padding: 0; max-width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -53,7 +54,7 @@ body {
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
 }
-#root { min-height: 100vh; }
+#root { min-height: 100vh; max-width: 100%; overflow-x: hidden; }
 h1, h2, h3 { font-family: var(--font-display); margin: 0; }
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; }
@@ -213,12 +214,16 @@ a { color: var(--accent-dk); }
 .bottom-nav-scan span { font-size: 10.5px; color: var(--accent-dk); font-weight: 600; }
 
 @media (max-width: 900px) {
-  .app-shell { flex-direction: column; }
+  .app-shell { flex-direction: column; max-width: 100%; overflow-x: hidden; }
   .sidebar { display: none; }
   .topbar { display: flex; }
   .drawer-backdrop.open { display: block; }
-  .content { padding: 16px 14px 100px; }
+  .content { padding: 16px 14px 100px; max-width: 100%; }
+  .content-inner { max-width: 100%; }
   .bottom-nav { display: flex; }
+  /* กันการ์ด/ตารางดันหน้าให้กว้างเกินจอ — เนื้อในกว้างให้เลื่อนใน .table-wrap เอง */
+  .card { max-width: 100%; }
+  .table-wrap { max-width: 100%; }
 }
 
 /* ── Atoms ─────────────────────────────────────────────────────── */
@@ -316,6 +321,29 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
   .sort-mobile select { flex: 1; min-width: 0; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px; }
   .sort-mobile button { flex-shrink: 0; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12.5px; font-weight: 600; }
   .sort-mobile button:disabled { opacity: .5; }
+}
+
+/* Toast แจ้งเตือน (แทน alert) + ป้าย Ctrl+Z */
+.mls-toaster { position: fixed; z-index: 9999; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; max-width: min(430px, 92vw); pointer-events: none; }
+.mls-toast {
+  pointer-events: auto; cursor: pointer; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-left: 4px solid var(--muted); border-radius: 10px;
+  padding: 12px 14px; font-size: 13.5px; line-height: 1.5; white-space: pre-line;
+  box-shadow: 0 12px 34px -10px rgba(0,0,0,.28); animation: mlsToastIn .22s ease;
+}
+.mls-toast.success { border-left-color: var(--success); }
+.mls-toast.error { border-left-color: var(--danger-hi); }
+.mls-toast.warn { border-left-color: var(--warning); }
+.mls-toast.info { border-left-color: var(--accent); }
+@keyframes mlsToastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.mls-undo-hint {
+  position: fixed; z-index: 9998; bottom: 20px; left: 20px; background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px; padding: 8px 15px; font-size: 12.5px; font-weight: 600;
+  box-shadow: 0 6px 20px -6px rgba(0,0,0,.2); cursor: pointer; animation: mlsToastIn .22s ease;
+}
+@media (max-width: 600px) {
+  .mls-toaster { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  .mls-undo-hint { display: none; }
 }
 
 /* ── Modal (quick-create Project / Part) ─────────────────────────── */
