@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, forwardRef, Component } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
@@ -8,7 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
-  exportAllData, clearScansRelease, clearScansUnit,
+  exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
@@ -4065,26 +4065,50 @@ function ProjectCrud() {
   );
 }
 
-// ─── ล้างข้อมูลสแกน (admin): ราย Release หรือ รายชิ้น — ลบบันทึกงาน + รีเซ็ตสถานะชิ้นงาน ───
+// ─── ล้างข้อมูลสแกน (admin): ทั้ง Release / ราย Part / รายชิ้น — ลบบันทึกงาน + รีเซ็ตสถานะ ───
 function ClearScansCard() {
-  const [mode, setMode] = useState("release");   // release | unit
+  const [mode, setMode] = useState("group");     // group (ทั้ง Release) | release (ราย Part) | unit (QR)
   const [releases, setReleases] = useState([]);
+  const [grpKey, setGrpKey] = useState("");       // "projectId|releaseOrder"
   const [relId, setRelId] = useState("");
   const [qr, setQr] = useState("");
-  const [preview, setPreview] = useState(null);   // ผลนับก่อนลบ
+  const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   useEffect(() => { getReleasesFull().then(setReleases); }, []);
 
+  // จับกลุ่ม release เป็น "ชุด" (project + release_order เดียวกัน = 1 Release จากไฟล์เดียว)
+  const groups = useMemo(() => {
+    const m = new Map();
+    for (const r of releases) {
+      const pid = r.part_master?.project_id || "";
+      const ro = r.release_order || "";
+      const key = `${pid}|${ro}`;
+      const g = m.get(key) || {
+        key, projectId: pid, releaseOrder: r.release_order || null,
+        projName: r.part_master?.projects?.name || "-", parts: 0, qty: 0,
+      };
+      g.parts += 1; g.qty += Number(r.qty) || 0;
+      m.set(key, g);
+    }
+    return Array.from(m.values());
+  }, [releases]);
+
   const relLabel = (r) =>
-    `${fmtD(r.release_date)} · ${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""}`
+    `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""}`
     + ` · ${r.part_master?.projects?.name || ""} × ${r.qty} ชิ้น`;
+
+  function reset() { setPreview(null); setMsg(null); }
 
   async function doPreview() {
     setMsg(null); setPreview(null); setBusy(true);
     try {
-      if (mode === "release") {
-        if (!relId) { mlsToast("เลือก Release ก่อน", "warn"); return; }
+      if (mode === "group") {
+        const g = groups.find((x) => x.key === grpKey);
+        if (!g) { mlsToast("เลือก Release ก่อน", "warn"); return; }
+        setPreview({ ...(await clearScansReleaseGroup(g.projectId, g.releaseOrder, { preview: true })), grp: g });
+      } else if (mode === "release") {
+        if (!relId) { mlsToast("เลือก Part ก่อน", "warn"); return; }
         setPreview(await clearScansRelease(relId, { preview: true }));
       } else {
         const u = await findUnitByQr(qr.trim());
@@ -4097,15 +4121,16 @@ function ClearScansCard() {
 
   async function doClear() {
     const total = (preview?.machine_records || 0) + (preview?.scan_logs || 0);
-    const scope = mode === "release" ? "Release นี้" : "ชิ้นนี้";
+    const scope = mode === "group" ? "ทั้ง Release นี้" : mode === "release" ? "Part นี้" : "ชิ้นนี้";
     if (!confirm(`ยืนยันลบข้อมูลสแกนของ${scope} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`)) return;
     setBusy(true);
     try {
       let res;
-      if (mode === "release") res = await clearScansRelease(relId, {});
+      if (mode === "group") { const g = preview?.grp || groups.find((x) => x.key === grpKey); res = await clearScansReleaseGroup(g.projectId, g.releaseOrder, {}); }
+      else if (mode === "release") res = await clearScansRelease(relId, {});
       else { const u = preview?.unit || await findUnitByQr(qr.trim()); res = await clearScansUnit(u.id, {}); }
       setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${res.machine_records || 0} · สแกนสำนักงาน ${res.scan_logs || 0} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
-      setPreview(null); setRelId(""); setQr("");
+      setPreview(null); setGrpKey(""); setRelId(""); setQr("");
     } catch (e) { setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) }); }
     finally { setBusy(false); }
   }
@@ -4116,11 +4141,17 @@ function ClearScansCard() {
         ลบเฉพาะ “ข้อมูลการสแกน/บันทึกงาน” ของขอบเขตที่เลือก และรีเซ็ตสถานะชิ้นงานกลับเป็น “ยังไม่ทำ” — โปรเจค / Release / Part / QR ยังอยู่ครบ · <b>ลบแล้วกู้คืนไม่ได้</b> (แนะนำสำรองข้อมูลก่อน)
       </div>
       <div className="chip-row" style={{ marginBottom: 12 }}>
-        <span className={`chip ${mode === "release" ? "active" : ""}`} onClick={() => { setMode("release"); setPreview(null); setMsg(null); }}>ราย Release</span>
-        <span className={`chip ${mode === "unit" ? "active" : ""}`} onClick={() => { setMode("unit"); setPreview(null); setMsg(null); }}>รายชิ้น (QR)</span>
+        <span className={`chip ${mode === "group" ? "active" : ""}`} onClick={() => { setMode("group"); reset(); }}>ทั้ง Release</span>
+        <span className={`chip ${mode === "release" ? "active" : ""}`} onClick={() => { setMode("release"); reset(); }}>ราย Part</span>
+        <span className={`chip ${mode === "unit" ? "active" : ""}`} onClick={() => { setMode("unit"); reset(); }}>รายชิ้น (QR)</span>
       </div>
-      {mode === "release" ? (
-        <Field label="เลือก Release">
+      {mode === "group" ? (
+        <Field label="เลือก Release (ทั้งชุด — ทุก Part)">
+          <Select value={grpKey} onChange={(e) => { setGrpKey(e.target.value); setPreview(null); }}
+            options={groups.map((g) => ({ value: g.key, label: `${g.projName} · ${g.releaseOrder || "(ไม่มีเลข)"} — ${g.parts} Part × ${g.qty} ชิ้น` }))} />
+        </Field>
+      ) : mode === "release" ? (
+        <Field label="เลือก Part (ราย Release)">
           <Select value={relId} onChange={(e) => { setRelId(e.target.value); setPreview(null); }}
             options={releases.map((r) => ({ value: r.id, label: relLabel(r) }))} />
         </Field>
@@ -4140,6 +4171,7 @@ function ClearScansCard() {
       {preview && (
         <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
           พบ: บันทึกงานหน้าเครื่อง <b>{preview.machine_records || 0}</b> · สแกนสำนักงาน <b>{preview.scan_logs || 0}</b>
+          {mode === "group" && preview.releases != null ? <> · ครอบคลุม <b>{preview.releases}</b> Part · รีเซ็ตชิ้นงาน <b>{preview.units || 0}</b></> : null}
           {mode === "release" && preview.units != null ? <> · ชิ้นที่จะรีเซ็ตสถานะ <b>{preview.units}</b></> : null}
           {mode === "unit" && preview.unit ? <> · ชิ้น {preview.unit.part_master?.part_no || ""} ({preview.unit.qr_code})</> : null}
         </div>
