@@ -45,8 +45,9 @@
 }
 
 * { box-sizing: border-box; }
-/* ล็อกหน้าจอไม่ให้ล้น/ทะลุแนวนอน — เนื้อห้ากว้าง (ตาราง ฯลฯ) ให้เลื่อนในกล่องตัวเอง ไม่ดันทั้งหน้า */
-html, body { margin: 0; padding: 0; max-width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+/* ล็อกหน้าจอไม่ให้ล้น/ทะลุแนวนอน — ใช้ clip (ไม่ใช่ hidden) เพราะ hidden ทำ position:sticky พัง
+   (sidebar sticky จะเลื่อนหลุด) · clip ตัดขอบแนวนอนได้โดยไม่สร้าง scroll container */
+html, body { margin: 0; padding: 0; max-width: 100%; overflow-x: clip; -webkit-text-size-adjust: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -54,7 +55,7 @@ body {
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
 }
-#root { min-height: 100vh; max-width: 100%; overflow-x: hidden; }
+#root { min-height: 100vh; max-width: 100%; overflow-x: clip; }
 h1, h2, h3 { font-family: var(--font-display); margin: 0; }
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; }
@@ -216,7 +217,7 @@ a { color: var(--accent-dk); }
 .bottom-nav-scan span { font-size: 10.5px; color: var(--accent-dk); font-weight: 600; }
 
 @media (max-width: 900px) {
-  .app-shell { flex-direction: column; max-width: 100%; overflow-x: hidden; }
+  .app-shell { flex-direction: column; max-width: 100%; overflow-x: clip; }
   .sidebar { display: none; }
   .topbar { display: flex; }
   .drawer-backdrop.open { display: block; }
@@ -242,8 +243,9 @@ a { color: var(--accent-dk); }
 .card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-title { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--font-display); }
-.page-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.page-head > div:first-child { min-width: 0; }   /* กันชื่อ/รหัสยาวดันหัวเพจล้น (ให้ตัดคำได้) */
+.page-title { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--font-display); overflow-wrap: anywhere; }
+.page-sub { font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
@@ -313,8 +315,13 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
   position: sticky; top: 0; z-index: 3;
   box-shadow: 0 1px 0 var(--border);   /* เส้นใต้หัวตาราง (border หายตอน sticky + border-collapse) */
 }
-/* มือถือ/แท็บเล็ต: การ์ด (responsive-cards) เริ่มที่ 820px → ปล่อยเลื่อนทั้งหน้า ไม่ขังการ์ดในกล่อง 68vh */
-@media (max-width: 820px) { .table-wrap.tall-scroll { max-height: none; overflow: visible; } }
+/* มือถือ/แท็บเล็ต: ปลดล็อกความสูง 68vh · แต่ต้องคงการเลื่อนแนวนอนของ "ตารางธรรมดา" ไว้
+   (ตารางรายงานที่ไม่ใช่การ์ด กว้างเกินจอ ถ้า overflow:visible จะดันหน้าจน overflow-x:clip ตัดคอลัมน์หาย)
+   → ตารางแบบการ์ด (responsive-cards) เท่านั้นที่ปล่อย visible ให้การ์ดไหลเป็นบล็อก */
+@media (max-width: 820px) {
+  .table-wrap.tall-scroll { max-height: none; overflow: auto; }
+  .table-wrap.tall-scroll:has(.responsive-cards) { overflow: visible; }
+}
 
 /* ตัวเลือกเรียงลำดับบนมือถือ (หัวตารางถูกซ่อนตอนเป็นการ์ด) — ซ่อนบนเดสก์ท็อป */
 .sort-mobile { display: none; }
@@ -808,9 +815,12 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
   .data-table.responsive-cards td {
     border-bottom: none; padding: 4px 0; display: flex; justify-content: space-between;
     align-items: baseline; gap: 10px; font-size: 13px;
+    /* ค่ายาว (รหัส/ชื่อ Part) ให้ตัดคำได้ + ชิดขวา — กันล้นการ์ดจนอ่านปลายไม่เห็น */
+    white-space: normal; overflow-wrap: anywhere; text-align: right;
   }
   .data-table.responsive-cards td::before {
     content: attr(data-label); font-size: 11px; color: var(--muted); font-weight: 600; flex-shrink: 0;
+    text-align: left; white-space: nowrap;
   }
   /* เซลล์ที่ไม่มี label (เช่น ปุ่มดูขั้นตอน) ไม่ต้องขึ้นหัวเปล่าๆ */
   .data-table.responsive-cards td[data-label=""]::before { content: none; }
