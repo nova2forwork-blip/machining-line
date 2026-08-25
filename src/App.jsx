@@ -7,7 +7,7 @@ import {
   deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
-  logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus,
+  logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   exportAllData, clearScansRelease, clearScansUnit,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -5233,6 +5233,33 @@ export default function App() {
     clearSession();
     setUser(null);
   }
+
+  // ★ session หมดอายุ/ถูกตัดจากเครื่องอื่น → เด้งออกจากระบบทันที ไม่ค้างในระบบแบบใช้งานไม่ได้
+  //   (1) ฟัง event จาก supabase.js เมื่อ action ใดๆ เจอ 'invalid session' → ออกทันที
+  //   (2) เช็คเป็นระยะ (heartbeat) เผื่อถูกตัด/หมดอายุขณะไม่ได้กดอะไร
+  useEffect(() => {
+    if (!user) return;
+    let done = false;
+    function forceOut(msg) {
+      if (done) return; done = true;
+      try { mlsToast(msg || "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่", "warn"); } catch (_) { /* ignore */ }
+      clearSession(); setUser(null);
+    }
+    const onInvalid = () => forceOut();
+    window.addEventListener("mls-session-invalid", onInvalid);
+    async function check() {
+      try {
+        const r = await sessionHeartbeat();   // { ok, exists, superseded }
+        if (r && (r.exists === false || r.superseded === true)) {
+          forceOut("บัญชีถูกใช้ที่อื่น หรือเซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่");
+        }
+      } catch (_) { /* เน็ตสะดุด — ไม่เตะออก */ }
+    }
+    check();
+    const t = setInterval(check, 60000);   // เช็คทุก 60 วินาที
+    return () => { done = true; window.removeEventListener("mls-session-invalid", onInvalid); clearInterval(t); };
+  }, [user]);
+
   const content = !user
     ? <Login onLogin={setUser} />
     : goStation ? null : <Shell user={user} onLogout={logout} />;
