@@ -8,7 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus,
-  exportAllData,
+  exportAllData, clearScansRelease, clearScansUnit,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
@@ -4065,6 +4065,90 @@ function ProjectCrud() {
   );
 }
 
+// ─── ล้างข้อมูลสแกน (admin): ราย Release หรือ รายชิ้น — ลบบันทึกงาน + รีเซ็ตสถานะชิ้นงาน ───
+function ClearScansCard() {
+  const [mode, setMode] = useState("release");   // release | unit
+  const [releases, setReleases] = useState([]);
+  const [relId, setRelId] = useState("");
+  const [qr, setQr] = useState("");
+  const [preview, setPreview] = useState(null);   // ผลนับก่อนลบ
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  useEffect(() => { getReleasesFull().then(setReleases); }, []);
+
+  const relLabel = (r) =>
+    `${fmtD(r.release_date)} · ${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""}`
+    + ` · ${r.part_master?.projects?.name || ""} × ${r.qty} ชิ้น`;
+
+  async function doPreview() {
+    setMsg(null); setPreview(null); setBusy(true);
+    try {
+      if (mode === "release") {
+        if (!relId) { mlsToast("เลือก Release ก่อน", "warn"); return; }
+        setPreview(await clearScansRelease(relId, { preview: true }));
+      } else {
+        const u = await findUnitByQr(qr.trim());
+        if (!u) { setMsg({ ok: false, text: "ไม่พบ QR นี้ในระบบ" }); return; }
+        setPreview({ ...(await clearScansUnit(u.id, { preview: true })), unit: u });
+      }
+    } catch (e) { setMsg({ ok: false, text: "ตรวจสอบไม่สำเร็จ: " + (e?.message || e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function doClear() {
+    const total = (preview?.machine_records || 0) + (preview?.scan_logs || 0);
+    const scope = mode === "release" ? "Release นี้" : "ชิ้นนี้";
+    if (!confirm(`ยืนยันลบข้อมูลสแกนของ${scope} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`)) return;
+    setBusy(true);
+    try {
+      let res;
+      if (mode === "release") res = await clearScansRelease(relId, {});
+      else { const u = preview?.unit || await findUnitByQr(qr.trim()); res = await clearScansUnit(u.id, {}); }
+      setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${res.machine_records || 0} · สแกนสำนักงาน ${res.scan_logs || 0} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
+      setPreview(null); setRelId(""); setQr("");
+    } catch (e) { setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) }); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Card title="ล้างข้อมูลสแกน (เฉพาะ Admin)">
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        ลบเฉพาะ “ข้อมูลการสแกน/บันทึกงาน” ของขอบเขตที่เลือก และรีเซ็ตสถานะชิ้นงานกลับเป็น “ยังไม่ทำ” — โปรเจค / Release / Part / QR ยังอยู่ครบ · <b>ลบแล้วกู้คืนไม่ได้</b> (แนะนำสำรองข้อมูลก่อน)
+      </div>
+      <div className="chip-row" style={{ marginBottom: 12 }}>
+        <span className={`chip ${mode === "release" ? "active" : ""}`} onClick={() => { setMode("release"); setPreview(null); setMsg(null); }}>ราย Release</span>
+        <span className={`chip ${mode === "unit" ? "active" : ""}`} onClick={() => { setMode("unit"); setPreview(null); setMsg(null); }}>รายชิ้น (QR)</span>
+      </div>
+      {mode === "release" ? (
+        <Field label="เลือก Release">
+          <Select value={relId} onChange={(e) => { setRelId(e.target.value); setPreview(null); }}
+            options={releases.map((r) => ({ value: r.id, label: relLabel(r) }))} />
+        </Field>
+      ) : (
+        <Field label="รหัส QR ของชิ้นงาน">
+          <Input value={qr} onChange={(e) => { setQr(e.target.value); setPreview(null); }} placeholder="สแกน/พิมพ์รหัส QR" />
+        </Field>
+      )}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+        <Btn variant="ghost" onClick={doPreview} disabled={busy}>ตรวจจำนวนก่อนลบ</Btn>
+        {preview && (
+          <Btn variant="danger" onClick={doClear} disabled={busy}>
+            ลบข้อมูลสแกน ({(preview.machine_records || 0) + (preview.scan_logs || 0)} รายการ)
+          </Btn>
+        )}
+      </div>
+      {preview && (
+        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
+          พบ: บันทึกงานหน้าเครื่อง <b>{preview.machine_records || 0}</b> · สแกนสำนักงาน <b>{preview.scan_logs || 0}</b>
+          {mode === "release" && preview.units != null ? <> · ชิ้นที่จะรีเซ็ตสถานะ <b>{preview.units}</b></> : null}
+          {mode === "unit" && preview.unit ? <> · ชิ้น {preview.unit.part_master?.part_no || ""} ({preview.unit.qr_code})</> : null}
+        </div>
+      )}
+      {msg && <div style={{ fontSize: 13, fontWeight: 600, marginTop: 10, color: msg.ok ? "var(--accent-dk, #0a7)" : "var(--danger, #e11d1d)" }}>{msg.ok ? "✓ " : "⚠ "}{msg.text}</div>}
+    </Card>
+  );
+}
+
 function SetupPage() {
   const [tab, setTab] = useState("machines");
   const TABS = [
@@ -4089,7 +4173,7 @@ function SetupPage() {
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
       {tab === "parts" && <PartMasterCrud />}
-      {tab === "backup" && <><RestorePointsCard /><BackupCard /></>}
+      {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
     </div>
   );
 }
