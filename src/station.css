@@ -150,6 +150,16 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   table.stn-rec th { font-size: 1.5vh; }
   table.stn-rec td { font-size: 1.7vh; }
   .stn-hint { font-size: 1.9vh; }
+  /* ย่อขั้นตอน "เลือกจำนวน/สถานะ/OK" ให้พอดีจอเตี้ย (พร้อม stn-work-area ที่เลื่อนได้เป็นตาข่ายกันเหนียว) */
+  .stn-work-area { padding: 8px; }
+  .stn-part-panel { max-width: 360px; }
+  .stn-part-label { margin-bottom: 1vh; }
+  .stn-lbl-qr { width: 7vh; height: 7vh; }
+  .stn-qty-lbl { font-size: 1.6vh; }
+  .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3vh; }
+  .stn-qty-stepper input { width: 13vh; font-size: 3.2vh; padding: 4px; }
+  .stn-row-btns { gap: 1vh; }
+  .stn-pill { font-size: 1.8vh; padding: 1.2vh 2.6vh; border-radius: 1.4vh; }
 }
 
 @media (max-width: 600px) {
@@ -216,7 +226,9 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 @media (max-width: 860px) { .stn-work-wrap { grid-template-columns: minmax(0, 1fr) 168px; } }
 .stn-work-area {
   border-right: 2px solid var(--st-line); position: relative; padding: 14px;
-  display: flex; align-items: center; justify-content: center; text-align: center; min-width: 0; min-height: 0;
+  display: flex; align-items: safe center; justify-content: center; text-align: center; min-width: 0; min-height: 0;
+  /* เนื้อหาสูงเกินจอเตี้ย (มือถือแนวนอน) → เลื่อนได้ + safe center กันปุ่ม OK ล่างสุดถูกตัดจนกดไม่ได้ */
+  overflow-y: auto; overflow-x: hidden;
 }
 .stn-control { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
 /* กระจายปุ่มควบคุมเต็มความสูง (ปุ่มออกอยู่ล่างสุด) */
