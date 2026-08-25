@@ -133,3 +133,51 @@ body.dash-body {
 .dash-boot { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; color: var(--dash-ink-2); }
 .dash-boot .spin { width: 6vh; height: 6vh; border: .6vh solid var(--dash-line); border-top-color: var(--dash-green); border-radius: 50%; animation: dashSpin 1s linear infinite; }
 @keyframes dashSpin { to { transform: rotate(360deg); } }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RESPONSIVE — จอเล็ก/แนวตั้ง (มือถือ/แท็บเล็ต)
+   เลิกล็อก 16:9 · เรียงคอลัมน์เดียว · เลื่อนหน้าได้ · พื้นตัวอักษรเป็น px กันเล็กจนอ่านไม่ออก
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1100px), (orientation: portrait) {
+  html, body { height: auto; min-height: 100%; overflow-x: clip; overflow-y: auto; }
+  .dash {
+    height: auto; min-height: 100dvh; width: 100%;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto auto;
+    grid-template-areas: "head" "kpi" "line" "main" "feed";
+    gap: 12px; padding: 12px calc(12px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  }
+  .dash-head { flex-wrap: wrap; gap: 10px; }
+  .dash-headright { gap: 14px; }
+  .dash-kpi-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .dash-line { height: auto; min-height: 200px; }
+  .dash-main { grid-template-rows: auto auto; }
+  .dash-machines { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); overflow: visible; }
+
+  /* พื้นฐานตัวอักษรเป็น px (เดิมอิง vh → บนจอเตี้ยจะเล็กมาก) */
+  .dash-title { font-size: 22px; }
+  .dash-title .sub { font-size: 11px; }
+  .dash-clock { font-size: 20px; }
+  .dash-date, .dash-live, .dash-lang-btn { font-size: 12px; }
+  .dash-kpi { border-radius: 14px; padding: 14px 16px; }
+  .dash-kpi .lbl { font-size: 12px; margin-bottom: 4px; }
+  .dash-kpi .val { font-size: clamp(28px, 8vw, 46px); }
+  .dash-kpi .val .unit { font-size: 14px; }
+  .dash-panel, .dash-feed { border-radius: 14px; }
+  .dash-panel-h { font-size: 13px; margin-bottom: 10px; }
+  .dash-mach { border-radius: 12px; padding: 12px 13px; }
+  .dash-mach .name { font-size: 15px; }
+  .dash-mach .name .op { font-size: 11px; }
+  .dash-mach .big { font-size: 26px; }
+  .dash-mach .big .unit, .dash-mach .meta { font-size: 12px; }
+  .dash-bar-track { height: 8px; }
+  .dash-boot { height: 100dvh; }
+}
+
+/* จอเตี้ยมาก (มือถือแนวนอน ~<=480px สูง) — ตั้งพื้นตัวอักษรรองไม่ให้เล็กกว่า 11px */
+@media (max-height: 480px) and (orientation: landscape) {
+  .dash-kpi .lbl, .dash-mach .meta, .dash-date, .dash-live,
+  .dash-panel-h, .dash-mach .name .op { font-size: max(11px, 1.3vh); }
+  .dash-mach .big { font-size: max(20px, 3.4vh); }
+  .dash-kpi .val { font-size: max(24px, 5.2vh); }
+}
