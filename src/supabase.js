@@ -134,6 +134,18 @@ export async function deleteCap(machineId, operationId) {
   if (error) { console.warn("deleteCap error", error); throw error; }
 }
 
+// ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
+export async function clearScansRelease(releaseId, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_release", { p_token: authToken(), p_release_id: releaseId, p_preview: preview });
+  if (error) { console.warn("clearScansRelease error", error); throw error; }
+  return data;
+}
+export async function clearScansUnit(partUnitId, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_unit", { p_token: authToken(), p_part_unit_id: partUnitId, p_preview: preview });
+  if (error) { console.warn("clearScansUnit error", error); throw error; }
+  return data;
+}
+
 const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
 
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
