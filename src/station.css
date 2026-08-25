@@ -245,6 +245,12 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-pending-row { opacity: .62; box-shadow: inset 3px 0 0 var(--st-alert); }
 
 .stn-cam-close { position: absolute; top: 10px; right: 10px; z-index: 4; width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+/* ปุ่มกดเปิดกล้องเอง (เต็มกรอบกล้องตอนที่ยังไม่เปิด) */
+.stn-cam-open { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; border: none; cursor: pointer;
+  background: #0d1512; color: #cdd9e5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  font-family: inherit; font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+.stn-cam-open svg { color: var(--st-green, #16b364); }
+.stn-cam-open:active { background: #111c18; }
 .stn-cam-close:active { transform: scale(.92); }
 .stn-cam-manual { margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .stn-cam-manual input { width: 210px; }
