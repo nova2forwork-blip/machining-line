@@ -315,6 +315,8 @@ function MachineStation({ user, onLogout, onKicked }) {
 
   function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
+    // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง กลับไปหน้าจับเวลา (toggle)
+    if (step === STEP.SCAN) { setStep(STEP.REC); return; }
     // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
     if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
     // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
@@ -610,12 +612,12 @@ function MachineStation({ user, onLogout, onKicked }) {
                 disabled={busy}>
                 <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}`} onClick={onScan} disabled={busy}>
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy}>
                 <div className="row1">
-                  <span>{t("สแกน", "SCAN")}</span>
+                  <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
                 </div>
-                <div className="qty">{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</div>
+                <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close") : <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>}</div>
               </button>
             </div>
             <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
@@ -960,8 +962,7 @@ function CameraScan({ onDecoded, busy, onClose }) {
           onChange={(e) => setManual(e.target.value)} />
         <button className="stn-pill" type="submit" disabled={busy}>{t("ตกลง", "OK")}</button>
       </form>
-      <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center" }}>
-        {camOn && <button type="button" className="stn-pill no" onClick={() => setCamOn(false)}>{t("พักกล้อง", "Pause camera")}</button>}
+      <div style={{ marginTop: 10 }}>
         <button type="button" className="stn-pill" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
       </div>
     </div>
