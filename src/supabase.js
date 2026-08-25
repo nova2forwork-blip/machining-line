@@ -26,6 +26,15 @@ function authToken() {
   catch { return null; }
 }
 
+// ── ตรวจ error ว่าเป็น "session หมดอายุ/ไม่ถูกต้อง" → ยิง event ให้แอปเด้งออกจากระบบ ──
+// (RPC authz_* จะ raise 'unauthorized: invalid session' / 'forbidden: ...' เมื่อ token ใช้ไม่ได้)
+export function isAuthError(error) {
+  return /unauthorized|invalid session|forbidden|not.*authenticated|jwt/i.test(error?.message || error?.hint || "");
+}
+function flagAuth(error) {
+  if (isAuthError(error)) { try { window.dispatchEvent(new Event("mls-session-invalid")); } catch (_) { /* ignore */ } }
+}
+
 // ── Generic table helpers ───────────────────────────────────────────────────
 // อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
 // (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
@@ -49,19 +58,19 @@ export async function listRows(table, { order, ascending = true, filters } = {})
 
 export async function insertRow(table, row) {
   const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
-  if (error) { console.warn("insertRow error", table, error); throw error; }
+  if (error) { console.warn("insertRow error", table, error); flagAuth(error); throw error; }
   return data;
 }
 
 export async function insertRows(table, rows) {
   const { data, error } = await supabase.rpc("authz_insert_many", { p_token: authToken(), p_tbl: table, p_payload: rows });
-  if (error) { console.warn("insertRows error", table, error); throw error; }
+  if (error) { console.warn("insertRows error", table, error); flagAuth(error); throw error; }
   return data || [];
 }
 
 export async function updateRow(table, id, patch) {
   const { data, error } = await supabase.rpc("authz_update", { p_token: authToken(), p_tbl: table, p_id: id, p_payload: patch });
-  if (error) { console.warn("updateRow error", table, error); throw error; }
+  if (error) { console.warn("updateRow error", table, error); flagAuth(error); throw error; }
   return data;
 }
 
@@ -69,20 +78,20 @@ export async function updateRow(table, id, patch) {
 // Used e.g. to propagate a release's edited weight/length down to all its part_units.
 export async function updateRows(table, filters, patch) {
   const { data, error } = await supabase.rpc("authz_update_where", { p_token: authToken(), p_tbl: table, p_filters: filters, p_payload: patch });
-  if (error) { console.warn("updateRows error", table, error); throw error; }
+  if (error) { console.warn("updateRows error", table, error); flagAuth(error); throw error; }
   return data || 0; // จำนวนแถวที่อัปเดต
 }
 
 export async function deleteRow(table, id) {
   const { error } = await supabase.rpc("authz_delete", { p_token: authToken(), p_tbl: table, p_id: id });
-  if (error) { console.warn("deleteRow error", table, error); throw error; }
+  if (error) { console.warn("deleteRow error", table, error); flagAuth(error); throw error; }
 }
 
 // Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
 export async function deleteRows(table, ids) {
   if (!ids || ids.length === 0) return;
   const { error } = await supabase.rpc("authz_delete_many", { p_token: authToken(), p_tbl: table, p_ids: ids });
-  if (error) { console.warn("deleteRows error", table, error); throw error; }
+  if (error) { console.warn("deleteRows error", table, error); flagAuth(error); throw error; }
 }
 
 // ออกจากระบบ — ยกเลิก token ฝั่ง DB (เรียกก่อน clearSession)
@@ -94,7 +103,7 @@ export async function logoutSession() {
 // เปิด/ปิดการใช้งานพนักงาน (admin เท่านั้น) — ผ่าน RPC
 export async function setEmployeeActive(id, active) {
   const { error } = await supabase.rpc("set_employee_active", { p_token: authToken(), p_id: id, p_active: active });
-  if (error) { console.warn("set_employee_active error", error); throw error; }
+  if (error) { console.warn("set_employee_active error", error); flagAuth(error); throw error; }
 }
 
 // ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
@@ -103,7 +112,7 @@ export async function setEmployeeActive(id, active) {
 //   force=true = ยืนยันลบทั้งประวัติงานของเครื่องนี้ (ตัวเลขในรายงานจะหาย)
 export async function deleteMachine(id, force = false) {
   const { data, error } = await supabase.rpc("authz_delete_machine", { p_token: authToken(), p_id: id, p_force: !!force });
-  if (error) { console.warn("authz_delete_machine error", error); throw error; }
+  if (error) { console.warn("authz_delete_machine error", error); flagAuth(error); throw error; }
   return data || { ok: false, reason: "unknown" };
 }
 
@@ -114,7 +123,7 @@ export async function deleteMachine(id, force = false) {
 //   force=true = ยืนยันลบทั้งที่มีประวัติ (ประวัติงานยังอยู่ แต่ตัดชื่อผู้ทำออก)
 export async function deleteEmployee(id, force = false) {
   const { data, error } = await supabase.rpc("authz_delete_employee", { p_token: authToken(), p_id: id, p_force: !!force });
-  if (error) { console.warn("authz_delete_employee error", error); throw error; }
+  if (error) { console.warn("authz_delete_employee error", error); flagAuth(error); throw error; }
   return data || { ok: false, reason: "unknown" };
 }
 
@@ -125,24 +134,24 @@ export async function deleteEmployee(id, force = false) {
 export async function deleteReleaseCascade(releaseId) {
   // cascade (scan_logs → part_units → releases) ทำใน RPC เดียว = atomic + ตรวจสิทธิ์
   const { error } = await supabase.rpc("authz_delete_release", { p_token: authToken(), p_release_id: releaseId });
-  if (error) { console.warn("deleteReleaseCascade error", error); throw error; }
+  if (error) { console.warn("deleteReleaseCascade error", error); flagAuth(error); throw error; }
 }
 
 // ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
 export async function deleteCap(machineId, operationId) {
   const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
-  if (error) { console.warn("deleteCap error", error); throw error; }
+  if (error) { console.warn("deleteCap error", error); flagAuth(error); throw error; }
 }
 
 // ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
 export async function clearScansRelease(releaseId, { preview = false } = {}) {
   const { data, error } = await supabase.rpc("authz_clear_scans_release", { p_token: authToken(), p_release_id: releaseId, p_preview: preview });
-  if (error) { console.warn("clearScansRelease error", error); throw error; }
+  if (error) { console.warn("clearScansRelease error", error); flagAuth(error); throw error; }
   return data;
 }
 export async function clearScansUnit(partUnitId, { preview = false } = {}) {
   const { data, error } = await supabase.rpc("authz_clear_scans_unit", { p_token: authToken(), p_part_unit_id: partUnitId, p_preview: preview });
-  if (error) { console.warn("clearScansUnit error", error); throw error; }
+  if (error) { console.warn("clearScansUnit error", error); flagAuth(error); throw error; }
   return data;
 }
 
@@ -523,6 +532,7 @@ export async function upsertEmployee(emp) {
   });
   if (error) {
     console.warn("upsert_employee error", error);
+    flagAuth(error);
     throw error;
   }
   return data; // uuid
