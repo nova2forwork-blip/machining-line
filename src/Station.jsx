@@ -517,10 +517,10 @@ function MachineStation({ user, onLogout, onKicked }) {
           <table className="stn-rec">
             <thead>
               <tr>
-                <th>MDF&nbsp;NO.</th><th>REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th>REV.</th>
+                <th className="stn-hide-sm">MDF&nbsp;NO.</th><th className="stn-hide-sm">REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th className="stn-hide-sm">REV.</th>
                 <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BALANCE</th>
-                <th>LENGTH<br />[mm]</th><th>WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
-                <th>INVENTORY<br />CODE</th><th>PROCESS<br />TIME</th><th>STATUS</th>
+                <th className="stn-hide-sm">LENGTH<br />[mm]</th><th className="stn-hide-sm">WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
+                <th className="stn-hide-sm">INVENTORY<br />CODE</th><th className="stn-hide-sm">PROCESS<br />TIME</th><th>STATUS</th>
               </tr>
             </thead>
             <tbody>
@@ -533,10 +533,10 @@ function MachineStation({ user, onLogout, onKicked }) {
                 return (
                   <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
                     title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
-                    <td>{r.mdf_no || "-"}</td>
-                    <td>{r.rel_no || "-"}</td>
+                    <td className="stn-hide-sm">{r.mdf_no || "-"}</td>
+                    <td className="stn-hide-sm">{r.rel_no || "-"}</td>
                     <td className="l">{r.part_no || "-"}</td>
-                    <td>{r.rev || "-"}</td>
+                    <td className="stn-hide-sm">{r.rev || "-"}</td>
                     <td>{fmt(r.qty)}</td>
                     <td>{r.req != null ? fmt(r.req) : "-"}</td>
                     <td>{r.process_cum != null && r.req != null
@@ -546,16 +546,16 @@ function MachineStation({ user, onLogout, onKicked }) {
                       {r.process_cum != null && r.req != null
                         ? ((r.process_cum - r.req) > 0 ? `+${fmt(r.process_cum - r.req)}` : fmt(r.process_cum - r.req))
                         : "-"}</td>
-                    <td>{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
-                    <td>{r.weight != null ? fmt(r.weight) : "-"}</td>
+                    <td className="stn-hide-sm">{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
+                    <td className="stn-hide-sm">{r.weight != null ? fmt(r.weight) : "-"}</td>
                     {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง (Number() กันค่าเป็น string) */}
                     <td style={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
                         ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
                       title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
                         ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
                       {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
-                    <td className="l">{r.inventory_code || "-"}</td>
-                    <td>{hms(r.process_seconds)}</td>
+                    <td className="l stn-hide-sm">{r.inventory_code || "-"}</td>
+                    <td className="stn-hide-sm">{hms(r.process_seconds)}</td>
                     <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
                       {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
                     </td>
