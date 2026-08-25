@@ -173,10 +173,12 @@ a { color: var(--accent-dk); }
 .drawer.open { transform: translateX(0); }
 
 .content {
-  flex: 1; min-width: 0; padding: 28px 32px 60px;
-  max-width: 1180px;
+  flex: 1; min-width: 0; padding: 28px 40px 60px;
+  max-width: none;            /* ใช้เต็มความกว้างจอบนคอม (เดิมจำกัด 1180px เหลือที่ว่างขวาเยอะ) */
 }
 .content-inner { width: 100%; }
+/* จอกว้างมาก (≥1700px): เพิ่มระยะขอบให้อ่านสบายขึ้น ไม่ให้ตารางยืดสุดขอบ */
+@media (min-width: 1700px) { .content { padding-left: 56px; padding-right: 56px; } }
 
 .bottom-nav {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
