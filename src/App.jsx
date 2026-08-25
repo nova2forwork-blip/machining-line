@@ -4818,7 +4818,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
           options={departments.map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-          options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
+          options={[{ value: "admin", label: "Admin" }, { value: "office", label: "พนักงานออฟฟิศ" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
         <Field label="เครื่องจักรประจำ *"><Select value={form.machine_id} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
@@ -4926,7 +4926,7 @@ function EmployeeCrud() {
         <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
           options={departments.map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-          options={[{ value: "admin", label: "Admin" }, { value: "supervisor", label: "หัวหน้างาน" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
+          options={[{ value: "admin", label: "Admin" }, { value: "office", label: "พนักงานออฟฟิศ" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
         <Field label="เครื่องจักรประจำ"><Select value={form.machine_id || ""} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
