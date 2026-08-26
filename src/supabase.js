@@ -182,15 +182,24 @@ export async function findUnitByQr(qrCode) {
 }
 
 // หาชิ้นงานจาก "เบอร์พาร์ท" (แทนการสแกน QR — เผื่อ QR เสีย/พิมพ์เอง)
-// คืนชิ้นแรกของพาร์ทนั้น (unit_no น้อยสุด) ที่มี release · ตรงแบบไม่สนตัวพิมพ์เล็ก-ใหญ่
+// คืนชิ้นแรกของพาร์ทนั้น (unit_no น้อยสุด) · ตรงแบบไม่สนตัวพิมพ์เล็ก-ใหญ่
+// ทำ 2 ขั้น (ไม่ใช้ embedded-filter ของ PostgREST ซึ่งไม่เสถียร/มักคืนว่าง):
+//   1) หา part_master.id จาก part_no   2) หา part_units จาก part_master_id
 export async function findUnitByPartNo(partNo) {
   const p = String(partNo || "").trim();
   if (!p) return null;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return null;  // ต้องมีเน็ต
+  // 1) หาพาร์ทที่ part_no ตรง (ไม่สนตัวพิมพ์เล็ก-ใหญ่/ช่องว่างหัวท้าย)
+  const { data: pms, error: e1 } = await supabase
+    .from("part_master").select("id").ilike("part_no", p);
+  if (e1) { console.warn("findUnitByPartNo (part_master) error", e1); return null; }
+  const ids = (pms || []).map((x) => x.id).filter(Boolean);
+  if (!ids.length) return null;                            // ไม่มีพาร์ทเบอร์นี้ในระบบ
+  // 2) หา unit ตัวแรกของพาร์ทนั้น (เอาที่มี release ก่อน แล้วค่อยเรียงตาม unit_no)
   const { data, error } = await supabase
-    .from("part_units")
-    .select("*, part_master!inner(*, projects(code, name)), release:releases(*)")
-    .ilike("part_master.part_no", p)
+    .from("part_units").select(UNIT_SELECT)
+    .in("part_master_id", ids)
+    .order("release_id", { ascending: true, nullsFirst: false })  // ตัวที่ผูก release แล้วมาก่อน
     .order("unit_no", { ascending: true })
     .limit(1);
   if (error) { console.warn("findUnitByPartNo error", error); return null; }
