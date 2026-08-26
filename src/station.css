@@ -106,29 +106,37 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-daily .stn-date { font-size: 1.7vh; }
   .stn-kpi .lbl { font-size: 1.7vh; }
   .stn-kpi .val { font-size: 3.4vh; }
-  .stn-clock { font-size: 3.8vh; }
-  .stn-mat { border-radius: 2vh; padding: 1.4vh 1.8vh; }
+  .stn-clock { font-size: 3vh; }
+  .stn-mat { border-radius: 1.6vh; padding: 1vh 1.6vh; }
   .stn-mat .lbl { font-size: 1.35vh; }
-  .stn-mat input { font-size: 2.6vh; }
-  .stn-ctl-btn { font-size: 2.2vh; padding: 2.4vh 2vh; border-radius: 2vh; }
-  .stn-scan-cell .qty { font-size: 1.5vh; }
-  .stn-scan-cell .qty b { font-size: 2vh; }
-  .stn-rec-dot { width: 2.6vh; height: 2.6vh; }
-  .stn-exit { font-size: 2vh; padding: 2.3vh 1.6vh; }
+  .stn-mat input { font-size: 2.3vh; }
+  .stn-ctl-btn { font-size: 2vh; padding: 1.3vh 1.6vh; border-radius: 1.6vh; }
+  .stn-scan-cell .qty { font-size: 1.4vh; }
+  .stn-scan-cell .qty b { font-size: 1.9vh; }
+  .stn-rec-dot { width: 2.4vh; height: 2.4vh; }
+  .stn-exit { font-size: 1.9vh; padding: 1.3vh 1.4vh; }
+  /* ย่อระยะ/ตาราง ให้ควบคุม(START/SCAN/ออก)+งาน(จำนวน/OK) ครบพอดีจอ ไม่ต้องเลื่อน */
+  .stn-control { gap: 0.9vh; padding: 1vh; }
+  .stn-ctl-main { gap: 0.9vh; }
+  .stn-table { max-height: 40vw; }
+  .stn-work-area { padding: 1vh; }
   .stn-hint { font-size: 2.1vh; max-width: 62vh; }
   .stn-hint .big { font-size: 2.4vh; }
   table.stn-rec th { font-size: 1.35vh; }
   table.stn-rec td { font-size: 1.6vh; }
-  .stn-pill { font-size: 2vh; padding: 1.8vh 3vh; border-radius: 2vh; }
-  .stn-qty-lbl { font-size: 1.8vh; }
-  .stn-qty-num { font-size: 6vh; }
-  .stn-lbl-qr { width: 8vh; height: 8vh; }
-  .stn-lbl-num, .stn-lbl-name { font-size: 1.7vh; }
-  .stn-lbl-part { font-size: 3vh; }
-  .stn-lbl-mat, .stn-lbl-line, .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.5vh; }
-  .stn-lbl-of { font-size: 2.4vh; }
-  .stn-qty-stepper button { width: 6vh; height: 6vh; font-size: 3.2vh; }
-  .stn-qty-stepper input { width: 16vh; font-size: 3.6vh; }
+  .stn-pill { font-size: 1.9vh; padding: 1.4vh 2.6vh; border-radius: 1.6vh; }
+  .stn-qty-lbl { font-size: 1.6vh; margin: 0.4vh 0; }
+  .stn-qty-num { font-size: 5vh; }
+  .stn-lbl-qr { width: 6vh; height: 6vh; }
+  .stn-lbl-num, .stn-lbl-name { font-size: 1.6vh; }
+  .stn-lbl-part { font-size: 2.6vh; }
+  .stn-lbl-mat, .stn-lbl-line, .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.4vh; }
+  .stn-lbl-of { font-size: 2.1vh; }
+  .stn-part-label { margin-bottom: 0.8vh; padding: 1vh 1.4vh; }
+  .stn-status-row { margin-bottom: 0.8vh; }
+  .stn-qty-stepper { margin-bottom: 0.6vh; }
+  .stn-qty-stepper button { width: 5.4vh; height: 5.4vh; font-size: 2.8vh; }
+  .stn-qty-stepper input { width: 14vh; font-size: 3vh; }
 }
 
 /* มือถือแนวนอนจอเตี้ย (≤600px สูง) — พื้นที่แนวตั้งน้อย: ย่อ "ทุกอย่าง" ด้วย vh ให้พอดีจอ ไม่ต้องเลื่อน */
@@ -151,7 +159,10 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-ctl-btn svg { width: 2.4vh; height: 2.4vh; }
   .stn-scan-cell .qty { font-size: 1.3vh; }
   .stn-scan-cell .qty b { font-size: 1.7vh; }
-  .stn-exit { font-size: 1.6vh; padding: 0.9vh 1vh; }
+  /* ปุ่มออกใหญ่ด้านล่างมักถูกตัดในจอเตี้ย → ใช้ปุ่มออกมุมบนซ้าย (เห็นตลอด) แทน */
+  .stn-exit { display: none; }
+  .stn-code .stn-toplogout { display: inline-flex; top: 8px; left: 8px; }
+  .stn-code .stn-lang { left: auto; right: 8px; }   /* ภาษาไปขวาบน กันชนปุ่มออก */
   table.stn-rec th { font-size: 1.4vh; padding: 0.5vh 0.6vh; }
   table.stn-rec td { font-size: 1.6vh; padding: 0.5vh 0.6vh; }
   .stn-hint { font-size: 1.8vh; }
@@ -308,6 +319,15 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   font-family: inherit; font-size: 16px; font-weight: 700; letter-spacing: .01em; }
 .stn-cam-open svg { color: var(--st-green, #16b364); }
 .stn-cam-open:active { background: #111c18; }
+/* แถบซูมกล้อง (มุมล่างกลาง) — โผล่เฉพาะกล้องที่รองรับ hardware zoom */
+.stn-cam-zoom { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 999px;
+  background: rgba(0,0,0,.5); backdrop-filter: blur(4px); }
+.stn-cam-zoom button { width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(255,255,255,.9); color: #111; font-size: 22px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center; }
+.stn-cam-zoom button:active { transform: scale(.92); }
+.stn-cam-zoom input[type="range"] { width: min(48vw, 220px); accent-color: #fff; }
 .stn-cam-close:active { transform: scale(.92); }
 .stn-cam-manual { margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .stn-cam-manual input { width: 210px; }
@@ -487,4 +507,3 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 /* บนจอเครื่อง วางมุมบนซ้ายของเซลล์รหัสเครื่อง (มุมขวามีปุ่ม "เต็มจอ" อยู่แล้ว)
    จอใหญ่/แท็บเล็ต: ซ้ายบนว่าง (ปุ่มออกล่างขวา) · มือถือ <600px: ปุ่มออกโผล่ซ้ายบน → เลื่อนหลบ */
 .stn-code .stn-lang { position: absolute; top: 8px; left: 16px; z-index: 5; }
-@media (max-width: 600px) { .stn-code .stn-lang { left: 70px; top: 8px; } }
