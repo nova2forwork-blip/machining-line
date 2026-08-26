@@ -533,4 +533,11 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-ctl-btn { padding: 11px 12px; font-size: 15px; }
   .stn-ctl-btn svg { width: 20px; height: 20px; }
   .stn-scan-cell .qty { font-size: 11px; }
+
+  /* แถบ Operation ด้านบน — ย่อให้บางลง คืนพื้นที่แนวตั้งให้ตัวเครื่อง (กัน SCAN ล้นล่าง) */
+  .stn-oppick { padding: 4px 10px; gap: 8px; }
+  .stn-oppick-lbl { font-size: 12px; }
+  .stn-oppick-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; }
+  .stn-oppick.one .stn-oppick-btn.sel { font-size: 13px; padding: 4px 12px; }
+  .stn-oppick-hint { font-size: 11px; }
 }
