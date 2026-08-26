@@ -507,3 +507,18 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 /* บนจอเครื่อง วางมุมบนซ้ายของเซลล์รหัสเครื่อง (มุมขวามีปุ่ม "เต็มจอ" อยู่แล้ว)
    จอใหญ่/แท็บเล็ต: ซ้ายบนว่าง (ปุ่มออกล่างขวา) · มือถือ <600px: ปุ่มออกโผล่ซ้ายบน → เลื่อนหลบ */
 .stn-code .stn-lang { position: absolute; top: 8px; left: 16px; z-index: 5; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   หัวเครื่อง (.stn-code) บนมือถือ — ทั้งโหมดหมุนจอ + แนวนอนเตี้ย
+   วางท้ายไฟล์เพื่อ override การวางปุ่มภาษา/ออก ให้:
+     • ปุ่ม ออก(ซ้าย) · ภาษา(กลาง) · เต็มจอ(ขวา) อยู่ "แถวบน" ไม่ทับเลขเครื่อง
+     • ปุ่มออกมุมบนซ้ายเห็นตลอด (แทนปุ่มใหญ่ด้านล่างที่ถูกตัดจนกดไม่ได้)
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (orientation: portrait) and (max-width: 1024px),
+       (orientation: landscape) and (max-height: 600px) {
+  .stn-code { flex-direction: column; justify-content: flex-end; align-items: center; padding-top: 42px; }
+  .stn-code .stn-toplogout { display: inline-flex; top: 7px; left: 7px; right: auto; padding: 4px 10px; z-index: 6; }
+  .stn-code .stn-lang { top: 7px; left: 50%; right: auto; transform: translateX(-50%); z-index: 6; }
+  .stn-code .stn-fs { top: 7px; right: 7px; left: auto; z-index: 6; }
+  .stn-exit { display: none; }   /* ปุ่มออกใหญ่ด้านล่างถูกตัด → ใช้ปุ่มมุมบนซ้ายแทน */
+}
