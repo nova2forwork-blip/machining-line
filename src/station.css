@@ -122,8 +122,14 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-work-area { padding: 1vh; }
   .stn-hint { font-size: 2.1vh; max-width: 62vh; }
   .stn-hint .big { font-size: 2.4vh; }
-  table.stn-rec th { font-size: 1.35vh; }
-  table.stn-rec td { font-size: 1.6vh; }
+  /* ครบทุกคอลัมน์เหมือนคอม แต่บีบให้พอดีกรอบ ไม่ล้น/ไม่ต้องเลื่อนแนวนอน:
+     table-layout:fixed = ทุกคอลัมน์แบ่งความกว้างเท่า ๆ กันในกรอบ, ตัดคำขึ้นบรรทัดใหม่ได้ */
+  table.stn-rec { table-layout: fixed; width: 100%; }
+  table.stn-rec th, table.stn-rec td {
+    white-space: normal; overflow-wrap: anywhere; word-break: break-word; padding: 0.4vh 0.3vh;
+  }
+  table.stn-rec th { font-size: 1.25vh; }
+  table.stn-rec td { font-size: 1.4vh; }
   .stn-pill { font-size: 1.9vh; padding: 1.4vh 2.6vh; border-radius: 1.6vh; }
   .stn-qty-lbl { font-size: 1.6vh; margin: 0.4vh 0; }
   .stn-qty-num { font-size: 5vh; }
@@ -163,8 +169,11 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-exit { display: none; }
   .stn-code .stn-toplogout { display: inline-flex; top: 8px; left: 8px; }
   .stn-code .stn-lang { left: auto; right: 8px; }   /* ภาษาไปขวาบน กันชนปุ่มออก */
-  table.stn-rec th { font-size: 1.4vh; padding: 0.5vh 0.6vh; }
-  table.stn-rec td { font-size: 1.6vh; padding: 0.5vh 0.6vh; }
+  /* ครบทุกคอลัมน์เหมือนคอม แต่บีบพอดีกรอบ ไม่ล้นแนวนอน */
+  table.stn-rec { table-layout: fixed; width: 100%; }
+  table.stn-rec th, table.stn-rec td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+  table.stn-rec th { font-size: 1.3vh; padding: 0.4vh 0.3vh; }
+  table.stn-rec td { font-size: 1.45vh; padding: 0.4vh 0.3vh; }
   .stn-hint { font-size: 1.8vh; }
   /* ★ จำกัดความสูงตารางด้านบน → เหลือที่ให้ขั้นตอนจำนวน/OK ด้านล่างพอดี ไม่ต้องเลื่อน */
   .stn-table { max-height: 30vh; }
@@ -330,6 +339,7 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-cam-close:active { transform: scale(.92); }
 .stn-cam-manual { margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .stn-cam-manual input { width: 210px; }
+.stn-cam-cancel-row { margin-top: 10px; }
 
 /* scanned-part panel */
 .stn-part-panel { width: 100%; max-width: 440px; }
@@ -539,4 +549,31 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-oppick-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; }
   .stn-oppick.one .stn-oppick-btn.sel { font-size: 13px; padding: 4px 12px; }
   .stn-oppick-hint { font-size: 11px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   กล้องสแกน (มือถือ) — ให้กล้อง + ช่องกรอก + ปุ่มปิด/ยกเลิก อยู่ในกรอบจอครบ ไม่ทะลุลงล่าง
+   วางไว้ท้ายไฟล์ + ใช้ ".stn-work-area" นำหน้า → ชนะกฎ base ".stn-cam" (max-height:74vh/
+   aspect-ratio:1 ที่อยู่ก่อนหน้าในไฟล์) ทั้งด้วยลำดับและ specificity ที่สูงกว่า
+   ═══════════════════════════════════════════════════════════════════════ */
+/* โหมดหมุนจอ (มือถือแนวตั้ง): "แกนตั้งจริง" หลังหมุน 90° วัดด้วย vw → จำกัดสูงกล้องด้วย vw */
+@media (orientation: portrait) and (max-width: 1024px) {
+  .stn-work-area .stn-cam { width: min(90%, 52vw); height: 40vw; max-height: 40vw; aspect-ratio: auto; }
+}
+/* มือถือแนวนอนจอเตี้ย (ไม่หมุน): แกนตั้ง = vh */
+@media (orientation: landscape) and (max-height: 600px) {
+  .stn-work-area .stn-cam { width: min(86%, 60vh); height: 40vh; max-height: 40vh; aspect-ratio: auto; }
+}
+/* ย่อปุ่ม/ช่องรอบกล้อง (ใช้ร่วมทั้งสองโหมด) ให้กระชับ อยู่ในจอครบ ไม่ต้องเลื่อน */
+@media (orientation: portrait) and (max-width: 1024px),
+       (orientation: landscape) and (max-height: 600px) {
+  .stn-work-area .stn-cam-close { width: 6vh; height: 6vh; font-size: 3vh; top: 1vh; right: 1vh; }
+  .stn-work-area .stn-cam-zoom { bottom: 1vh; gap: 1.4vh; padding: 0.5vh 1.4vh; }
+  .stn-work-area .stn-cam-zoom button { width: 5.4vh; height: 5.4vh; font-size: 3vh; }
+  .stn-work-area .stn-cam-zoom input[type="range"] { width: 34vh; }
+  .stn-work-area .stn-cam-manual { margin-top: 1.2vh; gap: 1.2vh; }
+  .stn-work-area .stn-cam-manual input { width: 40vh; max-width: 100%; font-size: 2.2vh; padding: 1vh 1.6vh; }
+  .stn-work-area .stn-cam-manual .stn-pill { font-size: 2.1vh; padding: 1vh 2.6vh; min-width: auto; }
+  .stn-work-area .stn-cam-cancel-row { margin-top: 1.2vh; }
+  .stn-work-area .stn-cam-cancel { font-size: 2.1vh; padding: 1vh 3vh; min-width: auto; }
 }
