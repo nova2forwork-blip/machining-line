@@ -521,4 +521,16 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-code .stn-lang { top: 7px; left: 50%; right: auto; transform: translateX(-50%); z-index: 6; }
   .stn-code .stn-fs { top: 7px; right: 7px; left: auto; z-index: 6; }
   .stn-exit { display: none; }   /* ปุ่มออกใหญ่ด้านล่างถูกตัด → ใช้ปุ่มมุมบนซ้ายแทน */
+
+  /* คอลัมน์ควบคุมขวา (นาฬิกา + ความยาววัสดุ + START + SCAN) — กัน SCAN ทะลุลงล่างจนกดไม่ถึง
+     จัดชิดบน + เลื่อนได้เป็นตาข่ายกันเหนียว (ปกติแน่นพอดีจอ ไม่ต้องเลื่อน) */
+  .stn-control { overflow-y: auto; gap: 8px; padding: 8px; }
+  .stn-ctl-main { flex: none; justify-content: flex-start; gap: 8px; }
+  .stn-clock { font-size: 26px; }
+  .stn-mat { padding: 7px 11px; }
+  .stn-mat .lbl { font-size: 10px; }
+  .stn-mat input { font-size: 18px; }
+  .stn-ctl-btn { padding: 11px 12px; font-size: 15px; }
+  .stn-ctl-btn svg { width: 20px; height: 20px; }
+  .stn-scan-cell .qty { font-size: 11px; }
 }
