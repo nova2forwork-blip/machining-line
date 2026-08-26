@@ -809,7 +809,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ลำดับ", "No.")} </span>
                 {progress?.offline ? `~${ofText}` : ofText}
               </div>
-              {isOver ? <div className="stn-lbl-rework">{t("เกินจำนวนสั่งแล้ว (สแปร์ / เพิ่ม)", "Over ordered qty (spare / extra)")}</div> : null}
+              {/* ไม่แจ้งเตือนเมื่อสแกนเกินจำนวนสั่ง (REQ) — บันทึกต่อได้ปกติ (สแปร์/เพิ่ม) */}
               {dupCount > 0 ? <div className="stn-lbl-dup">{t(`⚠ ชิ้นนี้เคยทำขั้นตอนนี้แล้ว ${dupCount} ครั้ง`, `⚠ This piece already ran this step ${dupCount}×`)}</div> : null}
               {progress?.offline ? <div className="stn-lbl-approx">{t("ประมาณการ · ออฟไลน์", "estimate · offline")}</div> : null}
             </div>
@@ -849,6 +849,13 @@ function CameraScan({ onDecoded, busy, onClose }) {
   const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
+  const trackRef = useRef(null);
+  const [zoom, setZoom] = useState(null);      // { min, max, step, value } หรือ null ถ้ากล้องไม่รองรับซูม
+  function applyZoom(v) {
+    const val = Number(v);
+    setZoom((z) => (z ? { ...z, value: val } : z));
+    try { trackRef.current?.applyConstraints({ advanced: [{ zoom: val }] }); } catch { /* กล้องไม่รองรับ */ }
+  }
 
   useEffect(() => {
     if (!camOn) return;                          // ยังไม่กดเปิดกล้อง → ไม่แตะกล้องเลย
@@ -861,6 +868,16 @@ function CameraScan({ onDecoded, busy, onClose }) {
       if (cancelled) return;                       // ปิดหน้าไปก่อน — อย่าแตะกล้อง (สตรีมคงอยู่ให้ครั้งหน้า)
       if (!stream) { setErr(t("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้", "Can't open camera — type the QR code below instead")); setCamOn(false); return; }
       streamRef.current = stream;
+      // ★ ตรวจว่ากล้องรองรับซูม (hardware zoom) ไหม — ถ้ารองรับให้โชว์แถบซูม
+      const track = stream.getVideoTracks?.()[0] || null;
+      trackRef.current = track;
+      try {
+        const caps = track?.getCapabilities?.();
+        if (caps && caps.zoom && Number(caps.zoom.max) > Number(caps.zoom.min)) {
+          const cur = track.getSettings?.().zoom ?? caps.zoom.min;
+          setZoom({ min: Number(caps.zoom.min), max: Number(caps.zoom.max), step: Number(caps.zoom.step) || 0.1, value: Number(cur) });
+        } else { setZoom(null); }
+      } catch { setZoom(null); }
       const v = videoRef.current;
       if (!v) return;                              // ไม่ stop สตรีม — เก็บไว้ใช้ครั้งหน้า
       v.srcObject = stream;
@@ -947,6 +964,14 @@ function CameraScan({ onDecoded, busy, onClose }) {
             <canvas ref={canvasRef} style={{ display: "none" }} />
             <canvas ref={overlayRef} className="stn-cam-overlay" />
             <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
+            {zoom && (
+              <div className="stn-cam-zoom">
+                <button type="button" onClick={() => applyZoom(Math.max(zoom.min, zoom.value - zoom.step * 3))} aria-label="zoom out">−</button>
+                <input type="range" min={zoom.min} max={zoom.max} step={zoom.step} value={zoom.value}
+                  onChange={(e) => applyZoom(e.target.value)} aria-label="zoom" />
+                <button type="button" onClick={() => applyZoom(Math.min(zoom.max, zoom.value + zoom.step * 3))} aria-label="zoom in">+</button>
+              </div>
+            )}
           </>
         ) : (
           // กล้องยังไม่เปิด — กดเปิดเอง (ขอสิทธิ์ไปแล้ว จึงไม่ถามซ้ำ)
