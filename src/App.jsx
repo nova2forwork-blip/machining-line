@@ -1560,7 +1560,7 @@ function PartProgressModal({ release, user, onClose }) {
 }
 
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
-  const canEdit = canManage(user);   // admin / supervisor เท่านั้นที่แก้ไข/ลบได้
+  const canEdit = isAdmin(user);   // เฉพาะ Admin เท่านั้นที่แก้ไข/ลบ Release ได้ (office เพิ่ม/นำเข้า/ดูได้ แต่แก้/ลบไม่ได้)
   // สำเนา releases แบบ local เพื่อให้แก้ไข/ลบ สะท้อนทันทีในหน้านี้ (ยอดรวมคิดใหม่ตามนี้)
   const [releases, setReleases] = useState(group.releases);
   const [unitStats, setUnitStats] = useState({});
