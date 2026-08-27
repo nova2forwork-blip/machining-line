@@ -5,7 +5,7 @@ import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, findUnitByPartNo, findReleaseCandidatesByPartNo, getMachineDay, recordMachineWork, getReleaseProgress,
+  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
   countUnitOpRecords, listRejected, clearRejected,
@@ -426,34 +426,41 @@ function MachineStation({ user, onLogout, onKicked }) {
   }
   // สแกน QR (จากกล้อง) — ถ้าอ่านได้เป็นเบอร์พาร์ท ลอง fallback หา 1 ตัว (กล้องเดี่ยวไม่มี UI ให้เลือก)
   // คืน true=พบ, false=ไม่พบ
+  const curOpId = () => op?.id || user.operation?.id || null;
   async function onDecoded(qr) {
     if (!qr) return false;
     setBusy(true);
-    let u = await findUnitByQr(qr);
-    if (!u) u = await findUnitByPartNo(qr);
-    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false; }
+    const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจกต์/ใบเจาะจงเสมอ
+    if (u) { setBusy(false); await showScannedUnit(u); return true; }
+    // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจกต์เดียวใช้เลย · หลายโปรเจกต์ → อย่าเดา ให้พิมพ์เลือก
+    const opts = await findManualPartOptions(qr, curOpId());
     setBusy(false);
-    await showScannedUnit(u);
-    return true;
+    if (opts.length === 1) { await showScannedUnit(opts[0].unit); return true; }
+    if (opts.length >= 2) {
+      errorBeep();
+      flash(t("เบอร์นี้อยู่หลายโปรเจกต์ — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจกต์",
+              "This number is in several projects — type it below and pick the project"), "warn");
+      return false;
+    }
+    errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false;
   }
-  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — ถ้าเบอร์พาร์ทตรงกับ "หลาย release" ให้เลือกก่อน (กันลงผิดใบ)
-  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[units] } เมื่อต้องเลือก release · { ok:false } เมื่อไม่พบ
+  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจกต์ → ให้เลือก "โปรเจกต์" (ไม่ต้องเลือก release)
+  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจกต์ · { ok:false } เมื่อไม่พบ
   async function onManualEntry(text) {
     const s = String(text || "").trim();
     if (!s) return { ok: false };
     setBusy(true);
     // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
-    let u = await findUnitByQr(s);
+    const u = await findUnitByQr(s);
     if (u) { setBusy(false); await showScannedUnit(u); return { ok: true }; }
-    // 2) เป็นเบอร์พาร์ท → หา release ผู้สมัครทั้งหมด
-    const cands = await findReleaseCandidatesByPartNo(s);
+    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจกต์
+    const opts = await findManualPartOptions(s, curOpId());
     setBusy(false);
-    if (!cands.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
-    if (cands.length === 1) { await showScannedUnit(cands[0]); return { ok: true }; }
-    // มีหลาย release → ให้คนงานเลือก (กันลงผิดใบ)
-    return { ok: false, choose: cands };
+    if (!opts.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
+    if (opts.length === 1) { await showScannedUnit(opts[0].unit); return { ok: true }; }
+    return { ok: false, choose: opts };   // หลายโปรเจกต์ → ให้เลือก
   }
-  // คนงานเลือก release จากตัวเลือกแล้ว → ใช้ชิ้นตัวแทนของ release นั้น
+  // คนงานเลือกโปรเจกต์แล้ว → ใช้ชิ้นตัวแทนของโปรเจกต์นั้น
   async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
@@ -965,7 +972,8 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   const doneRef = useRef(false);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState("");
-  const [pickList, setPickList] = useState(null);   // [units] ให้เลือก release เมื่อเบอร์พาร์ทตรงหลายใบ
+  const [pickList, setPickList] = useState(null);   // [options] ให้เลือก "โปรเจกต์" เมื่อเบอร์พาร์ทอยู่หลายโปรเจกต์
+  const [pickFilter, setPickFilter] = useState("");   // ค้นหาโปรเจกต์ในตัวเลือก (กรณีมีหลายสิบโปรเจกต์)
   const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
@@ -1109,17 +1117,18 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   function submitManual(e) {
     e.preventDefault();
     if (!manual.trim()) return;
-    setPickList(null);
-    // เบอร์พาร์ทตรงหลาย release → คืน choose ให้เลือกก่อน (กันลงผิดใบ) · ตรงใบเดียว → ระบุเลย
+    setPickList(null); setPickFilter("");
+    // เบอร์พาร์ทอยู่หลายโปรเจกต์ → คืน choose ให้เลือกโปรเจกต์ · โปรเจกต์เดียว → ระบุเลย
     onManualEntry(manual.trim()).then((r) => {
       if (r && r.ok) { doneRef.current = true; }
-      else if (r && r.choose) { setPickList(r.choose); }
+      else if (r && r.choose) { setPickList(r.choose); setPickFilter(""); }
     });
   }
-  function pickRelease(u) {
-    setPickList(null);
+  function closePick() { setPickList(null); setPickFilter(""); }
+  function pickOption(opt) {
+    closePick();
     doneRef.current = true;
-    onPickUnit(u);
+    onPickUnit(opt.unit);
   }
 
   return (
@@ -1158,27 +1167,51 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
         <button type="button" className="stn-pill stn-cam-cancel" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
       </div>
 
-      {/* เบอร์พาร์ทตรงหลาย Release → เลือกใบที่กำลังทำ (กันลงผิดใบ) */}
-      {pickList && pickList.length > 0 && (
-        <div className="stn-pick-backdrop" onClick={() => setPickList(null)}>
-          <div className="stn-pick" onClick={(e) => e.stopPropagation()}>
-            <div className="stn-pick-head">
-              <b>{pickList[0]?.part_master?.part_no || ""}</b>
-              <span>{t("มีหลาย Release — เลือกใบที่กำลังทำ", "Multiple releases — pick the one you're working on")}</span>
+      {/* เบอร์พาร์ทอยู่หลายโปรเจกต์ → เลือก "โปรเจกต์" อย่างเดียว (ไม่ต้องเลือก release)
+          ★ โปรเจกต์ที่ "ยังไม่ได้ทำขั้นตอนนี้" ขึ้นก่อน · ที่ทำแล้วอยู่ล่าง (ไว้แก้งานเสีย)
+          ★ โชว์ ความยาว ให้เทียบกับชิ้นจริง (เบอร์ซ้ำแต่คนละความยาว) */}
+      {pickList && pickList.length > 0 && (() => {
+        const q = pickFilter.trim().toLowerCase();
+        const filtered = q
+          ? pickList.filter((o) => `${o.code} ${o.name} ${o.partName}`.toLowerCase().includes(q))
+          : pickList;
+        return (
+          <div className="stn-pick-backdrop" onClick={closePick}>
+            <div className="stn-pick" onClick={(e) => e.stopPropagation()}>
+              <div className="stn-pick-head">
+                <b>{pickList[0]?.unit?.part_master?.part_no || ""}</b>
+                <span>{t("อยู่", "in")} {pickList.length} {t("โปรเจกต์ — เลือกให้ตรงชิ้นจริง (ดูความยาว)", "projects — pick the one matching the piece (check length)")}</span>
+              </div>
+              {/* มีหลายโปรเจกต์ → ช่องค้นหา (พิมพ์โค้ด/ชื่อโปรเจกต์ให้แคบลง) */}
+              {pickList.length > 6 && (
+                <input className="stn-input stn-pick-search" value={pickFilter} autoFocus
+                  placeholder={t("ค้นหาโปรเจกต์ (โค้ด/ชื่อ)…", "Search project (code/name)…")}
+                  onChange={(e) => setPickFilter(e.target.value)} />
+              )}
+              <div className="stn-pick-list">
+                {filtered.length === 0 && <div className="stn-pick-empty">{t("ไม่พบโปรเจกต์ที่ค้นหา", "No matching project")}</div>}
+                {filtered.map((o, i) => {
+                  const projText = [o.code, o.name].filter(Boolean).join(" · ") || t("ไม่ระบุโปรเจกต์", "No project");
+                  const done = o.doneCount > 0;
+                  return (
+                    <button type="button" key={o.pmId || i} className={`stn-pick-item${done ? " done" : ""}`} onClick={() => pickOption(o)}>
+                      <b>{projText}</b>
+                      <span className="stn-pick-len">{t("ยาว", "Length")} {o.length != null ? `${fmt(o.length)} mm` : "-"}
+                        {o.partName ? ` · ${o.partName}` : ""}</span>
+                      <span className={done ? "stn-pick-done" : "stn-pick-fresh"}>
+                        {done
+                          ? `✓ ${t("ทำขั้นตอนนี้แล้ว", "operation already done")} (${o.doneCount}) · ${t("เลือกเพื่อแก้งาน", "pick to rework")}`
+                          : `● ${t("ยังไม่ได้ทำขั้นตอนนี้", "not done yet")}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="stn-pill stn-cam-cancel" onClick={closePick}>{t("ยกเลิก", "Cancel")}</button>
             </div>
-            <div className="stn-pick-list">
-              {pickList.map((u, i) => (
-                <button type="button" key={u.id || i} className="stn-pick-item" onClick={() => pickRelease(u)}>
-                  <b>Release {u.release?.release_order ?? "-"}</b>
-                  <span>{t("จำนวนสั่ง", "Qty")} {u.release?.qty ?? "-"}
-                    {u.part_master?.projects?.code ? ` · ${u.part_master.projects.code}` : ""}</span>
-                </button>
-              ))}
-            </div>
-            <button type="button" className="stn-pill stn-cam-cancel" onClick={() => setPickList(null)}>{t("ยกเลิก", "Cancel")}</button>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
