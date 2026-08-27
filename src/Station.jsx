@@ -10,7 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
   countUnitOpRecords,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang } from "./i18n-dom.js";
 
@@ -983,12 +983,14 @@ function CameraScan({ onDecoded, busy, onClose }) {
     return () => {
       cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      // แค่ "ถอดจอ" กล้อง (หยุดวาด/ถอด srcObject) — ★ ไม่ปิดสตรีมจริง (ไม่ releaseSharedCamera)
-      // เพื่อให้กดสแกนชิ้นถัดไปใช้สตรีมเดิม กล้องไม่ขอสิทธิ์ใหม่/ไม่หน่วงเปิดฮาร์ดแวร์ซ้ำ
-      // สตรีมจริงจะถูกปิดตอน "ออกจากระบบ/ออกจากหน้าเครื่อง" (useEffect cleanup ระดับ root)
       const v = videoRef.current;
       if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
       streamRef.current = null;
+      // ★ ปิดสตรีมจริง (ดับไฟกล้อง) "เฉพาะเมื่อเบราว์เซอร์จำสิทธิ์ได้" → กดสแกนชิ้นถัดไปไม่ถามซ้ำ
+      //   (Android/เดสก์ท็อป หรือ ติดตั้งเป็นแอป/PWA)
+      // ถ้าเป็นแท็บ Safari บน iOS ที่จำสิทธิ์ข้าม stop() ไม่ได้ → คงสตรีมไว้ กันเด้งขอสิทธิ์ซ้ำทุกชิ้น
+      //   (สตรีมจะถูกปิดจริงตอนออกจากระบบ ที่ cleanup ระดับ root)
+      if (camPermissionPersists()) releaseSharedCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camOn]);
