@@ -232,30 +232,57 @@ export async function findUnitByPartNo(partNo) {
   return u;
 }
 
-// หา "release ผู้สมัครทั้งหมด" ของเบอร์พาร์ท (หนึ่งชิ้นตัวแทนต่อ 1 release)
-// ★ ใช้ตอนพิมพ์เบอร์พาร์ท: ถ้าพาร์ทมีหลาย release ให้หน้าเครื่องแสดงตัวเลือกให้คนงานยืนยัน
-//   (แทนการเดา release ให้เอง ซึ่งอาจลงผิดใบ) · คืน [] ถ้าไม่พบ/ออฟไลน์
-export async function findReleaseCandidatesByPartNo(partNo) {
+// พิมพ์เบอร์พาร์ท → คืน "ตัวเลือกระดับโปรเจกต์" (part_no ไม่ซ้ำในโปรเจกต์เดียว = 1 โปรเจกต์ 1 part_master)
+// ★ ผู้ใช้เลือกแค่ "โปรเจกต์" พอ (ไม่ต้องเลือก release) — ระบบ resolve unit ให้เอง
+//   • done = ขั้นตอนนี้ (operation) "เคยทำ" ของโปรเจกต์นี้ไปกี่ครั้ง → เรียงโปรเจกต์ที่ยังไม่เคยทำขึ้นก่อน
+//     (โปรเจกต์ที่ทำแล้วยังเลือกได้ ไว้แก้งานเสีย)
+//   • unit ตัวแทน = ชิ้นของ "release ที่ยังทำอยู่" (record ล่าสุดของขั้นตอนนี้) ไม่งั้นชิ้นแรกของโปรเจกต์
+// คืน [{ pmId, code, name, partName, length, doneCount, unit }] เรียงยังไม่เคยทำก่อน · [] ถ้าไม่พบ/ออฟไลน์
+export async function findManualPartOptions(partNo, operationId = null) {
   const p = String(partNo || "").trim();
   if (!p) return [];
   if (typeof navigator !== "undefined" && navigator.onLine === false) return [];  // ต้องมีเน็ต
+  // 1) part_master (1 ต่อ 1 โปรเจกต์) ที่ part_no ตรง
   const { data: pms, error: e1 } = await supabase
-    .from("part_master").select("id").ilike("part_no", p);
-  if (e1) { console.warn("findReleaseCandidates (part_master) error", e1); return []; }
-  const ids = (pms || []).map((x) => x.id).filter(Boolean);
-  if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from("part_units").select(UNIT_SELECT)
-    .in("part_master_id", ids)
-    .order("unit_no", { ascending: true });
-  if (error) { console.warn("findReleaseCandidates error", error); return []; }
-  // ตัวแทน 1 ชิ้นต่อ 1 release (dedupe ตาม release_id) → เอาไว้ให้เลือก
-  const seen = new Set(); const out = [];
-  for (const u of (data || [])) {
-    const rid = u.release_id || "none";
-    if (seen.has(rid)) continue;
-    seen.add(rid); out.push(u);
+    .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name)")
+    .ilike("part_no", p);
+  if (e1) { console.warn("findManualPartOptions (part_master) error", e1); return []; }
+  const masters = pms || [];
+  if (!masters.length) return [];
+  const ids = masters.map((m) => m.id);
+  // 2) ชิ้นงานของทุก part_master (ไว้ resolve + เอาความยาวเฉพาะชิ้น)
+  const { data: units } = await supabase.from("part_units").select(UNIT_SELECT)
+    .in("part_master_id", ids).order("unit_no", { ascending: true });
+  const allUnits = units || [];
+  // 3) บันทึกของ "ขั้นตอนนี้" (ไว้หา doneCount + release ที่ยังทำอยู่ ต่อโปรเจกต์)
+  let recs = [];
+  if (operationId) {
+    const { data: r } = await supabase.from("machine_records")
+      .select("part_master_id, release_id, recorded_at")
+      .in("part_master_id", ids).eq("operation_id", operationId)
+      .order("recorded_at", { ascending: false });
+    recs = r || [];
   }
+  const out = [];
+  for (const m of masters) {
+    const mUnits = allUnits.filter((u) => u.part_master_id === m.id);
+    if (!mUnits.length) continue;                          // ไม่มีชิ้น = บันทึกไม่ได้ → ข้าม
+    const mRecs = recs.filter((r) => r.part_master_id === m.id);   // เรียงใหม่→เก่าอยู่แล้ว
+    let unit = null;
+    if (mRecs.length && mRecs[0].release_id) unit = mUnits.find((u) => u.release_id === mRecs[0].release_id) || null;
+    if (!unit) unit = mUnits[0];                           // ยังไม่เคยทำ → ชิ้นแรกของโปรเจกต์
+    out.push({
+      pmId: m.id, code: m.projects?.code || "", name: m.projects?.name || "",
+      partName: m.part_name || "", length: unit.length_mm ?? m.default_length_mm,
+      doneCount: mRecs.length, lastTs: mRecs[0]?.recorded_at || null, unit,
+    });
+  }
+  // ยังไม่เคยทำขั้นตอนนี้ (0) ขึ้นก่อน · ในกลุ่มเดียวกันเรียง "งานล่าสุด" ขึ้นก่อน (โปรเจกต์ที่กำลังทำลอยขึ้น)
+  out.sort((a, b) => {
+    const af = a.doneCount === 0 ? 0 : 1, bf = b.doneCount === 0 ? 0 : 1;
+    if (af !== bf) return af - bf;
+    return String(b.lastTs || "").localeCompare(String(a.lastTs || ""));
+  });
   return out;
 }
 
