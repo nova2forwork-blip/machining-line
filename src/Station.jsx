@@ -482,9 +482,8 @@ function MachineStation({ user, onLogout, onKicked }) {
     // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
     if (qty > 2000 && !confirm(t(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`,
                                  `${qty.toLocaleString()} pieces in a single record is unusually large — confirm?`))) return;
-    // ชิ้นนี้เคยทำขั้นตอนนี้ไปแล้ว → ยืนยันกันสแกนซ้ำโดยไม่ตั้งใจ (ยอมได้ถ้าเป็น rework จริง)
-    if (dupCount > 0 && !confirm(t(`ชิ้นนี้เคยบันทึกขั้นตอนนี้ไปแล้ว ${dupCount} ครั้ง — ยืนยันทำซ้ำ (rework) หรือไม่?`,
-                                   `This piece already recorded this step ${dupCount}× — confirm rework?`))) return;
+    // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
+    //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
     doSave();
   }
 
@@ -922,8 +921,10 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
       : (total != null
           ? `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} of ${fmt(total)}`
           : `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`);
-    // ทำเกินจำนวนสั่งแล้ว → บันทึกต่อได้ปกติ (เช่น ตัดเผื่อเป็นสแปร์ หรือกลับไปเจาะเพิ่ม)
-    const isOver = !noOp && total != null && done >= total;
+    // ★ เกินจำนวนสั่งเท่าไร (ถ้าบันทึกครั้งนี้) — ยังไม่เกิน = 0 (ไม่เตือน) · เกิน = โชว์จำนวนที่เกิน
+    //   บันทึกต่อได้ปกติเสมอ (ตัดเผื่อสแปร์/เพิ่ม) — แค่เตือนแบบไม่บล็อก ไม่หยุดเวลา
+    const projected = done + (Number(qty) || 0);
+    const overBy = (!noOp && total != null && projected > total) ? (projected - total) : 0;
     return (
       <div className="stn-part-panel">
         {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
@@ -947,8 +948,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ลำดับ", "No.")} </span>
                 {progress?.offline ? `~${ofText}` : ofText}
               </div>
-              {/* ไม่แจ้งเตือนเมื่อสแกนเกินจำนวนสั่ง (REQ) — บันทึกต่อได้ปกติ (สแปร์/เพิ่ม) */}
-              {dupCount > 0 ? <div className="stn-lbl-dup">{t(`⚠ ชิ้นนี้เคยทำขั้นตอนนี้แล้ว ${dupCount} ครั้ง`, `⚠ This piece already ran this step ${dupCount}×`)}</div> : null}
+              {/* เตือนเฉพาะ "เกินจำนวนสั่ง" + บอกจำนวนที่เกิน (ยังไม่เกิน = ไม่เตือน) · แบบไม่บล็อก ไม่หยุดเวลา */}
+              {overBy > 0 ? <div className="stn-lbl-dup">{t(`⚠ เกินจำนวนสั่ง +${fmt(overBy)} ชิ้น`, `⚠ Over the order +${fmt(overBy)} pcs`)}</div> : null}
               {progress?.offline ? <div className="stn-lbl-approx">{t("ประมาณการ · ออฟไลน์", "estimate · offline")}</div> : null}
             </div>
           </div>
