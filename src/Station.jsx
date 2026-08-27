@@ -36,6 +36,11 @@ function todayISOdate() {
   const d = new Date();
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
+// วันที่แบบสั้น MM.DD — ใช้เติมคอลัมน์ DATE ให้แถวที่เพิ่งสแกน (row จาก record_machine_work ไม่มี day)
+function todayMD() {
+  const d = new Date();
+  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+}
 
 // ─── เสียง "ติ๊ด" ตอนสแกน (Web Audio) + สั่น ───────────────────────────────
 let _audioCtx = null;
@@ -519,6 +524,7 @@ function MachineStation({ user, onLogout, onKicked }) {
           <table className="stn-rec">
             <thead>
               <tr>
+                <th>{t("วันที่", "DATE")}</th>
                 <th className="stn-hide-sm">MDF&nbsp;NO.</th><th className="stn-hide-sm">REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th className="stn-hide-sm">REV.</th>
                 <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BALANCE</th>
                 <th className="stn-hide-sm">LENGTH<br />[mm]</th><th className="stn-hide-sm">WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
@@ -527,7 +533,7 @@ function MachineStation({ user, onLogout, onKicked }) {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={14}>{t("ยังไม่มีบันทึกวันนี้ — เริ่มงานแรกได้เลย", "No records today — start your first job")}</td></tr>
+                <tr className="stn-empty-row"><td colSpan={15}>{t("ยังไม่มีบันทึกสัปดาห์นี้ — เริ่มงานแรกได้เลย", "No records this week — start your first job")}</td></tr>
               )}
               {rows.map((r, i) => {
                 const fin = String(r.status).toLowerCase() === "finished";
@@ -535,6 +541,7 @@ function MachineStation({ user, onLogout, onKicked }) {
                 return (
                   <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
                     title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
+                    <td className="stn-mono">{r.day || todayMD()}</td>
                     <td className="stn-hide-sm">{r.mdf_no || "-"}</td>
                     <td className="stn-hide-sm">{r.rel_no || "-"}</td>
                     <td className="l">{r.part_no || "-"}</td>
