@@ -232,6 +232,33 @@ export async function findUnitByPartNo(partNo) {
   return u;
 }
 
+// หา "release ผู้สมัครทั้งหมด" ของเบอร์พาร์ท (หนึ่งชิ้นตัวแทนต่อ 1 release)
+// ★ ใช้ตอนพิมพ์เบอร์พาร์ท: ถ้าพาร์ทมีหลาย release ให้หน้าเครื่องแสดงตัวเลือกให้คนงานยืนยัน
+//   (แทนการเดา release ให้เอง ซึ่งอาจลงผิดใบ) · คืน [] ถ้าไม่พบ/ออฟไลน์
+export async function findReleaseCandidatesByPartNo(partNo) {
+  const p = String(partNo || "").trim();
+  if (!p) return [];
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return [];  // ต้องมีเน็ต
+  const { data: pms, error: e1 } = await supabase
+    .from("part_master").select("id").ilike("part_no", p);
+  if (e1) { console.warn("findReleaseCandidates (part_master) error", e1); return []; }
+  const ids = (pms || []).map((x) => x.id).filter(Boolean);
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from("part_units").select(UNIT_SELECT)
+    .in("part_master_id", ids)
+    .order("unit_no", { ascending: true });
+  if (error) { console.warn("findReleaseCandidates error", error); return []; }
+  // ตัวแทน 1 ชิ้นต่อ 1 release (dedupe ตาม release_id) → เอาไว้ให้เลือก
+  const seen = new Set(); const out = [];
+  for (const u of (data || [])) {
+    const rid = u.release_id || "none";
+    if (seen.has(rid)) continue;
+    seen.add(rid); out.push(u);
+  }
+  return out;
+}
+
 // โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
 // จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
 export async function prefetchUnitsForOffline(limit = 4000) {
@@ -261,8 +288,8 @@ export async function getReleaseProgress(releaseId, operationId = null) {
   // นับ "แยกตามขั้นตอน (operation) ของเครื่องนี้" — เครื่องตัด/เจาะ/บาก มีตัวนับของตัวเอง
   // ยึดตามเครื่องจักรเป็นหลัก: เจาะไปกี่ชิ้น OF จำนวนสั่ง โดยไม่รวมยอดของขั้นตอนอื่น
   const key = releaseId + (operationId ? "|" + operationId : "");
-  // สเตชันนี้ทำ operation เดียว → งานค้างคิวทั้งหมดคือ operation นี้อยู่แล้ว
-  const queued = queuedQtyForRelease(releaseId);
+  // ★ นับงานค้างคิว "เฉพาะขั้นตอนนี้" (กันเครื่องหลายขั้นตอนนับข้ามกันตอนออฟไลน์)
+  const queued = queuedQtyForRelease(releaseId, operationId);
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return (await getCachedProgress(key)) + queued;
   }
@@ -442,10 +469,16 @@ function qWrite(a) {
 export function scanQueueCount() { return qRead().length; }
 export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
 // รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
-function queuedQtyForRelease(releaseId) {
+// ★ แยกตาม "ขั้นตอน (operation)" ด้วย — กันเครื่องหลายขั้นตอนที่สลับงานบน release เดียวกัน
+//   ตอนออฟไลน์ แล้วยอดคืบหน้าของแต่ละขั้นตอนนับข้ามกันจนเกินจริง
+function queuedQtyForRelease(releaseId, operationId = null) {
   if (!releaseId) return 0;
-  return qRead().reduce((s, it) =>
-    s + (it.release_id === releaseId ? (Number(it.machineWork?.p_quantity) || 0) : 0), 0);
+  return qRead().reduce((s, it) => {
+    if (it.release_id !== releaseId) return s;
+    // ถ้าระบุขั้นตอน → นับเฉพาะงานค้างของขั้นตอนนั้น (machineWork ที่ p_operation_id ตรง)
+    if (operationId && it.machineWork && it.machineWork.p_operation_id !== operationId) return s;
+    return s + (Number(it.machineWork?.p_quantity) || 0);
+  }, 0);
 }
 function isNetworkErr(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
@@ -735,10 +768,12 @@ async function offlineMachineDay() {
     const mw = it.machineWork;
     daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
     daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
+    daily.weight = (Number(daily.weight) || 0) + (Number(it.weight) || 0);   // ★ บวกน้ำหนักงานค้างด้วย
     records.push({
       id: "q-" + (it.ts || item), item: ++item,
       qty: Number(mw.p_quantity) || 0, status: mw.p_status,
       process_seconds: Number(mw.p_process_seconds) || 0,
+      weight: Number(it.weight) || 0,
       materials_length: mw.p_material_length, pending: true,   // ธง = ยังไม่ซิงค์
     });
   }
@@ -761,7 +796,7 @@ export async function sessionHeartbeat() {
 // • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
 // คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
 export async function recordMachineWork(
-  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt, operationId },
+  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt, operationId, weight },
   { allowQueue = true } = {}
 ) {
   const payload = {
@@ -778,8 +813,10 @@ export async function recordMachineWork(
   const { data, error } = await supabase.rpc("record_machine_work", payload);
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
-      // เก็บ release_id ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number ออฟไลน์
-      const a = qRead(); a.push({ machineWork: payload, release_id: releaseId || null, qid: payload.p_client_id, ts: Date.now() });
+      // เก็บ release_id + weight ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number/ยอดน้ำหนักออฟไลน์
+      //   (น้ำหนักคิดฝั่งเซิร์ฟเวอร์ = จำนวน × น้ำหนักต่อชิ้น · ออฟไลน์เก็บค่าที่คำนวณไว้ล่วงหน้ามาโชว์)
+      const a = qRead();
+      a.push({ machineWork: payload, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now() });
       // ★ ถ้าเขียนคิวไม่ได้ (ที่เก็บเต็ม/โหมดส่วนตัว) อย่าบอกว่าสำเร็จ — งานจะหายเงียบ
       if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
