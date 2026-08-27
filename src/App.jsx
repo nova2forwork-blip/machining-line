@@ -8,6 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
+  listActiveSessions, forceLogoutSession,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -4093,6 +4094,133 @@ function ProjectCrud() {
 }
 
 // ─── ล้างข้อมูลสแกน (admin): ทั้ง Release / ราย Part / รายชิ้น — ลบบันทึกงาน + รีเซ็ตสถานะ ───
+// ─── ผู้ใช้ที่กำลังล็อกอินอยู่ + บังคับออกจากระบบ (เฉพาะ Admin) ───────────────────
+function ActiveSessionsCard() {
+  const [rows, setRows] = useState(null);   // null = loading
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState("");     // sid ที่กำลังเตะ
+  const [msg, setMsg] = useState("");
+  const [now, setNow] = useState(Date.now());
+
+  const load = useCallback(async () => {
+    try {
+      const data = await listActiveSessions();
+      setRows(Array.isArray(data) ? data : []);
+      setErr("");
+    } catch (e) {
+      setErr("โหลดรายชื่อไม่สำเร็จ: " + (e?.message || e));
+      setRows([]);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  // รีเฟรชอัตโนมัติทุก 30 วิ (สถานะออนไลน์เปลี่ยนตาม heartbeat) + เดินนาฬิกา "ใช้งานล่าสุด"
+  useEffect(() => {
+    const t1 = setInterval(load, 30000);
+    const t2 = setInterval(() => setNow(Date.now()), 15000);
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, [load]);
+
+  function ago(iso) {
+    if (!iso) return "-";
+    const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
+    if (s < 45) return "เมื่อสักครู่";
+    const m = Math.floor(s / 60);
+    if (m < 1) return "เมื่อสักครู่";
+    if (m < 60) return `${m} นาทีที่แล้ว`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} ชม.ที่แล้ว`;
+    return `${Math.floor(h / 24)} วันที่แล้ว`;
+  }
+
+  async function kick(row) {
+    if (row.is_self) return;
+    const who = `${row.code || "-"}${row.name ? " — " + row.name : ""}`;
+    if (!confirm(`บังคับ "${who}" ออกจากระบบ?\n\nเครื่องนั้นจะซิงค์งานที่ค้างให้เสร็จก่อน แล้วเด้งออกเอง (ข้อมูลไม่หาย) — ต้องล็อกอินใหม่ถึงจะใช้ต่อได้`)) return;
+    setBusy(row.sid); setMsg("");
+    try {
+      const res = await forceLogoutSession(row.sid);
+      if (res?.ok) {
+        setMsg(`บังคับ ${who} ออกจากระบบแล้ว — เครื่องนั้นจะเด้งออกภายใน 1 นาที`);
+        mlsToast("บังคับออกจากระบบแล้ว", "success");
+        await load();
+      } else if (res?.reason === "self") {
+        mlsToast("เตะเครื่องที่กำลังใช้อยู่ไม่ได้", "warn");
+      } else {
+        mlsToast("เครื่องนั้นออกไปแล้ว หรือไม่พบเซสชัน", "warn");
+        await load();
+      }
+    } catch (e) {
+      setErr("บังคับออกไม่สำเร็จ: " + (e?.message || e));
+    } finally { setBusy(""); }
+  }
+
+  const online = (rows || []).filter((r) => r.online).length;
+
+  return (
+    <Card
+      title="ผู้ใช้ที่กำลังใช้งาน (เฉพาะ Admin)"
+      right={<Btn variant="ghost" size="sm" onClick={load} disabled={rows === null}>รีเฟรช</Btn>}
+    >
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        รายชื่อบัญชีที่ยัง “ถือเซสชันอยู่” (ยังไม่หมดอายุ/ยังไม่ถูกตัด) · จุดเขียว = กำลังออนไลน์ (มีสัญญาณใน 3 นาที) ·
+        กด <b>บังคับออกจากระบบ</b> เพื่อเตะเครื่องนั้น — เครื่องนั้นจะซิงค์งานค้างให้เสร็จก่อนแล้วเด้งออกเอง <b>(ข้อมูลไม่หาย)</b>
+      </div>
+
+      {msg && <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--accent-dk, #0a7)" }}>✓ {msg}</div>}
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
+
+      {rows === null ? (
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+      ) : rows.length === 0 ? (
+        <div className="empty-state">
+          <Icon name="user" size={30} />
+          <div className="empty-state-title">ยังไม่มีใครล็อกอินอยู่</div>
+          <div className="empty-state-sub">เมื่อมีเครื่อง/บัญชีเข้าใช้งาน จะแสดงที่นี่</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
+            ทั้งหมด <b>{rows.length}</b> เซสชัน · ออนไลน์ตอนนี้ <b style={{ color: "var(--accent-dk)" }}>{online}</b>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr>
+                <th style={{ width: 44 }}>สถานะ</th><th>บัญชี</th><th>บทบาท</th><th>เครื่อง</th><th>ใช้งานล่าสุด</th><th></th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.sid}>
+                    <td>
+                      <span title={r.online ? "ออนไลน์" : "เงียบ (แท็บปิด/ออฟไลน์)"} style={{
+                        display: "inline-block", width: 10, height: 10, borderRadius: 999,
+                        background: r.online ? "var(--success, #22c55e)" : "var(--border, #cbd5d1)",
+                        boxShadow: r.online ? "0 0 0 3px rgba(34,197,94,.18)" : "none",
+                      }} />
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <span style={{ fontWeight: 600 }}>{r.code || "-"}</span>{r.name ? <span style={{ color: "var(--muted)" }}> — {r.name}</span> : null}
+                      {r.is_self && <> <Badge tone="steel">เครื่องนี้</Badge></>}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{ROLE_LABELS[r.role] || r.role || "-"}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.is_machine ? `${r.machine_code || "-"}${r.machine_name ? " — " + r.machine_name : ""}` : <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: r.online ? "var(--text)" : "var(--muted)" }}>{ago(r.last_seen)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <Btn variant="danger" size="sm" disabled={r.is_self || busy === r.sid} onClick={() => kick(r)}>
+                        {busy === r.sid ? "กำลังเตะ..." : "บังคับออกจากระบบ"}
+                      </Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function ClearScansCard() {
   const [mode, setMode] = useState("group");     // group (ทั้ง Release) | release (ราย Part) | unit (QR)
   const [releases, setReleases] = useState([]);
@@ -4214,6 +4342,7 @@ function SetupPage() {
     { key: "machines", label: "เครื่องจักร" },
     { key: "parts", label: "Part Master" },
     { key: "employees", label: "พนักงาน" },
+    { key: "sessions", label: "ผู้ใช้ออนไลน์" },
     { key: "backup", label: "สำรองข้อมูล" },
   ];
   return (
@@ -4231,6 +4360,7 @@ function SetupPage() {
       {tab === "projects" && <ProjectCrud />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
+      {tab === "sessions" && <ActiveSessionsCard />}
       {tab === "parts" && <PartMasterCrud />}
       {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
     </div>
