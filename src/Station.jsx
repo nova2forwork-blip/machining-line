@@ -1122,25 +1122,34 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
       rafRef.current = stopPrimary;                    // เก็บตัวหยุดของกล้องหลัก
       startExtras();                                   // เปิดกล้องหลังตัวอื่น decode ขนานกัน
     }
+    // กล้องหลัก "ยังทำงาน/ไม่ดำ" อยู่ไหม (ใช้เช็กว่าอุปกรณ์เปิดหลายกล้องพร้อมกันได้จริง)
+    const primaryAlive = () => { const p = trackRef.current; return !!p && p.readyState === "live" && !p.muted; };
     // ── เปิดกล้องหลัง "ทุกตัว" ที่อุปกรณ์เปิดพร้อมกันได้ แล้ว decode ขนานกัน (ตัวไหนชัดก่อนชนะ) ──
     async function startExtras() {
+      // ★ iOS/iPadOS เปิดกล้องได้ทีละตัว — เปิดตัวอื่นจะไปแย่งกล้องหลัก → จอดำ · ข้าม ใช้กล้องเดียว
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "")
+        || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
+      if (isIOS) { setCamCount(1); return; }
       try {
         const primaryId = trackRef.current?.getSettings?.().deviceId || null;
         const rears = await listRearCameras();
         if (cancelled) return;
         let count = 1;                                 // นับกล้องหลัก
         for (const c of rears.filter((x) => x.deviceId && x.deviceId !== primaryId)) {
-          if (cancelled) break;
+          if (cancelled || !primaryAlive()) break;     // กล้องหลักตายแล้ว → หยุด (อุปกรณ์ไม่รองรับพร้อมกัน)
+          let s = null;
           try {
-            const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: c.deviceId } } });
-            if (cancelled) { s.getTracks().forEach((t) => t.stop()); break; }
-            const vid = document.createElement("video");
-            vid.playsInline = true; vid.muted = true; vid.srcObject = s;
-            try { await vid.play(); } catch { /* ignore */ }
-            const stop = makeTick(vid, document.createElement("canvas"), { drawsBox: false });
-            extraRef.current.push({ stream: s, stop, video: vid });
-            count++;
-          } catch { /* เปิดพร้อมกันไม่ได้ (เช่น iOS อนุญาตทีละตัว) → ข้าม */ }
+            s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: c.deviceId } } });
+          } catch { break; }                           // เปิดไม่ได้ = ไม่รองรับพร้อมกัน → หยุด
+          // ★ ถ้าเปิดตัวใหม่แล้วกล้องหลัก "ตาย/ดำ" → ทิ้งตัวใหม่ + หยุด (กันจอหลักดำ)
+          if (cancelled || !primaryAlive()) { try { s.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ } break; }
+          const vid = document.createElement("video");
+          vid.playsInline = true; vid.muted = true; vid.srcObject = s;
+          try { await vid.play(); } catch { /* ignore */ }
+          if (cancelled || !primaryAlive()) { try { s.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ } break; }
+          const stop = makeTick(vid, document.createElement("canvas"), { drawsBox: false });
+          extraRef.current.push({ stream: s, stop, video: vid });
+          count++;
         }
         if (!cancelled) setCamCount(count);
       } catch { /* ignore */ }
