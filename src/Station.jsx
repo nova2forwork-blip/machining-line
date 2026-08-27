@@ -10,7 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
   countUnitOpRecords, listRejected, clearRejected,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang } from "./i18n-dom.js";
 import { newClientId } from "./offline.js";   // ตัวสร้าง UUID ที่ปลอดภัยเสมอ (แม้ไม่มี crypto.randomUUID)
@@ -993,6 +993,8 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   const [zoom, setZoom] = useState(null);      // { min, max, step, value } หรือ null ถ้ากล้องไม่รองรับซูม
   const pinchRef = useRef(null);               // จับระยะ 2 นิ้ว (pinch zoom)
   const [focusRing, setFocusRing] = useState(null);  // { x, y } จุดที่แตะโฟกัส (px ในกรอบกล้อง)
+  const extraRef = useRef([]);                 // กล้องหลัง "ตัวอื่น" ที่เปิด decode ขนานกัน { stream, stop, video }
+  const [camCount, setCamCount] = useState(1); // จำนวนกล้องหลังที่ใช้อ่านพร้อมกันจริง
   function applyZoom(v) {
     const val = Number(v);
     setZoom((z) => (z ? { ...z, value: val } : z));
@@ -1014,6 +1016,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   function camTouchEnd() { pinchRef.current = null; }
   // แตะเพื่อโฟกัสจุดที่แตะ (best-effort — กล้องที่ไม่รองรับจะเงียบไว้)
   async function tapFocus(e) {
+    if (e.target?.closest?.("button, input, .stn-cam-zoom")) return;   // แตะปุ่ม/แถบซูม ไม่นับเป็นจิ้มโฟกัส
     const box = e.currentTarget.getBoundingClientRect();
     const px = (e.clientX ?? e.changedTouches?.[0]?.clientX) - box.left;
     const py = (e.clientY ?? e.changedTouches?.[0]?.clientY) - box.top;
@@ -1079,41 +1082,81 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
     }
     function clearBox() { const oc = overlayRef.current; if (oc) { const g = oc.getContext("2d"); g && g.clearRect(0, 0, oc.width, oc.height); } }
 
-    async function loop() {
-      const mod = await import("jsqr");
-      const jsQR = mod.default || mod;
-      const v = videoRef.current, cv = canvasRef.current;
-      if (!v || !cv) return;
-      const ctx = cv.getContext("2d", { willReadFrequently: true });
-      let last = 0;
+    // เมื่อ decode เจอ QR (ตัวไหนก็ได้ที่อ่านชัดก่อน) → ประมวลผล · ถ้าไม่พบในระบบ กลับมาสแกนต่อเอง
+    function handleFound(data) {
+      doneRef.current = true;                          // หยุดทุกตัวชั่วคราว (กัน decode ซ้ำ)
+      onDecoded(data).then((ok) => { if (!ok) { clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); } });
+    }
+    // ★ tick แบบ "reschedule เสมอ" — พอ doneRef กลับเป็น false (เคสไม่พบ) จะสแกนต่ออัตโนมัติ ไม่ค้าง
+    function makeTick(video, canvas, { drawsBox }) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      let last = 0, raf = 0, live = true;
       const tick = () => {
-        if (cancelled || doneRef.current) return;
+        if (cancelled || !live) return;
         const now = Date.now();
-        if (v.readyState === v.HAVE_ENOUGH_DATA && now - last > 110) {
+        if (!doneRef.current && video.readyState === video.HAVE_ENOUGH_DATA && now - last > 110) {
           last = now;
-          const w = v.videoWidth, h = v.videoHeight;
+          const w = video.videoWidth, h = video.videoHeight;
           if (w && h) {
-            cv.width = w; cv.height = h;
-            ctx.drawImage(v, 0, 0, w, h);
-            const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(video, 0, 0, w, h);
+            const code = jsQRmod(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
             if (code && code.data && code.location) {
-              drawBox(code.location, w, h);        // กรอบขาวเกาะรอบ QR ตัวที่กำลังอ่าน
-              doneRef.current = true;
-              // ถ้าไม่พบในระบบ → เตือนแล้วกลับมาสแกนต่อ (ล้างกรอบด้วย)
-              onDecoded(code.data.trim()).then((ok) => { if (!ok) { clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); } });
-              return;
-            }
-            clearBox();                            // ไม่เจอ QR ในเฟรมนี้ → ล้างกรอบ
+              if (drawsBox) drawBox(code.location, w, h);
+              handleFound(code.data.trim());
+            } else if (drawsBox) { clearBox(); }
           }
         }
-        rafRef.current = requestAnimationFrame(tick);
+        raf = requestAnimationFrame(tick);
       };
       tick();
+      return () => { live = false; cancelAnimationFrame(raf); };
+    }
+    let jsQRmod = null;
+    async function loop() {
+      const mod = await import("jsqr");
+      jsQRmod = mod.default || mod;
+      const v = videoRef.current, cv = canvasRef.current;
+      if (!v || !cv) return;
+      const stopPrimary = makeTick(v, cv, { drawsBox: true });
+      rafRef.current = stopPrimary;                    // เก็บตัวหยุดของกล้องหลัก
+      startExtras();                                   // เปิดกล้องหลังตัวอื่น decode ขนานกัน
+    }
+    // ── เปิดกล้องหลัง "ทุกตัว" ที่อุปกรณ์เปิดพร้อมกันได้ แล้ว decode ขนานกัน (ตัวไหนชัดก่อนชนะ) ──
+    async function startExtras() {
+      try {
+        const primaryId = trackRef.current?.getSettings?.().deviceId || null;
+        const rears = await listRearCameras();
+        if (cancelled) return;
+        let count = 1;                                 // นับกล้องหลัก
+        for (const c of rears.filter((x) => x.deviceId && x.deviceId !== primaryId)) {
+          if (cancelled) break;
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: c.deviceId } } });
+            if (cancelled) { s.getTracks().forEach((t) => t.stop()); break; }
+            const vid = document.createElement("video");
+            vid.playsInline = true; vid.muted = true; vid.srcObject = s;
+            try { await vid.play(); } catch { /* ignore */ }
+            const stop = makeTick(vid, document.createElement("canvas"), { drawsBox: false });
+            extraRef.current.push({ stream: s, stop, video: vid });
+            count++;
+          } catch { /* เปิดพร้อมกันไม่ได้ (เช่น iOS อนุญาตทีละตัว) → ข้าม */ }
+        }
+        if (!cancelled) setCamCount(count);
+      } catch { /* ignore */ }
     }
     open();
     return () => {
       cancelled = true;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (typeof rafRef.current === "function") { try { rafRef.current(); } catch { /* ignore */ } }  // หยุด loop กล้องหลัก
+      rafRef.current = null;
+      // หยุด decode + ปิดกล้องหลัง "ตัวอื่น" (extra) เสมอ — ไม่ใช่สตรีมถาวร
+      extraRef.current.forEach((x) => {
+        try { x.stop && x.stop(); } catch { /* ignore */ }
+        try { x.stream.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+        try { x.video.srcObject = null; } catch { /* ignore */ }
+      });
+      extraRef.current = [];
       const v = videoRef.current;
       if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
       streamRef.current = null;
@@ -1145,13 +1188,16 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
 
   return (
     <div>
-      <div className="stn-cam">
+      <div className="stn-cam"
+        onTouchStart={camTouchStart} onTouchMove={camTouchMove} onTouchEnd={camTouchEnd} onClick={tapFocus}>
         {camOn ? (
           <>
             <video ref={videoRef} playsInline muted />
             <canvas ref={canvasRef} style={{ display: "none" }} />
             <canvas ref={overlayRef} className="stn-cam-overlay" />
+            {focusRing && <div className="stn-cam-focus" style={{ left: focusRing.x, top: focusRing.y }} />}
             <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
+            {camCount > 1 && <div className="stn-cam-multi">📷×{camCount}</div>}
             {zoom && (
               <div className="stn-cam-zoom">
                 <button type="button" onClick={() => applyZoom(Math.max(zoom.min, zoom.value - zoom.step * 3))} aria-label="zoom out">−</button>
