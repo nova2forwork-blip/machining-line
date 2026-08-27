@@ -5,7 +5,7 @@ import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, findUnitByPartNo, getMachineDay, recordMachineWork, getReleaseProgress,
+  findUnitByQr, findUnitByPartNo, findReleaseCandidatesByPartNo, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
   countUnitOpRecords, listRejected, clearRejected,
@@ -137,6 +137,9 @@ function StationLogin({ onLogin, notice }) {
 // MACHINE TERMINAL
 // ══════════════════════════════════════════════════════════════════════════
 const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "part", READY: "ready", SAVE: "save" };
+// เก็บ "งานที่กำลังทำ" (ยังไม่กด OK) ไว้ใน localStorage → กดอัปเดต/รีโหลด/แอปเด้ง แล้วกู้กลับมาได้ ไม่หาย
+const DRAFT_KEY = "mls-station-draft";
+const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
 
 function MachineStation({ user, onLogout, onKicked }) {
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
@@ -155,6 +158,7 @@ function MachineStation({ user, onLogout, onKicked }) {
   const [materialLen, setMaterialLen] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(null);
+  const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
   const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
@@ -287,14 +291,66 @@ function MachineStation({ user, onLogout, onKicked }) {
   useEffect(() => () => clearTimeout(toastRef.current), []);
 
   // ── timer ───────────────────────────────────────────────────────────────
+  // ยึด "เวลาเริ่มจริง (startTsRef)" เป็นหลัก → เวลาไม่ดริฟต์ + กู้ต่อได้เป๊ะตอนโหลดแอปใหม่
   function startTimer() {
     clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    if (startTsRef.current == null) startTsRef.current = Date.now() - (Number(elapsed) || 0) * 1000;
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTsRef.current) / 1000)));
+    tick();
+    timerRef.current = setInterval(tick, 1000);
   }
-  function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; }
+  function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; startTsRef.current = null; }
   useEffect(() => () => stopTimer(), []);
   // ปิดกล้องถาวรตอนออกจากหน้าเครื่อง (ออกจากระบบ/ถูกเตะ) — ระหว่างใช้งานกล้องเปิดค้างไว้ตัวเดียว
   useEffect(() => () => releaseSharedCamera(), []);
+
+  // ── กัน "งานหายตอนกดอัปเดต/รีโหลด" ──────────────────────────────────────
+  // เก็บงานที่กำลังทำ (พาร์ทที่สแกน/จำนวน/สถานะ/เวลาเดินเครื่อง) ลง localStorage แบบสด
+  // แล้วกู้กลับตอนโหลดแอปใหม่ → กดอัปเดตกลางงานก็ไม่หาย (เวลาเดินเครื่องนับต่อจากเวลาเริ่มจริง)
+  const draftLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;   // ยังไม่ผ่านขั้นกู้ draft — อย่าเพิ่งเขียนทับ
+    try {
+      // "กำลังทำงาน" = กด START แล้ว (timer เดิน / สแกน / เลือกจำนวน) — step ไม่ใช่ IDLE
+      if (step === STEP.IDLE) { localStorage.removeItem(DRAFT_KEY); return; }   // จบ/ยกเลิก/บันทึกแล้ว → ล้าง draft
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        v: 1, step, materialLen, qty, status,
+        unit, op, progress, dupCount,
+        clientId: clientIdRef.current,
+        startTs: startTsRef.current,        // เวลาเริ่มจริง → คำนวณเวลาเดินเครื่องต่อได้
+        savedAt: Date.now(),
+      }));
+    } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
+  }, [step, materialLen, qty, status, unit, op, progress, dupCount]);
+
+  // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        const tooOld = d && d.savedAt && (Date.now() - d.savedAt > DRAFT_MAX_AGE_MS);
+        if (d && d.v === 1 && d.step && d.step !== STEP.IDLE && !tooOld) {
+          setMaterialLen(d.materialLen ?? "");
+          setUnit(d.unit ?? null);
+          setQty(Number(d.qty) || 0);
+          setStatus(d.status ?? null);
+          setProgress(d.progress ?? null);
+          setDupCount(Number(d.dupCount) || 0);
+          if (d.op) setOp(d.op);
+          clientIdRef.current = d.clientId ?? null;
+          if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
+          setStep(d.step);
+          startTimer();   // เดินเวลาต่อทันที
+          flash(t("กู้งานที่ค้างอยู่กลับมาแล้ว — ตรวจแล้วกด OK ได้เลย", "Restored your in-progress job — review and press OK"), "ok");
+        } else if (tooOld) {
+          localStorage.removeItem(DRAFT_KEY);   // เก่าเกิน → ทิ้ง
+        }
+      }
+    } catch { /* ignore */ }
+    draftLoadedRef.current = true;   // เปิดให้ effect เขียน draft ทำงานได้หลังจากนี้
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function resetAll(keepLen = false) {
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
@@ -352,33 +408,53 @@ function MachineStation({ user, onLogout, onKicked }) {
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
   function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
-  // คืน true=พบ, false=ไม่พบ · มีเสียงเฉพาะตอน "ไม่พบ" (เตือนทุกครั้งที่กดตกลง) เท่านั้น
-  async function onDecoded(qr) {
-    if (!qr) return false;
-    setBusy(true);
-    // หาแบบ QR ก่อน · ถ้าไม่เจอลองหาแบบ "เบอร์พาร์ท" (เผื่อพิมพ์เบอร์พาร์ทแทนสแกน QR)
-    let u = await findUnitByQr(qr);
-    if (!u) u = await findUnitByPartNo(qr);
-    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false; }
-    tickBeep();   // เสียงเบายืนยันว่าสแกนเจอชิ้นงาน (ต่างจาก error)
-    // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
-    // done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
-    // ยึดตามเครื่องจักร: ตัด/เจาะ/บาก นับแยกกัน (ไม่รวมยอดข้ามขั้นตอน)
-    // ★ H1: ต้องรู้ "ขั้นตอน (operation) ของเครื่องนี้" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้
-    //   อย่าเอายอด "รวมทุกขั้นตอน" มาโชว์ (จะหลอกให้หยุดงานก่อนครบ) → โชว์เป็นไม่ทราบแทน
+  // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
+  // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
+  //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
+  //   ★ H1: ต้องรู้ "ขั้นตอน (operation)" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้ โชว์เป็นไม่ทราบ
+  async function showScannedUnit(u) {
+    tickBeep();   // เสียงเบายืนยันว่าเจอชิ้นงาน
     const opId = op?.id || user.operation?.id || null;
     const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
-    // ★ ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วหรือยัง — ใช้เตือน rework ก่อนบันทึกซ้ำ (0 เมื่อออฟไลน์)
-    const dup = opId ? await countUnitOpRecords(u.id, opId) : 0;
+    const dup = opId ? await countUnitOpRecords(u.id, opId) : 0;   // เตือน rework (0 เมื่อออฟไลน์)
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-    setBusy(false);
     setDupCount(dup);
     setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
+  }
+  // สแกน QR (จากกล้อง) — ถ้าอ่านได้เป็นเบอร์พาร์ท ลอง fallback หา 1 ตัว (กล้องเดี่ยวไม่มี UI ให้เลือก)
+  // คืน true=พบ, false=ไม่พบ
+  async function onDecoded(qr) {
+    if (!qr) return false;
+    setBusy(true);
+    let u = await findUnitByQr(qr);
+    if (!u) u = await findUnitByPartNo(qr);
+    if (!u) { setBusy(false); errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false; }
+    setBusy(false);
+    await showScannedUnit(u);
     return true;
   }
+  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — ถ้าเบอร์พาร์ทตรงกับ "หลาย release" ให้เลือกก่อน (กันลงผิดใบ)
+  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[units] } เมื่อต้องเลือก release · { ok:false } เมื่อไม่พบ
+  async function onManualEntry(text) {
+    const s = String(text || "").trim();
+    if (!s) return { ok: false };
+    setBusy(true);
+    // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
+    let u = await findUnitByQr(s);
+    if (u) { setBusy(false); await showScannedUnit(u); return { ok: true }; }
+    // 2) เป็นเบอร์พาร์ท → หา release ผู้สมัครทั้งหมด
+    const cands = await findReleaseCandidatesByPartNo(s);
+    setBusy(false);
+    if (!cands.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
+    if (cands.length === 1) { await showScannedUnit(cands[0]); return { ok: true }; }
+    // มีหลาย release → ให้คนงานเลือก (กันลงผิดใบ)
+    return { ok: false, choose: cands };
+  }
+  // คนงานเลือก release จากตัวเลือกแล้ว → ใช้ชิ้นตัวแทนของ release นั้น
+  async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
   function confirmPart() {
@@ -407,6 +483,8 @@ function MachineStation({ user, onLogout, onKicked }) {
         ? crypto.randomUUID() : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     }
     try {
+      // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
+      const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
       const res = await recordMachineWork({
         qr: unit.qr_code,
         quantity: qty,
@@ -416,6 +494,7 @@ function MachineStation({ user, onLogout, onKicked }) {
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
         operationId: op?.id || null,  // ★ ขั้นตอนที่เลือกบนจอ
         clientId: clientIdRef.current, // ★ คงเดิมตอน retry
+        weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
       });
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
@@ -628,7 +707,8 @@ function MachineStation({ user, onLogout, onKicked }) {
             <WorkArea
               step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
               status={status} setStatus={setStatus} busy={busy}
-              onDecoded={onDecoded} confirmCancel={confirmCancel} confirmPart={confirmPart}
+              onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
+              confirmCancel={confirmCancel} confirmPart={confirmPart}
               closeScan={closeScan} rescan={rescan} dupCount={dupCount}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
@@ -765,7 +845,7 @@ function StationAnim() {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0 }) {
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0 }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
   if (step === STEP.IDLE) {
@@ -804,7 +884,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     );
   }
   if (step === STEP.SCAN) {
-    return <CameraScan onDecoded={onDecoded} busy={busy} onClose={closeScan} />;
+    return <CameraScan onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit} busy={busy} onClose={closeScan} />;
   }
   if (step === STEP.PART) {
     const p = unit?.part_master || {};
@@ -876,7 +956,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 }
 
 // ── Camera QR scanner (rear camera + jsQR) with manual fallback ────────────
-function CameraScan({ onDecoded, busy, onClose }) {
+function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);   // แคนวาสวาดกรอบขาวทับ QR ที่เจอ
@@ -885,6 +965,7 @@ function CameraScan({ onDecoded, busy, onClose }) {
   const doneRef = useRef(false);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState("");
+  const [pickList, setPickList] = useState(null);   // [units] ให้เลือก release เมื่อเบอร์พาร์ทตรงหลายใบ
   const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
@@ -1028,8 +1109,17 @@ function CameraScan({ onDecoded, busy, onClose }) {
   function submitManual(e) {
     e.preventDefault();
     if (!manual.trim()) return;
-    // กดตกลงได้ทุกครั้ง: ถ้า QR ผิด จะเตือนซ้ำทุกครั้ง; ถ้าถูกค่อยหยุดสแกน
-    onDecoded(manual.trim()).then((ok) => { if (ok) doneRef.current = true; });
+    setPickList(null);
+    // เบอร์พาร์ทตรงหลาย release → คืน choose ให้เลือกก่อน (กันลงผิดใบ) · ตรงใบเดียว → ระบุเลย
+    onManualEntry(manual.trim()).then((r) => {
+      if (r && r.ok) { doneRef.current = true; }
+      else if (r && r.choose) { setPickList(r.choose); }
+    });
+  }
+  function pickRelease(u) {
+    setPickList(null);
+    doneRef.current = true;
+    onPickUnit(u);
   }
 
   return (
@@ -1060,13 +1150,35 @@ function CameraScan({ onDecoded, busy, onClose }) {
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
       <form className="stn-cam-manual" onSubmit={submitManual}>
-        <input className="stn-input stn-mono" value={manual} placeholder={t("หรือพิมพ์รหัส QR", "or type the QR code")}
+        <input className="stn-input stn-mono" value={manual} placeholder={t("หรือพิมพ์ QR / เบอร์พาร์ท", "or type QR / part no.")}
           onChange={(e) => setManual(e.target.value)} />
         <button className="stn-pill" type="submit" disabled={busy}>{t("ตกลง", "OK")}</button>
       </form>
       <div className="stn-cam-cancel-row">
         <button type="button" className="stn-pill stn-cam-cancel" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
       </div>
+
+      {/* เบอร์พาร์ทตรงหลาย Release → เลือกใบที่กำลังทำ (กันลงผิดใบ) */}
+      {pickList && pickList.length > 0 && (
+        <div className="stn-pick-backdrop" onClick={() => setPickList(null)}>
+          <div className="stn-pick" onClick={(e) => e.stopPropagation()}>
+            <div className="stn-pick-head">
+              <b>{pickList[0]?.part_master?.part_no || ""}</b>
+              <span>{t("มีหลาย Release — เลือกใบที่กำลังทำ", "Multiple releases — pick the one you're working on")}</span>
+            </div>
+            <div className="stn-pick-list">
+              {pickList.map((u, i) => (
+                <button type="button" key={u.id || i} className="stn-pick-item" onClick={() => pickRelease(u)}>
+                  <b>Release {u.release?.release_order ?? "-"}</b>
+                  <span>{t("จำนวนสั่ง", "Qty")} {u.release?.qty ?? "-"}
+                    {u.part_master?.projects?.code ? ` · ${u.part_master.projects.code}` : ""}</span>
+                </button>
+              ))}
+            </div>
+            <button type="button" className="stn-pill stn-cam-cancel" onClick={() => setPickList(null)}>{t("ยกเลิก", "Cancel")}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1147,7 +1259,7 @@ function StationUpdateBanner() {
   if (!ready) return null;
   return (
     <div className="stn-update">
-      <span>● มีเวอร์ชันใหม่{offline ? " · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่" : " — กดอัปเดตเมื่อพร้อม"}</span>
+      <span>● มีเวอร์ชันใหม่{offline ? " · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่" : " — กดอัปเดตเมื่อพร้อม (งานที่ทำอยู่ไม่หาย)"}</span>
       <button onClick={() => { setBusy(true); if (!applyUpdate()) { setBusy(false); setOffline(true); } }} disabled={busy}>
         {busy ? "กำลังอัปเดต…" : "อัปเดต"}
       </button>
