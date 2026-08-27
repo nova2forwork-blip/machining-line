@@ -122,20 +122,18 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-work-area { padding: 1vh; }
   .stn-hint { font-size: 2.1vh; max-width: 62vh; }
   .stn-hint .big { font-size: 2.4vh; }
-  /* ครบทุกคอลัมน์เหมือนคอม แต่บีบให้พอดีกรอบ ไม่ล้น/ไม่ต้องเลื่อนแนวนอน:
-     table-layout:fixed = ทุกคอลัมน์แบ่งความกว้างเท่า ๆ กันในกรอบ, ตัดคำขึ้นบรรทัดใหม่ได้ */
-  table.stn-rec { table-layout: fixed; width: 100%; }
-  table.stn-rec th, table.stn-rec td {
-    white-space: normal; overflow-wrap: anywhere; word-break: break-word; padding: 0.4vh 0.3vh;
-  }
-  table.stn-rec th { font-size: 1.25vh; }
-  table.stn-rec td { font-size: 1.4vh; }
+  /* มือถือ: คงคำเต็ม + ข้อมูลเต็มบรรทัดเดียว (ไม่ตัด/ไม่ขึ้นบรรทัด) เหมือนคอม — แค่ย่อฟอนต์ให้กระชับ
+     คอลัมน์กว้างตามเนื้อหา (auto) · ถ้ากว้างเกินจอ เลื่อนแนวนอนในกรอบตารางเองได้ (ไม่ดันหน้าทะลุ)
+     ใช้ .stn-table นำหน้าให้ฟอนต์ชนะกฎ base (10.5/12.5px ที่อยู่หลังในไฟล์) */
+  .stn-table table.stn-rec th { font-size: 9px; letter-spacing: 0; padding: 0.4vh 0.4vh; }
+  .stn-table table.stn-rec td { font-size: 10px; padding: 0.4vh 0.5vh; }
   .stn-pill { font-size: 1.9vh; padding: 1.4vh 2.6vh; border-radius: 1.6vh; }
   .stn-qty-lbl { font-size: 1.6vh; margin: 0.4vh 0; }
   .stn-qty-num { font-size: 5vh; }
   .stn-lbl-qr { width: 6vh; height: 6vh; }
   .stn-lbl-num, .stn-lbl-name { font-size: 1.6vh; }
-  .stn-lbl-part { font-size: 2.6vh; }
+  /* PART NO. บนป้ายตัวอย่าง = ข้อมูลสำคัญ → แสดงเต็ม ตัดบรรทัดได้ ไม่ตัดทิ้งเป็น "VE..." */
+  .stn-lbl-part { font-size: 2.2vh; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.15; }
   .stn-lbl-mat, .stn-lbl-line, .stn-lbl-kv .k, .stn-lbl-kv .v { font-size: 1.4vh; }
   .stn-lbl-of { font-size: 2.1vh; }
   .stn-part-label { margin-bottom: 0.8vh; padding: 1vh 1.4vh; }
@@ -170,10 +168,9 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
   .stn-code .stn-toplogout { display: inline-flex; top: 8px; left: 8px; }
   .stn-code .stn-lang { left: auto; right: 8px; }   /* ภาษาไปขวาบน กันชนปุ่มออก */
   /* ครบทุกคอลัมน์เหมือนคอม แต่บีบพอดีกรอบ ไม่ล้นแนวนอน */
-  table.stn-rec { table-layout: fixed; width: 100%; }
-  table.stn-rec th, table.stn-rec td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
-  table.stn-rec th { font-size: 1.3vh; padding: 0.4vh 0.3vh; }
-  table.stn-rec td { font-size: 1.45vh; padding: 0.4vh 0.3vh; }
+  /* มือถือแนวนอนจอเตี้ย: คงคำเต็ม + ข้อมูลเต็มบรรทัดเดียว เหมือนคอม — ย่อฟอนต์ · เลื่อนแนวนอนในกรอบได้ */
+  .stn-table table.stn-rec th { font-size: 8.5px; letter-spacing: 0; padding: 0.4vh 0.4vh; }
+  .stn-table table.stn-rec td { font-size: 9.5px; padding: 0.4vh 0.5vh; }
   .stn-hint { font-size: 1.8vh; }
   /* ★ จำกัดความสูงตารางด้านบน → เหลือที่ให้ขั้นตอนจำนวน/OK ด้านล่างพอดี ไม่ต้องเลื่อน */
   .stn-table { max-height: 30vh; }
