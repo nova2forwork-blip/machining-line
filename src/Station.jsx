@@ -8,7 +8,7 @@ import {
   findUnitByQr, findUnitByPartNo, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
-  countUnitOpRecords,
+  countUnitOpRecords, listRejected, clearRejected,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -169,6 +169,8 @@ function MachineStation({ user, onLogout, onKicked }) {
   const [pending, setPending] = useState(scanQueueCount());
   const [rejected, setRejected] = useState(rejectedQueueCount());
   const [storageFull, setStorageFull] = useState(false);   // ที่เก็บเต็ม — โชว์แถบค้างจนกว่าจะบันทึกได้
+  const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine !== false);
+  const [showRejected, setShowRejected] = useState(false); // เปิดแผงจัดการคิวซิงค์ไม่สำเร็จ
 
   // ── load today's records for this machine ──────────────────────────────
   const reload = useCallback(async () => {
@@ -240,6 +242,15 @@ function MachineStation({ user, onLogout, onKicked }) {
     const off = onScanQueue((n) => setPending(n));
     const offR = onRejectedQueue((n) => setRejected(n));
     return () => { off(); offR(); };
+  }, []);
+
+  // สถานะออนไลน์/ออฟไลน์ (reactive) — ใช้โชว์แถบสถานะเน็ตด้านบน
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
   }, []);
 
   // แจ้งเตือนถ้าที่เก็บข้อมูลเต็ม (เขียนคิวไม่ได้) — งานอาจไม่ถูกบันทึก (B4)
@@ -471,19 +482,38 @@ function MachineStation({ user, onLogout, onKicked }) {
 
   return (
     <div className="stn-shell">
-      {pending > 0 && <div className="stn-pending">⏳ ค้างซิงค์ {pending}</div>}
+      {/* แถบสถานะเน็ต — โชว์เมื่อ "ออฟไลน์" หรือมีงาน "ค้างซิงค์" (ออนไลน์กำลังดันขึ้น) */}
+      {(!online || pending > 0) && (
+        <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
+          {!online ? (
+            <span>📴 {t("ออฟไลน์", "Offline")}
+              {pending > 0
+                ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending} ${t("ชิ้น", "pcs")}`
+                : ` · ${t("ทำงานต่อได้ตามปกติ", "you can keep working")}`}
+            </span>
+          ) : (
+            <span>🔄 {t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}</span>
+          )}
+        </div>
+      )}
       {storageFull && (
         <div className="stn-rejected" onClick={() => setStorageFull(false)}
           style={{ background: "#b91c1c" }}
-          title="ที่เก็บข้อมูลในเครื่องเต็ม">
-          ⛔ ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)
+          title={t("ที่เก็บข้อมูลในเครื่องเต็ม", "Device storage full")}>
+          ⛔ {t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)",
+                "Storage full — work may not be saved! Close other apps / clear browser data, then retry · notify admin (tap to hide)")}
         </div>
       )}
       {rejected > 0 && (
-        <div className="stn-rejected" onClick={retryRejected}
-          title="แตะเพื่อลองซิงค์อีกครั้ง (หลังออฟฟิศกู้/แก้ข้อมูลแล้ว)">
-          ⚠️ ซิงค์ไม่สำเร็จ {rejected} — QR ถูกลบ/แก้ฝั่งออฟฟิศ · แตะเพื่อลองใหม่
-        </div>
+        <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}
+          title={t("แตะเพื่อจัดการคิวที่ซิงค์ไม่สำเร็จ", "Tap to manage failed-sync queue")}>
+          ⚠️ {t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} {t("ชิ้น", "pcs")} — {t("แตะเพื่อจัดการ", "tap to manage")}
+        </button>
+      )}
+      {showRejected && (
+        <RejectedPanel t={t} onClose={() => setShowRejected(false)}
+          onRetry={() => { retryRejected(); setShowRejected(false); flash(t("กำลังลองซิงค์ใหม่…", "Retrying sync…"), "ok"); }}
+          onClear={() => { clearRejected(); setShowRejected(false); flash(t("ล้างคิวที่ซิงค์ไม่สำเร็จแล้ว", "Cleared failed-sync queue"), "ok"); }} />
       )}
 
       {/* ── ปุ่มเลือกขั้นตอน — โชว์เฉพาะเครื่องที่ทำได้หลายขั้นตอน ─────────────── */}
@@ -1036,6 +1066,71 @@ function CameraScan({ onDecoded, busy, onClose }) {
       </form>
       <div className="stn-cam-cancel-row">
         <button type="button" className="stn-pill stn-cam-cancel" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── แผงจัดการคิว "ซิงค์ไม่สำเร็จ" (rejected) — ดูรายการ + ลองใหม่ทั้งหมด / ล้างทิ้ง ──
+function RejectedPanel({ t, onClose, onRetry, onClear }) {
+  const items = listRejected();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const reasonText = (r) => {
+    if (r === "not_found" || r === "unit_not_found") return t("ไม่พบ QR/ล็อตในระบบ (อาจถูกลบ)", "QR/lot not found (may be deleted)");
+    if (r === "retry_exhausted") return t("ลองซิงค์หลายครั้งไม่สำเร็จ", "Failed after several retries");
+    if (r === "forbidden" || r === "unauthorized") return t("สิทธิ์/เซสชันมีปัญหา", "Permission/session issue");
+    return r || t("ไม่ทราบสาเหตุ", "unknown");
+  };
+  const whatText = (it) => {
+    const mw = it.machineWork;
+    if (mw) return `${mw.p_qr || "-"}${mw.p_quantity ? ` × ${mw.p_quantity}` : ""}`;
+    return it.qr || "-";
+  };
+  const whenText = (it) => {
+    const ts = it.rejectedAt || it.ts;
+    if (!ts) return "";
+    try { const d = new Date(ts); return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+    catch { return ""; }
+  };
+  return (
+    <div className="stn-rej-backdrop" onClick={onClose}>
+      <div className="stn-rej-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="stn-rej-head">
+          <b>⚠️ {t("คิวซิงค์ไม่สำเร็จ", "Failed-sync queue")} ({items.length})</b>
+          <button type="button" className="stn-rej-x" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
+        </div>
+        <div className="stn-rej-note">
+          {t("งานเหล่านี้ทำจริงแต่ซิงค์ขึ้นระบบไม่ได้ (มัก QR/ล็อตถูกลบหรือแก้ฝั่งออฟฟิศ) — ให้ออฟฟิศกู้/แก้ข้อมูลก่อน แล้วกดลองใหม่",
+             "These jobs were done but couldn't sync (usually the QR/lot was deleted or changed in the office app). Ask the office to restore/fix the data, then retry.")}
+        </div>
+        <div className="stn-rej-list">
+          {items.length === 0 && <div className="stn-rej-empty">{t("ไม่มีรายการ", "No items")}</div>}
+          {items.map((it, i) => (
+            <div className="stn-rej-item" key={it.qid || i}>
+              <div className="stn-rej-what stn-mono">{whatText(it)}</div>
+              <div className="stn-rej-reason">{reasonText(it.reason)}</div>
+              <div className="stn-rej-when stn-mono">{whenText(it)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="stn-rej-actions">
+          {!confirmClear ? (
+            <>
+              <button type="button" className="stn-pill yes" onClick={onRetry} disabled={!items.length}>
+                🔄 {t("ลองซิงค์ใหม่ทั้งหมด", "Retry all")}
+              </button>
+              <button type="button" className="stn-pill no" onClick={() => setConfirmClear(true)} disabled={!items.length}>
+                🗑 {t("ล้างทิ้ง", "Discard")}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="stn-rej-confirm">{t("ล้างทิ้งถาวร? งานเหล่านี้จะหายและไม่ถูกบันทึก", "Discard permanently? These jobs will be lost.")}</span>
+              <button type="button" className="stn-pill no" onClick={onClear}>{t("ยืนยันล้าง", "Confirm discard")}</button>
+              <button type="button" className="stn-pill" onClick={() => setConfirmClear(false)}>{t("ยกเลิก", "Cancel")}</button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
