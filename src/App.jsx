@@ -1654,15 +1654,18 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </svg>
               หน้าแรก
             </Btn>
-            {canEdit && (
-              <Btn variant="ghost" size="sm" onClick={() => setEditHeader(true)} title="แก้เลขที่ Release Order / วันที่ / Modify ของทั้งใบ">
-                <Icon name="settings" size={14} /> แก้ไขหัวเอกสาร
-              </Btn>
-            )}
           </div>
           <div className="page-title">{hdr.ro ? `Release Order: ${hdr.ro}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}</div>
           <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtD(hdr.date)}</div>
         </div>
+        {canEdit && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="accent" onClick={() => setEditHeader(true)}
+              title="แก้เลขที่ Release Order / วันที่ / Modify ของทั้งใบ">
+              <Icon name="settings" size={15} /> แก้ไขหัวเอกสาร
+            </Btn>
+          </div>
+        )}
       </div>
 
       <div className="grid-3" style={{ marginBottom: 16 }}>
