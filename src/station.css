@@ -463,6 +463,12 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-pick-item:active { transform: scale(.99); background: var(--st-tint); }
 .stn-pick-item b { font-size: 15px; color: var(--st-ink); }
 .stn-pick-item span { font-size: 12.5px; color: var(--st-muted); }
+.stn-pick-item .stn-pick-len { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700; color: var(--st-red-dk); }
+.stn-pick-item.done { opacity: .72; }                                  /* ทำแล้ว → หรี่ลง (ดันขึ้นความสำคัญให้ตัวที่ยังไม่ทำ) */
+.stn-pick-item .stn-pick-fresh { color: var(--st-green); font-weight: 700; }
+.stn-pick-item .stn-pick-done { color: #9a5b00; font-weight: 600; }
+.stn-pick-search { width: 100%; font-size: 14px; }
+.stn-pick-empty { text-align: center; color: var(--st-muted); font-size: 13px; padding: 18px; }
 
 /* ── Ambient animation: พนักงานเดินมา "วางอลูมิเนียมบนเครื่องตัด" (ซ้าย→ขวา) ── */
 .stn-scene { width: min(90%, 600px); height: auto; display: block; margin: 2px auto 16px; }
