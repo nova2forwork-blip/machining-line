@@ -8,7 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
-  listActiveSessions, forceLogoutSession,
+  listActiveSessions, forceLogoutSession, updateReleaseHeader,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -1569,6 +1569,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
   const [editing, setEditing] = useState(null);   // release ที่กำลังแก้ไข
   const [busyId, setBusyId] = useState(null);     // release ที่กำลังลบ
+  const [editHeader, setEditHeader] = useState(false);   // เปิดหน้าต่างแก้หัวเอกสาร (Modify/RO/วันที่)
+  const [hdr, setHdr] = useState({ ro: group.releaseOrder, date: group.date });   // ค่าหัวเอกสารที่โชว์ (อัปเดตหลังบันทึก)
   const sort = useTableSort();
 
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
@@ -1652,9 +1654,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </svg>
               หน้าแรก
             </Btn>
+            {canEdit && (
+              <Btn variant="ghost" size="sm" onClick={() => setEditHeader(true)} title="แก้เลขที่ Release Order / วันที่ / Modify ของทั้งใบ">
+                <Icon name="settings" size={14} /> แก้ไขหัวเอกสาร
+              </Btn>
+            )}
           </div>
-          <div className="page-title">{group.releaseOrder ? `Release Order: ${group.releaseOrder}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}</div>
-          <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtD(group.date)}</div>
+          <div className="page-title">{hdr.ro ? `Release Order: ${hdr.ro}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}</div>
+          <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtD(hdr.date)}</div>
         </div>
       </div>
 
@@ -1824,6 +1831,27 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           onClose={() => setEditing(null)}
           onSaved={afterEdit}
           onDelete={() => { const r = editing; setEditing(null); handleDelete(r); }}
+        />
+      )}
+      {editHeader && (
+        <ReleaseHeaderEditModal
+          group={group}
+          releases={releases}
+          curRO={hdr.ro}
+          curDate={hdr.date}
+          onClose={() => setEditHeader(false)}
+          onSaved={({ ro, dateIso, mdf }) => {
+            // อัปเดตค่าที่โชว์ + แถวในตารางให้เห็นผลทันที (ไม่ต้องกลับออกไปโหลดใหม่)
+            setHdr({ ro, date: dateIso || hdr.date });
+            setReleases((prev) => prev.map((r) => ({
+              ...r,
+              release_order: ro || null,
+              release_date: dateIso || r.release_date,
+              part_master: r.part_master ? { ...r.part_master, mdf_no: mdf ?? r.part_master.mdf_no } : r.part_master,
+            })));
+            setEditHeader(false);
+            onChanged && onChanged();   // ให้หน้ารายการหลักรีเฟรชด้วย
+          }}
         />
       )}
     </div>
@@ -3095,6 +3123,106 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </div>
       )}
     </div>
+  );
+}
+
+// แปลง ISO/timestamp → "yyyy-mm-dd" ตามเวลาเครื่อง (สำหรับ <input type="date">)
+//   ใช้ส่วนวันของเวลาท้องถิ่น (ไทย = UTC+7) ให้ตรงกับ dateToIso ตอนบันทึกกลับ
+function isoToDateInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// ─── แก้หัวเอกสาร Release ทั้งใบ (Modify / เลขที่ Release Order / วันที่) — Admin เท่านั้น ───
+// ค่าทั้ง 3 เป็นระดับ "ทั้งใบ" → บันทึกทีเดียวเปลี่ยนครบทุก Part (ผ่าน RPC admin-gated)
+function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSaved }) {
+  const [modify, setModify] = useState("");
+  const [releaseOrder, setReleaseOrder] = useState(curRO || "");
+  const [date, setDate] = useState(() => isoToDateInput(curDate));
+  const [origMdf, setOrigMdf] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  // ดึงค่า Modify ปัจจุบัน (เก็บที่ part_master — ตัวแทน 1 Part ในใบ, ปกติทั้งใบใช้ค่าเดียวกัน)
+  useEffect(() => {
+    let alive = true;
+    const pmId = releases[0]?.part_master_id;
+    if (!pmId) { setLoading(false); return; }
+    listRows("part_master", { filters: { id: pmId } })
+      .then((rows) => { if (!alive) return; const m = (rows[0]?.mdf_no ?? "").toString(); setModify(m); setOrigMdf(m); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [releases]);
+
+  async function doSave() {
+    const ro = normalizeReleaseOrder(releaseOrder);
+    if (ro && !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009 (หรือเว้นว่าง)'); return; }
+    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    setBusy(true); setErr("");
+    try {
+      const dateChanged = date !== isoToDateInput(curDate);
+      const dateIso = dateChanged ? dateToIso(date) : null;
+      const mdfTrim = modify.trim();
+      const mdfChanged = mdfTrim !== (origMdf ?? "").trim();
+      const mdfVal = mdfChanged ? (mdfTrim || "0") : null;
+
+      const res = await updateReleaseHeader({
+        releaseIds: releases.map((r) => r.id),
+        releaseOrder: ro || null,
+        releaseDate: dateIso,
+        mdfNo: mdfVal,
+      });
+      if (!res?.ok) { setErr("บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : "")); setBusy(false); return; }
+
+      mlsToast(`บันทึกหัวเอกสารแล้ว — อัปเดต ${fmtNum(res.releases || releases.length)} Part`, "success");
+      onSaved({
+        ro: ro || null,
+        dateIso: dateChanged ? dateIso : curDate,
+        mdf: mdfChanged ? (mdfTrim || "0") : origMdf,
+      });
+    } catch (e) {
+      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="แก้ไขหัวเอกสาร Release"
+      sub={`${group.projectCode} — ${group.projectName} · ${releases.length} Part ในใบนี้`}
+      onClose={onClose} locked={busy}
+    >
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.6 }}>
+        แก้ค่าหัวเอกสารที่ใช้ “ทั้งใบ” — บันทึกครั้งเดียวจะเปลี่ยนให้ครบทุก Part ({releases.length} รายการ) ในใบนี้พร้อมกัน
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
+      ) : (
+        <>
+          <div className="grid-2">
+            <Field label="Modify (Release)">
+              <Input value={modify} onChange={(e) => setModify(e.target.value)} placeholder="เช่น M-001 (เว้นว่าง = 0)" />
+            </Field>
+            <Field label="เลขที่ Release Order">
+              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)}
+                onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
+            </Field>
+            <Field label="วันที่">
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+          </div>
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 8, lineHeight: 1.6 }}>{err}</div>}
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+            <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึกทั้งใบ"}</Btn>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 
