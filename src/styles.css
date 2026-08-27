@@ -344,6 +344,10 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 .mls-toast.error { border-left-color: var(--danger-hi); }
 .mls-toast.warn { border-left-color: var(--warning); }
 .mls-toast.info { border-left-color: var(--accent); }
+
+/* ป้าย "ปิดแล้ว" ของโปรเจกต์ที่แอดมินกดเสร็จ (ล็อกไม่ให้บันทึกงานเพิ่ม) */
+.proj-closed-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--danger); vertical-align: middle; letter-spacing: .02em; }
 @keyframes mlsToastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .mls-undo-hint {
   position: fixed; z-index: 9998; bottom: 20px; left: 20px; background: var(--surface-2); color: var(--text);
