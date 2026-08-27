@@ -80,6 +80,19 @@ let _sharedStream = null;
 let _acquiring = null;
 function _streamAlive(s) { return !!s && s.getVideoTracks?.().some((t) => t.readyState === "live"); }
 
+// ลิสต์ "กล้องหลังทั้งหมด" (ตัดกล้องหน้าออก) — ใช้เปิดหลายตัวพร้อมกันแล้ว decode ขนานกัน
+// label จะมีค่าก็ต่อเมื่อได้สิทธิ์กล้องแล้ว (เรียกหลังเปิดกล้องหลักสำเร็จ)
+export async function listRearCameras() {
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs
+      .filter((d) => d.kind === "videoinput" && !/front|user|face|selfie/i.test(d.label || ""))
+      .map((d) => ({ deviceId: d.deviceId, label: d.label || "" }))
+      .filter((c) => c.deviceId);
+  } catch { return []; }
+}
+
 async function _acquireRearStream() {
   // เลือกกล้องหลังตัวหลัก (เลี่ยง ultrawide/tele) ถ้าทำได้ แล้ว fallback ไปตามลำดับ
   let id = null;
