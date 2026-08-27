@@ -1014,29 +1014,35 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
     }
   }
   function camTouchEnd() { pinchRef.current = null; }
-  // แตะเพื่อโฟกัสจุดที่แตะ — ★ ทำเฉพาะเครื่องที่รองรับจริง (เช่น Android บางรุ่น)
-  //   iOS Safari ไม่รองรับสั่งโฟกัสผ่านเว็บ → ไม่โชว์วงกลมหลอก (กล้องใช้โฟกัสอัตโนมัติแทน)
+  // แตะ = "สั่งโฟกัสใหม่ (re-autofocus)" — จิ้มโฟกัส "ที่จุด" เว็บไม่รองรับจริง (pointsOfInterest แทบ
+  //   ไม่มีเบราว์เซอร์ไหนเปิด) จึงทำได้แค่กระตุ้นให้กล้องโฟกัสรอบใหม่ · เครื่องที่ไม่เปิด focusMode (iOS)
+  //   สั่งไม่ได้ → เงียบไว้ (พึ่งโฟกัสอัตโนมัติต่อเนื่องแทน)
   async function tapFocus(e) {
-    if (e.target?.closest?.("button, input, .stn-cam-zoom")) return;   // แตะปุ่ม/แถบซูม ไม่นับเป็นจิ้มโฟกัส
+    if (e.target?.closest?.("button, input, .stn-cam-zoom")) return;   // แตะปุ่ม/แถบซูม ไม่นับ
     const track = trackRef.current; if (!track) return;
     const caps = track.getCapabilities?.() || {};
-    const canFocus = (Array.isArray(caps.focusMode) && (caps.focusMode.includes("single-shot") || caps.focusMode.includes("manual")))
-      || Array.isArray(caps.pointsOfInterest) || caps.pointsOfInterest === true;
-    if (!canFocus) return;   // อุปกรณ์สั่งโฟกัสไม่ได้ (iOS ฯลฯ) → ไม่ต้องโชว์วงกลม (ไม่หลอกตา)
+    const modes = Array.isArray(caps.focusMode) ? caps.focusMode : [];
+    const hasPoint = !!caps.pointsOfInterest && modes.includes("single-shot");   // โฟกัสที่จุด (หายากมาก)
+    const hasSingle = modes.includes("single-shot");                              // สั่งโฟกัสรอบใหม่ได้
+    if (!hasPoint && !hasSingle) return;   // สั่งโฟกัสไม่ได้เลย (iOS/เครื่องที่ไม่เปิด API) → เงียบ ไม่หลอกตา
     const box = e.currentTarget.getBoundingClientRect();
     const px = (e.clientX ?? e.changedTouches?.[0]?.clientX) - box.left;
     const py = (e.clientY ?? e.changedTouches?.[0]?.clientY) - box.top;
     setFocusRing({ x: px, y: py });
-    setTimeout(() => setFocusRing(null), 800);
+    setTimeout(() => setFocusRing(null), 900);
     try {
-      const nx = Math.min(1, Math.max(0, px / box.width));
-      const ny = Math.min(1, Math.max(0, py / box.height));
-      const adv = {};
-      if (Array.isArray(caps.focusMode) && caps.focusMode.includes("single-shot")) adv.focusMode = "single-shot";
-      else if (Array.isArray(caps.focusMode) && caps.focusMode.includes("manual")) adv.focusMode = "manual";
-      if (caps.pointsOfInterest) adv.pointsOfInterest = [{ x: nx, y: ny }];
-      if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
-    } catch { /* ไม่รองรับโฟกัสจุด */ }
+      if (hasPoint) {
+        const nx = Math.min(1, Math.max(0, px / box.width));
+        const ny = Math.min(1, Math.max(0, py / box.height));
+        await track.applyConstraints({ advanced: [{ focusMode: "single-shot", pointsOfInterest: [{ x: nx, y: ny }] }] });
+      } else {
+        // กระตุ้นโฟกัสรอบใหม่ (single-shot) แล้วกลับเป็นต่อเนื่อง (ถ้ามี) ให้ AF ทำงานต่อ
+        await track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
+        if (modes.includes("continuous")) {
+          setTimeout(() => { track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }, 900);
+        }
+      }
+    } catch { /* สั่งไม่สำเร็จ — เงียบไว้ */ }
   }
 
   useEffect(() => {
