@@ -124,6 +124,21 @@ export async function forceLogoutSession(sid) {
   return data || { ok: false, reason: "unknown" };
 }
 
+// แก้หัวเอกสาร Release ทั้งใบ (admin เท่านั้น) — เลขที่ Release Order / วันที่ / Modify(mdf_no)
+//   releaseIds = id ของทุก Part ในใบ · releaseDate = ISO string (หรือ null = ไม่เปลี่ยน)
+//   mdfNo = ค่า Modify (ส่ง null = ไม่แตะ) · คืน { ok, releases, parts }
+export async function updateReleaseHeader({ releaseIds, releaseOrder, releaseDate, mdfNo }) {
+  const { data, error } = await supabase.rpc("authz_update_release_header", {
+    p_token: authToken(),
+    p_release_ids: releaseIds,
+    p_release_order: releaseOrder ?? null,
+    p_release_date: releaseDate ?? null,
+    p_mdf_no: mdfNo ?? null,
+  });
+  if (error) { console.warn("authz_update_release_header error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
 // ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
 //   คืน { ok:true, unbound, deleted_records } เมื่อสำเร็จ
 //   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
