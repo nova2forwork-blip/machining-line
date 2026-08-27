@@ -983,11 +983,12 @@ function CameraScan({ onDecoded, busy, onClose }) {
     return () => {
       cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      // ปิดกล้องจริงเมื่อกด "ปิดกล้อง" หรือออกจากหน้าสแกน — กดเปิดใหม่ไม่ถามสิทธิ์ (ให้ไปแล้ว)
+      // แค่ "ถอดจอ" กล้อง (หยุดวาด/ถอด srcObject) — ★ ไม่ปิดสตรีมจริง (ไม่ releaseSharedCamera)
+      // เพื่อให้กดสแกนชิ้นถัดไปใช้สตรีมเดิม กล้องไม่ขอสิทธิ์ใหม่/ไม่หน่วงเปิดฮาร์ดแวร์ซ้ำ
+      // สตรีมจริงจะถูกปิดตอน "ออกจากระบบ/ออกจากหน้าเครื่อง" (useEffect cleanup ระดับ root)
       const v = videoRef.current;
       if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
       streamRef.current = null;
-      releaseSharedCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camOn]);
