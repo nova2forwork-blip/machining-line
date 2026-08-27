@@ -3733,6 +3733,21 @@ function ProjectsPage({ user, goTo }) {
     setEditing({ project: p, impact });
   }
 
+  // แอดมิน "ปิดโปรเจกต์ (เสร็จแล้ว)" → หน้าเครื่องบันทึกงานเพิ่มไม่ได้ · "เปิดใหม่" เพื่อแก้งาน
+  const admin = isAdmin(user);
+  const [closingId, setClosingId] = useState(null);
+  async function toggleClose(p, e) {
+    e.stopPropagation();
+    const closing = p.status !== "closed";
+    if (closing && !window.confirm(`ปิดโปรเจกต์ "${p.code} — ${p.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`)) return;
+    setClosingId(p.id);
+    try {
+      await updateRow("projects", p.id, { status: closing ? "closed" : "active" });
+      await reload();
+    } catch (err) { alert("เปลี่ยนสถานะไม่สำเร็จ: " + (err?.message || err)); }
+    finally { setClosingId(null); }
+  }
+
   // กดเข้าไปดู Release ในโปรเจคนี้ (แล้วเจาะเข้า Part / รายละเอียด ต่อได้)
   if (viewProject) {
     return (
@@ -3790,8 +3805,11 @@ function ProjectsPage({ user, goTo }) {
                   const done = s.total > 0 && s.finished >= s.total;   // ครบจริง
                   const pct = s.total ? (done ? 100 : Math.min(99, Math.round((s.finished / s.total) * 100))) : 0;
                   return (
-                    <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้">
-                      <td data-label="รหัส" style={{ fontFamily: "var(--font-mono)" }}>{p.code}</td>
+                    <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้"
+                      style={p.status === "closed" ? { opacity: 0.62 } : undefined}>
+                      <td data-label="รหัส" style={{ fontFamily: "var(--font-mono)" }}>{p.code}
+                        {p.status === "closed" && <span className="proj-closed-badge">ปิดแล้ว</span>}
+                      </td>
                       <td data-label="ชื่อโปรเจค">{p.name}</td>
                       <td data-label="ปล่อยงาน (ชิ้น)">{fmtNum(s.total)}</td>
                       <td data-label="เสร็จแล้ว" style={{ fontWeight: 700, color: s.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(s.finished)}</td>
@@ -3805,7 +3823,16 @@ function ProjectsPage({ user, goTo }) {
                       </td>
                       <td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(s.weight)}</td>
                       {canEdit && (
-                        <td data-label="" style={{ textAlign: "right" }}>
+                        <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          {admin && (
+                            <Btn variant="ghost" size="sm" disabled={closingId === p.id}
+                              onClick={(e) => toggleClose(p, e)}
+                              title={p.status === "closed" ? "เปิดโปรเจกต์อีกครั้ง (แก้งานได้)" : "ปิดโปรเจกต์ — ทำเสร็จแล้ว หน้าเครื่องบันทึกเพิ่มไม่ได้"}>
+                              {p.status === "closed"
+                                ? <><Icon name="refresh" size={13} /> เปิดใหม่</>
+                                : <><Icon name="check" size={13} /> ปิด (เสร็จ)</>}
+                            </Btn>
+                          )}
                           <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn>
                         </td>
                       )}
