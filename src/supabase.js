@@ -106,6 +106,24 @@ export async function setEmployeeActive(id, active) {
   if (error) { console.warn("set_employee_active error", error); flagAuth(error); throw error; }
 }
 
+// รายชื่อ session ที่กำลังล็อกอินอยู่ (admin เท่านั้น) — ใครออนไลน์/ผูกเครื่องไหน
+//   คืน array ของ { sid, is_self, code, name, role, is_machine, machine_code,
+//                   machine_name, last_seen, created_at, expires_at, online }
+//   sid = รหัสอ้างอิง session (md5 ของ token — ไม่ใช่ token จริง) ใช้ส่งให้ forceLogoutSession
+export async function listActiveSessions() {
+  const { data, error } = await supabase.rpc("authz_list_sessions", { p_token: authToken() });
+  if (error) { console.warn("authz_list_sessions error", error); flagAuth(error); throw error; }
+  return data || [];
+}
+
+// บังคับ 1 session ออกจากระบบ (admin เท่านั้น) — set superseded → เครื่องนั้นซิงค์งานค้างแล้วเด้งออก
+//   คืน { ok:true, kicked:1 } เมื่อสำเร็จ · { ok:false, reason:'self' } เมื่อพยายามเตะเครื่องตัวเอง
+export async function forceLogoutSession(sid) {
+  const { data, error } = await supabase.rpc("authz_force_logout", { p_token: authToken(), p_sid: sid });
+  if (error) { console.warn("authz_force_logout error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
 // ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
 //   คืน { ok:true, unbound, deleted_records } เมื่อสำเร็จ
 //   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
