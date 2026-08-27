@@ -161,7 +161,7 @@ export async function clearScansReleaseGroup(projectId, releaseOrder, { preview 
   return data;
 }
 
-const UNIT_SELECT = "*, part_master(*, projects(code, name)), release:releases(*)";
+const UNIT_SELECT = "*, part_master(*, projects(code, name, status)), release:releases(*)";
 
 // หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
 // ออนไลน์ = ถามฐานข้อมูล + เก็บลงแคชไว้ใช้ออฟไลน์ · ออฟไลน์/เน็ตมีปัญหา = อ่านจากแคช
@@ -244,10 +244,11 @@ export async function findManualPartOptions(partNo, operationId = null) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return [];  // ต้องมีเน็ต
   // 1) part_master (1 ต่อ 1 โปรเจกต์) ที่ part_no ตรง
   const { data: pms, error: e1 } = await supabase
-    .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name)")
+    .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name, status)")
     .ilike("part_no", p);
   if (e1) { console.warn("findManualPartOptions (part_master) error", e1); return []; }
-  const masters = pms || [];
+  // ตัดโปรเจกต์ที่ "ปิดแล้ว" ออก — บันทึกไม่ได้อยู่แล้ว ไม่ต้องให้เลือก (ถ้าต้องแก้งาน ให้แอดมินเปิดโปรเจกต์ก่อน)
+  const masters = (pms || []).filter((m) => m.projects?.status !== "closed");
   if (!masters.length) return [];
   const ids = masters.map((m) => m.id);
   // 2) ชิ้นงานของทุก part_master (ไว้ resolve + เอาความยาวเฉพาะชิ้น)
