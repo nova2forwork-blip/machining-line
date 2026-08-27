@@ -13,6 +13,7 @@ import {
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang } from "./i18n-dom.js";
+import { newClientId } from "./offline.js";   // ตัวสร้าง UUID ที่ปลอดภัยเสมอ (แม้ไม่มี crypto.randomUUID)
 
 // ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง (ใช้ตัวแปล DOM ตัวเดียวกับหน้าสำนักงาน · ซิงค์ผ่าน localStorage)
 function StnLangToggle() {
@@ -494,10 +495,9 @@ function MachineStation({ user, onLogout, onKicked }) {
     setBusy(true);
     // สร้าง client_id ครั้งเดียวต่อการบันทึกชิ้นนี้ · ถ้ากด OK ซ้ำ (retry หลังพลาด) ใช้ตัวเดิม
     // → ฝั่ง DB dedup ด้วย client_id ได้ กันบันทึกซ้ำแม้ error ที่ไม่ใช่เน็ต (เช่น insert สำเร็จแต่ตอบกลับพลาด)
-    if (!clientIdRef.current) {
-      clientIdRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
-        ? crypto.randomUUID() : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    }
+    // ★ ต้องเป็น "UUID จริง" เสมอ (คอลัมน์ client_id เป็น uuid) — newClientId() รับประกันได้แม้เครื่อง
+    //   ไม่มี crypto.randomUUID (เปิดผ่าน http / webview เก่า) · เดิมใช้ fallback ที่ไม่ใช่ UUID → insert พัง
+    if (!clientIdRef.current) clientIdRef.current = newClientId();
     try {
       // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
       const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
