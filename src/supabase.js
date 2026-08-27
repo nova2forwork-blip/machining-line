@@ -182,9 +182,11 @@ export async function findUnitByQr(qrCode) {
 }
 
 // หาชิ้นงานจาก "เบอร์พาร์ท" (แทนการสแกน QR — เผื่อ QR เสีย/พิมพ์เอง)
-// คืนชิ้นแรกของพาร์ทนั้น (unit_no น้อยสุด) · ตรงแบบไม่สนตัวพิมพ์เล็ก-ใหญ่
-// ทำ 2 ขั้น (ไม่ใช้ embedded-filter ของ PostgREST ซึ่งไม่เสถียร/มักคืนว่าง):
-//   1) หา part_master.id จาก part_no   2) หา part_units จาก part_master_id
+// ★ สำคัญ: พาร์ทเดียวอาจมีหลาย release → ถ้าเลือก release มั่ว "เลขรัน (PROCESS/BALANCE)"
+//   จะแยกคนละชุดกับตอนสแกน QR (ที่ได้ release เจาะจงจากตัว QR) → ยอดไม่ตรงกัน
+//   แก้: เลือก "release ที่กำลังทำอยู่" = release ที่มี machine_record ล่าสุดของพาร์ทนี้
+//   → พิมพ์เบอร์พาร์ทแล้วไปนับต่อกับชุดเดียวกับที่สแกน (เลขรันตรงกัน)
+// ทำเป็นขั้น ๆ (เลี่ยง embedded-filter ของ PostgREST ที่ไม่เสถียร):
 export async function findUnitByPartNo(partNo) {
   const p = String(partNo || "").trim();
   if (!p) return null;
@@ -195,15 +197,37 @@ export async function findUnitByPartNo(partNo) {
   if (e1) { console.warn("findUnitByPartNo (part_master) error", e1); return null; }
   const ids = (pms || []).map((x) => x.id).filter(Boolean);
   if (!ids.length) return null;                            // ไม่มีพาร์ทเบอร์นี้ในระบบ
-  // 2) หา unit ตัวแรกของพาร์ทนั้น (เอาที่มี release ก่อน แล้วค่อยเรียงตาม unit_no)
-  const { data, error } = await supabase
-    .from("part_units").select(UNIT_SELECT)
+
+  // 2) หา "release ที่กำลังทำอยู่" = release ที่เพิ่งมี machine_record ล่าสุดของพาร์ทนี้
+  //    (จับให้ตรงกับชุดที่สแกน QR อยู่ → เลขรันไม่แตกเป็นคนละชุด)
+  let activeReleaseId = null;
+  const { data: recent } = await supabase
+    .from("machine_records").select("release_id")
     .in("part_master_id", ids)
-    .order("release_id", { ascending: true, nullsFirst: false })  // ตัวที่ผูก release แล้วมาก่อน
-    .order("unit_no", { ascending: true })
+    .not("release_id", "is", null)
+    .order("recorded_at", { ascending: false })
     .limit(1);
-  if (error) { console.warn("findUnitByPartNo error", error); return null; }
-  const u = (data && data[0]) || null;
+  if (recent && recent[0]) activeReleaseId = recent[0].release_id;
+
+  // 3) เอา unit สักตัวของ release ที่กำลังทำ (ยังไม่เคยทำ → activeReleaseId=null ค่อย fallback)
+  let u = null;
+  if (activeReleaseId) {
+    const { data } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .eq("release_id", activeReleaseId).in("part_master_id", ids)
+      .order("unit_no", { ascending: true }).limit(1);
+    u = (data && data[0]) || null;
+  }
+  // fallback: ยังไม่เคยทำพาร์ทนี้ (ไม่มี record) → เอา unit แรกที่ผูก release แล้ว
+  if (!u) {
+    const { data, error } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .in("part_master_id", ids)
+      .order("release_id", { ascending: true, nullsFirst: false })
+      .order("unit_no", { ascending: true }).limit(1);
+    if (error) { console.warn("findUnitByPartNo error", error); return null; }
+    u = (data && data[0]) || null;
+  }
   if (u) cacheUnit(u);
   return u;
 }
