@@ -412,6 +412,41 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 /* แถบเตือน "ซิงค์ไม่สำเร็จถาวร" (QR ถูกลบ/แก้ฝั่งออฟฟิศ) — แตะเพื่อลองใหม่ */
 .stn-rejected { position: fixed; top: 44px; right: 16px; max-width: 60vw; font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 12px; font-weight: 600; color: #fff; background: var(--st-alert); border-radius: 12px; padding: 6px 12px; z-index: 31; cursor: pointer; box-shadow: 0 8px 18px -8px rgba(200,40,40,.6); }
 .stn-rejected:active { transform: scale(.98); }
+.stn-rejected { border: none; font-family: 'IBM Plex Sans Thai', sans-serif; }   /* reset ปุ่มให้เหมือนชิปเดิม */
+
+/* ── แถบสถานะเน็ต (ออฟไลน์ / กำลังซิงค์) ── อยู่ในโฟลว์บนสุด โชว์เฉพาะตอนจำเป็น (ปกติซ่อน ไม่กินที่) */
+.stn-netbar {
+  flex: 0 0 auto; width: 100%; text-align: center; color: #fff;
+  font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 13px; font-weight: 600;
+  padding: 6px 12px; letter-spacing: .01em; line-height: 1.35;
+}
+.stn-netbar.offline { background: #b45309; }        /* ส้มเข้ม = ออฟไลน์ */
+.stn-netbar.syncing { background: var(--st-red); }  /* น้ำเงินแบรนด์ = กำลังดันงานค้างขึ้น */
+
+/* ── แผงจัดการคิว "ซิงค์ไม่สำเร็จ" (rejected) ── */
+.stn-rej-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(10,15,30,.55);
+  display: flex; align-items: center; justify-content: center; padding: 16px; }
+.stn-rej-modal { background: #fff; border-radius: 16px; width: min(560px, 94vw); max-height: 86vh;
+  display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 60px -18px rgba(20,30,80,.5); }
+.stn-rej-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--st-line); font-size: 15px; color: var(--st-ink); }
+.stn-rej-x { border: none; background: none; font-size: 18px; cursor: pointer; color: var(--st-muted);
+  width: 32px; height: 32px; border-radius: 8px; flex: 0 0 auto; }
+.stn-rej-x:active { background: var(--st-panel); }
+.stn-rej-note { padding: 10px 16px; font-size: 12.5px; line-height: 1.55; color: #9a5b00;
+  background: #fff7ed; border-bottom: 1px solid var(--st-line-soft); }
+.stn-rej-list { overflow-y: auto; padding: 4px 10px; min-height: 40px; }
+.stn-rej-empty { text-align: center; color: var(--st-muted); padding: 22px; font-size: 13px; }
+.stn-rej-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+  padding: 8px 6px; border-bottom: 1px solid #eef1f6; align-items: center; }
+.stn-rej-what { font-size: 13px; font-weight: 600; color: var(--st-ink); }
+.stn-rej-reason { grid-column: 1 / 2; font-size: 11.5px; color: var(--st-alert); }
+.stn-rej-when { grid-column: 2; grid-row: 1 / 3; font-size: 11px; color: var(--st-muted); text-align: right; align-self: center; }
+.stn-rej-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 12px 16px; border-top: 1px solid var(--st-line); }
+.stn-rej-actions .stn-pill { flex: 1 1 auto; min-width: 130px; text-align: center; }
+.stn-rej-confirm { flex: 1 1 100%; font-size: 12.5px; color: var(--st-alert); font-weight: 600; }
+.stn-pill:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ── Ambient animation: พนักงานเดินมา "วางอลูมิเนียมบนเครื่องตัด" (ซ้าย→ขวา) ── */
 .stn-scene { width: min(90%, 600px); height: auto; display: block; margin: 2px auto 16px; }
