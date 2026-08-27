@@ -110,16 +110,35 @@ export async function getSharedCameraStream() {
       const s = await _acquireRearStream();
       _sharedStream = s;
       _camWarmed = !!s;
+      if (s) refreshCamPermissionPersist();                        // เพิ่งได้สิทธิ์ → เช็คว่าจำได้ไหม (ไม่ต้องรอ)
       return s;
     } finally { _acquiring = null; }
   })();
   return _acquiring;
 }
 
-// ปิดกล้องถาวรจริงๆ (เรียกตอนออกจากระบบ/ปิดหน้าเครื่อง) — เลิกจับกล้อง คืนทรัพยากร
+// ปิดกล้องถาวรจริงๆ (เรียกตอนออกจากระบบ/ปิดหน้าเครื่อง หรือ "พักกล้อง" ระหว่างสแกน
+// เมื่อรู้ว่าเบราว์เซอร์จำสิทธิ์ได้) — หยุด track = ดับไฟกล้อง คืนทรัพยากร
 export function releaseSharedCamera() {
   try { _sharedStream?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
   _sharedStream = null;
+}
+
+// ── เบราว์เซอร์ "จำสิทธิ์กล้อง" ได้ไหม? ──────────────────────────────────────
+// ถ้าจำได้ → ปิดสตรีม (ดับไฟกล้อง) ระหว่างสแกนได้เลย เพราะเปิดใหม่จะไม่ถามสิทธิ์ซ้ำ
+//   • Permissions API = 'granted' (Android/เดสก์ท็อป Chrome ฯลฯ) → จำได้แน่นอน
+//   • ติดตั้งเป็นแอป (standalone/PWA) → จำได้ (รวม iOS ที่ Permissions API ไม่รองรับ camera)
+//   • แท็บ Safari บน iOS (ไม่ได้ติดตั้งเป็นแอป) → จำข้าม stop() ไม่ได้ → ต้องคงสตรีมไว้กันถามซ้ำ
+let _permPersists = false;
+export function camPermissionPersists() { return _permPersists || isStandalone(); }
+export async function refreshCamPermissionPersist() {
+  try {
+    if (navigator.permissions?.query) {
+      const st = await navigator.permissions.query({ name: "camera" });
+      _permPersists = (st.state === "granted");
+      try { st.onchange = () => { _permPersists = (st.state === "granted"); }; } catch { /* ignore */ }
+    }
+  } catch { _permPersists = false; }   // iOS/Safari ไม่รองรับ name:camera → พึ่ง isStandalone แทน
 }
 
 // เรียกเต็มจอตอนผู้ใช้แตะจอครั้งแรก (fallback สำหรับคนที่ล็อกอินค้างไว้ ไม่มี gesture ตอนโหลด)
