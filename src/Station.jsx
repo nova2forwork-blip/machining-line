@@ -412,7 +412,15 @@ function MachineStation({ user, onLogout, onKicked }) {
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
   //   ★ H1: ต้องรู้ "ขั้นตอน (operation)" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้ โชว์เป็นไม่ทราบ
+  // คืน true=แสดงชิ้นเข้าหน้าเลือกจำนวน · false=ถูกบล็อก (เช่นโปรเจกต์ปิดแล้ว)
   async function showScannedUnit(u) {
+    // ★ กันไว้ตั้งแต่ต้น: โปรเจกต์ปิดแล้ว → เตือนทันที ไม่ให้เข้าหน้าทำงาน (ไม่ต้องเสียเวลาแล้วโดนเด้งตอนกด OK)
+    if (u?.part_master?.projects?.status === "closed") {
+      errorBeep();
+      flash(t("โปรเจกต์นี้ปิดแล้ว (ทำเสร็จ) — บันทึกงานเพิ่มไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน",
+              "This project is closed — can't add work · ask admin to reopen for rework"), "warn");
+      return false;
+    }
     tickBeep();   // เสียงเบายืนยันว่าเจอชิ้นงาน
     const opId = op?.id || user.operation?.id || null;
     const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
@@ -423,6 +431,7 @@ function MachineStation({ user, onLogout, onKicked }) {
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
+    return true;
   }
   // สแกน QR (จากกล้อง) — ถ้าอ่านได้เป็นเบอร์พาร์ท ลอง fallback หา 1 ตัว (กล้องเดี่ยวไม่มี UI ให้เลือก)
   // คืน true=พบ, false=ไม่พบ
@@ -431,11 +440,11 @@ function MachineStation({ user, onLogout, onKicked }) {
     if (!qr) return false;
     setBusy(true);
     const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจกต์/ใบเจาะจงเสมอ
-    if (u) { setBusy(false); await showScannedUnit(u); return true; }
+    if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจกต์ปิด → คืน false ให้สแกนต่อได้
     // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจกต์เดียวใช้เลย · หลายโปรเจกต์ → อย่าเดา ให้พิมพ์เลือก
     const opts = await findManualPartOptions(qr, curOpId());
     setBusy(false);
-    if (opts.length === 1) { await showScannedUnit(opts[0].unit); return true; }
+    if (opts.length === 1) { return await showScannedUnit(opts[0].unit); }
     if (opts.length >= 2) {
       errorBeep();
       flash(t("เบอร์นี้อยู่หลายโปรเจกต์ — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจกต์",
@@ -452,12 +461,12 @@ function MachineStation({ user, onLogout, onKicked }) {
     setBusy(true);
     // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
     const u = await findUnitByQr(s);
-    if (u) { setBusy(false); await showScannedUnit(u); return { ok: true }; }
-    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจกต์
+    if (u) { setBusy(false); return { ok: await showScannedUnit(u) }; }
+    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจกต์ (findManualPartOptions ตัดโปรเจกต์ปิดออกให้แล้ว)
     const opts = await findManualPartOptions(s, curOpId());
     setBusy(false);
     if (!opts.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
-    if (opts.length === 1) { await showScannedUnit(opts[0].unit); return { ok: true }; }
+    if (opts.length === 1) { return { ok: await showScannedUnit(opts[0].unit) }; }
     return { ok: false, choose: opts };   // หลายโปรเจกต์ → ให้เลือก
   }
   // คนงานเลือกโปรเจกต์แล้ว → ใช้ชิ้นตัวแทนของโปรเจกต์นั้น
@@ -505,7 +514,10 @@ function MachineStation({ user, onLogout, onKicked }) {
       });
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
-        flash(res?.message || "บันทึกไม่สำเร็จ", "warn");
+        const msg = res?.reason === "project_closed"
+          ? t("โปรเจกต์นี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
+          : (res?.message || "บันทึกไม่สำเร็จ");
+        flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
         return;
       }
