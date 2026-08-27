@@ -1014,17 +1014,21 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
     }
   }
   function camTouchEnd() { pinchRef.current = null; }
-  // แตะเพื่อโฟกัสจุดที่แตะ (best-effort — กล้องที่ไม่รองรับจะเงียบไว้)
+  // แตะเพื่อโฟกัสจุดที่แตะ — ★ ทำเฉพาะเครื่องที่รองรับจริง (เช่น Android บางรุ่น)
+  //   iOS Safari ไม่รองรับสั่งโฟกัสผ่านเว็บ → ไม่โชว์วงกลมหลอก (กล้องใช้โฟกัสอัตโนมัติแทน)
   async function tapFocus(e) {
     if (e.target?.closest?.("button, input, .stn-cam-zoom")) return;   // แตะปุ่ม/แถบซูม ไม่นับเป็นจิ้มโฟกัส
+    const track = trackRef.current; if (!track) return;
+    const caps = track.getCapabilities?.() || {};
+    const canFocus = (Array.isArray(caps.focusMode) && (caps.focusMode.includes("single-shot") || caps.focusMode.includes("manual")))
+      || Array.isArray(caps.pointsOfInterest) || caps.pointsOfInterest === true;
+    if (!canFocus) return;   // อุปกรณ์สั่งโฟกัสไม่ได้ (iOS ฯลฯ) → ไม่ต้องโชว์วงกลม (ไม่หลอกตา)
     const box = e.currentTarget.getBoundingClientRect();
     const px = (e.clientX ?? e.changedTouches?.[0]?.clientX) - box.left;
     const py = (e.clientY ?? e.changedTouches?.[0]?.clientY) - box.top;
     setFocusRing({ x: px, y: py });
     setTimeout(() => setFocusRing(null), 800);
     try {
-      const track = trackRef.current; if (!track) return;
-      const caps = track.getCapabilities?.() || {};
       const nx = Math.min(1, Math.max(0, px / box.width));
       const ny = Math.min(1, Math.max(0, py / box.height));
       const adv = {};
@@ -1055,6 +1059,10 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
           const cur = track.getSettings?.().zoom ?? caps.zoom.min;
           setZoom({ min: Number(caps.zoom.min), max: Number(caps.zoom.max), step: Number(caps.zoom.step) || 0.1, value: Number(cur) });
         } else { setZoom(null); }
+        // ★ เปิดโฟกัสอัตโนมัติต่อเนื่อง (ถ้ารองรับ) — ให้กล้องปรับโฟกัสเองตลอด (สำคัญเมื่อจิ้มโฟกัสไม่ได้)
+        if (caps && Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) {
+          try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch { /* ignore */ }
+        }
       } catch { setZoom(null); }
       const v = videoRef.current;
       if (!v) return;                              // ไม่ stop สตรีม — เก็บไว้ใช้ครั้งหน้า
