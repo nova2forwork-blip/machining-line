@@ -476,6 +476,11 @@ function Login({ onLogin }) {
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
           ค่าเริ่มต้น: admin / admin123<br />ระบบจะออกจากระบบอัตโนมัติเมื่อปิดแท็บนี้
         </div>
+        <div style={{ textAlign: "center", marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+          <a href="/station" style={{ fontSize: 13.5, fontWeight: 600, color: "var(--accent-dk)", textDecoration: "none" }}>
+            → ไปหน้าเครื่อง (สแกนงาน)
+          </a>
+        </div>
       </form>
     </div>
   );
