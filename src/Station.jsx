@@ -8,7 +8,7 @@ import {
   findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
-  countUnitOpRecords, listRejected, clearRejected,
+  countUnitOpRecords, listRejected, clearRejected, getBom, recordAssembly,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -162,6 +162,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
   const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
+  // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
+  const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
+  const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
+  const asmClientRef = useRef(null);
   const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
   const [dupCount, setDupCount] = useState(0);   // ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วกี่ครั้ง (เตือน rework)
   const [qty, setQty] = useState(0);
@@ -587,6 +591,95 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
   }, [lockTableHeight]);
 
+  // ── โหมดประกอบ/แพ็ก ─────────────────────────────────────────────────────
+  const isAsm = !!op?.is_assembly;
+  const asmComplete = !!asmParent && asmParent.bom.every((b) => asmChildren.filter((c) => c.child_pm_id === b.child_pm_id).length === b.qty);
+
+  // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
+  useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; }, [op?.id]);
+
+  function asmReset() { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; }
+  function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
+  function asmOpenCam() { warmAudio(); setStep(STEP.SCAN); }
+
+  const asmReason = (r) => {
+    const m = {
+      incomplete: t("ยังไม่ครบตาม BOM", "not complete per BOM"),
+      not_in_bom: t("มีชิ้นไม่อยู่ใน BOM", "a part is not in this BOM"),
+      child_used: t("มีชิ้นถูกใช้ในเบอร์อื่นแล้ว", "a part is already used elsewhere"),
+      duplicate_child: t("มีชิ้นซ้ำ", "duplicate part"),
+      child_not_found: t("มีชิ้นไม่พบในระบบ", "a part QR not found"),
+      no_bom: t("เบอร์นี้ยังไม่ได้กำหนด BOM", "no BOM set for this number"),
+      parent_not_found: t("ไม่พบเบอร์แม่", "parent not found"),
+      no_machine: t("บัญชีไม่ได้ผูกเครื่อง", "account has no machine"),
+      unauthorized: t("เซสชันหมดอายุ — ล็อกอินใหม่", "session expired"),
+    };
+    return m[r] || t("บันทึกประกอบไม่สำเร็จ", "assembly failed");
+  };
+
+  // สแกน/พิมพ์ QR ในโหมดประกอบ: ยังไม่มีเบอร์แม่ → ตั้งเป็นเบอร์แม่ (โหลด BOM) · มีแล้ว → เพิ่มเป็นลูก
+  async function asmScan(code) {
+    const s = String(code || "").trim();
+    if (!s) return false;
+    setBusy(true);
+    let u = null;
+    try { u = await findUnitByQr(s); } catch { u = null; }
+    setBusy(false);
+    if (!u) { errorBeep(); flash(t("ไม่พบ QR นี้ในระบบ", "QR not found"), "warn"); return false; }
+
+    if (!asmParent) {
+      if (u.part_master?.projects?.status === "closed") {
+        errorBeep(); flash(t("โปรเจกต์นี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
+      }
+      let bom = [];
+      try { bom = await getBom(u.part_master_id); } catch { bom = []; }
+      if (!bom || bom.length === 0) {
+        errorBeep(); flash(t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master"), "warn"); return false;
+      }
+      tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
+      setAsmParent({ unit: u, bom }); setAsmChildren([]); asmClientRef.current = null;
+      return true;
+    }
+
+    // เป็น "ลูก"
+    if (u.id === asmParent.unit.id) { flash(t("นี่คือเบอร์แม่เอง", "this is the parent"), "warn"); return false; }
+    if (asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้ว", "already scanned"), "warn"); return false; }
+    const inBom = asmParent.bom.find((b) => b.child_pm_id === u.part_master_id);
+    if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ใน BOM ของเบอร์แม่", "not in this BOM"), "warn"); return false; }
+    const got = asmChildren.filter((c) => c.child_pm_id === u.part_master_id).length;
+    if (got >= inBom.qty) { flash(t(`${inBom.part_no} ครบตาม BOM แล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
+    tickBeep(); flash(`+ ${inBom.part_no} (${got + 1}/${inBom.qty})`, "ok");
+    setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
+    return true;
+  }
+  const asmDecoded = async (qr) => { await asmScan(qr); return false; };          // false = กล้องสแกนต่อ (ใส่ลูกได้เรื่อยๆ)
+  const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
+
+  async function asmConfirm() {
+    if (!asmParent || !asmComplete || savingRef.current) return;
+    savingRef.current = true; setBusy(true);
+    if (!asmClientRef.current) asmClientRef.current = newClientId();
+    try {
+      const res = await recordAssembly({
+        parentQr: asmParent.unit.qr_code,
+        childQrs: asmChildren.map((c) => c.qr),
+        operationId: op?.id || null,
+        clientId: asmClientRef.current,
+      });
+      if (res && res.ok) {
+        tickBeep(); flash(t("✓ บันทึกประกอบแล้ว", "✓ Assembled"), "ok");
+        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null;
+        reload();
+      } else {
+        errorBeep(); flash(asmReason(res?.reason), "warn");
+      }
+    } catch (e) {
+      const off = typeof navigator !== "undefined" && navigator.onLine === false;
+      errorBeep();
+      flash(off ? t("โหมดประกอบต้องออนไลน์ (ตรวจชิ้นกับระบบ)", "assembly needs to be online") : t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
+    } finally { setBusy(false); savingRef.current = false; }
+  }
+
   const recording = step !== STEP.IDLE;
   const scanArmed = qty > 0 && !!unit;
 
@@ -741,6 +834,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
               onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
               confirmCancel={confirmCancel} confirmPart={confirmPart}
               closeScan={closeScan} rescan={rescan} dupCount={dupCount}
+              isAsm={isAsm} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
+              asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
+              asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
@@ -876,9 +972,85 @@ function StationAnim() {
 }
 
 // ── the changing middle panel ─────────────────────────────────────────────
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0 }) {
+function AsmManualInput({ onSubmit, placeholder, t }) {
+  const [v, setV] = useState("");
+  return (
+    <form className="stn-asm-manual" onSubmit={(e) => { e.preventDefault(); const s = v.trim(); if (!s) return; onSubmit(s); setV(""); }}>
+      <input value={v} onChange={(e) => setV(e.target.value)} placeholder={placeholder} inputMode="text" autoCapitalize="characters" />
+      <button type="submit">{t("เพิ่ม", "Add")}</button>
+    </form>
+  );
+}
+
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
+  isAsm, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
+
+  // ── โหมดประกอบ/แพ็ก ──────────────────────────────────────────────────────
+  if (isAsm) {
+    if (step === STEP.SCAN) {
+      return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} />;
+    }
+    const bom = asmParent?.bom || [];
+    const gotFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;
+    return (
+      <div className="stn-asm">
+        {!asmParent ? (
+          <div className="stn-asm-empty">
+            <div className="stn-asm-title">{t("โหมดประกอบ / แพ็ก", "Assembly / Packing")}</div>
+            <div className="stn-asm-sub">{t("สแกน หรือ พิมพ์ QR ของ “เบอร์แม่” ที่จะประกอบ", "Scan or type the parent QR to build")}</div>
+            <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t("สแกนเบอร์แม่", "Scan parent")}</button>
+            <AsmManualInput onSubmit={asmScan} placeholder={t("พิมพ์ QR เบอร์แม่", "type parent QR")} t={t} />
+          </div>
+        ) : (
+          <>
+            <div className="stn-asm-parent">
+              <div className="stn-asm-pinfo">
+                <span className="stn-asm-plabel">{t("เบอร์แม่", "PARENT")}</span>
+                <span className="stn-asm-pno">{asmParent.unit.part_master?.part_no || asmParent.unit.qr_code}</span>
+                <span className="stn-asm-pname">{asmParent.unit.part_master?.part_name || ""}</span>
+              </div>
+              <button className="stn-asm-changebtn" onClick={asmReset}>{t("เปลี่ยน", "Change")}</button>
+            </div>
+            <div className="stn-asm-bom">
+              {bom.map((b) => {
+                const g = gotFor(b.child_pm_id);
+                const done = g >= b.qty;
+                return (
+                  <div key={b.child_pm_id} className={`stn-asm-row${done ? " done" : ""}`}>
+                    <span className="chk">{done ? "✓" : "○"}</span>
+                    <span className="pn">{b.part_no}</span>
+                    <span className="nm">{b.part_name || ""}</span>
+                    <span className="cnt">{g}/{b.qty}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {asmChildren.length > 0 && (
+              <div className="stn-asm-scanned">
+                {asmChildren.map((c) => (
+                  <span key={c.unit_id} className="stn-asm-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>
+                    {c.part_no} · {c.qr} ✕
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="stn-asm-actions">
+              <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t("สแกนลูก", "Scan child")}</button>
+              <AsmManualInput onSubmit={asmScan} placeholder={t("พิมพ์ QR ลูก", "type child QR")} t={t} />
+            </div>
+            <button className={`stn-asm-confirm${asmComplete ? " ready" : ""}`} disabled={!asmComplete || busy} onClick={asmConfirm}>
+              {busy ? "..." : asmComplete
+                ? t(`✓ ยืนยันประกอบ (${asmChildren.length} ชิ้น)`, `✓ Confirm (${asmChildren.length} pcs)`)
+                : t("สแกนลูกให้ครบตาม BOM ก่อน", "scan all children first")}
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
   if (step === STEP.IDLE) {
     return (
       <div className="stn-hint">
