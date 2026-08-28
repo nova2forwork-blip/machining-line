@@ -9,6 +9,7 @@ import {
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
+  listDeadLetter, resolveDeadLetter,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -4491,6 +4492,75 @@ function ActiveSessionsCard() {
   );
 }
 
+// ─── งานค้างซิงค์ราย "เครื่อง" (dead-letter) — ทำแล้วแต่เข้าระบบไม่ได้ (เฉพาะ Admin) ───
+const DL_REASONS = {
+  not_found: "QR/ล็อตถูกลบหรือแก้",
+  project_closed: "โปรเจกต์ถูกปิด",
+  retry_exhausted: "ลองซิงค์หลายครั้งไม่สำเร็จ",
+};
+function DeadLetterCard() {
+  const [rows, setRows] = useState(null);   // null = loading
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(0);
+
+  const load = useCallback(async () => {
+    try { setRows(await listDeadLetter(false)); setErr(""); }
+    catch (e) { setErr("โหลดไม่สำเร็จ: " + (e?.message || e)); setRows([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function resolve(id) {
+    setBusy(id);
+    try { await resolveDeadLetter(id); setRows((prev) => prev.filter((r) => r.id !== id)); }
+    catch (e) { setErr("ทำเครื่องหมายไม่สำเร็จ: " + (e?.message || e)); }
+    finally { setBusy(0); }
+  }
+
+  function itemText(r) {
+    if (r.kind === "qr" || r.qr) return `QR ${r.qr || "-"}`;
+    const d = r.detail || {};
+    return "งานหน้าเครื่อง" + (d.quantity != null ? ` · ${fmtNum(d.quantity)} ชิ้น` : "");
+  }
+
+  return (
+    <Card title="งานค้างซิงค์ (stranded) — เฉพาะ Admin" right={<Btn variant="ghost" size="sm" onClick={load} disabled={rows === null}>รีเฟรช</Btn>}>
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        งานที่ทำหน้าเครื่อง (ตอนออฟไลน์) แล้ว <b>ซิงค์เข้าระบบไม่ได้ถาวร</b> — มักเพราะ QR/ล็อตถูกลบหรือแก้ฝั่งออฟฟิศ · แก้ต้นเหตุ (เช่นกู้ล็อตคืน) แล้วให้เครื่องนั้นกด “ลองซิงค์ใหม่” ในแถบงานค้าง · เคลียร์แล้วกด ✓ จัดการแล้ว
+      </div>
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      {rows === null ? (
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+      ) : rows.length === 0 ? (
+        <div className="empty-state">
+          <Icon name="check" size={30} />
+          <div className="empty-state-title">ไม่มีงานค้างซิงค์</div>
+          <div className="empty-state-sub">ทุกเครื่องซิงค์งานเข้าระบบครบ</div>
+        </div>
+      ) : (
+        <div className="table-wrap tall-scroll">
+          <table className="data-table">
+            <thead><tr><th>เวลาทำงาน</th><th>เครื่อง</th><th>ผู้ทำ</th><th>งาน</th><th>เหตุผล</th><th></th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{fmtDT(r.client_ts || r.reported_at)}</td>
+                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.machine_code || "-"}</td>
+                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.actor_code || "-"}</td>
+                  <td style={{ fontSize: 12.5 }}>{itemText(r)}</td>
+                  <td><Badge tone="danger">{DL_REASONS[r.reason] || r.reason || "-"}</Badge></td>
+                  <td style={{ textAlign: "right" }}>
+                    <Btn variant="ghost" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id)}>{busy === r.id ? "..." : "✓ จัดการแล้ว"}</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── ประวัติการแก้ไข (audit log) — ใครทำอะไรที่สำคัญ/ลบข้อมูลได้ (เฉพาะ Admin) ───
 const AUDIT_ACTIONS = {
   delete_project:      { label: "ลบโปรเจกต์", tone: "danger" },
@@ -4736,7 +4806,7 @@ function SetupPage() {
       {tab === "projects" && <ProjectCrud />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
-      {tab === "sessions" && <ActiveSessionsCard />}
+      {tab === "sessions" && <><ActiveSessionsCard /><DeadLetterCard /></>}
       {tab === "audit" && <AuditLogCard />}
       {tab === "parts" && <PartMasterCrud />}
       {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
@@ -5819,7 +5889,7 @@ export default function App() {
     async function check() {
       try {
         const r = await sessionHeartbeat();   // { ok, exists, superseded }
-        if (r && (r.exists === false || r.superseded === true)) {
+        if (r && (r.exists === false || r.superseded === true || r.expired === true)) {
           forceOut("บัญชีถูกใช้ที่อื่น หรือเซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่");
         }
       } catch (_) { /* เน็ตสะดุด — ไม่เตะออก */ }
