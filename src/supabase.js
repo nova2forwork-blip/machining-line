@@ -647,6 +647,13 @@ export async function recordAssembly({ parentQr, childQrs, operationId, clientId
   return data || { ok: false, reason: "error" };
 }
 
+// โหลดสถานะประกอบ "สะสม" ของเบอร์แม่ (BOM + ที่ติดตั้งไปแล้วข้ามสเตชัน) — ใช้ตอนสแกนเบอร์แม่
+export async function getAssemblyState(parentQr) {
+  const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: parentQr });
+  if (error) { console.warn("get_assembly_state error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 export async function uploadPackingPhoto(blob, keyHint = "pack") {
