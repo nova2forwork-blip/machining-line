@@ -7,7 +7,7 @@ import {
 import {
   findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
-  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps,
+  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
@@ -142,7 +142,7 @@ const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "
 const DRAFT_KEY = "mls-station-draft";
 const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
 
-function MachineStation({ user, onLogout, onKicked }) {
+function MachineStation({ user, onLogout, onKicked, onExpired }) {
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
   const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
@@ -230,6 +230,10 @@ function MachineStation({ user, onLogout, onKicked }) {
       if (stopped || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
       const r = await sessionHeartbeat();
       if (stopped) return;
+      if (r && (r.expired || r.exists === false)) {              // token หมดอายุ/หาย → ล็อกอินใหม่ (ซิงค์ต่อหลัง login)
+        onExpired && onExpired();
+        return;
+      }
       if (r && r.superseded) {
         await flushScanQueue();                                  // ดันงานค้างขึ้นก่อน
         if (scanQueueCount() === 0) { onKicked && onKicked(); }  // ไม่มีค้างแล้ว → ออกได้ปลอดภัย
@@ -242,8 +246,17 @@ function MachineStation({ user, onLogout, onKicked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // flushScanQueue เจอ token หมดอายุระหว่างซิงค์ → ยิง event นี้ → เด้งล็อกอินใหม่ (งานคงในคิว รอดข้ามล็อกอิน)
+  useEffect(() => {
+    const onExp = () => { onExpired && onExpired(); };
+    window.addEventListener("mls-session-expired", onExp);
+    return () => window.removeEventListener("mls-session-expired", onExp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     flushScanQueue().then(() => setPending(scanQueueCount()));
+    if (rejectedQueueCount() > 0) reportDeadLetter();   // มีงานค้างเดิมค้างอยู่ → แจ้ง office ตอนเปิดเครื่อง
     const off = onScanQueue((n) => setPending(n));
     const offR = onRejectedQueue((n) => setRejected(n));
     return () => { off(); offR(); };
@@ -1386,7 +1399,12 @@ export default function StationApp() {
   const [user, setUser] = useState(getSession());
   const [notice, setNotice] = useState("");
   async function logout() {
-    if (!window.confirm("ออกจากระบบและปิดแอป?")) return;   // แจ้งเตือนก่อนล็อกเอาต์
+    // เตือนถ้ายังมีงานค้างซิงค์ (ไม่หาย — เก็บใน localStorage รอดข้ามล็อกอิน จะซิงค์เองรอบหน้า)
+    const pending = scanQueueCount() + rejectedQueueCount();
+    const msg = pending > 0
+      ? `ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อล็อกอินอีกครั้ง (ข้อมูลไม่หาย)\n\nออกจากระบบและปิดแอป?`
+      : "ออกจากระบบและปิดแอป?";
+    if (!window.confirm(msg)) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await logoutSession(); } catch { /* ignore */ }
     clearSession();
     try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch { /* ignore */ }
@@ -1398,6 +1416,13 @@ export default function StationApp() {
     clearSession();
     setUser(null);
     setNotice("บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่");
+  }
+  // token หมดอายุ (นาน ๆ ครั้ง — บัญชีเครื่องอายุ 30 วัน) — เด้งกลับหน้าล็อกอิน
+  //   งานค้างอยู่ในคิว (localStorage) รอดข้ามล็อกอิน → ล็อกอินใหม่แล้วซิงค์ต่อเอง ไม่หาย
+  function onExpired() {
+    clearSession();
+    setUser(null);
+    setNotice("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่ (งานที่ค้างจะซิงค์อัตโนมัติหลังล็อกอิน)");
   }
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
@@ -1426,7 +1451,7 @@ export default function StationApp() {
       </div>
     );
   } else {
-    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} />;
+    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} />;
   }
   return <><StationUpdateBanner />{content}</>;
 }
