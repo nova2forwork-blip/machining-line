@@ -9,6 +9,7 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getBom, recordAssembly,
+  uploadPackingPhoto, recordPackingPhotos,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -166,6 +167,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
   const asmClientRef = useRef(null);
+  const [packPhotos, setPackPhotos] = useState([]);     // รูปตอนแพ็ก (ยังไม่อัป) [{ blob, url }]
+  const [photoOpen, setPhotoOpen] = useState(false);    // เปิดกล้องถ่ายรูปแพ็ก
   const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
   const [dupCount, setDupCount] = useState(0);   // ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วกี่ครั้ง (เตือน rework)
   const [qty, setQty] = useState(0);
@@ -591,16 +594,18 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
   }, [lockTableHeight]);
 
-  // ── โหมดประกอบ/แพ็ก ─────────────────────────────────────────────────────
-  const isAsm = !!op?.is_assembly;
+  // ── โหมดประกอบ/แพ็ก (แยกตาม op_type: assembly / packing) ────────────────────
+  const isAsm = op?.op_type === "assembly" || op?.op_type === "packing" || !!op?.is_assembly;
   const asmComplete = !!asmParent && asmParent.bom.every((b) => asmChildren.filter((c) => c.child_pm_id === b.child_pm_id).length === b.qty);
 
   // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
-  useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; }, [op?.id]);
+  useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
 
-  function asmReset() { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; }
+  function asmReset() { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
   function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
   function asmOpenCam() { warmAudio(); setStep(STEP.SCAN); }
+  function photoCapture(blob, url) { setPackPhotos((prev) => [...prev, { blob, url }]); }
+  function photoRemove(i) { setPackPhotos((prev) => prev.filter((_, idx) => idx !== i)); }
 
   const asmReason = (r) => {
     const m = {
@@ -657,9 +662,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
 
   async function asmConfirm() {
     if (!asmParent || !asmComplete || savingRef.current) return;
+    const isPack = op?.op_type === "packing";
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
+      // แพ็ก: อัปรูปขึ้น Storage ก่อน (ถ้าถ่ายไว้) — พังตรงนี้ = หยุด ให้ลองใหม่ (ยังไม่บันทึกแพ็ก)
+      let photoPaths = [];
+      if (isPack && packPhotos.length > 0) {
+        try {
+          for (const p of packPhotos) photoPaths.push(await uploadPackingPhoto(p.blob, asmParent.unit.qr_code));
+        } catch (e) {
+          errorBeep(); flash(t("อัปรูปไม่สำเร็จ — ตรวจเน็ต/สิทธิ์ Storage แล้วลองใหม่", "photo upload failed — check network/storage"), "warn");
+          setBusy(false); savingRef.current = false; return;
+        }
+      }
       const res = await recordAssembly({
         parentQr: asmParent.unit.qr_code,
         childQrs: asmChildren.map((c) => c.qr),
@@ -667,8 +683,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
         clientId: asmClientRef.current,
       });
       if (res && res.ok) {
-        tickBeep(); flash(t("✓ บันทึกประกอบแล้ว", "✓ Assembled"), "ok");
-        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null;
+        if (photoPaths.length) { try { await recordPackingPhotos(asmParent.unit.qr_code, photoPaths); } catch { /* ผูกไม่ได้แต่ไฟล์อยู่ Storage */ } }
+        tickBeep(); flash(isPack ? t("✓ บันทึกแพ็กแล้ว", "✓ Packed") : t("✓ บันทึกประกอบแล้ว", "✓ Assembled"), "ok");
+        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         reload();
       } else {
         errorBeep(); flash(asmReason(res?.reason), "warn");
@@ -676,7 +693,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     } catch (e) {
       const off = typeof navigator !== "undefined" && navigator.onLine === false;
       errorBeep();
-      flash(off ? t("โหมดประกอบต้องออนไลน์ (ตรวจชิ้นกับระบบ)", "assembly needs to be online") : t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
+      flash(off ? t("โหมดประกอบ/แพ็กต้องออนไลน์ (ตรวจชิ้นกับระบบ)", "assembly/packing needs to be online") : t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
     } finally { setBusy(false); savingRef.current = false; }
   }
 
@@ -834,9 +851,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
               onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
               confirmCancel={confirmCancel} confirmPart={confirmPart}
               closeScan={closeScan} rescan={rescan} dupCount={dupCount}
-              isAsm={isAsm} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
+              isAsm={isAsm} asmType={op?.op_type} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
               asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
               asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
+              packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
+              photoCapture={photoCapture} photoRemove={photoRemove}
             />
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
@@ -982,15 +1001,69 @@ function AsmManualInput({ onSubmit, placeholder, t }) {
   );
 }
 
+// ── ถ่ายรูปตอนแพ็ก (ภาพนิ่งจากกล้องที่ใช้ร่วมกัน) ────────────────────────────
+function PackPhotoCapture({ onCapture, onClose, count, t }) {
+  const videoRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await getSharedCameraStream();
+        if (cancelled || !stream) return;
+        const v = videoRef.current;
+        if (v) { v.srcObject = stream; v.playsInline = true; v.muted = true; try { await v.play(); } catch { /* ignore */ } if (!cancelled) setReady(true); }
+      } catch { /* ignore */ }
+    })();
+    return () => {
+      cancelled = true;
+      const v = videoRef.current;
+      if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
+      if (camPermissionPersists()) releaseSharedCamera();
+    };
+  }, []);
+  function snap() {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const scale = Math.min(1, 1280 / v.videoWidth);
+    const c = document.createElement("canvas");
+    c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    const url = c.toDataURL("image/jpeg", 0.8);
+    c.toBlob((blob) => { if (blob) onCapture(blob, url); }, "image/jpeg", 0.8);
+  }
+  return (
+    <div className="stn-photocap">
+      <div className="stn-photocap-view">
+        <video ref={videoRef} playsInline muted />
+        {!ready && <div className="stn-photocap-loading">{t("กำลังเปิดกล้อง…", "opening camera…")}</div>}
+      </div>
+      <div className="stn-photocap-bar">
+        <button className="stn-photocap-close" onClick={onClose}>{t("เสร็จ", "Done")}{count > 0 ? ` (${count})` : ""}</button>
+        <button className="stn-photocap-snap" onClick={snap} disabled={!ready}>📷 {t("ถ่าย", "Capture")}</button>
+      </div>
+    </div>
+  );
+}
+
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
-  isAsm, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam }) {
+  isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam,
+  packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
 
-  // ── โหมดประกอบ/แพ็ก ──────────────────────────────────────────────────────
+  // ── โหมดประกอบ/แพ็ก (แยกป้ายตามประเภท) ──────────────────────────────────────
   if (isAsm) {
     if (step === STEP.SCAN) {
       return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} />;
+    }
+    const isPack = asmType === "packing";
+    const modeTitle = isPack ? t("โหมดแพ็ก", "Packing mode") : t("โหมดประกอบ", "Assembly mode");
+    const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
+    const childWord = isPack ? t("ของที่ใส่", "item") : t("ลูก", "child");
+    const confirmVerb = isPack ? t("ยืนยันแพ็ก", "Confirm pack") : t("ยืนยันประกอบ", "Confirm assembly");
+    if (isPack && photoOpen) {
+      return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
     }
     const bom = asmParent?.bom || [];
     const gotFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;
@@ -998,16 +1071,16 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
       <div className="stn-asm">
         {!asmParent ? (
           <div className="stn-asm-empty">
-            <div className="stn-asm-title">{t("โหมดประกอบ / แพ็ก", "Assembly / Packing")}</div>
-            <div className="stn-asm-sub">{t("สแกน หรือ พิมพ์ QR ของ “เบอร์แม่” ที่จะประกอบ", "Scan or type the parent QR to build")}</div>
-            <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t("สแกนเบอร์แม่", "Scan parent")}</button>
-            <AsmManualInput onSubmit={asmScan} placeholder={t("พิมพ์ QR เบอร์แม่", "type parent QR")} t={t} />
+            <div className="stn-asm-title">{modeTitle}</div>
+            <div className="stn-asm-sub">{t(`สแกน หรือ พิมพ์ QR ของ “${parentWord}”`, `Scan or type the ${parentWord} QR`)}</div>
+            <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t(`สแกน${parentWord}`, `Scan ${parentWord}`)}</button>
+            <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${parentWord}`, `type ${parentWord} QR`)} t={t} />
           </div>
         ) : (
           <>
             <div className="stn-asm-parent">
               <div className="stn-asm-pinfo">
-                <span className="stn-asm-plabel">{t("เบอร์แม่", "PARENT")}</span>
+                <span className="stn-asm-plabel">{isPack ? t("เบอร์แพ็ก", "PACKAGE") : t("เบอร์แม่", "PARENT")}</span>
                 <span className="stn-asm-pno">{asmParent.unit.part_master?.part_no || asmParent.unit.qr_code}</span>
                 <span className="stn-asm-pname">{asmParent.unit.part_master?.part_name || ""}</span>
               </div>
@@ -1037,13 +1110,29 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
               </div>
             )}
             <div className="stn-asm-actions">
-              <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t("สแกนลูก", "Scan child")}</button>
-              <AsmManualInput onSubmit={asmScan} placeholder={t("พิมพ์ QR ลูก", "type child QR")} t={t} />
+              <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t(`สแกน${childWord}`, `Scan ${childWord}`)}</button>
+              <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
             </div>
+            {isPack && (
+              <div className="stn-asm-photos">
+                <button className="stn-asm-photobtn" onClick={openPhoto}>
+                  📷 {t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span>
+                </button>
+                {packPhotos.length > 0 && (
+                  <div className="stn-asm-thumbs">
+                    {packPhotos.map((p, i) => (
+                      <div key={i} className="stn-asm-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}>
+                        <img src={p.url} alt="" /><span className="x">✕</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button className={`stn-asm-confirm${asmComplete ? " ready" : ""}`} disabled={!asmComplete || busy} onClick={asmConfirm}>
               {busy ? "..." : asmComplete
-                ? t(`✓ ยืนยันประกอบ (${asmChildren.length} ชิ้น)`, `✓ Confirm (${asmChildren.length} pcs)`)
-                : t("สแกนลูกให้ครบตาม BOM ก่อน", "scan all children first")}
+                ? t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length} pcs)`)
+                : t(`สแกน${childWord}ให้ครบตาม BOM ก่อน`, `scan all ${childWord}s first`)}
             </button>
           </>
         )}
