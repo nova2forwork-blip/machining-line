@@ -647,6 +647,27 @@ export async function recordAssembly({ parentQr, childQrs, operationId, clientId
   return data || { ok: false, reason: "error" };
 }
 
+// ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
+// อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
+export async function uploadPackingPhoto(blob, keyHint = "pack") {
+  const path = `${keyHint}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { data, error } = await supabase.storage.from("packing-photos").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (error) { console.warn("uploadPackingPhoto error", error); throw error; }
+  return data?.path || path;
+}
+export function packingPhotoUrl(path) {
+  try { return supabase.storage.from("packing-photos").getPublicUrl(path).data.publicUrl; }
+  catch { return null; }
+}
+// ผูก path รูปกับเบอร์แพ็ก (เรียกหลังอัปโหลดรูปสำเร็จ)
+export async function recordPackingPhotos(parentQr, paths) {
+  const list = (paths || []).filter(Boolean);
+  if (!list.length) return { ok: true, saved: 0 };
+  const { data, error } = await supabase.rpc("record_packing_photos", { p_token: authToken(), p_parent_qr: parentQr, p_paths: list });
+  if (error) { console.warn("record_packing_photos error", error); flagAuth(error); throw error; }
+  return data || { ok: false };
+}
+
 // สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
 export async function recordScanByQr(qr, { allowQueue = true } = {}) {
   const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
@@ -899,15 +920,19 @@ export async function getMachineOps() {
     try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
   }
   const list = data || [];
-  // เติมธง is_assembly (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์นี้) — อ่านตรงจากตาราง operations
+  // เติม op_type + is_assembly (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์นี้) — อ่านตรงจากตาราง operations
   try {
     const ids = list.map((o) => o.id).filter(Boolean);
-    if (ids.length && !(list[0] && "is_assembly" in list[0])) {
-      const { data: ops } = await supabase.from("operations").select("id, is_assembly").in("id", ids);
-      const m = new Map((ops || []).map((o) => [o.id, !!o.is_assembly]));
-      for (const o of list) o.is_assembly = m.get(o.id) || false;
+    if (ids.length && !(list[0] && "op_type" in list[0])) {
+      const { data: ops } = await supabase.from("operations").select("id, is_assembly, op_type").in("id", ids);
+      const m = new Map((ops || []).map((o) => [o.id, o]));
+      for (const o of list) {
+        const e = m.get(o.id);
+        o.op_type = (e && e.op_type) || "machining";
+        o.is_assembly = e ? !!e.is_assembly : (o.op_type !== "machining");
+      }
     }
-  } catch { /* ignore — ถ้าเติมไม่ได้ ถือว่าไม่ใช่ขั้นตอนประกอบ */ }
+  } catch { /* ignore — ถ้าเติมไม่ได้ ถือว่าเป็น machining ปกติ */ }
   try { localStorage.setItem(MOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
   return list;
 }
