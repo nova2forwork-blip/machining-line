@@ -8,7 +8,7 @@ import {
   findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
-  countUnitOpRecords, listRejected, clearRejected, getBom, recordAssembly,
+  countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly,
   uploadPackingPhoto, recordPackingPhotos,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
@@ -596,7 +596,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
 
   // ── โหมดประกอบ/แพ็ก (แยกตาม op_type: assembly / packing) ────────────────────
   const isAsm = op?.op_type === "assembly" || op?.op_type === "packing" || !!op?.is_assembly;
-  const asmComplete = !!asmParent && asmParent.bom.every((b) => asmChildren.filter((c) => c.child_pm_id === b.child_pm_id).length === b.qty);
+  // นับ "สะสม" = ที่ติดตั้งไปแล้ว (สเตชันก่อน) + ที่สแกนรอบนี้ · ครบเมื่อทุกบรรทัด ≥ qty
+  const asmHave = (pmId) =>
+    (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length +
+    asmChildren.filter((c) => c.child_pm_id === pmId).length;
+  const asmComplete = !!asmParent && asmParent.bom.every((b) => asmHave(b.child_pm_id) >= b.qty);
 
   // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
   useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
@@ -612,6 +616,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
       incomplete: t("ยังไม่ครบตาม BOM", "not complete per BOM"),
       not_in_bom: t("มีชิ้นไม่อยู่ใน BOM", "a part is not in this BOM"),
       child_used: t("มีชิ้นถูกใช้ในเบอร์อื่นแล้ว", "a part is already used elsewhere"),
+      already_installed: t("มีชิ้นติดตั้งในเบอร์นี้ไปแล้ว", "a part is already installed here"),
+      child_incomplete: t("มีชิ้นที่ยังประกอบไม่เสร็จ — ทำให้เสร็จก่อน", "a sub-part isn't finished yet"),
+      over_bom: t("ใส่เกินจำนวนที่ BOM กำหนด", "exceeds the BOM quantity"),
       duplicate_child: t("มีชิ้นซ้ำ", "duplicate part"),
       child_not_found: t("มีชิ้นไม่พบในระบบ", "a part QR not found"),
       no_bom: t("เบอร์นี้ยังไม่ได้กำหนด BOM", "no BOM set for this number"),
@@ -622,7 +629,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     return m[r] || t("บันทึกประกอบไม่สำเร็จ", "assembly failed");
   };
 
-  // สแกน/พิมพ์ QR ในโหมดประกอบ: ยังไม่มีเบอร์แม่ → ตั้งเป็นเบอร์แม่ (โหลด BOM) · มีแล้ว → เพิ่มเป็นลูก
+  // สแกน/พิมพ์ QR โหมดประกอบ: ยังไม่มีเบอร์แม่ → โหลดสถานะสะสม (BOM + ที่ติดไปแล้ว) · มีแล้ว → เพิ่มเป็นลูกรอบนี้
   async function asmScan(code) {
     const s = String(code || "").trim();
     if (!s) return false;
@@ -636,37 +643,57 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
       if (u.part_master?.projects?.status === "closed") {
         errorBeep(); flash(t("โปรเจกต์นี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
       }
-      let bom = [];
-      try { bom = await getBom(u.part_master_id); } catch { bom = []; }
-      if (!bom || bom.length === 0) {
-        errorBeep(); flash(t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master"), "warn"); return false;
+      setBusy(true);
+      let st = null;
+      try { st = await getAssemblyState(u.qr_code); } catch { st = null; }
+      setBusy(false);
+      if (!st) { errorBeep(); flash(t("โหลดสถานะไม่ได้ — โหมดนี้ต้องออนไลน์", "couldn't load state — needs online"), "warn"); return false; }
+      if (!st.ok) {
+        errorBeep();
+        flash(st.reason === "no_bom"
+          ? t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master")
+          : asmReason(st.reason), "warn");
+        return false;
       }
-      tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
-      setAsmParent({ unit: u, bom }); setAsmChildren([]); asmClientRef.current = null;
+      if (st.parent?.status === "finished") {
+        flash(t("เบอร์นี้ประกอบครบแล้ว (เปิดดูได้ ใส่เพิ่มไม่ได้)", "already complete (view only)"), "warn");
+      } else {
+        tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
+      }
+      setAsmParent({ unit: u, bom: st.bom || [], installed: st.installed || [] });
+      setAsmChildren([]); asmClientRef.current = null;
       return true;
     }
 
-    // เป็น "ลูก"
+    // เป็น "ลูก" (ที่จะติดตั้งรอบนี้)
     if (u.id === asmParent.unit.id) { flash(t("นี่คือเบอร์แม่เอง", "this is the parent"), "warn"); return false; }
-    if (asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้ว", "already scanned"), "warn"); return false; }
+    if (asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้วรอบนี้", "already scanned this round"), "warn"); return false; }
+    if ((asmParent.installed || []).some((x) => x.child_unit_id === u.id)) {
+      flash(t("ชิ้นนี้ติดตั้งไปแล้ว (สเตชันก่อนหน้า)", "already installed (earlier station)"), "warn"); return false;
+    }
     const inBom = asmParent.bom.find((b) => b.child_pm_id === u.part_master_id);
     if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ใน BOM ของเบอร์แม่", "not in this BOM"), "warn"); return false; }
-    const got = asmChildren.filter((c) => c.child_pm_id === u.part_master_id).length;
-    if (got >= inBom.qty) { flash(t(`${inBom.part_no} ครบตาม BOM แล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
-    tickBeep(); flash(`+ ${inBom.part_no} (${got + 1}/${inBom.qty})`, "ok");
+    // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้
+    if (u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
+      errorBeep(); flash(t(`${inBom.part_no} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${inBom.part_no} isn't finished yet`), "warn"); return false;
+    }
+    const have = asmHave(u.part_master_id);
+    if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบตาม BOM แล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
+    tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
     setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
     return true;
   }
   const asmDecoded = async (qr) => { await asmScan(qr); return false; };          // false = กล้องสแกนต่อ (ใส่ลูกได้เรื่อยๆ)
   const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
 
+  // บันทึก "รอบนี้" (สะสมได้ — ไม่ต้องครบก็เซฟ) · ครบ BOM สะสม → ปิดงานอัตโนมัติ · ไม่ครบ → รีเฟรชยอด แล้วสแกนต่อ/ส่งสเตชันถัดไป
   async function asmConfirm() {
-    if (!asmParent || !asmComplete || savingRef.current) return;
+    if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
     const isPack = op?.op_type === "packing";
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
-      // แพ็ก: อัปรูปขึ้น Storage ก่อน (ถ้าถ่ายไว้) — พังตรงนี้ = หยุด ให้ลองใหม่ (ยังไม่บันทึกแพ็ก)
+      // แพ็ก: อัปรูปขึ้น Storage ก่อน (ถ้าถ่ายไว้) — พังตรงนี้ = หยุด ให้ลองใหม่ (ยังไม่บันทึก)
       let photoPaths = [];
       if (isPack && packPhotos.length > 0) {
         try {
@@ -684,8 +711,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
       });
       if (res && res.ok) {
         if (photoPaths.length) { try { await recordPackingPhotos(asmParent.unit.qr_code, photoPaths); } catch { /* ผูกไม่ได้แต่ไฟล์อยู่ Storage */ } }
-        tickBeep(); flash(isPack ? t("✓ บันทึกแพ็กแล้ว", "✓ Packed") : t("✓ บันทึกประกอบแล้ว", "✓ Assembled"), "ok");
-        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+        tickBeep();
+        if (res.complete) {
+          flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t("✓ ประกอบครบแล้ว — ปิดงาน", "✓ Assembled & complete"), "ok");
+          setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+        } else {
+          const added = res.added ?? asmChildren.length;
+          flash(t(`✓ บันทึกแล้ว ${added} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
+          // รีเฟรชยอดสะสมจากเซิร์ฟเวอร์ → เห็น "ที่ติดแล้ว" อัปเดต · เคลียร์รายการรอบนี้ · รอบใหม่ใช้ client_id ใหม่
+          let st = null;
+          try { st = await getAssemblyState(asmParent.unit.qr_code); } catch { st = null; }
+          if (st && st.ok) setAsmParent((p) => (p ? { ...p, bom: st.bom || p.bom, installed: st.installed || [] } : p));
+          setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+        }
         reload();
       } else {
         errorBeep(); flash(asmReason(res?.reason), "warn");
@@ -1066,7 +1104,8 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
       return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
     }
     const bom = asmParent?.bom || [];
-    const gotFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;
+    const prevFor = (pmId) => (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length; // ติดจากสเตชันก่อน
+    const sessFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;                  // สแกนรอบนี้
     return (
       <div className="stn-asm">
         {!asmParent ? (
@@ -1088,14 +1127,14 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             </div>
             <div className="stn-asm-bom">
               {bom.map((b) => {
-                const g = gotFor(b.child_pm_id);
+                const prev = prevFor(b.child_pm_id), sess = sessFor(b.child_pm_id), g = prev + sess;
                 const done = g >= b.qty;
                 return (
                   <div key={b.child_pm_id} className={`stn-asm-row${done ? " done" : ""}`}>
                     <span className="chk">{done ? "✓" : "○"}</span>
                     <span className="pn">{b.part_no}</span>
                     <span className="nm">{b.part_name || ""}</span>
-                    <span className="cnt">{g}/{b.qty}</span>
+                    <span className="cnt">{g}/{b.qty}{prev > 0 && sess > 0 ? ` (+${sess})` : ""}</span>
                   </div>
                 );
               })}
@@ -1129,10 +1168,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 )}
               </div>
             )}
-            <button className={`stn-asm-confirm${asmComplete ? " ready" : ""}`} disabled={!asmComplete || busy} onClick={asmConfirm}>
-              {busy ? "..." : asmComplete
-                ? t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length} pcs)`)
-                : t(`สแกน${childWord}ให้ครบตาม BOM ก่อน`, `scan all ${childWord}s first`)}
+            <button className={`stn-asm-confirm${asmComplete ? " ready" : ""}`} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
+              {busy ? "..." : asmChildren.length === 0
+                ? t(`สแกน${childWord}ที่ติดรอบนี้ก่อน`, `scan the ${childWord}s you installed`)
+                : asmComplete
+                  ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
+                  : t(`💾 บันทึกรอบนี้ (${asmChildren.length} ชิ้น) — ยังไม่ครบ`, `💾 Save batch (${asmChildren.length}) — partial`)}
             </button>
           </>
         )}
