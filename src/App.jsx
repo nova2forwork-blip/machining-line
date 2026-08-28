@@ -9,7 +9,7 @@ import {
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
-  listDeadLetter, resolveDeadLetter,
+  listDeadLetter, resolveDeadLetter, setBom, getBom,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -5707,9 +5707,108 @@ function EmployeeCrud() {
   );
 }
 
+// ─── ชนิดของเบอร์ (พาร์ท / ซับ / แผง / แพ็ก) + BOM editor สำหรับเบอร์ประกอบ ────────
+const PM_KINDS = [
+  { value: "part", label: "พาร์ท" },
+  { value: "subassembly", label: "ซับแอสเซมบลี" },
+  { value: "panel", label: "แผง" },
+  { value: "package", label: "แพ็ก" },
+];
+const kindLabel = (k) => (PM_KINDS.find((x) => x.value === (k || "part"))?.label || "พาร์ท");
+
+// กำหนด BOM ของเบอร์แม่ (ซับ/แผง/แพ็ก) — เลือกลูกในโปรเจกต์เดียวกัน + จำนวน
+function BomEditorModal({ parent, allParts, onClose, onSaved }) {
+  const [rows, setRows] = useState(null);   // null = loading · [{child_pm_id, qty, part_no, part_name, kind}]
+  const [pick, setPick] = useState("");
+  const [pickQty, setPickQty] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const candidates = useMemo(
+    () => allParts.filter((p) => p.project_id === parent.project_id && p.id !== parent.id),
+    [allParts, parent]
+  );
+
+  useEffect(() => {
+    getBom(parent.id).then((b) => setRows((b || []).map((x) => ({
+      child_pm_id: x.child_pm_id, qty: x.qty, part_no: x.part_no, part_name: x.part_name, kind: x.kind,
+    }))));
+  }, [parent.id]);
+
+  function addChild() {
+    if (!pick || !rows) return;
+    if (rows.some((r) => r.child_pm_id === pick)) { setErr("มีลูกตัวนี้อยู่แล้ว — แก้จำนวนในตารางแทน"); return; }
+    const c = candidates.find((p) => p.id === pick);
+    setRows([...rows, { child_pm_id: pick, qty: Math.max(1, Number(pickQty) || 1), part_no: c?.part_no, part_name: c?.part_name, kind: c?.kind }]);
+    setPick(""); setPickQty(1); setErr("");
+  }
+  const removeChild = (id) => setRows(rows.filter((r) => r.child_pm_id !== id));
+  const setQty = (id, q) => setRows(rows.map((r) => (r.child_pm_id === id ? { ...r, qty: Math.max(1, Number(q) || 1) } : r)));
+
+  async function save() {
+    setBusy(true); setErr("");
+    try {
+      const res = await setBom(parent.id, rows.map((r) => ({ child_pm_id: r.child_pm_id, qty: r.qty })));
+      if (res?.ok) { mlsToast("บันทึก BOM แล้ว", "success"); onSaved && onSaved(); onClose(); }
+      else setErr("บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : ""));
+    } catch (e) { setErr("บันทึกไม่สำเร็จ: " + (e?.message || e)); }
+    finally { setBusy(false); }
+  }
+
+  const avail = rows ? candidates.filter((c) => !rows.some((r) => r.child_pm_id === c.id)) : [];
+
+  return (
+    <Modal title={`กำหนด BOM — ${parent.part_no}`} sub={`${kindLabel(parent.kind)} · ประกอบจากลูก (ต้องอยู่โปรเจกต์เดียวกัน)`} onClose={onClose} locked={busy} wide>
+      {rows === null ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <Field label="เพิ่มลูก (Part / ซับ ในโปรเจกต์นี้)">
+                <Select value={pick} onChange={(e) => setPick(e.target.value)}
+                  options={avail.map((c) => ({ value: c.id, label: `${c.part_no} — ${c.part_name || ""}${c.kind && c.kind !== "part" ? " [" + kindLabel(c.kind) + "]" : ""}` }))} />
+              </Field>
+            </div>
+            <Field label="จำนวน/ชุด"><Input type="number" min="1" value={pickQty} onChange={(e) => setPickQty(e.target.value)} style={{ maxWidth: 100 }} /></Field>
+            <Btn variant="ghost" onClick={addChild} disabled={!pick}><Icon name="plus" size={14} /> เพิ่มลูก</Btn>
+          </div>
+
+          {rows.length === 0 ? (
+            <div className="empty-state"><Icon name="grid" size={28} /><div className="empty-state-title">ยังไม่มีลูกใน BOM</div><div className="empty-state-sub">เลือกลูกด้านบนแล้วกด “เพิ่มลูก”</div></div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead><tr><th>ลูก (Part No.)</th><th>ชื่อ</th><th>ชนิด</th><th>จำนวน/ชุด</th><th></th></tr></thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.child_pm_id}>
+                      <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_no}</td>
+                      <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{r.part_name}</td>
+                      <td style={{ fontSize: 12.5 }}>{kindLabel(r.kind)}</td>
+                      <td><Input type="number" min="1" value={r.qty} onChange={(e) => setQty(r.child_pm_id, e.target.value)} style={{ maxWidth: 80 }} /></td>
+                      <td><span onClick={() => removeChild(r.child_pm_id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 8 }}>{err}</div>}
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <Btn variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+            <Btn variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก BOM"}</Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function PartMasterCrud() {
   const [rows, setRows] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [bomParent, setBomParent] = useState(null);   // เบอร์ที่กำลังกำหนด BOM
   const [form, setForm] = useUndoable({ routing: [] });
   const load = useCallback(async () => {
     setRows(await listRows("part_master", { order: "part_no" }));
@@ -5723,9 +5822,14 @@ function PartMasterCrud() {
       project_id: form.project_id, part_no: form.part_no, part_name: form.part_name || form.part_no,
       material: form.material, unit_weight: Number(form.unit_weight || 0),
       default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
-      routing: form.routing || [],
+      routing: form.routing || [], kind: form.kind || "part",
     });
     setForm({ routing: [] }); load();
+  }
+  // เปลี่ยนชนิดของเบอร์ที่มีอยู่ (พาร์ท ↔ ซับ/แผง/แพ็ก) — เบอร์ประกอบถึงจะกำหนด BOM ได้
+  async function changeKind(id, kind) {
+    try { await updateRow("part_master", id, { kind }); setRows((prev) => prev.map((r) => (r.id === id ? { ...r, kind } : r))); }
+    catch (e) { mlsToast("เปลี่ยนชนิดไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
   // ลบ Part แบบรู้ผลกระทบ — ถ้ายังมี Release/ชิ้นงานผูกอยู่ ห้ามลบตรงๆ (กันข้อมูลหาย + กัน FK error)
   async function remove(id) {
@@ -5747,6 +5851,7 @@ function PartMasterCrud() {
   }
 
   return (
+    <>
     <Card title="เพิ่ม Part ใหม่">
       <div className="grid-3" style={{ marginBottom: 16 }}>
         <Field label="โปรเจค"><Select value={form.project_id || ""} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
@@ -5756,22 +5861,40 @@ function PartMasterCrud() {
         <Field label="วัสดุ"><Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} /></Field>
         <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
         <Field label="ความยาวโดยประมาณ/ชิ้น (มม.)"><Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} /></Field>
+        <Field label="ชนิด">
+          <Select value={form.kind || "part"} onChange={(e) => setForm({ ...form, kind: e.target.value })}
+            options={PM_KINDS.map((k) => ({ value: k.value, label: k.label }))} />
+        </Field>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-6px 2px 12px", lineHeight: 1.6 }}>
+        <b>ชนิด</b>: พาร์ท = ชิ้นส่วนปกติ · ซับ/แผง/แพ็ก = เบอร์ประกอบ (ประกอบจากลูก) — เลือกเป็นเบอร์ประกอบแล้วจะกำหนด BOM ได้ในตารางด้านล่าง
       </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
-          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th></th></tr></thead>
+          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>ชนิด</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>BOM</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td>
+                <td style={{ whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{r.part_no}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td>
+                <td>
+                  <select className="select" value={r.kind || "part"} onChange={(e) => changeKind(r.id, e.target.value)} style={{ minWidth: 120 }}>
+                    {PM_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+                  </select>
+                </td>
                 <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
                 <td>{r.default_length_mm ? `${fmtNum(r.default_length_mm)} มม.` : "-"}</td>
+                <td>
+                  {(r.kind && r.kind !== "part")
+                    ? <Btn variant="ghost" size="sm" onClick={() => setBomParent(r)}><Icon name="grid" size={13} /> กำหนด BOM</Btn>
+                    : <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span>}
+                </td>
                 <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={5}>
+              <tr><td colSpan={7}>
                 <div className="empty-state" style={{ padding: "24px 0" }}>
                   <Icon name="grid" size={30} />
                   <div className="empty-state-title">ยังไม่มี Part</div>
@@ -5783,6 +5906,10 @@ function PartMasterCrud() {
         </table>
       </div>
     </Card>
+    {bomParent && (
+      <BomEditorModal parent={bomParent} allParts={rows} onClose={() => setBomParent(null)} onSaved={load} />
+    )}
+    </>
   );
 }
 
