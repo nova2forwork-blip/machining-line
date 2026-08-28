@@ -619,11 +619,11 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
    ═══════════════════════════════════════════════════════════════════════ */
 /* โหมดหมุนจอ (มือถือแนวตั้ง): "แกนตั้งจริง" หลังหมุน 90° วัดด้วย vw → จำกัดสูงกล้องด้วย vw */
 @media (orientation: portrait) and (max-width: 1024px) {
-  .stn-work-area .stn-cam { width: min(90%, 52vw); height: 40vw; max-height: 40vw; aspect-ratio: auto; }
+  .stn-work-area .stn-cam { width: min(94%, 66vw); height: 54vw; max-height: 54vw; aspect-ratio: auto; }
 }
 /* มือถือแนวนอนจอเตี้ย (ไม่หมุน): แกนตั้ง = vh */
 @media (orientation: landscape) and (max-height: 600px) {
-  .stn-work-area .stn-cam { width: min(86%, 60vh); height: 40vh; max-height: 40vh; aspect-ratio: auto; }
+  .stn-work-area .stn-cam { width: min(90%, 76vh); height: 54vh; max-height: 54vh; aspect-ratio: auto; }
 }
 /* ย่อปุ่ม/ช่องรอบกล้อง (ใช้ร่วมทั้งสองโหมด) ให้กระชับ อยู่ในจอครบ ไม่ต้องเลื่อน */
 @media (orientation: portrait) and (max-width: 1024px),
@@ -638,3 +638,34 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-work-area .stn-cam-cancel-row { margin-top: 1.2vh; }
   .stn-work-area .stn-cam-cancel { font-size: 2.1vh; padding: 1vh 3vh; min-width: auto; }
 }
+
+/* ── โหมดประกอบ/แพ็ก (assembly mode) ──────────────────────────────────── */
+.stn-asm { display: flex; flex-direction: column; gap: 10px; padding: 10px; height: 100%; overflow-y: auto; }
+.stn-asm-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 18px 10px; height: 100%; }
+.stn-asm-title { font-size: 20px; font-weight: 800; color: #eaf2ee; }
+.stn-asm-sub { font-size: 13px; color: #9fb0a8; line-height: 1.5; }
+.stn-asm-parent { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #12352a; border: 1px solid #1e5a45; border-radius: 10px; padding: 10px 12px; }
+.stn-asm-pinfo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stn-asm-plabel { font-size: 10px; letter-spacing: 1px; color: #6fd3a6; font-weight: 700; }
+.stn-asm-pno { font-size: 18px; font-weight: 800; color: #eafff5; font-family: var(--font-mono, monospace); }
+.stn-asm-pname { font-size: 12px; color: #9fb0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stn-asm-changebtn { flex-shrink: 0; background: #24302a; color: #cfe7dc; border: 1px solid #3a6b55; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.stn-asm-bom { display: flex; flex-direction: column; gap: 4px; }
+.stn-asm-row { display: grid; grid-template-columns: 22px 1fr 1.3fr auto; align-items: center; gap: 8px; padding: 7px 10px; background: #0f1c17; border: 1px solid #22332c; border-radius: 8px; font-size: 13px; color: #cdd8d2; }
+.stn-asm-row.done { background: #12352a; border-color: #1e5a45; color: #d6ffe9; }
+.stn-asm-row .chk { font-size: 15px; color: #6b7a72; text-align: center; }
+.stn-asm-row.done .chk { color: #22e39a; font-weight: 800; }
+.stn-asm-row .pn { font-family: var(--font-mono, monospace); font-weight: 700; white-space: nowrap; }
+.stn-asm-row .nm { color: #8fa199; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stn-asm-row .cnt { font-weight: 800; font-family: var(--font-mono, monospace); white-space: nowrap; }
+.stn-asm-scanned { display: flex; flex-wrap: wrap; gap: 6px; }
+.stn-asm-chip { font-size: 11px; background: #1a2b24; border: 1px solid #2f6b52; border-radius: 999px; padding: 3px 9px; color: #bfe9d6; cursor: pointer; font-family: var(--font-mono, monospace); }
+.stn-asm-actions { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.stn-asm-scan { flex: 1; min-width: 130px; background: #163f31; color: #eafff5; border: 1px solid #2a7d5f; border-radius: 10px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.stn-asm-scan:active { background: #1e5a45; }
+.stn-asm-manual { display: flex; gap: 6px; flex: 1.2; min-width: 160px; }
+.stn-asm-manual input { flex: 1; min-width: 0; background: #0b1410; border: 1px solid #2a3a33; border-radius: 8px; padding: 10px; color: #eaf2ee; font-size: 15px; font-family: var(--font-mono, monospace); }
+.stn-asm-manual button { background: #24302a; color: #cfe7dc; border: 1px solid #3a6b55; border-radius: 8px; padding: 0 14px; font-size: 14px; cursor: pointer; }
+.stn-asm-confirm { margin-top: auto; background: #24302a; color: #7d8a83; border: 1px solid #2a3a33; border-radius: 12px; padding: 15px; font-size: 17px; font-weight: 800; cursor: not-allowed; }
+.stn-asm-confirm.ready { background: linear-gradient(180deg, #16b877, #0e9d63); color: #fff; border-color: #0e9d63; cursor: pointer; box-shadow: 0 3px 0 #0a7a4d; }
+.stn-asm-confirm.ready:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a7a4d; }
