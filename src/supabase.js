@@ -624,6 +624,29 @@ export async function resolveDeadLetter(id) {
   if (error) { console.warn("authz_resolve_dead_letter error", error); flagAuth(error); throw error; }
 }
 
+// ── BOM (ประกอบ/แพ็ก) — กำหนด/อ่าน รายการลูกของเบอร์แม่ ─────────────────────
+// components = [{ child_pm_id, qty }] · แทนที่ทั้งชุด · ลูกต้องอยู่โปรเจกต์เดียวกัน (DB บังคับ)
+export async function setBom(parentPmId, components) {
+  const { data, error } = await supabase.rpc("authz_set_bom", { p_token: authToken(), p_parent_pm_id: parentPmId, p_components: components });
+  if (error) { console.warn("authz_set_bom error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+export async function getBom(parentPmId) {
+  const { data, error } = await supabase.rpc("get_bom", { p_parent_pm_id: parentPmId });
+  if (error) { console.warn("get_bom error", error); return []; }
+  return data || [];
+}
+
+// บันทึกการประกอบจากหน้าเครื่อง (ใช้ใน Phase 1 ส่วนที่ 3) — คืนผลตรวจครบตาม BOM
+export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt }) {
+  const { data, error } = await supabase.rpc("record_assembly", {
+    p_token: authToken(), p_parent_qr: parentQr, p_child_qrs: childQrs,
+    p_operation_id: operationId, p_client_id: clientId ?? null, p_recorded_at: recordedAt ?? null,
+  });
+  if (error) { console.warn("record_assembly error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
 export async function recordScanByQr(qr, { allowQueue = true } = {}) {
   const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
