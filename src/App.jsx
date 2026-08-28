@@ -2185,7 +2185,7 @@ function ScanPage({ user }) {
         {ready ? (
           <div className="grid-2" style={{ marginBottom: 0 }}>
             <div>
-              <div className="label-el">เครื่องจักรประจำ</div>
+              <div className="label-el">เครื่อง/สถานีประจำ</div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>{user.machine.code} — {user.machine.name}</div>
             </div>
             <div>
@@ -2196,7 +2196,7 @@ function ScanPage({ user }) {
         ) : (
           <div className="empty-state">
             <Icon name="scan" size={32} />
-            <div className="empty-state-title">ยังไม่ได้ตั้งค่าเครื่องจักร/ขั้นตอนประจำ</div>
+            <div className="empty-state-title">ยังไม่ได้ตั้งค่าเครื่อง/สถานี/ขั้นตอนประจำ</div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
               แจ้ง Admin ให้ตั้งค่าที่ Setup → พนักงาน ก่อน จึงจะเริ่มสแกนได้
             </div>
@@ -2544,7 +2544,7 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
         not_found: "ไม่พบชิ้นงานนี้ในระบบ",
         machine_cannot: `เครื่อง ${machine?.code || ""} ไม่ได้ตั้งค่าให้ทำขั้นตอน "${operation?.name || ""}"`,
         duplicate: `ผ่านขั้นตอน "${operation?.name || ""}" ไปแล้ว — ไม่บันทึกซ้ำ`,
-        no_station: "บัญชีนี้ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ — แจ้ง Admin",
+        no_station: "บัญชีนี้ยังไม่ได้ตั้งเครื่อง/สถานี/ขั้นตอนประจำ — แจ้ง Admin",
         unauthorized: "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่",
         storage_full: "ที่เก็บข้อมูลในเครื่องเต็ม — บันทึกไม่สำเร็จ ลบข้อมูล/แอปอื่นแล้วลองใหม่",
         error: "บันทึกไม่สำเร็จ" + (res.message ? ": " + res.message : ""),
@@ -4782,7 +4782,7 @@ function ClearScansCard() {
 function SetupPage() {
   const [tab, setTab] = useState("machines");
   const TABS = [
-    { key: "machines", label: "เครื่องจักร" },
+    { key: "machines", label: "เครื่อง/สถานี" },
     { key: "operations", label: "ขั้นตอน" },
     { key: "parts", label: "Part Master" },
     { key: "employees", label: "พนักงาน" },
@@ -4800,9 +4800,7 @@ function SetupPage() {
         ))}
       </div>
       {tab === "machines" && <MachineCrud />}
-      {tab === "operations" && <SimpleCrud table="operations" fields={[
-        { key: "name", label: "ชื่อขั้นตอน (เช่น ตัด/เจาะ/บาก)" }, { key: "seq", label: "ลำดับ", type: "number" },
-      ]} />}
+      {tab === "operations" && <OperationsCrud />}
       {tab === "projects" && <ProjectCrud />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
@@ -5165,7 +5163,7 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
         )}
       </div>
       {!machineChosen && selected.size > 0 && (
-        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 4 }}>เลือกเครื่องจักรก่อน จึงจะบันทึกหลายขั้นตอนได้</div>
+        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 4 }}>เลือกเครื่อง/สถานีก่อน จึงจะบันทึกหลายขั้นตอนได้</div>
       )}
     </div>
   );
@@ -5260,26 +5258,26 @@ function MachineCrud() {
   }
 
   return (
-    <Card title="เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ">
+    <Card title="เพิ่มเครื่อง/สถานีใหม่ + ตั้งความสามารถ">
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
         <div style={{ minWidth: 140 }}><Field label="รหัสเครื่อง"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field></div>
-        <div style={{ minWidth: 180 }}><Field label="ชื่อเครื่องจักร"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field></div>
+        <div style={{ minWidth: 180 }}><Field label="ชื่อเครื่อง/สถานี"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field></div>
         <div style={{ minWidth: 140 }}><Field label="ประเภทงาน"><Input value={form.type || ""} onChange={(e) => setForm({ ...form, type: e.target.value })} /></Field></div>
         <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        เครื่องหนึ่งทำได้หลายขั้นตอน — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
+        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
       </div>
       <SortControl sort={sort} options={[
-        { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่องจักร" },
+        { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
         { k: "type", label: "ประเภท" }, { k: "caps", label: "ขั้นตอนที่ทำได้" },
       ]} />
       <div className="table-wrap tall-scroll">
         <table className="data-table responsive-cards">
           <thead><tr>
             <SortTh k="code" sort={sort}>รหัสเครื่อง</SortTh>
-            <SortTh k="name" sort={sort}>ชื่อเครื่องจักร</SortTh>
+            <SortTh k="name" sort={sort}>ชื่อเครื่อง/สถานี</SortTh>
             <SortTh k="type" sort={sort}>ประเภท</SortTh>
             <SortTh k="caps" sort={sort}>ขั้นตอนที่ทำได้</SortTh>
             <th></th>
@@ -5293,7 +5291,7 @@ function MachineCrud() {
               return (
                 <tr key={r.id}>
                   <td data-label="รหัสเครื่อง">{r.code}</td>
-                  <td data-label="ชื่อเครื่องจักร">{r.name}</td>
+                  <td data-label="ชื่อเครื่อง/สถานี">{r.name}</td>
                   <td data-label="ประเภท">{r.type || "-"}</td>
                   <td data-label="ขั้นตอนที่ทำได้">
                     {names.length > 0
@@ -5372,10 +5370,10 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
   }
 
   return (
-    <Modal title={`แก้ไขเครื่องจักร — ${machine.code}`} sub="แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้" onClose={onClose}>
+    <Modal title={`แก้ไขเครื่อง/สถานี — ${machine.code}`} sub="แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้" onClose={onClose}>
       <div className="grid-2">
         <Field label="รหัสเครื่อง"><Input value={machine.code} disabled /></Field>
-        <Field label="ชื่อเครื่องจักร"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <Field label="ชื่อเครื่อง/สถานี"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
       </div>
       <Field label="ประเภทงาน (คำอธิบาย · ไม่บังคับ)">
         <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
@@ -5397,6 +5395,76 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ─── ขั้นตอนการทำงาน + ประเภทงาน (machining / assembly / packing) ───────────────
+const OP_TYPES = [
+  { value: "machining", label: "งานเครื่อง (machining)" },
+  { value: "assembly", label: "ประกอบ (assembly)" },
+  { value: "packing", label: "แพ็ก (packing)" },
+];
+function OperationsCrud() {
+  const [rows, setRows] = useState([]);
+  const [form, setForm] = useUndoable({ op_type: "machining" });
+  const load = useCallback(async () => setRows(await listRows("operations", { order: "seq" })), []);
+  useEffect(() => { load(); }, [load]);
+
+  async function add() {
+    if (!form.name) { mlsToast("กรอกชื่อขั้นตอน", "warn"); return; }
+    await insertRow("operations", {
+      name: form.name, seq: form.seq === "" || form.seq == null ? null : Number(form.seq),
+      op_type: form.op_type || "machining",
+    });
+    setForm({ op_type: "machining" }); load();
+  }
+  async function changeType(id, op_type) {
+    try { await updateRow("operations", id, { op_type }); setRows((prev) => prev.map((r) => (r.id === id ? { ...r, op_type } : r))); }
+    catch (e) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (e?.message || e), "error"); }
+  }
+  async function remove(id) {
+    if (!confirm("ลบขั้นตอนนี้?")) return;
+    try { await deleteRow("operations", id); load(); }
+    catch (e) { mlsToast("ลบไม่ได้ — ขั้นตอนนี้ถูกใช้งานอยู่ (มีเครื่อง/งาน/การสแกนอ้างอิงถึง)", "error"); }
+  }
+
+  return (
+    <Card title="ขั้นตอนการทำงาน (machining / ประกอบ / แพ็ก)">
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <b>งานเครื่อง</b> = ตัด/เจาะ/บาก (สแกนต่อชิ้นปกติ) · <b>ประกอบ/แพ็ก</b> = หน้าเครื่องสลับเป็นโหมดประกอบ (สแกนลูกเข้าเบอร์แม่ตาม BOM) — ตั้งประเภทที่นี่แทนการรัน SQL
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end" }}>
+        <Field label="ชื่อขั้นตอน"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น ตัด / ประกอบ / แพ็ก" /></Field>
+        <Field label="ลำดับ"><Input type="number" value={form.seq ?? ""} onChange={(e) => setForm({ ...form, seq: e.target.value })} style={{ maxWidth: 90 }} /></Field>
+        <div style={{ minWidth: 200 }}>
+          <Field label="ประเภทงาน"><Select value={form.op_type || "machining"} onChange={(e) => setForm({ ...form, op_type: e.target.value })}
+            options={OP_TYPES.map((o) => ({ value: o.value, label: o.label }))} /></Field>
+        </div>
+        <Btn variant="accent" onClick={add} style={{ height: 42 }}>เพิ่ม</Btn>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr><th>ชื่อขั้นตอน</th><th>ลำดับ</th><th>ประเภทงาน</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{r.name}</td>
+                <td>{r.seq}</td>
+                <td>
+                  <select className="select" value={r.op_type || "machining"} onChange={(e) => changeType(r.id, e.target.value)} style={{ minWidth: 190 }}>
+                    {OP_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </td>
+                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr><td colSpan={4}><div className="empty-state" style={{ padding: "20px 0" }}><Icon name="settings" size={28} /><div className="empty-state-title">ยังไม่มีขั้นตอน</div><div className="empty-state-sub">เพิ่มขั้นตอนแรกด้านบน</div></div></td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
@@ -5535,7 +5603,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
   }
 
   return (
-    <Modal title={`แก้ไขพนักงาน — ${employee.code}`} sub="ตั้งเครื่องจักร/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง" onClose={onClose}>
+    <Modal title={`แก้ไขพนักงาน — ${employee.code}`} sub="ตั้งเครื่อง/สถานี/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง" onClose={onClose}>
       <div className="grid-2">
         <Field label="ชื่อ"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
@@ -5543,7 +5611,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
           options={[{ value: "admin", label: "Admin" }, { value: "office", label: "พนักงานออฟฟิศ" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
-        <Field label="เครื่องจักรประจำ *"><Select value={form.machine_id} onChange={(e) => chooseMachine(e.target.value)}
+        <Field label="เครื่อง/สถานีประจำ *"><Select value={form.machine_id} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
         <Field label="ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *">
           <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
@@ -5555,7 +5623,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
       </Field>
       {(!form.machine_id || opSel.size === 0) && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-          * ถ้าไม่ตั้งเครื่องจักร/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้
+          * ถ้าไม่ตั้งเครื่อง/สถานี/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้
         </div>
       )}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
@@ -5651,14 +5719,14 @@ function EmployeeCrud() {
         <Field label="สิทธิ์การใช้งาน"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
           options={[{ value: "admin", label: "Admin" }, { value: "office", label: "พนักงานออฟฟิศ" }, { value: "operator", label: "พนักงานหน้าเครื่อง" }]} /></Field>
         <div />
-        <Field label="เครื่องจักรประจำ"><Select value={form.machine_id || ""} onChange={(e) => chooseMachine(e.target.value)}
+        <Field label="เครื่อง/สถานีประจำ"><Select value={form.machine_id || ""} onChange={(e) => chooseMachine(e.target.value)}
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
         <Field label="ขั้นตอนประจำ (เลือกได้หลายขั้นตอน)">
           <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
         </Field>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง
+        พนักงานที่ยังไม่ได้ตั้งเครื่อง/สถานี/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <Btn variant="accent" onClick={add} disabled={busy}>{busy ? "กำลังบันทึก…" : "เพิ่มพนักงาน"}</Btn>
@@ -5671,7 +5739,7 @@ function EmployeeCrud() {
       </div>
       <div className="table-wrap" style={{ marginTop: 16 }}>
         <table className="data-table">
-          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>เครื่องจักรประจำ</th><th>ขั้นตอนประจำ</th><th>สถานะ</th><th></th></tr></thead>
+          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>เครื่อง/สถานีประจำ</th><th>ขั้นตอนประจำ</th><th>สถานะ</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
