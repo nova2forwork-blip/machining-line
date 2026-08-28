@@ -595,6 +595,35 @@ export function retryRejected() {
 }
 export function clearRejected() { rjWrite([]); }
 
+// ── รายงานคิว rejected ขึ้น server (dead-letter) ให้ office เห็นราย "เครื่อง" (#14) ──
+// best-effort — server กันซ้ำด้วย qid · เรียกหลัง flush เมื่อมี reject ใหม่ + ตอนเปิดหน้าเครื่อง
+export async function reportDeadLetter(items) {
+  const list = (items || rjRead()).filter((it) => it && it.qid);
+  if (!list.length) return;
+  const payload = list.map((it) => ({
+    qid: it.qid,
+    kind: it.machineWork ? "machine_work" : "qr",
+    qr: it.qr || null,
+    detail: it.machineWork
+      ? { release_id: it.machineWork.p_release_id, operation_id: it.machineWork.p_operation_id, quantity: it.machineWork.p_quantity }
+      : null,
+    reason: it.reason || null,
+    client_ts: String(it.rejectedAt || it.ts || Date.now()),
+  }));
+  try { await supabase.rpc("report_dead_letter", { p_token: authToken(), p_items: payload }); }
+  catch (e) { console.warn("reportDeadLetter failed:", e?.message || e); }
+}
+// อ่าน dead-letter (admin) · ทำเครื่องหมายจัดการแล้ว (admin)
+export async function listDeadLetter(includeResolved = false) {
+  const { data, error } = await supabase.rpc("authz_list_dead_letter", { p_token: authToken(), p_include_resolved: includeResolved });
+  if (error) { console.warn("authz_list_dead_letter error", error); flagAuth(error); throw error; }
+  return data || [];
+}
+export async function resolveDeadLetter(id) {
+  const { error } = await supabase.rpc("authz_resolve_dead_letter", { p_token: authToken(), p_id: id });
+  if (error) { console.warn("authz_resolve_dead_letter error", error); flagAuth(error); throw error; }
+}
+
 // สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
 export async function recordScanByQr(qr, { allowQueue = true } = {}) {
   const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
@@ -628,6 +657,7 @@ export async function flushScanQueue() {
   const done = new Set();          // qid ที่จัดการเสร็จแล้ว (สำเร็จ/ถูก reject) → เอาออกจากคิว
   const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (นับเฉพาะ error รอบนี้)
   const rejects = [];
+  let authExpired = false;         // เจอ token หมดอายุระหว่างซิงค์ → แจ้งให้ล็อกอินใหม่ (งานคงอยู่ในคิว)
   const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
   try {
     for (const item of a) {
@@ -638,6 +668,7 @@ export async function flushScanQueue() {
         ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
       }
       if (error) {
+        if (isAuthError(error)) { authExpired = true; continue; }  // token หมดอายุ/ไม่ถูกต้อง → คงไว้รอ login ใหม่ (ไม่นับ attempt/ไม่ reject)
         // แยก "เน็ต/DB สะดุด" (retry) ออกจาก "พลาดถาวร" (วนไม่จบ) — H3
         if (typeof navigator !== "undefined" && navigator.onLine === false) continue; // ออฟไลน์ = ไม่ถือเป็นครั้ง
         const at = (Number(item.attempts) || 0) + 1;
@@ -646,7 +677,7 @@ export async function flushScanQueue() {
         continue;
       }
       if (data && data.ok === false) {
-        if (data.reason === "unauthorized") continue;             // token หมดอายุ → คงไว้รอ login
+        if (data.reason === "unauthorized") { authExpired = true; continue; }   // token หมดอายุ → คงไว้รอ login ใหม่ + แจ้งเตือน
         rejects.push({ item, reason: data.reason });              // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
         done.add(item.qid);
         continue;
@@ -664,6 +695,12 @@ export async function flushScanQueue() {
                 .map((it) => (bumped.has(it.qid) ? { ...it, attempts: bumped.get(it.qid) } : it)));
       for (const r of rejects) pushRejected(r.item, r.reason);    // pushRejected กันซ้ำด้วย qid แล้ว
     } catch (e) { console.warn("flush finalize failed", e); }
+    // มี reject ใหม่ → รายงานคิว rejected ขึ้น server ให้ office เห็น (best-effort, กันซ้ำด้วย qid)
+    if (rejects.length) { try { reportDeadLetter(); } catch (_) { /* ignore */ } }
+    // token หมดอายุระหว่างซิงค์ → แจ้งแอปให้เด้งล็อกอินใหม่ (งานยังอยู่ในคิว รอดข้ามการล็อกอิน)
+    if (authExpired && typeof window !== "undefined") {
+      try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
+    }
   }
 }
 
