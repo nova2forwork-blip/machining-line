@@ -3426,6 +3426,7 @@ function ReportPage() {
   const machineAcc = {
     name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
     time: (m) => m.total.seconds,
+    secPer: (m) => (m.total.count > 0 ? m.total.seconds / m.total.count : 0),   // cycle-time วินาที/ชิ้น
     avgKg: (m) => dmByName(m.name)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name)?.avg.count || 0,
   };
   matrix.opNames.forEach((op) => { machineAcc[`op:${op}`] = (m) => m.ops[op]?.count || 0; });
@@ -3437,12 +3438,72 @@ function ReportPage() {
   const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
   const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
 
+  // ── ดาวน์โหลดทุกตารางในหน้านี้เป็นไฟล์ Excel หลายชีต (โหลด xlsx เฉพาะตอนกด) ──
+  async function exportExcel() {
+    const { downloadSheets, round2 } = await import("./excelExport.js");
+    const opRows = chartData.map((o) => ({ "ขั้นตอน": o.name, "จำนวน (ชิ้น)": o.count, "น้ำหนัก (กก.)": round2(o.weight) }));
+    const mOps = matrix.opNames;
+    const machineRows = matrix.machines.map((m) => {
+      const row = { "เครื่องจักร": m.name };
+      mOps.forEach((op) => { row[op] = m.ops[op]?.count || 0; });
+      row["รวม (ชิ้น)"] = m.total.count;
+      row["น้ำหนัก (กก.)"] = round2(m.total.weight);
+      row["เวลาเดินเครื่อง (วินาที)"] = Math.round(m.total.seconds || 0);
+      row["วินาที/ชิ้น"] = m.total.count > 0 ? round2(m.total.seconds / m.total.count) : "";
+      const dm = dmByName(m.name);
+      row["เฉลี่ย กก./วัน"] = dm ? round2(dm.avg.weight) : "";
+      row["เฉลี่ย ชิ้น/วัน"] = dm ? round2(dm.avg.count) : "";
+      return row;
+    });
+    const cycleRows = [];
+    matrix.machines.forEach((m) => mOps.forEach((op) => {
+      const c = m.ops[op];
+      if (!c || !c.count) return;
+      cycleRows.push({
+        "เครื่องจักร": m.name, "ขั้นตอน": op, "จำนวน (ชิ้น)": c.count,
+        "เวลา (วินาที)": Math.round(c.seconds || 0),
+        "วินาที/ชิ้น": c.count > 0 ? round2((c.seconds || 0) / c.count) : "",
+      });
+    }));
+    const pOps = partMatrix.opNames;
+    const partRows = partMatrix.parts.map((p) => {
+      const row = { "Release": p.releaseOrder, "Part No.": p.partNo, "ชื่อ Part": p.partName };
+      pOps.forEach((op) => { row[op] = p.ops[op]?.count || 0; });
+      row["รวม (ชิ้น)"] = p.total.count;
+      row["น้ำหนัก (กก.)"] = round2(p.total.weight);
+      row["เสร็จ (ชิ้น)"] = p.total.finished;
+      return row;
+    });
+    const dailyRows = [];
+    dailyMatrix.machines.forEach((m) => dailyMatrix.days.forEach((day) => {
+      const d = m.days[day];
+      if (!d) return;
+      dailyRows.push({
+        "เครื่องจักร": m.name, "วันที่": day, "จำนวน (ชิ้น)": d.count,
+        "น้ำหนัก (กก.)": round2(d.weight), "เวลา (วินาที)": Math.round(d.seconds || 0),
+      });
+    }));
+    downloadSheets(`report-${todayStr()}${partFilter ? "-" + partFilter : ""}.xlsx`, [
+      { name: "สรุปตามขั้นตอน", rows: opRows },
+      { name: "เครื่องจักรxขั้นตอน", rows: machineRows },
+      { name: "Cycle-time วินาทีต่อชิ้น", rows: cycleRows },
+      { name: "ReleasexPart", rows: partRows },
+      { name: "รายวันต่อเครื่อง", rows: dailyRows },
+    ]);
+  }
+
   return (
     <div>
       <div className="page-head">
         <div>
           <div className="page-title">รายงานข้อมูลสแกน</div>
           <div className="page-sub">สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn variant="accent" onClick={exportExcel} disabled={filteredLogs.length === 0}
+            title="ดาวน์โหลดทุกตารางในหน้านี้เป็นไฟล์ Excel (หลายชีต)">
+            <Icon name="grid" size={15} /> ดาวน์โหลด Excel
+          </Btn>
         </div>
       </div>
 
@@ -3528,6 +3589,7 @@ function ReportPage() {
                   <SortTh k="total" sort={sortM}>รวม (ชิ้น)</SortTh>
                   <SortTh k="weight" sort={sortM}>น้ำหนัก (กก.)</SortTh>
                   <SortTh k="time" sort={sortM}>เวลาเดินเครื่อง</SortTh>
+                  <SortTh k="secPer" sort={sortM}>วินาที/ชิ้น</SortTh>
                   <SortTh k="avgKg" sort={sortM}>เฉลี่ย กก./วัน</SortTh>
                   <SortTh k="avgPcs" sort={sortM}>เฉลี่ย ชิ้น/วัน</SortTh>
                 </tr>
@@ -3549,6 +3611,7 @@ function ReportPage() {
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{m.total.count.toLocaleString()} ชิ้น</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—"}</td>
                       <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }}>{(m.total.seconds && m.total.count) ? `${(m.total.seconds / m.total.count).toFixed(1)} วิ` : "—"}</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{dm ? `${fmtNum(dm.avg.weight)} กก.` : "—"}</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>
                         {dm
@@ -4471,8 +4534,10 @@ function SetupPage() {
   const [tab, setTab] = useState("machines");
   const TABS = [
     { key: "machines", label: "เครื่องจักร" },
+    { key: "operations", label: "ขั้นตอน" },
     { key: "parts", label: "Part Master" },
     { key: "employees", label: "พนักงาน" },
+    { key: "departments", label: "แผนก" },
     { key: "sessions", label: "ผู้ใช้ออนไลน์" },
     { key: "backup", label: "สำรองข้อมูล" },
   ];
