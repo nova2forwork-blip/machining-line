@@ -8,7 +8,7 @@ import {
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
-  listActiveSessions, forceLogoutSession, updateReleaseHeader,
+  listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -512,9 +512,69 @@ const BOTTOM_LEFT = { key: "release", label: "Release", icon: "box" };
 const BOTTOM_LEFT2 = { key: "labels", label: "พิมพ์ QR", icon: "qr" };
 const BOTTOM_RIGHT = { key: "report", label: "รายงาน", icon: "chart" };
 
+// ─── เปลี่ยนรหัสผ่านของตัวเอง (ผู้ใช้คนไหนก็ได้ที่ล็อกอินอยู่) ───────────────────
+function ChangePasswordModal({ onClose }) {
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit() {
+    setErr("");
+    if (newPw.length < 4) { setErr("รหัสผ่านใหม่ต้องอย่างน้อย 4 ตัวอักษร"); return; }
+    if (newPw !== confirmPw) { setErr("ยืนยันรหัสผ่านใหม่ไม่ตรงกัน"); return; }
+    if (newPw === oldPw) { setErr("รหัสผ่านใหม่ต้องต่างจากรหัสเดิม"); return; }
+    setBusy(true);
+    try {
+      const res = await changeMyPassword(oldPw, newPw);
+      if (res?.ok) { setDone(true); mlsToast("เปลี่ยนรหัสผ่านแล้ว", "success"); }
+      else if (res?.reason === "wrong_old") setErr("รหัสผ่านเดิมไม่ถูกต้อง");
+      else if (res?.reason === "too_short") setErr("รหัสผ่านใหม่สั้นเกินไป");
+      else setErr("เปลี่ยนไม่สำเร็จ");
+    } catch (e) { setErr("เปลี่ยนไม่สำเร็จ: " + (e?.message || e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal title="เปลี่ยนรหัสผ่าน" sub="เปลี่ยนรหัสผ่านของบัญชีคุณเอง" onClose={onClose} locked={busy}>
+      {done ? (
+        <>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7, color: "var(--accent-dk)", marginBottom: 16 }}>
+            ✓ เปลี่ยนรหัสผ่านเรียบร้อยแล้ว — ครั้งต่อไปให้ใช้รหัสผ่านใหม่ในการเข้าสู่ระบบ
+          </div>
+          <div className="modal-actions"><Btn variant="accent" onClick={onClose}>เสร็จสิ้น</Btn></div>
+        </>
+      ) : (
+        <>
+          <Field label="รหัสผ่านเดิม">
+            <Input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoFocus />
+          </Field>
+          <Field label="รหัสผ่านใหม่ (อย่างน้อย 4 ตัว)">
+            <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+          </Field>
+          <Field label="ยืนยันรหัสผ่านใหม่">
+            <Input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+          </Field>
+          {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 4 }}>{err}</div>}
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <Btn variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+            <Btn variant="accent" onClick={submit} disabled={busy || !oldPw || !newPw || !confirmPw}>
+              {busy ? "กำลังเปลี่ยน..." : "เปลี่ยนรหัสผ่าน"}
+            </Btn>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function Shell({ user, onLogout }) {
   const [tab, setTab] = useState("projects");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);   // หน้าต่างเปลี่ยนรหัสผ่านตัวเอง
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
 
   const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
@@ -560,6 +620,7 @@ function Shell({ user, onLogout }) {
             </div>
             <div style={{ marginLeft: "auto" }}><LangToggle /></div>
           </div>
+          <div className="nav-item" onClick={() => setPwOpen(true)}><Icon name="lock" size={17} />เปลี่ยนรหัสผ่าน</div>
           <div className="nav-item logout-item" onClick={onLogout}><Icon name="logout" size={17} />ออกจากระบบ</div>
         </div>
       </div>
@@ -602,10 +663,15 @@ function Shell({ user, onLogout }) {
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border-soft)", paddingTop: 14, paddingLeft: 6 }}>
           <LangToggle />
         </div>
+        <div className="nav-item" onClick={() => { setDrawerOpen(false); setPwOpen(true); }} style={{ marginTop: 8 }}>
+          <Icon name="lock" size={17} />เปลี่ยนรหัสผ่าน
+        </div>
         <div className="nav-item logout-item" onClick={onLogout} style={{ marginTop: 8 }}>
           <Icon name="logout" size={17} />ออกจากระบบ
         </div>
       </div>
+
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
 
       {/* ── Page content ── */}
       <div className="content">
@@ -1599,6 +1665,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
       if (!confirm(msg)) { setBusyId(null); return; }
       await deleteReleaseCascade(r.id);
+      auditRecord("delete_release", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty, project: r.part_master?.projects?.code });
       const next = releases.filter((x) => x.id !== r.id);
       setReleases(next);
       onChanged && onChanged();               // ให้หน้ารายการหลักรีโหลดด้วย
@@ -3181,6 +3248,12 @@ function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSa
       });
       if (!res?.ok) { setErr("บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : "")); setBusy(false); return; }
 
+      auditRecord("edit_release_header", "release_group", group.releaseOrder || releases[0]?.id, {
+        project: group.projectCode, parts: releases.length,
+        release_order: ro || null,
+        mdf: mdfChanged ? (mdfTrim || "0") : undefined,
+        date: dateChanged ? date : undefined,
+      });
       mlsToast(`บันทึกหัวเอกสารแล้ว — อัปเดต ${fmtNum(res.releases || releases.length)} Part`, "success");
       onSaved({
         ro: ro || null,
@@ -3938,6 +4011,7 @@ function ProjectsPage({ user, goTo }) {
     setClosingId(p.id);
     try {
       await updateRow("projects", p.id, { status: closing ? "closed" : "active" });
+      auditRecord(closing ? "close_project" : "reopen_project", "project", p.id, { code: p.code, name: p.name });
       await reload();
     } catch (err) { alert("เปลี่ยนสถานะไม่สำเร็จ: " + (err?.message || err)); }
     finally { setClosingId(null); }
@@ -4149,6 +4223,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted }) {
     setBusy(true); setErr("");
     try {
       await deleteProjectCascade(project.id);
+      auditRecord("delete_project", "project", project.id, { code: project.code, name: project.name });
       onDeleted();
     } catch (e) {
       setErr("ลบไม่สำเร็จ: " + e.message);
@@ -4335,6 +4410,7 @@ function ActiveSessionsCard() {
     try {
       const res = await forceLogoutSession(row.sid);
       if (res?.ok) {
+        auditRecord("force_logout", "session", row.sid, { code: row.code, name: row.name, machine: row.machine_code });
         setMsg(`บังคับ ${who} ออกจากระบบแล้ว — เครื่องนั้นจะเด้งออกภายใน 1 นาที`);
         mlsToast("บังคับออกจากระบบแล้ว", "success");
         await load();
@@ -4415,6 +4491,108 @@ function ActiveSessionsCard() {
   );
 }
 
+// ─── ประวัติการแก้ไข (audit log) — ใครทำอะไรที่สำคัญ/ลบข้อมูลได้ (เฉพาะ Admin) ───
+const AUDIT_ACTIONS = {
+  delete_project:      { label: "ลบโปรเจกต์", tone: "danger" },
+  delete_release:      { label: "ลบ Release", tone: "danger" },
+  delete_employee:     { label: "ลบพนักงาน", tone: "danger" },
+  delete_machine:      { label: "ลบเครื่องจักร", tone: "danger" },
+  clear_scans:         { label: "ล้างข้อมูลสแกน", tone: "danger" },
+  restore_backup:      { label: "กู้คืน Backup", tone: "warning" },
+  force_logout:        { label: "บังคับออกจากระบบ", tone: "warning" },
+  edit_release_header: { label: "แก้หัวเอกสาร Release", tone: "steel" },
+  close_project:       { label: "ปิดโปรเจกต์", tone: "muted" },
+  reopen_project:      { label: "เปิดโปรเจกต์", tone: "muted" },
+};
+
+function auditDetailText(row) {
+  const d = row.detail || {};
+  const parts = [];
+  if (d.code || d.name) parts.push([d.code, d.name].filter(Boolean).join(" — "));
+  if (d.part_no) parts.push(`Part ${d.part_no}`);
+  if (d.release_order) parts.push(d.release_order);
+  if (d.project && !d.code) parts.push(`โปรเจกต์ ${d.project}`);
+  if (d.parts != null) parts.push(`${fmtNum(d.parts)} Part`);
+  if (d.qty != null) parts.push(`${fmtNum(d.qty)} ชิ้น`);
+  if (d.scope) parts.push(`ขอบเขต: ${d.scope}`);
+  if (d.machine_records != null) parts.push(`บันทึกหน้าเครื่อง ${fmtNum(d.machine_records)}`);
+  if (d.records != null) parts.push(`ประวัติ ${fmtNum(d.records)} รายการ`);
+  if (d.mode) parts.push(`โหมด ${d.mode}`);
+  if (d.mdf != null) parts.push(`Modify ${d.mdf}`);
+  if (d.date) parts.push(`วันที่ ${d.date}`);
+  if (d.machine) parts.push(`เครื่อง ${d.machine}`);
+  return parts.join(" · ") || (row.entity_id ? `id ${String(row.entity_id).slice(0, 8)}` : "—");
+}
+
+function AuditLogCard() {
+  const [rows, setRows] = useState(null);   // null = loading
+  const [err, setErr] = useState("");
+  const [canMore, setCanMore] = useState(false);
+  const [more, setMore] = useState(false);
+
+  const load = useCallback(async () => {
+    try { const r = await listAuditLog({ limit: 200 }); setRows(r); setCanMore(r.length >= 200); setErr(""); }
+    catch (e) { setErr("โหลดไม่สำเร็จ: " + (e?.message || e)); setRows([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function loadMore() {
+    if (!rows || rows.length === 0) return;
+    setMore(true);
+    try {
+      const before = rows[rows.length - 1].created_at;
+      const next = await listAuditLog({ limit: 200, before });
+      setRows((prev) => [...prev, ...next]);
+      setCanMore(next.length >= 200);
+    } catch (e) { setErr("โหลดเพิ่มไม่สำเร็จ: " + (e?.message || e)); }
+    finally { setMore(false); }
+  }
+
+  return (
+    <Card title="ประวัติการแก้ไข (เฉพาะ Admin)" right={<Btn variant="ghost" size="sm" onClick={load} disabled={rows === null}>รีเฟรช</Btn>}>
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        บันทึกการกระทำสำคัญ/ที่ลบข้อมูลได้ — ใครทำ อะไร เมื่อไหร่ (ลบโปรเจกต์/Release, ล้างสแกน, บังคับออกจากระบบ, แก้หัวเอกสาร, ปิด/เปิดโปรเจกต์, กู้คืน)
+      </div>
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      {rows === null ? (
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
+      ) : rows.length === 0 ? (
+        <div className="empty-state">
+          <Icon name="clock" size={30} />
+          <div className="empty-state-title">ยังไม่มีประวัติ</div>
+          <div className="empty-state-sub">เมื่อมีการลบ/แก้/กู้คืนข้อมูลสำคัญ จะบันทึกที่นี่</div>
+        </div>
+      ) : (
+        <>
+          <div className="table-wrap tall-scroll">
+            <table className="data-table">
+              <thead><tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>รายละเอียด</th></tr></thead>
+              <tbody>
+                {rows.map((r) => {
+                  const a = AUDIT_ACTIONS[r.action] || { label: r.action, tone: "muted" };
+                  return (
+                    <tr key={r.id}>
+                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{fmtDT(r.created_at)}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.actor_code || "-"}{r.actor_name ? <span style={{ color: "var(--muted)" }}> — {r.actor_name}</span> : null}</td>
+                      <td style={{ whiteSpace: "nowrap" }}><Badge tone={a.tone}>{a.label}</Badge></td>
+                      <td style={{ fontSize: 12.5 }}>{auditDetailText(r)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {canMore && (
+            <div style={{ marginTop: 10 }}>
+              <Btn variant="ghost" size="sm" onClick={loadMore} disabled={more}>{more ? "กำลังโหลด..." : "โหลดเพิ่ม"}</Btn>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 function ClearScansCard() {
   const [mode, setMode] = useState("group");     // group (ทั้ง Release) | release (ราย Part) | unit (QR)
   const [releases, setReleases] = useState([]);
@@ -4478,6 +4656,7 @@ function ClearScansCard() {
       if (mode === "group") { const g = preview?.grp || groups.find((x) => x.key === grpKey); res = await clearScansReleaseGroup(g.projectId, g.releaseOrder, {}); }
       else if (mode === "release") res = await clearScansRelease(relId, {});
       else { const u = preview?.unit || await findUnitByQr(qr.trim()); res = await clearScansUnit(u.id, {}); }
+      auditRecord("clear_scans", "scan_data", null, { scope: mode, machine_records: res.machine_records || 0, scan_logs: res.scan_logs || 0 });
       setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${res.machine_records || 0} · สแกนสำนักงาน ${res.scan_logs || 0} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
       setPreview(null); setGrpKey(""); setRelId(""); setQr("");
     } catch (e) { setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) }); }
@@ -4539,6 +4718,7 @@ function SetupPage() {
     { key: "employees", label: "พนักงาน" },
     { key: "departments", label: "แผนก" },
     { key: "sessions", label: "ผู้ใช้ออนไลน์" },
+    { key: "audit", label: "ประวัติการแก้ไข" },
     { key: "backup", label: "สำรองข้อมูล" },
   ];
   return (
@@ -4557,6 +4737,7 @@ function SetupPage() {
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
       {tab === "sessions" && <ActiveSessionsCard />}
+      {tab === "audit" && <AuditLogCard />}
       {tab === "parts" && <PartMasterCrud />}
       {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
     </div>
@@ -4575,6 +4756,7 @@ function RestoreModal({ backup, onClose, onDone }) {
     setBusy(true); setErr("");
     try {
       const res = await restoreBackup(backup.id, mode);
+      auditRecord("restore_backup", "project", backup.project_id || backup.id, { code: backup.project_code, name: backup.project_name, mode });
       onDone(res, mode);
     } catch (e) {
       setErr("กู้คืนไม่สำเร็จ: " + (e?.message || e));
@@ -5111,6 +5293,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       if (res && res.ok && res.unbound > 0) {
         mlsToast(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`, "info");
       }
+      if (res && res.ok) auditRecord("delete_machine", "machine", machine.id, { code: machine.code, name: machine.name, records: res.deleted_records || 0 });
       onSaved();
     } catch (e) {
       setErr("ลบไม่สำเร็จ: " + (e?.message || e));
@@ -5273,6 +5456,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         setBusy(false);
         return;
       }
+      auditRecord("delete_employee", "employee", employee.id, { code: employee.code, name: employee.name });
       onSaved();
     } catch (e) {
       setErr("ลบไม่สำเร็จ: " + e.message);
