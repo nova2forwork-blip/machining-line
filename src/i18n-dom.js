@@ -24,7 +24,7 @@ const DICT = {
   "หน้าแรก": "Home", "กลับหน้าแรก": "Back to home", "ดูขั้นตอน": "View steps",
 
   // เมนู / หัวข้อหลัก
-  "โปรเจค": "Projects", "เครื่องจักร": "Machine", "หน้าเครื่อง": "Machine terminal", "มือถือ": "Mobile",
+  "โปรเจค": "Projects", "เครื่องจักร": "Machine", "เครื่อง/สถานี": "Machine/Station", "หน้าเครื่อง": "Machine terminal", "มือถือ": "Mobile",
   "พิมพ์ QR": "Print QR", "พิมพ์ QR / ป้าย": "Print QR / Labels", "รายงาน": "Reports",
   "Report (ข้อมูลสแกน)": "Report (scans)", "ระบบบันทึกการทำงานเครื่องจักร": "Machine production logging",
   "ออกจากระบบ": "Log out", "เข้าสู่ระบบ": "Sign in", "รหัสผ่าน": "Password",
@@ -75,15 +75,15 @@ const DICT = {
   "ไม่บังคับ": "Optional", "ปิด": "Close", "ใช่": "Yes", "ไม่ใช่": "No", "ทั้งหมด": "All",
 
   // เครื่องจักร / setup
-  "เครื่องจักรประจำ": "Assigned machine", "ขั้นตอนประจำ": "Assigned operation",
-  "เครื่องจักรประจำ *": "Assigned machine *", "ขั้นตอนประจำ *": "Assigned operation *",
+  "เครื่อง/สถานีประจำ": "Assigned machine/station", "ขั้นตอนประจำ": "Assigned operation",
+  "เครื่อง/สถานีประจำ *": "Assigned machine/station *", "ขั้นตอนประจำ *": "Assigned operation *",
   "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน)": "Assigned operations (select multiple)",
   "ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *": "Assigned operations (select multiple) *",
-  "เลือกเครื่องจักรก่อน จึงจะบันทึกหลายขั้นตอนได้": "Select a machine first to save multiple operations",
+  "เลือกเครื่อง/สถานีก่อน จึงจะบันทึกหลายขั้นตอนได้": "Select a machine/station first to save multiple operations",
   "ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ \"ขั้นตอนงาน\" ก่อน": "No operations yet — add them in the \"Workflow\" tab first",
-  "พนักงานที่ยังไม่ได้ตั้งเครื่องจักร/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม \"แก้ไข\") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง":
+  "พนักงานที่ยังไม่ได้ตั้งเครื่อง/สถานี/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม \"แก้ไข\") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง":
     "Employees without an assigned machine/operation can't scan (you can set it later via \"Edit\") · select multiple operations if this machine does more than one",
-  "รหัสเครื่อง": "Machine code", "ชื่อเครื่องจักร": "Machine name", "รหัสพนักงาน": "Employee code",
+  "รหัสเครื่อง": "Machine code", "ชื่อเครื่อง/สถานี": "Machine/station name", "รหัสพนักงาน": "Employee code",
   "ขั้นตอนที่ทำได้": "Operations", "ขั้นตอนที่เครื่องนี้ทำได้": "Operations this machine can do",
   "แก้ชื่อและประเภทงานได้ · รหัสเครื่องแก้ไม่ได้ (เป็นตัวระบุตัวตน)": "Edit name and work type · machine code can't be changed (it's the identifier)",
   "แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้": "Edit name/type · select operations · or delete — machine code can't be changed",
@@ -93,11 +93,11 @@ const DICT = {
   "เรียงโดย": "Sort by", "— ค่าเริ่มต้น —": "— Default —",
   "▲ น้อย→มาก": "▲ Low→High", "▼ มาก→น้อย": "▼ High→Low", "สลับ น้อย↔มาก": "Toggle low↔high",
   "↶ กด Ctrl+Z เพื่อย้อนการแก้ไข": "↶ Press Ctrl+Z to undo edits",
-  "เครื่องหนึ่งทำได้หลายขั้นตอน — กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง": "A machine can do several operations — press \"Edit\" to set name/type, choose operations, or delete",
+  "เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น \"สถานี\" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง": "A machine/station can do several operations · create assembly/packing stations here (e.g. ประกอบ-01, แพ็ก-01) — press \"Edit\" to set name/type, choose operations, or delete",
   "ประเภทงาน (คำอธิบาย · ไม่บังคับ)": "Work type (description · optional)",
   "เช่น CUTTING / NOTCHING": "e.g. CUTTING / NOTCHING",
   "ไม่จำกัด (ยังไม่ตั้ง)": "Unlimited (not set)", "ประเภทงาน": "Work type",
-  "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่องจักรใหม่ + ตั้งความสามารถ": "Add machine + capabilities",
+  "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่อง/สถานีใหม่ + ตั้งความสามารถ": "Add machine/station + capabilities",
   "รหัสผ่านเริ่มต้น": "Default password", "ใช้งาน": "Active", "ปิดใช้งาน": "Disabled",
   "ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)": "Set new password (blank = keep)",
 
@@ -199,9 +199,9 @@ const DICT = {
   // ═══ หน้าเครื่องจักร (Station / Machine terminal) ═══════════════════════════
   // — หน้าล็อกอิน —
   "หน้าเครื่อง — เข้าสู่ระบบ": "Machine Terminal — Sign in",
-  "ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)": "Sign in with this machine's account (the account bound to it)",
+  "ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)": "Sign in with this machine/station's account (the account bound to it)",
   "รหัสเครื่อง / พนักงาน": "Machine / employee code",
-  "จอนี้สำหรับติดหน้าเครื่องจักร (แนวนอน)": "This screen mounts on the machine (landscape)",
+  "จอนี้สำหรับติดหน้าเครื่อง/สถานี (แนวนอน)": "This screen mounts on the machine/station (landscape)",
   "ไปหน้าปกติ (สำนักงาน) →": "Go to the normal (office) page →",
   "เช่น CT-001": "e.g. CT-001",
   "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง": "Machine/employee code or password is incorrect",
@@ -209,8 +209,8 @@ const DICT = {
     "This account hasn't signed in on this device yet — sign in once while online, then it can work offline next time",
   "บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่": "This account was signed in on another device — please sign in again",
   // — บัญชีไม่ได้ผูกเครื่อง —
-  "บัญชีนี้ยังไม่ได้ผูกเครื่องจักร": "This account isn't bound to a machine",
-  "หน้าเครื่องต้องใช้บัญชีที่กำหนด \"เครื่องจักรประจำ\" ไว้ที่ Setup → พนักงาน":
+  "บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี": "This account isn't bound to a machine/station",
+  "หน้าเครื่องต้องใช้บัญชีที่กำหนด \"เครื่อง/สถานีประจำ\" ไว้ที่ Setup → พนักงาน":
     "The terminal needs an account with an assigned machine (Setup → Employees)",
   "แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน": "Ask an Admin to set a machine for this account first",
   "ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →": "Go to the office page (sign in again as Admin) →",
@@ -285,7 +285,7 @@ const RULES = [
   [/^ความคืบหน้า\s*—\s*(.+)$/, (m) => `Progress — ${m[1]}`],
   [/^ความสามารถของเครื่อง\s*—\s*(.+)$/, (m) => `Machine capabilities — ${m[1]}`],
   [/^แก้ไขพนักงาน\s*—\s*(.+)$/, (m) => `Edit employee — ${m[1]}`],
-  [/^แก้ไขเครื่องจักร\s*—\s*(.+)$/, (m) => `Edit machine — ${m[1]}`],
+  [/^แก้ไขเครื่อง\/สถานี\s*—\s*(.+)$/, (m) => `Edit machine/station — ${m[1]}`],
   [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
   [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
   [/^⚠\s*ชิ้นนี้เคยทำขั้นตอนนี้แล้ว\s+(\d+)\s*ครั้ง$/, (m) => `⚠ This piece already ran this step ${m[1]}×`],
