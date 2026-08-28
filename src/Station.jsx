@@ -128,7 +128,9 @@ function StationLogin({ onLogin, notice }) {
         <button className="stn-btn" disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
           จอนี้สำหรับติดหน้าเครื่อง/สถานี (แนวนอน)
-          <br /><a className="stn-link-normal" href="/">ไปหน้าปกติ (สำนักงาน) →</a>
+        </div>
+        <div className="stn-login-link">
+          <a href="/">→ ไปหน้าปกติ (สำนักงาน)</a>
         </div>
       </form>
     </div>
