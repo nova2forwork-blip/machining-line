@@ -139,6 +139,32 @@ export async function updateReleaseHeader({ releaseIds, releaseOrder, releaseDat
   return data || { ok: false, reason: "unknown" };
 }
 
+// ── Audit log: บันทึก "ใครทำอะไร (สำคัญ/ลบได้) เมื่อไหร่" ─────────────────────
+// เรียก "หลังการกระทำสำเร็จ" แบบ best-effort — ถ้า log พลาดจะไม่ทำให้การกระทำหลักล้ม
+export async function auditRecord(action, entity = null, entityId = null, detail = null) {
+  try {
+    await supabase.rpc("authz_audit_record", {
+      p_token: authToken(), p_action: action, p_entity: entity,
+      p_entity_id: entityId == null ? null : String(entityId), p_detail: detail,
+    });
+  } catch (e) { console.warn("auditRecord failed:", action, e?.message || e); }
+}
+
+// อ่านประวัติการแก้ไข (admin เท่านั้น) — ล่าสุดก่อน · before = timestamptz สำหรับโหลดหน้าถัดไป
+export async function listAuditLog({ limit = 200, before = null } = {}) {
+  const { data, error } = await supabase.rpc("authz_list_audit", { p_token: authToken(), p_limit: limit, p_before: before });
+  if (error) { console.warn("authz_list_audit error", error); flagAuth(error); throw error; }
+  return data || [];
+}
+
+// เปลี่ยนรหัสผ่านของตัวเอง (ผู้ใช้คนไหนก็ได้ที่ล็อกอินอยู่) — ต้องกรอกรหัสเดิมถูก
+//   คืน { ok:true } · { ok:false, reason:'wrong_old'|'too_short' }
+export async function changeMyPassword(oldPw, newPw) {
+  const { data, error } = await supabase.rpc("change_my_password", { p_token: authToken(), p_old: oldPw, p_new: newPw });
+  if (error) { console.warn("change_my_password error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
 // ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
 //   คืน { ok:true, unbound, deleted_records } เมื่อสำเร็จ
 //   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
