@@ -899,6 +899,15 @@ export async function getMachineOps() {
     try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
   }
   const list = data || [];
+  // เติมธง is_assembly (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์นี้) — อ่านตรงจากตาราง operations
+  try {
+    const ids = list.map((o) => o.id).filter(Boolean);
+    if (ids.length && !(list[0] && "is_assembly" in list[0])) {
+      const { data: ops } = await supabase.from("operations").select("id, is_assembly").in("id", ids);
+      const m = new Map((ops || []).map((o) => [o.id, !!o.is_assembly]));
+      for (const o of list) o.is_assembly = m.get(o.id) || false;
+    }
+  } catch { /* ignore — ถ้าเติมไม่ได้ ถือว่าไม่ใช่ขั้นตอนประกอบ */ }
   try { localStorage.setItem(MOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
   return list;
 }
