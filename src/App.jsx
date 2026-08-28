@@ -9,7 +9,7 @@ import {
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
-  listDeadLetter, resolveDeadLetter, setBom, getBom,
+  listDeadLetter, resolveDeadLetter, setBom, getBom, createOperation, setOperationType,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -5412,15 +5412,22 @@ function OperationsCrud() {
 
   async function add() {
     if (!form.name) { mlsToast("กรอกชื่อขั้นตอน", "warn"); return; }
-    await insertRow("operations", {
-      name: form.name, seq: form.seq === "" || form.seq == null ? null : Number(form.seq),
-      op_type: form.op_type || "machining",
-    });
-    setForm({ op_type: "machining" }); load();
+    try {
+      const res = await createOperation({
+        name: form.name,
+        seq: form.seq === "" || form.seq == null ? null : Number(form.seq),
+        opType: form.op_type || "machining",
+      });
+      if (!res?.ok) { mlsToast("เพิ่มขั้นตอนไม่สำเร็จ: " + (res?.reason || "unknown"), "error"); return; }
+      setForm({ op_type: "machining" }); load();
+    } catch (e) { mlsToast("เพิ่มขั้นตอนไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
   async function changeType(id, op_type) {
-    try { await updateRow("operations", id, { op_type }); setRows((prev) => prev.map((r) => (r.id === id ? { ...r, op_type } : r))); }
-    catch (e) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (e?.message || e), "error"); }
+    try {
+      const res = await setOperationType(id, op_type);
+      if (!res?.ok) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (res?.reason || "unknown"), "error"); return; }
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, op_type } : r)));
+    } catch (e) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
   async function remove(id) {
     if (!confirm("ลบขั้นตอนนี้?")) return;
