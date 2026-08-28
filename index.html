@@ -1,70 +1,47 @@
-// ════════════════════════════════════════════════════════════════════════
-// Off-site backup (#13) — ดัมป์ทุกตารางเป็น JSON แล้วอัปโหลดขึ้น Storage bucket
-//   "backups" ซึ่งอยู่ "นอกฐานข้อมูล Postgres" → instance เสีย/พังก็ยังมี backup
-//   • ใช้ service_role → อ่านได้ทุกตาราง (รวม employees.password_hash — แก้ #16 ไปในตัว)
-//   • เก็บย้อนหลัง RETAIN_DAYS วัน (ลบไฟล์เก่าอัตโนมัติ)
-//   • ตั้งเวลารันด้วย pg_cron (ดูไฟล์ setup) — แนะนำหลังเลิกงาน เช่น 20:00
-// Deploy:  supabase functions deploy backup-offsite --no-verify-jwt
-// ════════════════════════════════════════════════════════════════════════
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// ตารางที่จะสำรอง (แก้เพิ่ม/ลดได้ตามจริง)
-const TABLES = [
-  "projects", "part_master", "releases", "part_units", "machine_records",
-  "machines", "operations", "departments", "employees", "machine_operations",
-  "scan_logs", "audit_log",
-];
-const RETAIN_DAYS = 90;          // เก็บ backup ย้อนหลังกี่วัน
-const BUCKET = "backups";
-
-Deno.serve(async () => {
-  const url = Deno.env.get("SUPABASE_URL")!;
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const sb = createClient(url, key, { auth: { persistSession: false } });
-
-  try {
-    // 1) ดึงทุกตาราง (แบ่งหน้า 1000 กันเพดาน PostgREST)
-    const dump: Record<string, unknown[]> = {};
-    for (const t of TABLES) {
-      const rows: unknown[] = [];
-      let from = 0; const page = 1000;
-      for (;;) {
-        const { data, error } = await sb.from(t).select("*").range(from, from + page - 1);
-        if (error) {
-          // ตารางไหนไม่มี/อ่านไม่ได้ ข้ามไป ไม่ให้ทั้ง backup ล้ม
-          console.warn(`skip ${t}: ${error.message}`);
-          break;
-        }
-        rows.push(...(data ?? []));
-        if (!data || data.length < page) break;
-        from += page;
-      }
-      dump[t] = rows;
-    }
-
-    // 2) อัปโหลดเป็นไฟล์ JSON ตั้งชื่อด้วยเวลา (เวลาไทย)
-    const now = new Date();
-    const stamp = new Date(now.getTime() + 7 * 3600_000).toISOString().slice(0, 19).replaceAll(":", "").replace("T", "_");
-    const fileName = `backup-${stamp}.json`;
-    const payload = JSON.stringify({ takenAt: now.toISOString(), tz: "Asia/Bangkok", tables: dump });
-    const up = await sb.storage.from(BUCKET).upload(fileName, new Blob([payload], { type: "application/json" }), {
-      upsert: false, contentType: "application/json",
-    });
-    if (up.error) return json({ ok: false, error: up.error.message }, 500);
-
-    // 3) retention: ลบไฟล์เก่ากว่า RETAIN_DAYS
-    const { data: files } = await sb.storage.from(BUCKET).list("", { limit: 1000 });
-    const cutoff = Date.now() - RETAIN_DAYS * 86400_000;
-    const old = (files ?? []).filter((f) => new Date(f.created_at ?? 0).getTime() < cutoff).map((f) => f.name);
-    if (old.length) await sb.storage.from(BUCKET).remove(old);
-
-    const counts = Object.fromEntries(Object.entries(dump).map(([k, v]) => [k, (v as unknown[]).length]));
-    return json({ ok: true, file: fileName, deleted_old: old.length, rows: counts });
-  } catch (e) {
-    return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
-  }
-});
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#111418" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="หน้าเครื่อง" />
+    <meta name="description" content="ระบบบันทึกการทำงานเครื่องจักร — Release, สแกน QR หน้าเครื่อง, รายงาน" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <title>Machining Line System</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: #eef3f1; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- หน้าโหลดชั่วคราว (inline ไม่พึ่ง bundle) — กัน "จอมืด" ระหว่างรีโหลด/อัปเดต
+         โทนสีเข้มสำหรับ /dashboard และ /station · หน้าสำนักงานใช้โทนสว่างเดิม -->
+    <script>
+      (function () {
+        try {
+          var p = location.pathname.replace(/\/+$/, "").toLowerCase();
+          var dark = p.indexOf("/dashboard") === 0 || p.indexOf("/station") === 0;
+          var bg = dark ? "#0b0f0d" : "#eef3f1";
+          var fg = dark ? "#14e39a" : "#10b981";
+          var track = dark ? "#24302a" : "#d7e3dd";
+          document.body.style.background = bg;
+          var st = document.createElement("style");
+          st.textContent = "@keyframes bootspin{to{transform:rotate(360deg)}}";
+          document.head.appendChild(st);
+          var s = document.createElement("div");
+          s.id = "boot-splash";
+          s.style.cssText = "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:" + bg + ";z-index:99999;transition:opacity .35s ease";
+          s.innerHTML = '<div style="width:56px;height:56px;border:5px solid ' + track + ';border-top-color:' + fg + ';border-radius:50%;animation:bootspin 1s linear infinite"></div>';
+          document.body.appendChild(s);
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
