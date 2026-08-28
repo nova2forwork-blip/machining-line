@@ -112,7 +112,7 @@ function StationLogin({ onLogin, notice }) {
       <form className="stn-login" onSubmit={submit} style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
         <h1>หน้าเครื่อง — เข้าสู่ระบบ</h1>
-        <p>ล็อกอินด้วยบัญชีของเครื่องจักรนี้ (บัญชีที่ผูกเครื่องไว้)</p>
+        <p>ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)</p>
         {notice && <div className="stn-notice">{notice}</div>}
         <div className="stn-field">
           <label>รหัสเครื่อง / พนักงาน</label>
@@ -127,7 +127,7 @@ function StationLogin({ onLogin, notice }) {
         {err && <div className="stn-err">{err}</div>}
         <button className="stn-btn" disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
-          จอนี้สำหรับติดหน้าเครื่องจักร (แนวนอน)
+          จอนี้สำหรับติดหน้าเครื่อง/สถานี (แนวนอน)
           <br /><a className="stn-link-normal" href="/">ไปหน้าปกติ (สำนักงาน) →</a>
         </div>
       </form>
@@ -1737,8 +1737,8 @@ export default function StationApp() {
     content = (
       <div className="stn-login-wrap">
         <div className="stn-login">
-          <h1>บัญชีนี้ยังไม่ได้ผูกเครื่องจักร</h1>
-          <p>หน้าเครื่องต้องใช้บัญชีที่กำหนด "เครื่องจักรประจำ" ไว้ที่ Setup → พนักงาน<br />
+          <h1>บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี</h1>
+          <p>หน้าเครื่องต้องใช้บัญชีที่กำหนด "เครื่อง/สถานีประจำ" ไว้ที่ Setup → พนักงาน<br />
             แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน</p>
           <button className="stn-btn" onClick={logout}>ออกจากระบบ</button>
           <div className="stn-login-foot">
