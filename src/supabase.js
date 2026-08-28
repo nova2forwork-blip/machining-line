@@ -637,6 +637,22 @@ export async function getBom(parentPmId) {
   return data || [];
 }
 
+// ── operation: สร้าง / ตั้งประเภทงาน (op_type) — ผ่าน RPC เฉพาะ (แอดมิน) เลี่ยง authz allow-list ──
+export async function createOperation({ name, seq, opType }) {
+  const { data, error } = await supabase.rpc("create_operation", {
+    p_token: authToken(), p_name: name, p_seq: seq ?? null, p_op_type: opType || "machining",
+  });
+  if (error) { console.warn("create_operation error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+export async function setOperationType(operationId, opType) {
+  const { data, error } = await supabase.rpc("set_operation_type", {
+    p_token: authToken(), p_operation_id: operationId, p_op_type: opType,
+  });
+  if (error) { console.warn("set_operation_type error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // บันทึกการประกอบจากหน้าเครื่อง (ใช้ใน Phase 1 ส่วนที่ 3) — คืนผลตรวจครบตาม BOM
 export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt }) {
   const { data, error } = await supabase.rpc("record_assembly", {
