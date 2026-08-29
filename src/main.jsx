@@ -8,6 +8,8 @@ import "./styles.css";
 const path = window.location.pathname.replace(/\/+$/, "").toLowerCase();
 // เทียบแบบเป๊ะ/มีขอบเขต — กัน /stationery, /dashboard-foo เผลอเข้าหน้าเครื่อง/แดชบอร์ด
 const isStation = path === "/station" || path.startsWith("/station/");
+const isAssembly = path === "/assembly" || path.startsWith("/assembly/");   // หน้าประกอบ (แผนกประกอบ)
+const isPacking = path === "/packing" || path.startsWith("/packing/");      // หน้าแพ็ก (แผนกแพ็ก)
 const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
 
 // ── auto-heal: render error จาก chunk ที่ไม่ตรงกัน (deploy ใหม่ทับของเก่า / แคชค้าง) ──
@@ -105,9 +107,11 @@ if (isDashboard) {
     root.render(<React.StrictMode><Dashboard /></React.StrictMode>);
     hideBootSplash();
   }).catch(onChunkError);
-} else if (isStation) {
+} else if (isStation || isAssembly || isPacking) {
+  // ทั้ง 3 แผนกใช้เอนจิน Station.jsx ตัวเดียวกัน — แยกด้วย prop dept (คนละ URL / คนละหน้าจอ)
+  const dept = isAssembly ? "assembly" : isPacking ? "packing" : "machine";
   import("./Station.jsx").then(({ default: StationApp }) => {
-    root.render(<React.StrictMode><StationApp /></React.StrictMode>);
+    root.render(<React.StrictMode><StationApp dept={dept} /></React.StrictMode>);
     hideBootSplash();
   }).catch(onChunkError);
 } else {
