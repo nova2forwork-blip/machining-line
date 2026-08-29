@@ -116,7 +116,7 @@ function StationLogin({ onLogin, notice }) {
         {notice && <div className="stn-notice">{notice}</div>}
         <div className="stn-field">
           <label>รหัสเครื่อง / พนักงาน</label>
-          <input className="stn-input" value={code} autoFocus
+          <input className="stn-input" value={code} autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false}
             onChange={(e) => setCode(e.target.value)} placeholder="เช่น CT-001" />
         </div>
         <div className="stn-field">
