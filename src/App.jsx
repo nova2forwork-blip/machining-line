@@ -1395,6 +1395,263 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
   );
 }
 
+// ══ Sub Assembly release (เบอร์แม่ kind=subassembly + ลูกตาม BOM × จำนวน) ══════
+// บันทึกต่อกลุ่ม 3 ขั้น: (1) release เบอร์แม่ (createReleaseBatch → part+QR) (2) ตั้ง kind=subassembly
+//   (3) upsert ลูก + ตั้ง BOM (ต่อชุด = จำนวนรวมของลูก ÷ จำนวนแม่)
+// รองรับทั้งกรอกมือและนำเข้า Excel (ปุ่มนำเข้าเติมกลุ่มให้ แล้วผู้ใช้ตรวจก่อนบันทึก)
+function emptySubAsmChild() { return { code: "", desc: "", len: "", totalQty: "" }; }
+function emptySubAsmGroup() { return { parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [emptySubAsmChild()] }; }
+
+function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
+  const [releaseOrder, setReleaseOrder] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [projectId, setProjectId] = useState(projects[0]?.id || "");
+  const [groups, setGroups] = useState([emptySubAsmGroup()]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [progress, setProgress] = useState("");
+  const fileRef = useRef(null);
+
+  const setParent = (gi, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, [key]: val } : g)));
+  const setChild = (gi, ci, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi
+    ? { ...g, children: g.children.map((c, j) => (j === ci ? { ...c, [key]: val } : c)) } : g)));
+  const addChild = (gi) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, children: [...g.children, emptySubAsmChild()] } : g)));
+  const removeChild = (gi, ci) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, children: g.children.filter((_, j) => j !== ci) } : g)));
+  const addGroup = () => setGroups((gs) => [...gs, emptySubAsmGroup()]);
+  const removeGroup = (gi) => setGroups((gs) => (gs.length <= 1 ? [emptySubAsmGroup()] : gs.filter((_, i) => i !== gi)));
+
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErr("");
+    try {
+      const { parseSubAssemblyExcel } = await import("./excelImport.js");
+      const parsed = await parseSubAssemblyExcel(file);
+      const gs = parsed.groups.map((g) => ({
+        parentCode: g.parentCode, parentDesc: g.parentDesc,
+        parentLen: g.parentLen ?? "", parentQty: String(g.parentQty || 1),
+        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len ?? "", totalQty: String(c.totalQty) })),
+      }));
+      setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+      if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
+      if (parsed.projectName) {
+        const nm = parsed.projectName.toLowerCase();
+        const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm);
+        if (pj) setProjectId(pj.id);
+      }
+      mlsToast(`อ่านไฟล์ได้ ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
+    } catch (e2) {
+      setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2));
+    }
+  }
+
+  // บันทึก 1 กลุ่ม (เบอร์แม่ + ลูก) — atomic เฉพาะขั้น release; BOM/kind เป็นขั้นต่อเนื่อง
+  async function saveOneGroup(g, ro) {
+    const parentCode = g.parentCode.trim();
+    const pQty = parseInt(g.parentQty, 10) || 1;
+    // 1) release เบอร์แม่ → สร้าง part_master (ถ้ายังไม่มี) + release + QR
+    await createReleaseBatch({
+      projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
+      rows: [{ code: parentCode, qty: pQty, unit_weight: 0,
+        length_mm: g.parentLen === "" || g.parentLen == null ? null : Number(g.parentLen),
+        material: null, remark: null, routing: [] }],
+    });
+    // 2) หา part_master ของแม่ + ตั้ง kind=subassembly
+    let parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: parentCode } }))[0];
+    if (!parentPm) throw new Error(`ไม่พบเบอร์แม่ ${parentCode} หลังสร้าง`);
+    await updateRow("part_master", parentPm.id, { kind: "subassembly" });
+    // 3) upsert ลูก → id + ตั้ง BOM (ต่อชุด = รวม ÷ จำนวนแม่)
+    const components = [];
+    for (const ch of g.children) {
+      const code = ch.code.trim();
+      if (!code || !(Number(ch.totalQty) > 0)) continue;
+      let pm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+      if (!pm) {
+        const created = await insertRow("part_master", {
+          project_id: projectId, part_no: code, part_name: ch.desc?.trim() || code,
+          material: null, unit_weight: 0,
+          default_length_mm: ch.len === "" || ch.len == null ? null : Number(ch.len),
+          routing: [], kind: "part",
+        });
+        pm = created && created.id ? created : (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+      }
+      if (!pm?.id) throw new Error(`สร้าง/หาลูก ${code} ไม่สำเร็จ`);
+      const perUnit = Math.max(1, Math.round(Number(ch.totalQty) / pQty));
+      components.push({ child_pm_id: pm.id, qty: perUnit });
+    }
+    if (components.length) await setBom(parentPm.id, components);
+  }
+
+  async function doSave() {
+    const ro = normalizeReleaseOrder(releaseOrder);
+    if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-076'); return; }
+    if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
+    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    const clean = groups
+      .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.totalQty) > 0) }))
+      .filter((g) => g.parentCode && g.children.length > 0);
+    if (clean.length === 0) { setErr("ต้องมีอย่างน้อย 1 เบอร์แม่ ที่มี Code และมีลูกอย่างน้อย 1 รายการ (Code + จำนวน)"); return; }
+    for (const g of clean) {
+      const pq = Number(g.parentQty);
+      if (!Number.isInteger(pq) || pq < 1) { setErr(`จำนวนแม่ของ "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
+      for (const c of g.children) {
+        const tq = Number(c.totalQty);
+        if (!Number.isInteger(tq) || tq < 1) { setErr(`จำนวนลูก "${c.code}" ใน "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
+      }
+    }
+    // เตือนถ้าจำนวนลูกหารจำนวนแม่ไม่ลงตัว (จะปัด "ต่อชุด")
+    const nonDiv = [];
+    for (const g of clean) {
+      const pq = Number(g.parentQty);
+      for (const c of g.children) if (pq > 0 && Number(c.totalQty) % pq !== 0) nonDiv.push(`${c.code} (${c.totalQty}÷${pq})`);
+    }
+    if (nonDiv.length) {
+      const ok = await askConfirm({
+        message: `จำนวนลูกบางรายการหาร "จำนวนแม่" ไม่ลงตัว — ระบบจะปัด "ต่อชุด" เป็นจำนวนเต็มที่ใกล้ที่สุด:\n${nonDiv.join(", ")}\n\nดำเนินการต่อไหม?`,
+        tone: "warn", confirmText: "ดำเนินการต่อ", cancelText: "กลับไปแก้",
+      });
+      if (!ok) return;
+    }
+    setBusy(true); setErr("");
+    let done = 0;
+    try {
+      for (const g of clean) {
+        setProgress(`กำลังบันทึก ${g.parentCode} (${done + 1}/${clean.length})...`);
+        await saveOneGroup(g, ro);
+        done++;
+      }
+      onSaved({ releaseOrder: ro, groups: clean.length });
+    } catch (e2) {
+      // เก็บเฉพาะเบอร์ที่ "ยังไม่บันทึก" ไว้ในฟอร์ม กันกดซ้ำแล้วสร้าง release ซ้ำ
+      const remaining = clean.slice(done).map((g) => ({
+        parentCode: g.parentCode, parentDesc: g.parentDesc, parentLen: g.parentLen, parentQty: String(g.parentQty),
+        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, totalQty: String(c.totalQty) })),
+      }));
+      setGroups(remaining.length ? remaining : [emptySubAsmGroup()]);
+      setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${e2?.message || e2}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
+      setBusy(false); setProgress("");
+      return;
+    }
+    setBusy(false); setProgress("");
+  }
+
+  const totalParents = groups.filter((g) => g.parentCode.trim()).length;
+  const totalUnits = groups.reduce((s, g) => s + (g.parentCode.trim() ? (parseInt(g.parentQty, 10) || 0) : 0), 0);
+
+  return (
+    <Modal title="เพิ่ม / นำเข้า Sub Assembly release" wide
+      sub="เบอร์แม่ (ประกอบ) + ลูกตาม BOM × จำนวน — บันทึกครั้งเดียว ตั้ง BOM + ปล่อยงานเบอร์แม่ให้เลย"
+      onClose={onClose} closeOnBackdrop={false} locked={busy}>
+      <div className="modal-lock-hint">
+        <Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — กด "ยกเลิก" หรือ ✕ เพื่อออก
+      </div>
+
+      <div className="release-header-fields" style={{ marginBottom: 12 }}>
+        <Field label="เลขที่ Release Order *">
+          <Input value={releaseOrder} placeholder="เช่น P-076"
+            onChange={(e) => setReleaseOrder(e.target.value)}
+            onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} />
+        </Field>
+        <Field label="วันที่ *"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field label="โปรเจค *">
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+            options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+        </Field>
+        <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
+          onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={onPickFile} />
+        <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
+          <Icon name="folder" size={14} /> นำเข้าจาก Excel
+        </Btn>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalParents)}</b> เบอร์แม่ · ปล่อยงาน <b>{fmtNum(totalUnits)}</b> ชิ้น (QR แม่)
+        </span>
+      </div>
+
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
+      {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
+
+      <div style={{ maxHeight: "48vh", overflow: "auto", paddingRight: 4 }}>
+        {groups.map((g, gi) => {
+          const pq = parseInt(g.parentQty, 10) || 0;
+          return (
+            <div key={gi} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, marginBottom: 12, background: "var(--surface-2, #f6f8f7)" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 8 }}>
+                <div style={{ flex: "1 1 130px", minWidth: 120 }}>
+                  <Field label={`เบอร์แม่ #${gi + 1} (Code) *`}><Input value={g.parentCode} placeholder="เช่น SAAN04-001"
+                    onChange={(e) => setParent(gi, "parentCode", e.target.value)} /></Field>
+                </div>
+                <div style={{ flex: "2 1 200px", minWidth: 160 }}>
+                  <Field label="รายละเอียด"><Input value={g.parentDesc} placeholder="SUB-ASSEMBLY ..."
+                    onChange={(e) => setParent(gi, "parentDesc", e.target.value)} /></Field>
+                </div>
+                <div style={{ flex: "0 0 80px" }}>
+                  <Field label="L (มม.)"><Input value={g.parentLen} inputMode="decimal"
+                    onChange={(e) => setParent(gi, "parentLen", e.target.value)} /></Field>
+                </div>
+                <div style={{ flex: "0 0 90px" }}>
+                  <Field label="จำนวนแม่ *"><Input value={g.parentQty} inputMode="numeric"
+                    onChange={(e) => setParent(gi, "parentQty", e.target.value)} /></Field>
+                </div>
+                <Btn type="button" variant="ghost" size="sm" title="ลบเบอร์แม่นี้" onClick={() => removeGroup(gi)}>
+                  <Icon name="trash" size={13} />
+                </Btn>
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table" style={{ fontSize: 12.5, minWidth: 520 }}>
+                  <thead><tr>
+                    <th style={{ width: "20%" }}>ลูก (Code)</th><th>รายละเอียด</th>
+                    <th style={{ width: 72 }}>L</th><th style={{ width: 92 }}>จำนวนรวม</th>
+                    <th style={{ width: 70 }}>ต่อชุด</th><th style={{ width: 34 }}></th>
+                  </tr></thead>
+                  <tbody>
+                    {g.children.map((c, ci) => {
+                      const tq = Number(c.totalQty);
+                      const per = pq > 0 && tq > 0 ? tq / pq : null;
+                      const perTxt = per == null ? "—" : (Number.isInteger(per) ? String(per) : `≈${Math.round(per)}`);
+                      return (
+                        <tr key={ci}>
+                          <td><Input value={c.code} placeholder="AN04-001A" onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
+                          <td><Input value={c.desc} placeholder="ANCHOR BASE PLATE" onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
+                          <td><Input value={c.len} inputMode="decimal" onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
+                          <td><Input value={c.totalQty} inputMode="numeric" onChange={(e) => setChild(gi, ci, "totalQty", e.target.value)} /></td>
+                          <td style={{ textAlign: "center", color: per != null && !Number.isInteger(per) ? "var(--warning, #b45309)" : "var(--muted)", fontFamily: "var(--font-mono)" }}>{perTxt}</td>
+                          <td style={{ textAlign: "center" }}>
+                            <span onClick={() => removeChild(gi, ci)} title="ลบลูก" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Btn type="button" variant="ghost" size="sm" onClick={() => addChild(gi)} style={{ marginTop: 6 }}>
+                <Icon name="plus" size={13} /> เพิ่มลูก
+              </Btn>
+            </div>
+          );
+        })}
+      </div>
+
+      <Btn type="button" variant="ghost" onClick={addGroup} style={{ marginTop: 4 }}>
+        <Icon name="plus" size={15} /> เพิ่มเบอร์แม่
+      </Btn>
+
+      <div className="modal-actions" style={{ marginTop: 14 }}>
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>
+          {busy ? "กำลังบันทึก..." : "บันทึก + ปล่อยงาน"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
 // จัดกลุ่ม release หลายแถวที่มาจากไฟล์ Excel เดียวกัน (release_order เดียวกัน) ให้เป็น
 // "การปล่อยงาน 1 ครั้ง" 1 แถวในตารางสรุป — ส่วน release เดี่ยวที่ไม่มี release_order
 // (ปล่อยทีละ Part ตามปกติ) ก็ยังคงแยกเป็นคนละแถวเหมือนเดิม
@@ -1940,6 +2197,7 @@ function ReleasePage({ user, goTo }) {
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [showSubAsm, setShowSubAsm] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
@@ -2001,6 +2259,9 @@ function ReleasePage({ user, goTo }) {
           </Btn>
           <Btn variant="ghost" className="release-import-btn" onClick={() => setShowImport(true)}>
             <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
+          </Btn>
+          <Btn variant="ghost" onClick={() => setShowSubAsm(true)}>
+            <Icon name="box" size={15} />Sub Assembly
           </Btn>
         </div>
       </div>
@@ -2128,6 +2389,20 @@ function ReleasePage({ user, goTo }) {
                 : ""),
               partsCreated > 0 ? "warn" : "success"
             );
+          }}
+        />
+      )}
+
+      {showSubAsm && (
+        <SubAssemblyReleaseModal
+          user={user}
+          projects={projects}
+          onClose={() => setShowSubAsm(false)}
+          onNeedProject={() => setShowNewProject(true)}
+          onSaved={async ({ releaseOrder, groups }) => {
+            setShowSubAsm(false);
+            await load();
+            mlsToast(`บันทึก Sub Assembly release ${releaseOrder} สำเร็จ — ${groups} เบอร์แม่ (ตั้ง BOM + ปล่อยงานแล้ว)`, "success");
           }}
         />
       )}
