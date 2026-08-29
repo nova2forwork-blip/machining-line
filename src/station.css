@@ -427,6 +427,8 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 13px; font-weight: 600;
   padding: 6px 12px; letter-spacing: .01em; line-height: 1.35;
 }
+/* ไอคอน SVG แทน emoji บนแถบ/ปุ่มหน้าเครื่อง — จัด baseline ให้ตรงกับข้อความ (context ส่วนใหญ่เป็น inline ไม่ใช่ flex) */
+.stn-ico { display: inline-block; vertical-align: -0.15em; margin-inline-end: 0.35em; flex: none; }
 .stn-netbar.offline { background: #b45309; }        /* ส้มเข้ม = ออฟไลน์ */
 .stn-netbar.syncing { background: var(--st-red); }  /* น้ำเงินแบรนด์ = กำลังดันงานค้างขึ้น */
 
