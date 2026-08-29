@@ -183,7 +183,9 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
         <button className="stn-btn" disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
           จอนี้สำหรับติดหน้า{meta.word} (แนวนอน)
-          <br /><a className="stn-link-normal" href="/">ไปหน้าปกติ (สำนักงาน) →</a>
+        </div>
+        <div className="stn-login-link">
+          <a href="/">→ ไปหน้าปกติ (สำนักงาน)</a>
         </div>
       </form>
     </div>
@@ -220,7 +222,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
-  // ── สถานะโหมดประกอบ/แพ็ก (ใช้เมื่อ dept = assembly/packing) ────────────────────
+  // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
   const asmClientRef = useRef(null);
@@ -797,8 +799,6 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
 
   // ── ยามแผนก (department gate): หน้านี้รับเฉพาะบัญชีของแผนกตัวเอง ──────────────
-  //   ยังไม่รู้ว่าบัญชีเป็นแผนกอะไร (ยังโหลด ops ไม่เสร็จ) → โชว์ "กำลังตรวจสอบ" ก่อน (เฉพาะหน้า assembly/packing)
-  //   รู้แล้วว่าไม่ตรงแผนก → เด้งไปหน้าที่ถูก (ไม่บันทึกผิดแผนก)
   const acctDepts = opsLoaded
     ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
     : [];
