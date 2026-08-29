@@ -25,7 +25,7 @@ function timeOf(iso) { try { return new Date(iso).toLocaleTimeString("en-GB", { 
 const STR = {
   th: {
     subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
-    kpiPieces: "ชิ้นที่ผลิตวันนี้", unitPieces: "ชิ้น",
+    kpiPieces: "ชิ้นงานที่ทำวันนี้", unitPieces: "ชิ้น",
     kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
     kpiTime: "เวลาเดินเครื่องรวม (หน้าเครื่อง)",
     kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
@@ -38,7 +38,7 @@ const STR = {
   },
   en: {
     subtitle: "Live Production Monitor", live: "LIVE",
-    kpiPieces: "Pieces Produced Today", unitPieces: "pcs",
+    kpiPieces: "Pieces Worked Today", unitPieces: "pcs",
     kpiWeight: "Total Weight Today", unitKg: "kg",
     kpiTime: "Machine Time · logged",
     kpiScans: "Scans Today", unitTimes: "scans",
