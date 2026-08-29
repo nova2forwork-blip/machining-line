@@ -181,3 +181,8 @@ body.dash-body {
   .dash-mach .big { font-size: max(20px, 3.4vh); }
   .dash-kpi .val { font-size: max(24px, 5.2vh); }
 }
+
+/* ★ ตัวบอกข้อมูลค้าง/หลุด (แทนที่ LIVE หลอก) */
+.dash-live.stale { color: #ffb020; }
+.dash-live.stale .dot { background: #ffb020; box-shadow: 0 0 0 .4vh rgba(255,176,32,.22); animation: none; }
+.dash-live-ago { font-size: .62em; font-weight: 500; letter-spacing: .04em; opacity: .75; }
