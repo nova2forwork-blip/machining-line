@@ -1400,9 +1400,9 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
 //   (3) upsert ลูก + ตั้ง BOM (ต่อชุด = จำนวนรวมของลูก ÷ จำนวนแม่)
 // รองรับทั้งกรอกมือและนำเข้า Excel (ปุ่มนำเข้าเติมกลุ่มให้ แล้วผู้ใช้ตรวจก่อนบันทึก)
 function emptySubAsmChild() { return { code: "", desc: "", len: "", totalQty: "" }; }
-function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [emptySubAsmChild()] }; }
+function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [] }; }
 
-function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
+function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [projectId, setProjectId] = useState(projects[0]?.id || "");
@@ -1420,31 +1420,51 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
   const addGroup = () => setGroups((gs) => [...gs, emptySubAsmGroup()]);
   const removeGroup = (gi) => setGroups((gs) => (gs.length <= 1 ? [emptySubAsmGroup()] : gs.filter((_, i) => i !== gi)));
 
+  // เติมฟอร์มจากผลที่ parse ได้ (ใช้ทั้งนำเข้าไฟล์ + วางจาก Excel)
+  function matchProject(projectName) {
+    if (!projectName) return;
+    const nm = projectName.toLowerCase();
+    const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm);
+    if (pj) setProjectId(pj.id);
+  }
+  function applyBom(parsed, src) {
+    const gs = parsed.groups.map((g) => ({
+      parentKind: g.parentKind || "subassembly",
+      parentCode: g.parentCode, parentDesc: g.parentDesc,
+      parentLen: g.parentLen ?? "", parentQty: String(g.parentQty || 1),
+      children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len ?? "", totalQty: String(c.totalQty) })),
+    }));
+    setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+    if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
+    matchProject(parsed.projectName);
+    mlsToast(`${src} ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
+  }
+  // รายชื่อแผง (flat) → กลุ่มแบบ "ไม่มีลูก" (ปล่อยงานเฉยๆ · kind=panel)
+  function applyPanelAsGroups(parsed, src) {
+    const gs = parsed.items.map((it) => ({ parentKind: "panel", parentCode: it.code, parentDesc: "", parentLen: "", parentQty: String(it.qty || 1), children: [] }));
+    setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+    if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
+    matchProject(parsed.projectName);
+    mlsToast(`${src} ${gs.length} แผง (ปล่อยงานเฉยๆ) — ตรวจแล้วกดบันทึก`, "success");
+  }
+  // นำเข้า/วาง auto-detect เอง: ลองอ่านเป็นฟอร์ม BOM ก่อน · ถ้าไม่ใช่ (ไม่มีคอลัมน์ Code) → อ่านเป็นรายชื่อแผง
   async function onPickFile(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setErr("");
+    const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
     try {
-      const { parseSubAssemblyExcel } = await import("./excelImport.js");
-      const parsed = await parseSubAssemblyExcel(file);
-      const gs = parsed.groups.map((g) => ({
-        parentKind: g.parentKind || "subassembly",
-        parentCode: g.parentCode, parentDesc: g.parentDesc,
-        parentLen: g.parentLen ?? "", parentQty: String(g.parentQty || 1),
-        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len ?? "", totalQty: String(c.totalQty) })),
-      }));
-      setGroups(gs.length ? gs : [emptySubAsmGroup()]);
-      if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
-      if (parsed.projectName) {
-        const nm = parsed.projectName.toLowerCase();
-        const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm);
-        if (pj) setProjectId(pj.id);
-      }
-      mlsToast(`อ่านไฟล์ได้ ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
-    } catch (e2) {
-      setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2));
-    }
+      const mod = await import("./excelImport.js");
+      try { applyBom(await mod.parseSubAssemblyExcel(file), "อ่านไฟล์ได้"); }
+      catch { applyPanelAsGroups(await mod.parsePanelReleaseExcel(file), "อ่านไฟล์ได้"); }
+    } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
+  }
+  async function onPasteExcel(e) {
+    const text = e.clipboardData?.getData("text");
+    if (!text || (!text.includes("\t") && !text.includes("\n"))) return;  // ค่าเดียว → ปล่อยวางปกติ
+    e.preventDefault(); setErr("");
+    try {
+      const mod = await import("./excelImport.js");
+      try { applyBom(mod.parseSubAssemblyText(text), "วางข้อมูลได้"); }
+      catch { applyPanelAsGroups(mod.parsePanelReleaseText(text), "วางข้อมูลได้"); }
+    } catch (e2) { setErr("อ่านข้อมูลที่วางไม่สำเร็จ: " + (e2?.message || e2)); }
   }
 
   // บันทึก 1 กลุ่ม (เบอร์แม่ + ลูก) — atomic เฉพาะขั้น release; BOM/kind เป็นขั้นต่อเนื่อง
@@ -1491,8 +1511,8 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
     const clean = groups
       .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.totalQty) > 0) }))
-      .filter((g) => g.parentCode && g.children.length > 0);
-    if (clean.length === 0) { setErr("ต้องมีอย่างน้อย 1 เบอร์แม่ ที่มี Code และมีลูกอย่างน้อย 1 รายการ (Code + จำนวน)"); return; }
+      .filter((g) => g.parentCode);   // มีเบอร์แม่พอ · มีลูก = ตั้ง BOM · ไม่มีลูก = ปล่อยงานเฉยๆ (เช่นแผง)
+    if (clean.length === 0) { setErr("ต้องมีอย่างน้อย 1 เบอร์แม่ (กรอก Code)"); return; }
     for (const g of clean) {
       const pq = Number(g.parentQty);
       if (!Number.isInteger(pq) || pq < 1) { setErr(`จำนวนแม่ของ "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
@@ -1541,8 +1561,8 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
   const totalUnits = groups.reduce((s, g) => s + (g.parentCode.trim() ? (parseInt(g.parentQty, 10) || 0) : 0), 0);
 
   return (
-    <Modal title="เพิ่ม / นำเข้า เบอร์ประกอบ (ซับ / แผง)" wide
-      sub="เบอร์แม่ (ซับ/แผง) + ลูกตาม BOM × จำนวน — บันทึกครั้งเดียว ตั้ง BOM + ปล่อยงานเบอร์แม่ให้เลย · ลูกที่โค้ดขึ้นต้น SA = เบอร์ซับ"
+    <Modal title="เพิ่ม / นำเข้า เบอร์ประกอบ + แผง" wide
+      sub="ฟอร์มเดียวใช้ได้ทั้งคู่: ใส่ลูก = ตั้ง BOM + ปล่อยงาน (ซับ/แผง) · ไม่ใส่ลูก = ปล่อยงานเฉยๆ (เช่นแผง) · นำเข้า/วางจาก Excel ได้ทั้งฟอร์ม BOM และรายชื่อแผง — ระบบแยกให้เอง"
       onClose={onClose} closeOnBackdrop={false} locked={busy}>
       <div className="modal-lock-hint">
         <Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — กด "ยกเลิก" หรือ ✕ เพื่อออก
@@ -1563,14 +1583,19 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
           onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
       </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={onPickFile} />
         <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
-          <Icon name="folder" size={14} /> นำเข้าจาก Excel
+          <Icon name="folder" size={14} /> นำเข้าจากไฟล์ Excel
         </Btn>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalParents)}</b> เบอร์แม่ · ปล่อยงาน <b>{fmtNum(totalUnits)}</b> ชิ้น (QR แม่)
-        </span>
+        <textarea onPaste={onPasteExcel} rows={1} disabled={busy}
+          placeholder="…หรือคลิกที่นี่แล้ววางจาก Excel (Ctrl+V) — ได้ทั้งฟอร์ม BOM (Code/Sum) และรายชื่อแผง (Panel No/Qty) · ก็อปรวมแถวหัวมาด้วย"
+          style={{ flex: "1 1 300px", minWidth: 220, resize: "none", padding: "9px 11px", borderRadius: 8,
+            border: "1px dashed var(--accent, #10b981)", background: "var(--surface-2, #f4f8f6)",
+            fontSize: 12, fontFamily: "inherit", color: "var(--muted)" }} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+        หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalParents)}</b> เบอร์ · ปล่อยงาน <b>{fmtNum(totalUnits)}</b> ชิ้น (QR)
       </div>
 
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
@@ -1609,6 +1634,7 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
                 </Btn>
               </div>
 
+              {g.children.length > 0 && (
               <div style={{ overflowX: "auto" }}>
                 <table className="data-table" style={{ fontSize: 12.5, minWidth: 520 }}>
                   <thead><tr>
@@ -1637,8 +1663,9 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
                   </tbody>
                 </table>
               </div>
+              )}
               <Btn type="button" variant="ghost" size="sm" onClick={() => addChild(gi)} style={{ marginTop: 6 }}>
-                <Icon name="plus" size={13} /> เพิ่มลูก
+                <Icon name="plus" size={13} /> {g.children.length > 0 ? "เพิ่มลูก" : "＋ ใส่ลูก (ตั้ง BOM) — ไม่ใส่ = ปล่อยงานเฉยๆ"}
               </Btn>
             </div>
           );
@@ -1654,124 +1681,6 @@ function SubAssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProje
         <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>
           {busy ? "กำลังบันทึก..." : "บันทึก + ปล่อยงาน"}
         </Btn>
-      </div>
-    </Modal>
-  );
-}
-
-// ══ release แผง (form 2 — flat): รายชื่อแผง PUA-xxx + จำนวน → ปล่อยงานแผง (สร้าง QR + kind=panel) ══
-function PanelReleaseImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
-  const [releaseOrder, setReleaseOrder] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [projectId, setProjectId] = useState(projects[0]?.id || "");
-  const [items, setItems] = useState([{ code: "", qty: "" }]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [progress, setProgress] = useState("");
-  const fileRef = useRef(null);
-
-  const setItem = (i, key, val) => setItems((xs) => xs.map((x, j) => (j === i ? { ...x, [key]: val } : x)));
-  const addItem = () => setItems((xs) => [...xs, { code: "", qty: "" }]);
-  const removeItem = (i) => setItems((xs) => (xs.length <= 1 ? [{ code: "", qty: "" }] : xs.filter((_, j) => j !== i)));
-
-  async function onPickFile(e) {
-    const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
-    setErr("");
-    try {
-      const { parsePanelReleaseExcel } = await import("./excelImport.js");
-      const parsed = await parsePanelReleaseExcel(file);
-      setItems(parsed.items.map((it) => ({ code: it.code, qty: String(it.qty) })));
-      if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
-      if (parsed.projectName) {
-        const nm = parsed.projectName.toLowerCase();
-        const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm);
-        if (pj) setProjectId(pj.id);
-      }
-      mlsToast(`อ่านไฟล์ได้ ${parsed.items.length} แผง — ตรวจแล้วกดปล่อยงาน`, "success");
-    } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
-  }
-
-  async function doRelease() {
-    const ro = normalizeReleaseOrder(releaseOrder);
-    if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-017'); return; }
-    if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
-    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
-    const rows = items.filter((it) => it.code.trim() && Number(it.qty) > 0);
-    if (!rows.length) { setErr("ต้องมีอย่างน้อย 1 แผง (มี Panel No + จำนวน)"); return; }
-    const bad = rows.find((it) => { const q = Number(it.qty); return !Number.isInteger(q) || q < 1; });
-    if (bad) { setErr(`จำนวนของแผง "${bad.code}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
-    setBusy(true); setErr(""); setProgress("กำลังปล่อยงานแผง + สร้าง QR...");
-    try {
-      await createReleaseBatch({
-        projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
-        rows: rows.map((it) => ({ code: it.code.trim(), qty: Number(it.qty), unit_weight: 0, length_mm: null, material: null, remark: null, routing: [] })),
-      });
-      // ตั้งชนิดเป็นแผงให้ทุกเบอร์ที่ปล่อย (เพื่อให้สแกนประกอบ/ใส่กระจกได้)
-      setProgress("ตั้งชนิดเป็นแผง...");
-      for (const it of rows) {
-        try { await updateRows("part_master", { project_id: projectId, part_no: it.code.trim() }, { kind: "panel" }); }
-        catch (_) { /* ไม่ให้ล้มทั้งใบ */ }
-      }
-      onSaved({ releaseOrder: ro, count: rows.length });
-    } catch (e2) {
-      setErr("ปล่อยงานไม่สำเร็จ: " + (e2?.message || e2) + " — ระบบยกเลิกทั้งใบอัตโนมัติ");
-      setBusy(false); setProgress(""); return;
-    }
-    setBusy(false); setProgress("");
-  }
-
-  const totalUnits = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
-  return (
-    <Modal title="นำเข้า / ปล่อยงานแผง (Panel)" wide
-      sub="รายชื่อแผง + จำนวน → ปล่อยงานแผง (สร้าง QR ต่อแผง) · ตั้งชนิดเป็น 'แผง' อัตโนมัติ · BOM ของแผงตั้งแยกที่ปุ่ม 'เบอร์ประกอบ'"
-      onClose={onClose} closeOnBackdrop={false} locked={busy}>
-      <div className="modal-lock-hint"><Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — กด "ยกเลิก" หรือ ✕ เพื่อออก</div>
-
-      <div className="release-header-fields" style={{ marginBottom: 12 }}>
-        <Field label="เลขที่ Release Order *">
-          <Input value={releaseOrder} placeholder="เช่น P-017"
-            onChange={(e) => setReleaseOrder(e.target.value)} onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} />
-        </Field>
-        <Field label="วันที่ *"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-        <Field label="โปรเจค *">
-          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
-            options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
-        </Field>
-        <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
-          onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
-      </div>
-
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={onPickFile} />
-        <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
-          <Icon name="folder" size={14} /> นำเข้าจาก Excel
-        </Btn>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalUnits)}</b> แผง (QR)</span>
-      </div>
-
-      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
-      {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
-
-      <div style={{ maxHeight: "48vh", overflow: "auto" }}>
-        <table className="data-table" style={{ fontSize: 13, minWidth: 360 }}>
-          <thead><tr><th style={{ width: 60 }}>#</th><th>Panel No (Code)</th><th style={{ width: 120 }}>จำนวน</th><th style={{ width: 34 }}></th></tr></thead>
-          <tbody>
-            {items.map((it, i) => (
-              <tr key={i}>
-                <td style={{ color: "var(--muted)" }}>{i + 1}</td>
-                <td><Input value={it.code} placeholder="เช่น PUA-100" onChange={(e) => setItem(i, "code", e.target.value)} /></td>
-                <td><Input value={it.qty} inputMode="numeric" onChange={(e) => setItem(i, "qty", e.target.value)} /></td>
-                <td style={{ textAlign: "center" }}><span onClick={() => removeItem(i)} title="ลบ" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <Btn type="button" variant="ghost" size="sm" onClick={addItem} style={{ marginTop: 6 }}><Icon name="plus" size={13} /> เพิ่มแผง</Btn>
-
-      <div className="modal-actions" style={{ marginTop: 14 }}>
-        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-        <Btn type="button" variant="accent" onClick={doRelease} disabled={busy}>{busy ? "กำลังปล่อยงาน..." : `ปล่อยงานแผง (${fmtNum(totalUnits)} QR)`}</Btn>
       </div>
     </Modal>
   );
@@ -2323,7 +2232,6 @@ function ReleasePage({ user, goTo }) {
   const [showImport, setShowImport] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showSubAsm, setShowSubAsm] = useState(false);
-  const [showPanelRel, setShowPanelRel] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
@@ -2387,10 +2295,7 @@ function ReleasePage({ user, goTo }) {
             <Icon name="folder" size={15} />นำเข้า Release จาก Excel
           </Btn>
           <Btn variant="accent" className="release-import-btn" onClick={() => setShowSubAsm(true)}>
-            <Icon name="box" size={15} />เบอร์ประกอบ (ซับ / แผง)
-          </Btn>
-          <Btn variant="accent" className="release-import-btn" onClick={() => setShowPanelRel(true)}>
-            <Icon name="grid" size={15} />ปล่อยงานแผง
+            <Icon name="box" size={15} />เบอร์ประกอบ / แผง
           </Btn>
         </div>
       </div>
@@ -2523,7 +2428,7 @@ function ReleasePage({ user, goTo }) {
       )}
 
       {showSubAsm && (
-        <SubAssemblyReleaseModal
+        <AssemblyReleaseModal
           user={user}
           projects={projects}
           onClose={() => setShowSubAsm(false)}
@@ -2531,21 +2436,7 @@ function ReleasePage({ user, goTo }) {
           onSaved={async ({ releaseOrder, groups }) => {
             setShowSubAsm(false);
             await load();
-            mlsToast(`บันทึกเบอร์ประกอบ ${releaseOrder} สำเร็จ — ${groups} เบอร์แม่ (ตั้ง BOM + ปล่อยงานแล้ว)`, "success");
-          }}
-        />
-      )}
-
-      {showPanelRel && (
-        <PanelReleaseImportModal
-          user={user}
-          projects={projects}
-          onClose={() => setShowPanelRel(false)}
-          onNeedProject={() => setShowNewProject(true)}
-          onSaved={async ({ releaseOrder, count }) => {
-            setShowPanelRel(false);
-            await load();
-            mlsToast(`ปล่อยงานแผง ${releaseOrder} สำเร็จ — ${count} แผง (สร้าง QR + ตั้งชนิดแผง)`, "success");
+            mlsToast(`บันทึก ${releaseOrder} สำเร็จ — ${groups} เบอร์ (ตั้ง BOM/ปล่อยงานแล้ว)`, "success");
           }}
         />
       )}
