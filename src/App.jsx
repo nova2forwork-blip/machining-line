@@ -1722,8 +1722,8 @@ function PanelReleaseImportModal({ user, projects, onClose, onSaved, onNeedProje
 
   const totalUnits = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
   return (
-    <Modal title="นำเข้า / ลง release แผง (Panel)" wide
-      sub="รายชื่อแผง + จำนวน → ปล่อยงานแผง (สร้าง QR ต่อแผง) · ตั้งชนิดเป็น 'แผง' อัตโนมัติ · BOM ของแผงตั้งแยกที่ปุ่ม 'ซับ/แผง'"
+    <Modal title="นำเข้า / ปล่อยงานแผง (Panel)" wide
+      sub="รายชื่อแผง + จำนวน → ปล่อยงานแผง (สร้าง QR ต่อแผง) · ตั้งชนิดเป็น 'แผง' อัตโนมัติ · BOM ของแผงตั้งแยกที่ปุ่ม 'เบอร์ประกอบ'"
       onClose={onClose} closeOnBackdrop={false} locked={busy}>
       <div className="modal-lock-hint"><Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — กด "ยกเลิก" หรือ ✕ เพื่อออก</div>
 
@@ -2380,17 +2380,17 @@ function ReleasePage({ user, goTo }) {
           <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="accent" onClick={() => setShowAdd(true)}>
+          <Btn variant="accent" className="release-import-btn" onClick={() => setShowAdd(true)}>
             <Icon name="plus" size={15} />เพิ่ม Release
           </Btn>
-          <Btn variant="ghost" className="release-import-btn" onClick={() => setShowImport(true)}>
-            <Icon name="folder" size={15} />นำเข้าจาก Excel (หลาย Part)
+          <Btn variant="accent" className="release-import-btn" onClick={() => setShowImport(true)}>
+            <Icon name="folder" size={15} />นำเข้า Release จาก Excel
           </Btn>
-          <Btn variant="ghost" onClick={() => setShowSubAsm(true)}>
-            <Icon name="box" size={15} />ซับ/แผง (BOM)
+          <Btn variant="accent" className="release-import-btn" onClick={() => setShowSubAsm(true)}>
+            <Icon name="box" size={15} />เบอร์ประกอบ (ซับ / แผง)
           </Btn>
-          <Btn variant="ghost" onClick={() => setShowPanelRel(true)}>
-            <Icon name="grid" size={15} />release แผง
+          <Btn variant="accent" className="release-import-btn" onClick={() => setShowPanelRel(true)}>
+            <Icon name="grid" size={15} />ปล่อยงานแผง
           </Btn>
         </div>
       </div>
