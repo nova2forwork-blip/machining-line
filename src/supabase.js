@@ -1030,3 +1030,46 @@ export async function recordMachineWork(
   }
   return data || { ok: false, reason: "error" };
 }
+// ════════════════════════════════════════════════════════════════════════
+//  วางต่อ "ท้ายไฟล์ src/supabase.js" ของคุณ (ก่อนบรรทัดว่างสุดท้ายก็ได้)
+//  — เพิ่ม 4 ฟังก์ชันสำหรับหน้าแอดมิน: ดูผู้ใช้ออนไลน์ / บังคับออกจากระบบ /
+//    บันทึก+อ่านประวัติการแก้ไข (audit log)
+//  ปลอดภัยที่จะวางซ้ำได้ตราบใดที่ยังไม่มีชื่อฟังก์ชันซ้ำกับของเดิม
+//  (ใช้ authToken() + supabase ที่มีอยู่แล้วในไฟล์ — ไม่พึ่ง helper อื่น)
+// ════════════════════════════════════════════════════════════════════════
+
+// รายชื่อ session ที่กำลังล็อกอินอยู่ (แอดมินเท่านั้น) — ใครออนไลน์/ผูกเครื่องไหน
+//   คืน array ของ { sid, is_self, code, name, role, is_machine, machine_code,
+//                   machine_name, last_seen, created_at, expires_at, online }
+//   sid = รหัสอ้างอิง session (md5 ของ token — ไม่ใช่ token จริง) ใช้ส่งให้ forceLogoutSession
+export async function listActiveSessions() {
+  const { data, error } = await supabase.rpc("authz_list_sessions", { p_token: authToken() });
+  if (error) { console.warn("authz_list_sessions error", error); throw error; }
+  return data || [];
+}
+
+// บังคับ 1 บัญชีออกจากระบบ (แอดมินเท่านั้น) — set superseded → เครื่องนั้นซิงค์งานค้างแล้วเด้งออกเอง
+//   คืน { ok:true, kicked:n } เมื่อสำเร็จ · { ok:false, reason:'self' } เมื่อพยายามเตะเครื่องตัวเอง
+export async function forceLogoutSession(sid) {
+  const { data, error } = await supabase.rpc("authz_force_logout", { p_token: authToken(), p_sid: sid });
+  if (error) { console.warn("authz_force_logout error", error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
+// บันทึกประวัติ "ใครทำอะไร (สำคัญ/แก้ไข) เมื่อไหร่" — เรียกหลังทำสำเร็จ แบบ best-effort
+//   ถ้า log พลาด (เช่นยังไม่ได้รันไมเกรชัน) จะไม่ทำให้การกระทำหลักล้ม
+export async function auditRecord(action, entity = null, entityId = null, detail = null) {
+  try {
+    await supabase.rpc("authz_audit_record", {
+      p_token: authToken(), p_action: action, p_entity: entity,
+      p_entity_id: entityId == null ? null : String(entityId), p_detail: detail,
+    });
+  } catch (e) { console.warn("auditRecord failed:", action, e?.message || e); }
+}
+
+// อ่านประวัติการแก้ไข (แอดมินเท่านั้น) — ล่าสุดก่อน · before = timestamptz สำหรับโหลดหน้าถัดไป
+export async function listAuditLog({ limit = 200, before = null } = {}) {
+  const { data, error } = await supabase.rpc("authz_list_audit", { p_token: authToken(), p_limit: limit, p_before: before });
+  if (error) { console.warn("authz_list_audit error", error); throw error; }
+  return data || [];
+}
