@@ -690,3 +690,76 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-photocap-snap { flex: 1.6; background: linear-gradient(180deg, #2b8cff, #1e6fd0); color: #fff; border: 1px solid #1e6fd0; border-radius: 10px; padding: 14px; font-size: 17px; font-weight: 800; cursor: pointer; box-shadow: 0 3px 0 #164e94; }
 .stn-photocap-snap:active { transform: translateY(2px); box-shadow: 0 1px 0 #164e94; }
 .stn-photocap-snap:disabled { opacity: .5; cursor: default; box-shadow: none; }
+
+/* ═══════════════════════════════════════════════════════════════
+   หน้าแยกแผนก — ประกอบ (assembly) / แพ็ก (packing)
+   พื้นหลังเข้ม ให้การ์ด .stn-asm* (ออกแบบไว้สำหรับพื้นเข้ม) อ่านง่าย
+   และแยกหน้าตาออกจากหน้าเครื่อง (machine) ที่เป็นธีมขาว/น้ำเงิน
+   ─ ประกอบ = เขียว · แพ็ก = น้ำเงิน
+   ═══════════════════════════════════════════════════════════════ */
+.stn-asm-shell {
+  background: radial-gradient(130% 120% at 50% 0%, #0f1f18 0%, #0a130f 62%, #070d0a 100%);
+  color: #eaf2ee;
+}
+.stn-asm-shell.dept-packing {
+  background: radial-gradient(130% 120% at 50% 0%, #0e1a2a 0%, #0a1220 62%, #070c14 100%);
+}
+.stn-asm-topbar {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; border-bottom: 2px solid rgba(22,184,119,.28); background: rgba(255,255,255,.02);
+}
+.stn-asm-shell.dept-packing .stn-asm-topbar { border-bottom-color: rgba(43,140,255,.28); }
+.stn-asm-ident { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.stn-asm-badge {
+  flex-shrink: 0; font-size: 15px; font-weight: 800; letter-spacing: .04em;
+  padding: 5px 14px; border-radius: 999px; color: #06251a; background: #16b877;
+}
+.stn-asm-badge.dept-packing { color: #04203f; background: #2b8cff; }
+.stn-asm-machine { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 800; color: #eafff5; white-space: nowrap; }
+.stn-asm-mname { font-size: 13px; color: #9fb0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stn-asm-tools { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.stn-asm-topbar .stn-logout {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-family: inherit;
+  background: rgba(255,255,255,.06); color: #cfe0d8; border: 1px solid rgba(255,255,255,.14);
+  border-radius: 9px; padding: 7px 12px; font-size: 13px; font-weight: 700;
+}
+.stn-asm-topbar .stn-logout:active { transform: scale(.97); }
+.stn-asm-main {
+  flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; padding: 10px;
+}
+.stn-asm-main > .stn-asm { width: 100%; max-width: 760px; margin: 0 auto; }
+.stn-asm-shell .stn-oppick { background: rgba(255,255,255,.02); border-bottom: 1px solid rgba(255,255,255,.06); }
+
+/* หน้าจอ "เข้าผิดแผนก" (redirect) + "กำลังตรวจสอบบัญชี" (checking) — ใช้การ์ดล็อกอินสีขาว */
+.stn-deptredir { text-align: center; }
+.stn-deptredir-emoji { font-size: 44px; margin-bottom: 6px; line-height: 1; }
+.stn-deptredir h1 { font-size: 19px; }
+.stn-deptredir-links { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; }
+.stn-deptredir-go {
+  display: block; text-decoration: none; text-align: center; font-family: inherit;
+  border: 1px solid var(--st-red); background: var(--st-red); color: #fff;
+  border-radius: 14px; padding: 13px; font-size: 15px; font-weight: 700;
+  box-shadow: 0 10px 22px -10px rgba(67,97,238,.6);
+}
+.stn-deptredir-go:active { transform: scale(.99); }
+.stn-deptredir-out {
+  margin-top: 10px; background: none; border: none; color: var(--st-muted);
+  font-size: 13px; text-decoration: underline; cursor: pointer; font-family: inherit;
+}
+.stn-asm-spin {
+  width: 34px; height: 34px; margin: 6px auto 14px; border-radius: 50%;
+  border: 3px solid var(--st-line); border-top-color: var(--st-red); animation: stnspin .8s linear infinite;
+}
+@keyframes stnspin { to { transform: rotate(360deg); } }
+
+/* แถบสีบางบนการ์ดล็อกอิน — บอกแผนกด้วยสายตา (ประกอบ=เขียว · แพ็ก=น้ำเงิน) */
+.stn-login.dept-assembly { border-top: 3px solid #16b877; }
+.stn-login.dept-packing { border-top: 3px solid #2b8cff; }
+
+/* มือถือ/แท็บเล็ตหมุนจอ — ย่อป้ายหัวแถบให้พอดี */
+@media (orientation: portrait) and (max-width: 1024px) {
+  .stn-asm-badge { font-size: 2vh; padding: 0.6vh 1.6vh; }
+  .stn-asm-machine { font-size: 2.6vh; }
+  .stn-asm-mname { font-size: 1.7vh; }
+  .stn-asm-topbar .stn-logout { font-size: 1.7vh; padding: 0.8vh 1.4vh; }
+}
