@@ -720,6 +720,15 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-asm-badge.dept-packing { color: #04203f; background: #2b8cff; }
 .stn-asm-machine { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 800; color: #eafff5; white-space: nowrap; }
 .stn-asm-mname { font-size: 13px; color: #9fb0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ยอด "วันนี้" บนแถบประกอบ/แพ็ก — ดึงจาก machine_day (record_assembly เขียนลง machine_records) */
+.stn-asm-today {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+  flex-shrink: 0; padding: 4px 14px; border-radius: 10px;
+  background: rgba(22,184,119,.10); border: 1px solid rgba(22,184,119,.30);
+}
+.stn-asm-shell.dept-packing .stn-asm-today { background: rgba(43,140,255,.10); border-color: rgba(43,140,255,.30); }
+.stn-asm-today .n { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 800; color: #eafff5; }
+.stn-asm-today .u { font-size: 10px; letter-spacing: .08em; color: #9fb0a8; text-transform: uppercase; margin-top: 3px; }
 .stn-asm-tools { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .stn-asm-topbar .stn-logout {
   display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-family: inherit;
@@ -764,6 +773,8 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-asm-badge { font-size: 2vh; padding: 0.6vh 1.6vh; }
   .stn-asm-machine { font-size: 2.6vh; }
   .stn-asm-mname { font-size: 1.7vh; }
+  .stn-asm-today .n { font-size: 2.6vh; }
+  .stn-asm-today .u { font-size: 1.1vh; }
   .stn-asm-topbar .stn-logout { font-size: 1.7vh; padding: 0.8vh 1.4vh; }
 }
 
