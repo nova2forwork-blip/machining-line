@@ -766,3 +766,17 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   .stn-asm-mname { font-size: 1.7vh; }
   .stn-asm-topbar .stn-logout { font-size: 1.7vh; padding: 0.8vh 1.4vh; }
 }
+
+/* ═══ Polish (round 7) — สีตามแผนก + touch target + คอนทราสต์ ═══════════════ */
+/* op-picker: ปุ่มที่เลือกใช้สีประจำแผนก — machine/packing = น้ำเงิน · assembly = เขียว (เดิมเขียวชนธีมขาว/น้ำเงิน) */
+.stn-oppick-btn.sel { background: var(--st-red); border-color: var(--st-red); color: #fff; }
+.stn-asm-shell.dept-assembly .stn-oppick-btn.sel { background: #16b877; border-color: #16b877; color: #06251a; }
+.stn-asm-shell.dept-packing  .stn-oppick-btn.sel { background: #2b8cff; border-color: #2b8cff; color: #04203f; }
+/* แถบซิงค์: สีตามแผนกบนหน้าประกอบ/แพ็ก (เดิมน้ำเงินสีเครื่องไปโผล่บนพื้นเขียว/น้ำเงิน) */
+.stn-asm-shell.dept-assembly .stn-netbar.syncing { background: #0e9d63; }
+.stn-asm-shell.dept-packing  .stn-netbar.syncing { background: #1e6fd0; }
+/* touch target ใหญ่ขึ้นสำหรับใส่ถุงมือหน้างาน */
+.stn-asm-chip { padding: 7px 12px; font-size: 12px; }
+.stn-asm-thumb .x { width: 22px; height: 22px; line-height: 22px; font-size: 13px; }
+/* ปุ่มยืนยันตอน disable: ตัวอักษร (คำสั่งหลัก "สแกนของที่ใส่ก่อน") อ่านง่ายขึ้น */
+.stn-asm-confirm { color: #9fb0a8; }
