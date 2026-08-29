@@ -1456,16 +1456,25 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
       catch { applyPanelAsGroups(await mod.parsePanelReleaseExcel(file), "อ่านไฟล์ได้"); }
     } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
   }
-  async function onPasteExcel(e) {
-    const text = e.clipboardData?.getData("text");
-    if (!text || (!text.includes("\t") && !text.includes("\n"))) return;  // ค่าเดียว → ปล่อยวางปกติ
-    e.preventDefault(); setErr("");
+  async function handlePastedText(text) {
+    setErr("");
     try {
       const mod = await import("./excelImport.js");
       try { applyBom(mod.parseSubAssemblyText(text), "วางข้อมูลได้"); }
       catch { applyPanelAsGroups(mod.parsePanelReleaseText(text), "วางข้อมูลได้"); }
     } catch (e2) { setErr("อ่านข้อมูลที่วางไม่สำเร็จ: " + (e2?.message || e2)); }
   }
+  // วางจาก Excel ได้ "ทุกที่ในหน้านี้" — ฟัง paste ที่ document ระหว่างเปิดกล่อง (ค่าหลายช่อง = ตาราง → parse · ค่าเดียว = วางลงช่องปกติ)
+  useEffect(() => {
+    const onDocPaste = (ev) => {
+      const text = ev.clipboardData?.getData("text") || "";
+      if (!text.includes("\t") && !text.includes("\n")) return;
+      ev.preventDefault();
+      handlePastedText(text);
+    };
+    document.addEventListener("paste", onDocPaste);
+    return () => document.removeEventListener("paste", onDocPaste);
+  }, [projects]);
 
   // บันทึก 1 กลุ่ม (เบอร์แม่ + ลูก) — atomic เฉพาะขั้น release; BOM/kind เป็นขั้นต่อเนื่อง
   async function saveOneGroup(g, ro) {
@@ -1588,11 +1597,12 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
         <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
           <Icon name="folder" size={14} /> นำเข้าจากไฟล์ Excel
         </Btn>
-        <textarea onPaste={onPasteExcel} rows={1} disabled={busy}
-          placeholder="…หรือคลิกที่นี่แล้ววางจาก Excel (Ctrl+V) — ได้ทั้งฟอร์ม BOM (Code/Sum) และรายชื่อแผง (Panel No/Qty) · ก็อปรวมแถวหัวมาด้วย"
-          style={{ flex: "1 1 300px", minWidth: 220, resize: "none", padding: "9px 11px", borderRadius: 8,
-            border: "1px dashed var(--accent, #10b981)", background: "var(--surface-2, #f4f8f6)",
-            fontSize: 12, fontFamily: "inherit", color: "var(--muted)" }} />
+        <span style={{ flex: "1 1 260px", minWidth: 200, fontSize: 12.5, fontWeight: 600, lineHeight: 1.5,
+          color: "var(--accent-dk, #0a7)", padding: "9px 12px", borderRadius: 8,
+          border: "1px dashed var(--accent, #10b981)", background: "var(--surface-2, #f4f8f6)" }}>
+          <Icon name="grid" size={13} style={{ verticalAlign: "-2px", marginInlineEnd: 4 }} />
+          หรือก็อปตารางจาก Excel แล้วกด <b>Ctrl+V</b> ตรงไหนก็ได้ในหน้านี้ — ได้ทั้งฟอร์ม BOM และรายชื่อแผง (ก็อปรวมแถวหัวมาด้วย)
+        </span>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
         หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalParents)}</b> เบอร์ · ปล่อยงาน <b>{fmtNum(totalUnits)}</b> ชิ้น (QR)
