@@ -393,6 +393,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // แล้วกู้กลับตอนโหลดแอปใหม่ → กดอัปเดตกลางงานก็ไม่หาย (เวลาเดินเครื่องนับต่อจากเวลาเริ่มจริง)
   const draftLoadedRef = useRef(false);
   useEffect(() => {
+    if (dept !== "machine") return;        // ★ ประกอบ/แพ็กไม่ใช้ draft (สถานะประกอบไม่ได้ถูกเก็บใน draft) — กันเด้ง "กู้งาน" หลอก + จับเวลาผี
     if (!draftLoadedRef.current) return;   // ยังไม่ผ่านขั้นกู้ draft — อย่าเพิ่งเขียนทับ
     try {
       // "กำลังทำงาน" = กด START แล้ว (timer เดิน / สแกน / เลือกจำนวน) — step ไม่ใช่ IDLE
@@ -409,6 +410,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
   useEffect(() => {
+    if (dept !== "machine") { draftLoadedRef.current = true; return; }   // ★ ประกอบ/แพ็ก: ไม่กู้ draft (กันงานเครื่องหลอกมาทับหน้าประกอบ)
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
@@ -670,7 +672,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   function asmReset() { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
   function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
-  function asmOpenCam() { warmAudio(); setStep(STEP.SCAN); }
+  function asmOpenCam() {
+    if (machineOps.length > 1 && !op) { flash(t("เลือกขั้นตอนก่อนสแกน", "pick an operation first"), "warn"); return; }   // ★ ต้องเลือกขั้นตอนก่อน
+    warmAudio(); setStep(STEP.SCAN);
+  }
   function photoCapture(blob, url) { setPackPhotos((prev) => [...prev, { blob, url }]); }
   function photoRemove(i) { setPackPhotos((prev) => prev.filter((_, idx) => idx !== i)); }
 
@@ -696,6 +701,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function asmScan(code) {
     const s = String(code || "").trim();
     if (!s) return false;
+    if (machineOps.length > 1 && !op) { errorBeep(); flash(t("เลือกขั้นตอนก่อนสแกน", "pick an operation first"), "warn"); return false; }   // ★ กันบันทึกผิดขั้นตอน (op=null) เหมือนหน้าเครื่อง
     setBusy(true);
     let u = null;
     try { u = await findUnitByQr(s); } catch { u = null; }
