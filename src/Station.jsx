@@ -95,7 +95,8 @@ function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
   const targets = (acctDepts || []).filter((d) => DEPT_META[d]).map((d) => DEPT_META[d]);
   return (
     <div className="stn-login-wrap">
-      <div className="stn-login stn-deptredir">
+      <div className="stn-login stn-deptredir" style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
         <div className="stn-deptredir-emoji">🚧</div>
         <h1>{t(`บัญชีนี้ไม่ใช่แผนก “${here.word}”`, `This account isn't a ${here.wordEn} station`)}</h1>
         <p>{targets.length
@@ -117,7 +118,8 @@ function StnDeptChecking({ dept, t }) {
   const m = DEPT_META[dept] || DEPT_META.machine;
   return (
     <div className="stn-login-wrap">
-      <div className="stn-login stn-deptredir">
+      <div className="stn-login stn-deptredir" style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
         <div className="stn-asm-spin" />
         <p>{t(`กำลังเปิด${m.th}…`, `Opening ${m.en}…`)}</p>
       </div>
@@ -1830,14 +1832,16 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
 // แถบแจ้ง "มีอัปเดต" สำหรับหน้าเครื่อง — คนงานกดเองเมื่อพร้อม (งานค้าง/ออฟไลน์ไม่หาย เพราะเก็บใน localStorage)
 function StationUpdateBanner() {
   const ready = useUpdateReady();
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
   if (!ready) return null;
   return (
     <div className="stn-update">
-      <span>● มีเวอร์ชันใหม่{offline ? " · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่" : " — กดอัปเดตเมื่อพร้อม (งานที่ทำอยู่ไม่หาย)"}</span>
+      <span>● {t("มีเวอร์ชันใหม่", "New version")}{offline ? t(" · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่", " · offline — reconnect then retry") : t(" — กดอัปเดตเมื่อพร้อม (งานที่ทำอยู่ไม่หาย)", " — tap update when ready (your work is safe)")}</span>
       <button onClick={() => { setBusy(true); if (!applyUpdate()) { setBusy(false); setOffline(true); } }} disabled={busy}>
-        {busy ? "กำลังอัปเดต…" : "อัปเดต"}
+        {busy ? t("กำลังอัปเดต…", "Updating…") : t("อัปเดต", "Update")}
       </button>
     </div>
   );
