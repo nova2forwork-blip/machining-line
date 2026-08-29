@@ -26,7 +26,7 @@
       (function () {
         try {
           var p = location.pathname.replace(/\/+$/, "").toLowerCase();
-          var dark = p.indexOf("/dashboard") === 0 || p.indexOf("/station") === 0;
+          var dark = p.indexOf("/dashboard") === 0 || p.indexOf("/station") === 0 || p.indexOf("/assembly") === 0 || p.indexOf("/packing") === 0;
           var bg = dark ? "#0b0f0d" : "#eef3f1";
           var fg = dark ? "#14e39a" : "#10b981";
           var track = dark ? "#24302a" : "#d7e3dd";
