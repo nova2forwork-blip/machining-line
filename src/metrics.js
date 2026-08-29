@@ -16,6 +16,17 @@ const q = (l) => Number(l?.quantity ?? 1) || 0;
 // เวลาเดินเครื่อง (วินาที) ของ log แต่ละแถว — มีเฉพาะงานหน้าเครื่อง (report_logs v3)
 const sec = (l) => Number(l?.process_seconds) || 0;
 
+// น้ำหนักรวม (กก.) ของ log แต่ละแถว:
+//   • ถ้ามีค่า weight ที่บันทึกไว้ → ใช้เลย (report_logs คืน weight = น้ำหนักต่อชิ้น × quantity ของแถวนั้น)
+//   • ถ้าไม่มี weight (record เก่า/ยังไม่ปล่อยค่า) → fallback เป็น (น้ำหนักต่อชิ้น) × (quantity)
+//     ★ ต้องคูณ quantity ด้วย ไม่งั้นล็อตหลายชิ้นจะถูกนับต่ำกว่าจริง (เช่น 8 ชิ้นได้แค่ 1 ชิ้น)
+export function logWeight(l) {
+  const recorded = l?.weight;
+  if (recorded != null && recorded !== "") return Number(recorded) || 0;
+  const per = Number(l?.part_unit?.weight ?? l?.part_unit?.part_master?.unit_weight ?? 0) || 0;
+  return per * (Number(l?.quantity ?? 1) || 0);
+}
+
 // จำนวนชิ้นรวมทั้งหมดในชุด logs (นับ quantity ของงานหน้าเครื่องด้วย)
 export function totalPieces(logs) {
   return (logs || []).reduce((sum, l) => sum + q(l), 0);
@@ -26,7 +37,7 @@ export function totalPieces(logs) {
 // เพราะแต่ละครั้งคือ "งาน" จริงที่เครื่องหนึ่งทำกับชิ้นนั้น
 export function processedWeight(logs) {
   return (logs || []).reduce(
-    (sum, l) => sum + w(l.weight, l.part_unit?.part_master?.unit_weight),
+    (sum, l) => sum + logWeight(l),
     0
   );
 }
@@ -40,7 +51,7 @@ export function materialWeight(logs) {
   for (const l of logs || []) {
     if (!l.part_unit_id || seen.has(l.part_unit_id)) continue;
     seen.add(l.part_unit_id);
-    sum += w(l.weight, l.part_unit?.part_master?.unit_weight);
+    sum += logWeight(l);
   }
   return sum;
 }
@@ -73,7 +84,7 @@ export function machineOpMatrix(logs) {
   for (const l of logs || []) {
     const m = l.machine?.name || "ไม่ระบุ";
     const op = l.operation?.name || "ไม่ระบุ";
-    const wt = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    const wt = logWeight(l);
     opNames.add(op);
 
     if (!byMachine.has(m)) {
@@ -114,7 +125,7 @@ export function partOpMatrix(logs) {
     const partNo   = l.part_unit?.part_master?.part_no   || "ไม่ระบุ";
     const partName = l.part_unit?.part_master?.part_name || "";
     const op       = l.operation?.name || "ไม่ระบุ";
-    const wt       = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    const wt       = logWeight(l);
     const pcs      = q(l);
     const fin      = String(l.status).toLowerCase() === "finished" ? pcs : 0;
     opNames.add(op);
@@ -187,7 +198,7 @@ export function machineDailyMatrix(logs) {
     }
     const e = byMachine.get(m);
     e.days[day] = e.days[day] || { count: 0, weight: 0, seconds: 0 };
-    const pcs = q(l), wt = w(l.weight, l.part_unit?.part_master?.unit_weight), s = sec(l);
+    const pcs = q(l), wt = logWeight(l), s = sec(l);
     e.days[day].count += pcs; e.days[day].weight += wt; e.days[day].seconds += s;
     e.total.count += pcs; e.total.weight += wt; e.total.seconds += s;
   }
@@ -212,7 +223,7 @@ export function missingWeightParts(logs) {
   const bad = new Map();
   for (const l of logs || []) {
     if (q(l) <= 0) continue;
-    const wt = w(l.weight, l.part_unit?.part_master?.unit_weight);
+    const wt = logWeight(l);
     if (wt > 0) continue;
     const partNo = l.part_unit?.part_master?.part_no || "ไม่ระบุ";
     bad.set(partNo, (bad.get(partNo) || 0) + q(l));
