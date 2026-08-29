@@ -74,11 +74,63 @@ function beep(freq = 950, ms = 110, vol = 0.25) {
 }
 function vibrate(pattern) { try { navigator.vibrate?.(pattern); } catch { /* ignore */ } }
 
+// ─── แผนก (department) ─────────────────────────────────────────────────────
+//   แต่ละหน้าจอ terminal = 1 แผนก · ระบุจาก op_type ของขั้นตอน
+//   machine = งานเครื่องจักร (ตัด/เจาะ/บาก…) · assembly = ประกอบ · packing = แพ็ก
+function opDept(o) {
+  const ty = o?.op_type;
+  if (ty === "assembly") return "assembly";
+  if (ty === "packing") return "packing";
+  return "machine";
+}
+const DEPT_META = {
+  machine:  { th: "หน้าเครื่อง", en: "Machine",  path: "/station",  word: "เครื่อง", wordEn: "machine" },
+  assembly: { th: "หน้าประกอบ", en: "Assembly", path: "/assembly", word: "ประกอบ", wordEn: "assembly" },
+  packing:  { th: "หน้าแพ็ก",   en: "Packing",  path: "/packing",  word: "แพ็ก",   wordEn: "packing" },
+};
+
+// ── บัญชีนี้ไม่ใช่แผนกของหน้านี้ → บอกเหตุผล + ลิงก์ไปหน้าที่ถูกต้อง ─────────────
+function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
+  const here = DEPT_META[dept] || DEPT_META.machine;
+  const targets = (acctDepts || []).filter((d) => DEPT_META[d]).map((d) => DEPT_META[d]);
+  return (
+    <div className="stn-login-wrap">
+      <div className="stn-login stn-deptredir">
+        <div className="stn-deptredir-emoji">🚧</div>
+        <h1>{t(`บัญชีนี้ไม่ใช่แผนก “${here.word}”`, `This account isn't a ${here.wordEn} station`)}</h1>
+        <p>{targets.length
+          ? t("บัญชีนี้อยู่คนละแผนก — เปิดหน้าที่ถูกต้องด้านล่าง", "This account belongs to another department — open the correct page below")
+          : t("บัญชีนี้ยังไม่ได้ตั้งขั้นตอนของแผนกใด — แจ้งผู้ดูแลให้ตั้งค่าก่อน", "No operation set for this account — ask an admin to configure it")}</p>
+        <div className="stn-deptredir-links">
+          {targets.map((m) => (
+            <a key={m.path} className="stn-deptredir-go" href={m.path}>{t(`ไป${m.th}`, `Go to ${m.en}`)} →</a>
+          ))}
+        </div>
+        <button type="button" className="stn-deptredir-out" onClick={onLogout}>{t("ออกจากระบบ", "Log out")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── กำลังตรวจว่าบัญชีเป็นแผนกอะไร (ระหว่างโหลดรายการขั้นตอน) ─────────────────────
+function StnDeptChecking({ dept, t }) {
+  const m = DEPT_META[dept] || DEPT_META.machine;
+  return (
+    <div className="stn-login-wrap">
+      <div className="stn-login stn-deptredir">
+        <div className="stn-asm-spin" />
+        <p>{t(`กำลังเปิด${m.th}…`, `Opening ${m.en}…`)}</p>
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // STATION LOGIN — same credentials as the main app; intended for the
 // machine's own account (an employee whose machine_id is set).
 // ══════════════════════════════════════════════════════════════════════════
-function StationLogin({ onLogin, notice }) {
+function StationLogin({ onLogin, notice, dept = "machine" }) {
+  const meta = DEPT_META[dept] || DEPT_META.machine;
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -109,15 +161,18 @@ function StationLogin({ onLogin, notice }) {
 
   return (
     <div className="stn-login-wrap">
-      <form className="stn-login" onSubmit={submit} style={{ position: "relative" }}>
+      <form className={`stn-login dept-${dept}`} onSubmit={submit} style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
-        <h1>หน้าเครื่อง — เข้าสู่ระบบ</h1>
-        <p>ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)</p>
+        <h1>{meta.th} — เข้าสู่ระบบ</h1>
+        <p>{dept === "machine"
+          ? "ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)"
+          : `ล็อกอินด้วยบัญชีของแผนก${meta.word} (บัญชีที่ผูกสถานี${meta.word}ไว้)`}</p>
         {notice && <div className="stn-notice">{notice}</div>}
         <div className="stn-field">
-          <label>รหัสเครื่อง / พนักงาน</label>
+          <label>{dept === "machine" ? "รหัสเครื่อง / พนักงาน" : `รหัสสถานี${meta.word} / พนักงาน`}</label>
           <input className="stn-input" value={code} autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false}
-            onChange={(e) => setCode(e.target.value)} placeholder="เช่น CT-001" />
+            onChange={(e) => setCode(e.target.value)}
+            placeholder={dept === "assembly" ? "เช่น ประกอบ-01" : dept === "packing" ? "เช่น แพ็ก-01" : "เช่น CT-001"} />
         </div>
         <div className="stn-field">
           <label>รหัสผ่าน</label>
@@ -127,7 +182,7 @@ function StationLogin({ onLogin, notice }) {
         {err && <div className="stn-err">{err}</div>}
         <button className="stn-btn" disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
-          จอนี้สำหรับติดหน้าเครื่อง/สถานี (แนวนอน)
+          จอนี้สำหรับติดหน้า{meta.word} (แนวนอน)
           <br /><a className="stn-link-normal" href="/">ไปหน้าปกติ (สำนักงาน) →</a>
         </div>
       </form>
@@ -143,14 +198,16 @@ const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "
 const DRAFT_KEY = "mls-station-draft";
 const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
 
-function MachineStation({ user, onLogout, onKicked, onExpired }) {
+function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" }) {
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
   const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
   const [op, setOp] = useState(user.operation || null);
-  const [machineOps, setMachineOps] = useState([]);   // ขั้นตอนที่เครื่องนี้ทำได้ (สำหรับปุ่มเลือก)
+  const [machineOps, setMachineOps] = useState([]);   // ขั้นตอน "ของแผนกนี้" ที่บัญชีทำได้ (กรองตาม dept แล้ว)
+  const [allOps, setAllOps] = useState([]);           // ★ ทุกขั้นตอนของบัญชี (ยังไม่กรอง) — ใช้บอกว่าบัญชีนี้เป็นแผนกอะไร
+  const [opsLoaded, setOpsLoaded] = useState(false);  // โหลดรายการขั้นตอนเสร็จหรือยัง (กันเด้ง redirect ก่อนรู้ข้อมูล)
   const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
   const [rows, setRows] = useState([]);
   const [newRowId, setNewRowId] = useState(null);
@@ -163,7 +220,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
   const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
 
   const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
-  // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
+  // ── สถานะโหมดประกอบ/แพ็ก (ใช้เมื่อ dept = assembly/packing) ────────────────────
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
   const asmClientRef = useRef(null);
@@ -208,20 +265,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
   }, [onKicked]);
   useEffect(() => { reload(); }, [reload]);
 
-  // โหลดขั้นตอนที่เครื่องนี้ทำได้ + ตั้ง default การเลือก (ครั้งเดียวตอนเปิด)
+  // โหลดขั้นตอนที่บัญชีทำได้ → กรอง "เฉพาะแผนกของหน้านี้" (machine / assembly / packing) + ตั้ง default
   useEffect(() => {
-    getMachineOps().then((ops) => {
+    getMachineOps().then((raw) => {
+      const list = raw || [];
+      setAllOps(list);
+      setOpsLoaded(true);
+      const ops = list.filter((o) => opDept(o) === dept);                  // เก็บเฉพาะขั้นตอนของแผนกนี้
       setMachineOps(ops);
       setOp((cur) => {
         if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังทำได้ → คงเดิม
         if (ops.length === 1) return ops[0];                               // ทำได้ขั้นตอนเดียว → เลือกให้เลย
-        if (ops.length === 0) return user.operation || cur;               // ไม่ได้ตั้งความสามารถ → ใช้ขั้นตอนประจำบัญชี
+        if (ops.length === 0) return dept === "machine" ? (user.operation || cur) : null; // machine: ใช้ขั้นตอนประจำบัญชี
         // ★ ทำได้หลายขั้นตอน → บังคับให้แตะเลือกเอง (ไม่ default จากบัญชี กันบันทึกผิดขั้นตอนเงียบๆ)
         return null;
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dept]);
   // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
   useEffect(() => {
     const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
@@ -594,8 +655,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
   }, [lockTableHeight]);
 
-  // ── โหมดประกอบ/แพ็ก (แยกตาม op_type: assembly / packing) ────────────────────
-  const isAsm = op?.op_type === "assembly" || op?.op_type === "packing" || !!op?.is_assembly;
+  // ── โหมดของหน้านี้ "ล็อกตามแผนก" (dept) แล้ว — assembly/packing = โหมดประกอบ/แพ็ก · machine = งานเครื่อง ──
+  const isAsm = dept === "assembly" || dept === "packing";
   // นับ "สะสม" = ที่ติดตั้งไปแล้ว (สเตชันก่อน) + ที่สแกนรอบนี้ · ครบเมื่อทุกบรรทัด ≥ qty
   const asmHave = (pmId) =>
     (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length +
@@ -689,7 +750,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
   // บันทึก "รอบนี้" (สะสมได้ — ไม่ต้องครบก็เซฟ) · ครบ BOM สะสม → ปิดงานอัตโนมัติ · ไม่ครบ → รีเฟรชยอด แล้วสแกนต่อ/ส่งสเตชันถัดไป
   async function asmConfirm() {
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
-    const isPack = op?.op_type === "packing";
+    const isPack = dept === "packing";
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
@@ -735,8 +796,98 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
     } finally { setBusy(false); savingRef.current = false; }
   }
 
+  // ── ยามแผนก (department gate): หน้านี้รับเฉพาะบัญชีของแผนกตัวเอง ──────────────
+  //   ยังไม่รู้ว่าบัญชีเป็นแผนกอะไร (ยังโหลด ops ไม่เสร็จ) → โชว์ "กำลังตรวจสอบ" ก่อน (เฉพาะหน้า assembly/packing)
+  //   รู้แล้วว่าไม่ตรงแผนก → เด้งไปหน้าที่ถูก (ไม่บันทึกผิดแผนก)
+  const acctDepts = opsLoaded
+    ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
+    : [];
+  if (dept !== "machine" && !opsLoaded) return <StnDeptChecking dept={dept} t={t} />;
+  if (opsLoaded && !acctDepts.includes(dept)) {
+    return <StnDeptRedirect dept={dept} acctDepts={acctDepts} onLogout={onLogout} t={t} />;
+  }
+
   const recording = step !== STEP.IDLE;
   const scanArmed = qty > 0 && !!unit;
+
+  // WorkArea ตัวเดียว ใช้ได้ทั้งหน้า machine (โหมดเครื่อง) และ assembly/packing (โหมดประกอบ/แพ็ก)
+  const workAreaEl = (
+    <WorkArea
+      step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
+      status={status} setStatus={setStatus} busy={busy}
+      onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
+      confirmCancel={confirmCancel} confirmPart={confirmPart}
+      closeScan={closeScan} rescan={rescan} dupCount={dupCount}
+      isAsm={isAsm} asmType={dept === "packing" ? "packing" : "assembly"} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
+      asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
+      asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
+      packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
+      photoCapture={photoCapture} photoRemove={photoRemove}
+    />
+  );
+
+  // ── หน้า assembly / packing = เลย์เอาต์เฉพาะแผนก (ไม่มีตารางเครื่อง/นาฬิกา/ความยาววัสดุ) ──
+  if (isAsm) {
+    const meta = DEPT_META[dept];
+    return (
+      <div className={`stn-shell stn-asm-shell dept-${dept}`}>
+        {(!online || pending > 0) && (
+          <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
+            {!online ? (
+              <span>📴 {t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("โหมดนี้ต้องออนไลน์", "this mode needs online")}`}</span>
+            ) : (
+              <span>🔄 {t("กำลังซิงค์งานค้าง", "Syncing")} · {pending}</span>
+            )}
+          </div>
+        )}
+        {storageFull && (
+          <div className="stn-rejected" onClick={() => setStorageFull(false)} style={{ background: "#b91c1c" }}>
+            ⛔ {t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! แจ้งผู้ดูแล (แตะเพื่อซ่อน)", "Storage full — notify admin (tap to hide)")}
+          </div>
+        )}
+        {rejected > 0 && (
+          <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}>
+            ⚠️ {t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} — {t("แตะเพื่อจัดการ", "tap to manage")}
+          </button>
+        )}
+        {showRejected && (
+          <RejectedPanel t={t} onClose={() => setShowRejected(false)}
+            onRetry={() => { retryRejected(); setShowRejected(false); flash(t("กำลังลองซิงค์ใหม่…", "Retrying sync…"), "ok"); }}
+            onClear={() => { clearRejected(); setShowRejected(false); flash(t("ล้างคิวที่ซิงค์ไม่สำเร็จแล้ว", "Cleared failed-sync queue"), "ok"); }} />
+        )}
+
+        <div className="stn-asm-topbar">
+          <div className="stn-asm-ident">
+            <span className={`stn-asm-badge dept-${dept}`}>{lang === "en" ? meta.en : meta.th}</span>
+            <span className="stn-asm-machine">{machine ? machine.code : "—"}</span>
+            {machine?.name ? <span className="stn-asm-mname">{machine.name}</span> : null}
+          </div>
+          <div className="stn-asm-tools">
+            <StnLangToggle />
+            {!isStandalone() && (
+              <button className="stn-logout stn-fs" onClick={toggleFullscreen} title={t("เต็มจอ", "Fullscreen")}>⛶ {t("เต็มจอ", "Full")}</button>
+            )}
+            <button className="stn-logout" onClick={onLogout} title={t("ออกจากระบบ", "Log out")}>⏻ {t("ออก", "Exit")}</button>
+          </div>
+        </div>
+
+        {machineOps.length > 1 && (
+          <div className="stn-oppick">
+            <span className="stn-oppick-lbl">{t("ขั้นตอน", "Operation")}:</span>
+            {machineOps.map((o) => (
+              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} onClick={() => setOp(o)}>{o.name}</button>
+            ))}
+            {!op && <span className="stn-oppick-hint">← {t("แตะเลือกก่อน", "pick first")}</span>}
+          </div>
+        )}
+
+        <div className="stn-asm-main">
+          {workAreaEl}
+          {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="stn-shell">
@@ -883,18 +1034,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired }) {
         {/* bottom-right: work area + control */}
         <div className="stn-work-wrap">
           <div className="stn-work-area">
-            <WorkArea
-              step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
-              status={status} setStatus={setStatus} busy={busy}
-              onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
-              confirmCancel={confirmCancel} confirmPart={confirmPart}
-              closeScan={closeScan} rescan={rescan} dupCount={dupCount}
-              isAsm={isAsm} asmType={op?.op_type} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
-              asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
-              asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
-              packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
-              photoCapture={photoCapture} photoRemove={photoRemove}
-            />
+            {workAreaEl}
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
           </div>
 
@@ -1697,7 +1837,8 @@ function StationUpdateBanner() {
   );
 }
 
-export default function StationApp() {
+export default function StationApp({ dept = "machine" } = {}) {
+  const meta = DEPT_META[dept] || DEPT_META.machine;
   const [user, setUser] = useState(getSession());
   const [notice, setNotice] = useState("");
   async function logout() {
@@ -1732,13 +1873,13 @@ export default function StationApp() {
 
   let content;
   if (!user) {
-    content = <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} /></div>;
+    content = <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
   } else if (!user.machine) {
     content = (
       <div className="stn-login-wrap">
         <div className="stn-login">
           <h1>บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี</h1>
-          <p>หน้าเครื่องต้องใช้บัญชีที่กำหนด "เครื่อง/สถานีประจำ" ไว้ที่ Setup → พนักงาน<br />
+          <p>{meta.th}ต้องใช้บัญชีที่กำหนด "เครื่อง/สถานีประจำ" ไว้ที่ Setup → พนักงาน<br />
             แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน</p>
           <button className="stn-btn" onClick={logout}>ออกจากระบบ</button>
           <div className="stn-login-foot">
@@ -1753,7 +1894,7 @@ export default function StationApp() {
       </div>
     );
   } else {
-    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} />;
+    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} dept={dept} />;
   }
   return <><StationUpdateBanner />{content}</>;
 }
