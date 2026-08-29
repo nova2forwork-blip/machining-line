@@ -91,10 +91,34 @@ const OP_EN = {
 };
 const opLabel = (name, lang) => (lang === "en" ? (OP_EN[name] || name) : name);
 
+// นาฬิกา + ตัวชี้ "อัปเดตสด/ข้อมูลค้าง" — แยกเป็น component ลูกที่ tick เองทุก 1 วิ
+// เพื่อไม่ให้การเดินนาฬิกาไป re-render ทั้ง Dashboard (รวมกราฟ recharts ที่หนัก) ทุกวินาที
+function LiveClock({ lang, t, lastOkRef }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const gapMs = now.getTime() - (lastOkRef.current || 0);
+  const stale = lastOkRef.current > 0 && gapMs > 20000;   // ไม่มีข้อมูลใหม่ > 20 วิ = การเชื่อมต่อน่าจะหลุด
+  const ago = Math.max(0, Math.round(gapMs / 1000));
+  return (
+    <>
+      <div className={`dash-live${stale ? " stale" : ""}`} title={stale ? "การเชื่อมต่ออาจหลุด — กำลังลองใหม่" : "อัปเดตสด"}>
+        <span className="dot" /> {stale ? (lang === "en" ? "RECONNECTING" : "กำลังเชื่อมต่อใหม่") : t.live}
+        {lastOkRef.current > 0 && <span className="dash-live-ago">{lang === "en" ? `· ${ago}s ago` : `· ${ago} วิ`}</span>}
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div className="dash-clock dash-num">{fmtClock(now)}</div>
+        <div className="dash-date">{fmtDateLoc(now, lang)}</div>
+      </div>
+    </>
+  );
+}
+
 export default function Dashboard() {
   const [logs, setLogs] = useState([]);
   const [booted, setBooted] = useState(false);
-  const [now, setNow] = useState(new Date());
   const [lang, setLang] = useState(() => {
     try { return localStorage.getItem("mls-dash-lang") === "en" ? "en" : "th"; } catch { return "th"; }
   });
@@ -165,8 +189,7 @@ export default function Dashboard() {
   useEffect(() => {
     fetchNow();
     const poll = setInterval(fetchNow, 5000);
-    const clock = setInterval(() => setNow(new Date()), 1000);
-    return () => { clearInterval(poll); clearInterval(clock); clearTimeout(hitTimer.current); };
+    return () => { clearInterval(poll); clearTimeout(hitTimer.current); };
   }, [fetchNow]);
 
   // เรียลไทม์: มีงานหน้าเครื่องเข้ามาปุ๊บ ดึงใหม่ทันที (ถ้าเปิด replication ไว้)
@@ -203,7 +226,7 @@ export default function Dashboard() {
   // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
   // ไม่ควรทำให้กราฟรีเซ็ต/กระพริบใหม่) — Recharts จะขยับก็ต่อเมื่อค่าจริงเปลี่ยน
   const HOUR = 3600 * 1000;
-  const curH = new Date(now.getTime() + 7 * HOUR).getUTCHours();
+  const curH = new Date(Date.now() + 7 * HOUR).getUTCHours();   // คำนวณสดตอน render (อัปเดตทุกครั้งที่ fetch ~5 วิ) — ไม่พึ่ง state now แล้ว
   const hourly = useMemo(() => {
     const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
     const perHour = new Array(24).fill(0);      // จำนวนชิ้น (นับต่อขั้นตอน)
@@ -264,22 +287,7 @@ export default function Dashboard() {
             title="สลับภาษา / Switch language">
             {lang === "th" ? "EN" : "ไทย"}
           </button>
-          {(() => {
-            // ★ ไม่มีข้อมูลใหม่ > 20 วิ = การเชื่อมต่อน่าจะหลุด — เลิกโชว์ "LIVE" หลอก
-            const gapMs = now.getTime() - (lastOkRef.current || 0);
-            const stale = lastOkRef.current > 0 && gapMs > 20000;
-            const ago = Math.max(0, Math.round(gapMs / 1000));
-            return (
-              <div className={`dash-live${stale ? " stale" : ""}`} title={stale ? "การเชื่อมต่ออาจหลุด — กำลังลองใหม่" : "อัปเดตสด"}>
-                <span className="dot" /> {stale ? (lang === "en" ? "RECONNECTING" : "กำลังเชื่อมต่อใหม่") : t.live}
-                {lastOkRef.current > 0 && <span className="dash-live-ago">{lang === "en" ? `· ${ago}s ago` : `· ${ago} วิ`}</span>}
-              </div>
-            );
-          })()}
-          <div style={{ textAlign: "right" }}>
-            <div className="dash-clock dash-num">{fmtClock(now)}</div>
-            <div className="dash-date">{fmtDateLoc(now, lang)}</div>
-          </div>
+          <LiveClock lang={lang} t={t} lastOkRef={lastOkRef} />
         </div>
       </div>
 
