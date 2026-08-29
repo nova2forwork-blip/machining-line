@@ -148,89 +148,174 @@ function extractLabeled(rows, patterns) {
   return "";
 }
 
-const SUBASM_COLS = {
-  item: [/^item$/i, /ลำดับ/],
-  code: [/^code$/i, /เบอร์/],
-  desc: [/description/i, /รายละเอียด/],
-  length: [/^l$/i, /length/i, /ความยาว/],
-};
+// code ขึ้นต้น "SA" = เบอร์ซับ (sub-assembly) — ใช้แยกชั้นในฟอร์มแผง
+function isSubAsmCode(code) { return /^\s*sa/i.test(String(code || "")); }
 
+function parseHeaderMeta(rows) {
+  const projectName = extractLabeled(rows, [/^\s*project/i, /โปรเจ/]);
+  const releaseRaw = extractLabeled(rows, [/^\s*release/i, /ปล่อยงาน/]);
+  const roMatch = String(releaseRaw).match(/P[-\s]?\d+/i);
+  const releaseOrder = roMatch ? roMatch[0].replace(/\s/g, "").toUpperCase() : "";
+  return { projectName, releaseOrder };
+}
+
+// รองรับ 2 ฟอร์ม:
+//   • Sub Assembly (flat): Item | Code | Description | L | Quantity(แม่) | Quantity(ลูกรวม) | U.M.I
+//   • Panel (nested):      Panel | Description | Quantity(แผง) | ... | Code | Description | L | ... | Quantity(ต่อแผง) | Sum(รวม)
+//     - แถว Code ขึ้นต้น "SA" = เบอร์ซับ (ลูกตรงของแผง + เปิดกลุ่มซับ) · ลูกของซับ = แถวถัดไปที่ "description ว่าง"
+//     - แถว description "มีข้อความ" = ลูกตรงของแผง (ปิดบริบทซับ)
+// คืน { projectName, releaseOrder, groups:[{ parentKind, parentCode, parentDesc, parentLen, parentQty, children:[{code,desc,len,totalQty}] }] }
 export async function parseSubAssemblyExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  const { projectName, releaseOrder } = parseHeaderMeta(rows);
 
-  const projectName = extractLabeled(rows, [/^\s*project/i, /โปรเจ/]);
-  const releaseRaw = extractLabeled(rows, [/^\s*release/i, /ปล่อยงาน/]);
-  // ตัดเอาเฉพาะเลขที่ P-xxx จาก "P-076 (CARE PACKAGE)"
-  const roMatch = String(releaseRaw).match(/P[-\s]?\d+/i);
-  const releaseOrder = roMatch ? roMatch[0].replace(/\s/g, "").toUpperCase() : "";
-
-  // หาแถวหัวตาราง: มีทั้ง Code และ (Quantity อย่างน้อย 1) — แล้วเก็บตำแหน่ง 2 คอลัมน์ Quantity
-  let headerRowIndex = -1, colMap = null, qtyCols = [];
+  // หาแถวหัวตาราง: ต้องมี Code + Quantity อย่างน้อย 1
+  let headerRowIndex = -1, headerRow = null;
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    const cm = {};
-    for (const [field, pats] of Object.entries(SUBASM_COLS)) {
-      const idx = row.findIndex((cell) => matches(cell, pats));
-      if (idx !== -1) cm[field] = idx;
-    }
-    const qc = [];
-    row.forEach((cell, i) => { if (matches(cell, [/quantity/i, /qty/i, /จำนวน/])) qc.push(i); });
-    if (cm.code !== undefined && qc.length >= 1) {
-      headerRowIndex = r; colMap = cm; qtyCols = qc; break;
-    }
+    const hasCode = row.some((c) => matches(c, [/^code$/i, /เบอร์/]));
+    const hasQty = row.some((c) => matches(c, [/quantity/i, /qty/i, /จำนวน/]));
+    if (hasCode && hasQty) { headerRowIndex = r; headerRow = row; break; }
   }
-  if (headerRowIndex === -1) {
-    throw new Error("หาหัวตาราง (Code / Quantity) ในไฟล์ไม่เจอ — ตรวจสอบว่าเป็นฟอร์ม Sub Assembly ที่ถูกต้อง");
+  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Code / Quantity) ในไฟล์ไม่เจอ — ตรวจว่าเป็นฟอร์มที่ถูกต้อง");
+
+  const codeCol = headerRow.findIndex((c) => matches(c, [/^code$/i, /เบอร์/]));
+  const sumCol = headerRow.findIndex((c) => matches(c, [/^sum$/i, /รวม/]));
+  const panelCol = headerRow.findIndex((c) => matches(c, [/^panel$/i]) && !matches(c, [/panel\s*no/i]));
+  const qtyCols = []; headerRow.forEach((c, i) => { if (matches(c, [/quantity/i, /qty/i, /จำนวน/])) qtyCols.push(i); });
+  const descCols = []; headerRow.forEach((c, i) => { if (matches(c, [/description/i, /รายละเอียด/])) descCols.push(i); });
+  const lenCols = []; headerRow.forEach((c, i) => { if (matches(c, [/^l$/i, /length/i, /ความยาว/])) lenCols.push(i); });
+
+  const body = rows.slice(headerRowIndex + 1);
+
+  // ── ฟอร์มแผง (มีคอลัมน์ Panel + Sum) → parse แบบ nested ──
+  if (panelCol !== -1 && sumCol !== -1) {
+    const groups = parsePanelBody(body, { panelCol, codeCol, sumCol, qtyCols, descCols, lenCols });
+    return { projectName, releaseOrder, groups };
   }
+
+  // ── ฟอร์ม Sub Assembly (flat) ──
+  const itemCol = headerRow.findIndex((c) => matches(c, [/^item$/i, /ลำดับ/]));
+  const compDescCol = descCols[descCols.length - 1];
+  const compLenCol = lenCols.find((i) => i > codeCol);
   const qtyParentCol = qtyCols[0];
   const qtyChildCol = qtyCols.length >= 2 ? qtyCols[1] : qtyCols[0];
-  const itemCol = colMap.item;               // อาจไม่มี → ใช้ "มีจำนวนแม่" เป็นตัวบอกแม่แทน
-  const codeCol = colMap.code;
-  const descCol = colMap.desc;
-  const lenCol = colMap.length;
 
   const groups = [];
-  let cur = null;
-  let blankStreak = 0;
-  for (let r = headerRowIndex + 1; r < rows.length; r++) {
-    const row = rows[r];
+  let cur = null, blankStreak = 0;
+  for (const row of body) {
     const code = String(row[codeCol] ?? "").trim();
-    const itemVal = itemCol !== undefined ? String(row[itemCol] ?? "").trim() : "";
+    const itemVal = itemCol !== -1 ? String(row[itemCol] ?? "").trim() : "";
     const qP = toNumber(row[qtyParentCol]);
     const qC = qtyChildCol !== undefined ? toNumber(row[qtyChildCol]) : null;
-
     if (!code) { if (++blankStreak >= 15) break; continue; }
     blankStreak = 0;
-
-    // เป็น "แม่" ถ้ามีเลข Item หรือมีจำนวนในคอลัมน์แม่ (และไม่มีในคอลัมน์ลูก)
     const looksParent = (itemVal !== "" && itemVal !== "0") || (qP && qP > 0 && qtyParentCol !== qtyChildCol);
     if (looksParent) {
-      cur = {
-        parentCode: code,
-        parentDesc: descCol !== undefined ? String(row[descCol] ?? "").trim() : "",
-        parentLen: lenCol !== undefined ? toNumber(row[lenCol]) : null,
-        parentQty: qP && qP > 0 ? qP : 1,
-        children: [],
-      };
+      cur = { parentKind: "subassembly", parentCode: code,
+        parentDesc: compDescCol !== undefined ? String(row[compDescCol] ?? "").trim() : "",
+        parentLen: compLenCol !== undefined ? toNumber(row[compLenCol]) : null,
+        parentQty: qP && qP > 0 ? qP : 1, children: [] };
       groups.push(cur);
     } else if (cur) {
       const total = qC && qC > 0 ? qC : (qP && qP > 0 ? qP : null);
-      if (!total) continue;                         // แถวลูกที่ไม่มีจำนวน → ข้าม
-      cur.children.push({
-        code,
-        desc: descCol !== undefined ? String(row[descCol] ?? "").trim() : "",
-        len: lenCol !== undefined ? toNumber(row[lenCol]) : null,
-        totalQty: total,
-      });
+      if (!total) continue;
+      cur.children.push({ code,
+        desc: compDescCol !== undefined ? String(row[compDescCol] ?? "").trim() : "",
+        len: compLenCol !== undefined ? toNumber(row[compLenCol]) : null, totalQty: total });
+    }
+  }
+  const withChildren = groups.filter((g) => g.children.length > 0);
+  if (withChildren.length === 0) throw new Error("ไม่พบกลุ่มเบอร์แม่–ลูกในไฟล์ — ตรวจว่าแถวแม่มีเลข Item และแถวลูกมีจำนวน");
+  return { projectName, releaseOrder, groups: withChildren };
+}
+
+// parse ตัวตารางฟอร์มแผง → หลายกลุ่ม (แผง 1 + ซับ N) · ใช้ Sum เป็น "จำนวนรวม" ของทุกแถว
+function parsePanelBody(body, cols) {
+  const { panelCol, codeCol, sumCol, qtyCols, descCols, lenCols } = cols;
+  const panelDescCol = descCols.find((i) => i < codeCol);
+  const panelQtyCol = qtyCols.find((i) => i < codeCol);
+  const compDescCol = descCols.find((i) => i > codeCol);
+  const compLenCol = lenCols.find((i) => i > codeCol);
+
+  const groups = [];
+  const panelByCode = new Map();
+  let curPanel = null, curSA = null, blankStreak = 0;
+
+  for (const row of body) {
+    const panelCode = String(row[panelCol] ?? "").trim();
+    const code = String(row[codeCol] ?? "").trim();
+    const compDesc = compDescCol !== undefined ? String(row[compDescCol] ?? "").trim() : "";
+    const compLen = compLenCol !== undefined ? toNumber(row[compLenCol]) : null;
+    const sum = toNumber(row[sumCol]);
+    const panelQty = panelQtyCol !== undefined ? toNumber(row[panelQtyCol]) : null;
+
+    if (!code && !panelCode) { if (++blankStreak >= 15) break; continue; }
+    blankStreak = 0;
+
+    // เปลี่ยนแผง (panelCode ใหม่) → เปิด/สลับกลุ่มแผง
+    if (panelCode && (!curPanel || curPanel.parentCode !== panelCode)) {
+      if (panelByCode.has(panelCode)) curPanel = panelByCode.get(panelCode);
+      else {
+        curPanel = { parentKind: "panel", parentCode: panelCode,
+          parentDesc: panelDescCol !== undefined ? String(row[panelDescCol] ?? "").trim() : "",
+          parentLen: null, parentQty: panelQty && panelQty > 0 ? panelQty : 1, children: [] };
+        groups.push(curPanel); panelByCode.set(panelCode, curPanel);
+      }
+      curSA = null;
+    }
+    if (!code || !curPanel) continue;
+    const total = sum && sum > 0 ? sum : null;
+
+    if (isSubAsmCode(code)) {
+      if (total) curPanel.children.push({ code, desc: compDesc, len: compLen, totalQty: total });
+      curSA = { parentKind: "subassembly", parentCode: code, parentDesc: compDesc, parentLen: compLen,
+        parentQty: total && total > 0 ? total : 1, children: [] };
+      groups.push(curSA);
+    } else if (curSA && !compDesc) {
+      if (total) curSA.children.push({ code, desc: compDesc, len: compLen, totalQty: total });
+    } else {
+      if (total) curPanel.children.push({ code, desc: compDesc, len: compLen, totalQty: total });
+      curSA = null;   // ลูกที่มี description = ลูกตรงของแผง → ปิดบริบทซับ
     }
   }
 
   const withChildren = groups.filter((g) => g.children.length > 0);
-  if (withChildren.length === 0) {
-    throw new Error("ไม่พบกลุ่มเบอร์แม่–ลูกในไฟล์ — ตรวจสอบว่าแถวแม่มีเลข Item และแถวลูกมีจำนวน");
+  if (withChildren.length === 0) throw new Error("อ่านฟอร์มแผงไม่พบรายการ — ตรวจว่ามีคอลัมน์ Code/Sum และกรอกจำนวนใน Sum");
+  return withChildren;
+}
+
+// ─── Import "release แผง" (form 2 — flat): Item | Panel No | Qty | Level | Remarks ─────
+// คืน { projectName, releaseOrder, items:[{ code, qty }] } — เอาไป release เป็นแผง (kind=panel)
+export async function parsePanelReleaseExcel(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  const { projectName, releaseOrder } = parseHeaderMeta(rows);
+
+  let headerRowIndex = -1, panelNoCol = -1, qtyCol = -1;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    const pIdx = row.findIndex((c) => matches(c, [/panel\s*no/i, /panel\s*number/i, /หมายเลขแผง/, /^panel$/i]));
+    const qIdx = row.findIndex((c) => matches(c, [/^qty$/i, /quantity/i, /จำนวน/]));
+    if (pIdx !== -1 && qIdx !== -1) { headerRowIndex = r; panelNoCol = pIdx; qtyCol = qIdx; break; }
   }
-  return { projectName, releaseOrder, groups: withChildren };
+  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Panel No / Qty) ในไฟล์ไม่เจอ — ตรวจว่าเป็นฟอร์ม release แผงที่ถูกต้อง");
+
+  const items = [];
+  let blankStreak = 0;
+  for (let r = headerRowIndex + 1; r < rows.length; r++) {
+    const code = String(rows[r][panelNoCol] ?? "").trim();
+    if (!code) { if (++blankStreak >= 15) break; continue; }
+    blankStreak = 0;
+    const qty = toNumber(rows[r][qtyCol]);
+    if (!qty || qty <= 0) continue;
+    items.push({ code, qty });
+  }
+  if (items.length === 0) throw new Error("ไม่พบรายชื่อแผงในไฟล์ — ตรวจว่ากรอก Panel No + Qty ครบ");
+  return { projectName, releaseOrder, items };
 }
