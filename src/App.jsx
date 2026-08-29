@@ -462,7 +462,7 @@ function Login({ onLogin }) {
           ระบบบันทึกการทำงานเครื่องจักร
         </div>
         <Field label="รหัสพนักงาน">
-          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น admin" autoFocus />
+          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น admin" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} />
         </Field>
         <Field label="รหัสผ่าน">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
