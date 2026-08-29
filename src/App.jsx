@@ -180,7 +180,7 @@ function UndoHint() {
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
   processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
-  machineDailyMatrix, missingWeightParts,
+  machineDailyMatrix, missingWeightParts, logWeight,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
 import { SimpleBarChart } from "./svgcharts.jsx";
@@ -3489,7 +3489,7 @@ function ReportPage() {
     const name = l.operation?.name || "ไม่ระบุ";
     byOp[name] = byOp[name] || { name, count: 0, weight: 0 };
     byOp[name].count += Number(l.quantity ?? 1) || 0;   // นับจำนวนชิ้น (งานหน้าเครื่อง = quantity)
-    byOp[name].weight += Number(l.weight ?? l.part_unit?.part_master?.unit_weight ?? 0);
+    byOp[name].weight += logWeight(l);   // ★ ใช้ตัวช่วยเดียวกับ metrics.js (fallback คูณ quantity ด้วย)
   });
   const chartData = Object.values(byOp);
   const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
