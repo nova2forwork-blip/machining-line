@@ -4297,9 +4297,9 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         {admin ? (
-          <span onClick={() => !busy && remove()} style={{ color: "var(--danger-hi)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}>
-            ลบโปรเจคนี้
-          </span>
+          <Btn type="button" variant="danger" size="sm" onClick={remove} disabled={busy}>
+            <Icon name="trash" size={13} /> ลบโปรเจคนี้
+          </Btn>
         ) : <span />}
         <div style={{ display: "flex", gap: 8 }}>
           <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
