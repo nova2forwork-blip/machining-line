@@ -870,6 +870,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             <span className="stn-asm-machine">{machine ? machine.code : "—"}</span>
             {machine?.name ? <span className="stn-asm-mname">{machine.name}</span> : null}
           </div>
+          <div className="stn-asm-today" title={t("ยอดที่บันทึกวันนี้", "Recorded today")}>
+            <span className="n">{fmt(daily.quantity)}</span>
+            <span className="u">{t("วันนี้", "today")}</span>
+          </div>
           <div className="stn-asm-tools">
             <StnLangToggle />
             {!isStandalone() && (
