@@ -472,7 +472,7 @@ function Login({ onLogin }) {
           {busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
         </Btn>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
-          ค่าเริ่มต้น: admin / admin123<br />ระบบจะออกจากระบบอัตโนมัติเมื่อปิดแท็บนี้
+          ลืมรหัสผ่าน? ติดต่อผู้ดูแลระบบ
         </div>
         <div style={{ textAlign: "center", marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
           <a href="/station" style={{ fontSize: 13.5, fontWeight: 600, color: "var(--accent-dk)", textDecoration: "none" }}>
@@ -4079,6 +4079,15 @@ function ProjectsPage({ user, goTo }) {
                       <td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(s.weight)}</td>
                       {canEdit && (
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          {admin && (
+                            <Btn variant="ghost" size="sm" disabled={closingId === p.id}
+                              onClick={(e) => toggleClose(p, e)}
+                              title={p.status === "closed" ? "เปิดโปรเจกต์อีกครั้ง (แก้งานได้)" : "ปิดโปรเจกต์ — ทำเสร็จแล้ว หน้าเครื่องบันทึกเพิ่มไม่ได้"}>
+                              {p.status === "closed"
+                                ? <><Icon name="refresh" size={13} /> เปิดใหม่</>
+                                : <><Icon name="check" size={13} /> ปิด (เสร็จ)</>}
+                            </Btn>
+                          )}
                           <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn>
                         </td>
                       )}
@@ -4182,21 +4191,6 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
     setBusy(false);
   }
 
-  // ปิด/เปิดโปรเจกต์ (แอดมิน) — ปิด = หน้าเครื่องบันทึกงานเพิ่มไม่ได้ · ย้ายจากปุ่มในแถวมาไว้ในหน้าแก้ไข
-  async function toggleClose() {
-    const closing = project.status !== "closed";
-    if (closing && !window.confirm(`ปิดโปรเจกต์ "${project.code} — ${project.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`)) return;
-    setBusy(true); setErr("");
-    try {
-      await updateRow("projects", project.id, { status: closing ? "closed" : "active" });
-      auditRecord(closing ? "close_project" : "reopen_project", "project", project.id, { code: project.code, name: project.name });
-      onSaved();
-    } catch (e) {
-      setErr((closing ? "ปิด" : "เปิด") + "โปรเจคไม่สำเร็จ: " + e.message);
-      setBusy(false);
-    }
-  }
-
   async function remove() {
     const hasData = impact.partCount > 0;
     const msg = impact.scannedCount > 0
@@ -4233,19 +4227,6 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
         ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
         {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
       </div>
-
-      {/* ปิด/เปิดโปรเจกต์ — ย้ายมาจากปุ่มในแถว (แอดมินเท่านั้น) */}
-      {admin && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", marginBottom: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface-2, #f6f8f7)" }}>
-          <div style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.5 }}>
-            สถานะ: <b style={{ color: project.status === "closed" ? "var(--warn, #b45309)" : "var(--success)" }}>{project.status === "closed" ? "ปิดแล้ว (เสร็จ)" : "เปิดอยู่"}</b>
-            <br />{project.status === "closed" ? 'หน้าเครื่องบันทึกงานเพิ่มไม่ได้ — กด "เปิดใหม่" เพื่อแก้งาน' : "ปิดเมื่อทำเสร็จ เพื่อกันหน้าเครื่องบันทึกงานเพิ่ม"}
-          </div>
-          <Btn type="button" variant="ghost" size="sm" onClick={toggleClose} disabled={busy} style={{ flexShrink: 0 }}>
-            {project.status === "closed" ? <><Icon name="refresh" size={13} /> เปิดใหม่</> : <><Icon name="check" size={13} /> ปิด (เสร็จ)</>}
-          </Btn>
-        </div>
-      )}
 
       {/* รายการ Release ในโปรเจคนี้ — รวมเป็น 1 Release Order ต่อ 1 แถว */}
       {(() => {
@@ -4292,9 +4273,11 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
       })()}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
-        <span onClick={() => !busy && remove()} style={{ color: "var(--danger-hi)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}>
-          ลบโปรเจคนี้
-        </span>
+        {admin ? (
+          <span onClick={() => !busy && remove()} style={{ color: "var(--danger-hi)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}>
+            ลบโปรเจคนี้
+          </span>
+        ) : <span />}
         <div style={{ display: "flex", gap: 8 }}>
           <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
           <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
