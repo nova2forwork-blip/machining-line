@@ -14,11 +14,12 @@ function fmtHrs(secs, L = "th") {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h > 0 ? `${h}:${pad(m)} ${L === "en" ? "h" : "ชม."}` : `${m} ${L === "en" ? "m" : "น."}`;
 }
-function fmtClock(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+// ★ ทุกเวลาบนจอ format เป็น Asia/Bangkok เสมอ — ให้ตรงกับช่วง "วันนี้" ของข้อมูล ไม่ว่า TV ตั้ง timezone อะไร
+function fmtClock(d) { try { return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour12: false }); } catch { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; } }
 function fmtDateLoc(d, L) {
-  return d.toLocaleDateString(L === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return d.toLocaleDateString(L === "en" ? "en-GB" : "th-TH", { timeZone: "Asia/Bangkok", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
-function timeOf(iso) { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function timeOf(iso) { try { return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }); } catch { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; } }
 
 // ─── สองภาษา ไทย/อังกฤษ ─────────────────────────────────────────────────────
 const STR = {
@@ -116,6 +117,7 @@ export default function Dashboard() {
   const seenRef = useRef(null);                        // key ที่เคยเห็นแล้ว (กันแฟลชซ้ำ)
   const hitTimer = useRef(0);
   const hourlyRef = useRef([]);                        // อ้างอิงข้อมูลกราฟคงที่ (กันรีอนิเมชันซ้ำ)
+  const lastOkRef = useRef(0);                         // เวลาที่ดึงข้อมูลสำเร็จล่าสุด — ใช้บอก "ข้อมูลค้าง/หลุด"
 
   const fetchNow = useCallback(async () => {
     const { from, to } = bangkokTodayRange();
@@ -130,6 +132,7 @@ export default function Dashboard() {
     const rows = Array.isArray(data) ? data : [];
     setLogs(rows);
     setBooted(true);
+    lastOkRef.current = Date.now();   // ★ ดึงสำเร็จ → รีเซ็ตนาฬิกา "ข้อมูลค้าง"
 
     // ตรวจสแกนใหม่ (เทียบกับรอบก่อน) — รอบแรกถือว่า "เห็นแล้วทั้งหมด" ไม่แฟลช
     const keys = new Set(rows.map(keyOf));
@@ -261,7 +264,18 @@ export default function Dashboard() {
             title="สลับภาษา / Switch language">
             {lang === "th" ? "EN" : "ไทย"}
           </button>
-          <div className="dash-live"><span className="dot" /> {t.live}</div>
+          {(() => {
+            // ★ ไม่มีข้อมูลใหม่ > 20 วิ = การเชื่อมต่อน่าจะหลุด — เลิกโชว์ "LIVE" หลอก
+            const gapMs = now.getTime() - (lastOkRef.current || 0);
+            const stale = lastOkRef.current > 0 && gapMs > 20000;
+            const ago = Math.max(0, Math.round(gapMs / 1000));
+            return (
+              <div className={`dash-live${stale ? " stale" : ""}`} title={stale ? "การเชื่อมต่ออาจหลุด — กำลังลองใหม่" : "อัปเดตสด"}>
+                <span className="dot" /> {stale ? (lang === "en" ? "RECONNECTING" : "กำลังเชื่อมต่อใหม่") : t.live}
+                {lastOkRef.current > 0 && <span className="dash-live-ago">{lang === "en" ? `· ${ago}s ago` : `· ${ago} วิ`}</span>}
+              </div>
+            );
+          })()}
           <div style={{ textAlign: "right" }}>
             <div className="dash-clock dash-num">{fmtClock(now)}</div>
             <div className="dash-date">{fmtDateLoc(now, lang)}</div>
