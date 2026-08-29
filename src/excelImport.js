@@ -170,6 +170,21 @@ export async function parseSubAssemblyExcel(file) {
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  return parseSubAssemblyRows(rows);
+}
+
+// แปลงข้อความ TSV (ก็อปจาก Excel, Ctrl+V) เป็นตาราง array-of-arrays
+function tsvToRows(text) {
+  return String(text || "").replace(/\r/g, "").split("\n").map((line) => line.split("\t"));
+}
+
+// วางจาก Excel: ก็อปทั้งตาราง (รวมแถวหัว Code/Quantity/Sum) แล้ววาง → parse เหมือนตอน import ไฟล์
+export function parseSubAssemblyText(text) {
+  return parseSubAssemblyRows(tsvToRows(text));
+}
+
+// core: parse ตาราง array-of-arrays → groups (ใช้ร่วมทั้งไฟล์และ paste)
+function parseSubAssemblyRows(rows) {
   const { projectName, releaseOrder } = parseHeaderMeta(rows);
 
   // หาแถวหัวตาราง: ต้องมี Code + Quantity อย่างน้อย 1
@@ -180,7 +195,7 @@ export async function parseSubAssemblyExcel(file) {
     const hasQty = row.some((c) => matches(c, [/quantity/i, /qty/i, /จำนวน/]));
     if (hasCode && hasQty) { headerRowIndex = r; headerRow = row; break; }
   }
-  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Code / Quantity) ในไฟล์ไม่เจอ — ตรวจว่าเป็นฟอร์มที่ถูกต้อง");
+  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Code / Quantity) ไม่เจอ — ก็อป/เลือกไฟล์ให้มีแถวหัวตาราง (Code, Quantity/Sum) มาด้วย");
 
   const codeCol = headerRow.findIndex((c) => matches(c, [/^code$/i, /เบอร์/]));
   const sumCol = headerRow.findIndex((c) => matches(c, [/^sum$/i, /รวม/]));
@@ -229,7 +244,7 @@ export async function parseSubAssemblyExcel(file) {
     }
   }
   const withChildren = groups.filter((g) => g.children.length > 0);
-  if (withChildren.length === 0) throw new Error("ไม่พบกลุ่มเบอร์แม่–ลูกในไฟล์ — ตรวจว่าแถวแม่มีเลข Item และแถวลูกมีจำนวน");
+  if (withChildren.length === 0) throw new Error("ไม่พบกลุ่มเบอร์แม่–ลูก — ตรวจว่าแถวแม่มีเลข Item/จำนวน และแถวลูกมีจำนวน");
   return { projectName, releaseOrder, groups: withChildren };
 }
 
@@ -295,8 +310,16 @@ export async function parsePanelReleaseExcel(file) {
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
-  const { projectName, releaseOrder } = parseHeaderMeta(rows);
+  return parsePanelReleaseRows(rows);
+}
 
+// วางจาก Excel: ก็อปตาราง (รวมหัว Panel No/Qty) แล้ววาง
+export function parsePanelReleaseText(text) {
+  return parsePanelReleaseRows(tsvToRows(text));
+}
+
+function parsePanelReleaseRows(rows) {
+  const { projectName, releaseOrder } = parseHeaderMeta(rows);
   let headerRowIndex = -1, panelNoCol = -1, qtyCol = -1;
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -304,7 +327,7 @@ export async function parsePanelReleaseExcel(file) {
     const qIdx = row.findIndex((c) => matches(c, [/^qty$/i, /quantity/i, /จำนวน/]));
     if (pIdx !== -1 && qIdx !== -1) { headerRowIndex = r; panelNoCol = pIdx; qtyCol = qIdx; break; }
   }
-  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Panel No / Qty) ในไฟล์ไม่เจอ — ตรวจว่าเป็นฟอร์ม release แผงที่ถูกต้อง");
+  if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Panel No / Qty) ไม่เจอ — ก็อปให้มีแถวหัว (Panel No + Qty) มาด้วย");
 
   const items = [];
   let blankStreak = 0;
@@ -316,6 +339,6 @@ export async function parsePanelReleaseExcel(file) {
     if (!qty || qty <= 0) continue;
     items.push({ code, qty });
   }
-  if (items.length === 0) throw new Error("ไม่พบรายชื่อแผงในไฟล์ — ตรวจว่ากรอก Panel No + Qty ครบ");
+  if (items.length === 0) throw new Error("ไม่พบรายชื่อแผง — ตรวจว่ากรอก Panel No + Qty ครบ");
   return { projectName, releaseOrder, items };
 }
