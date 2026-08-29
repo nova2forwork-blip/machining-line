@@ -24,6 +24,10 @@ const paths = {
   plus: "M12 5v14M5 12h14",
   lock: "M6 11V8a6 6 0 0 1 12 0v3 M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z M12 15v2.5",
   refresh: "M21 12a9 9 0 1 1-2.64-6.36M21 3v5h-5",
+  wifiOff: "M3 3l18 18M8.6 8.6A10 10 0 0 0 5 11 M2 8.8A15 15 0 0 1 8 5.3 M12 5c3.9 0 7.5 1.5 10 4 M16.7 12.7A6 6 0 0 0 12 11 M9 15a4.5 4.5 0 0 1 6 0 M12 19h.01",
+  warn: "M10.3 4l-7.4 13A2 2 0 0 0 4.6 20h14.8a2 2 0 0 0 1.7-3l-7.4-13a2 2 0 0 0-3.4 0Z M12 9v4 M12 17h.01",
+  expand: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
+  trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13 M10 11v6 M14 11v6",
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 1.8, style, className }) {
