@@ -124,20 +124,28 @@ export async function stationLogin(code, password) {
 // อนึ่ง token ยังมีอายุ 12 ชม.ฝั่ง DB — ถ้าค้างข้ามวันอาจต้องล็อกอินใหม่รอบเดียว
 const SESSION_KEY = "mls-session";
 
+// ★ iPad/Safari (โหมด private, "Block All Cookies", kiosk, บาง PWA) — localStorage อาจ throw
+//   หรือเขียนแล้วอ่านไม่ติด → session หาย → ล็อกอินแล้วเด้งกลับ · จึงทำ fallback หลายชั้น:
+//   localStorage → sessionStorage (รอดข้ามการ redirect ในแท็บเดียว) → in-memory (รอดอย่างน้อยจนปิดแอป)
 export function getSession() {
   try {
-    // อ่าน localStorage ก่อน แล้ว fallback sessionStorage (รองรับ session เก่าที่ยังค้างอยู่)
     const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+    if (raw) return JSON.parse(raw);
+  } catch { /* storage ถูกบล็อก — ไป fallback ต่อ */ }
+  try { return globalThis.__mlsSession || null; } catch { return null; }
 }
 export function setSession(user) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  try { globalThis.__mlsSession = user; } catch { /* ignore */ }   // in-memory เสมอ (ทนสุด)
+  const raw = JSON.stringify(user);
+  let stored = false;
+  try { localStorage.setItem(SESSION_KEY, raw); stored = true; } catch { /* localStorage บล็อก */ }
+  try {
+    if (stored) sessionStorage.removeItem(SESSION_KEY);
+    else sessionStorage.setItem(SESSION_KEY, raw);   // localStorage ใช้ไม่ได้ → เก็บ sessionStorage แทน
+  } catch { /* ignore */ }
 }
 export function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
+  try { globalThis.__mlsSession = null; } catch { /* ignore */ }
+  try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
 }
