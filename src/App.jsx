@@ -183,6 +183,7 @@ import {
   machineDailyMatrix, missingWeightParts, logWeight,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
+import { askConfirm, ConfirmHost } from "./confirm.jsx";
 import { SimpleBarChart } from "./svgcharts.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
@@ -1667,7 +1668,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const msg = scanned > 0
         ? `ล็อตนี้มี ${units.length} ชิ้น และมี ${scanned} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบ Release นี้จะลบ QR และประวัติสแกนของชิ้นทั้งหมดในล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
         : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
-      if (!confirm(msg)) { setBusyId(null); return; }
+      if (!(await askConfirm({ message: msg, tone: "danger", confirmText: "ลบ Release", cancelText: "ยกเลิก" }))) { setBusyId(null); return; }
       await deleteReleaseCascade(r.id);
       auditRecord("delete_release", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty, project: r.part_master?.projects?.code });
       const next = releases.filter((x) => x.id !== r.id);
@@ -2642,7 +2643,7 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
           {pending > 0 && (
             <div className="scan-counter" style={{ color: "var(--warning)", background: "rgba(245,158,11,.16)", borderColor: "rgba(245,158,11,.4)" }}
               title="สแกนที่ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ (จะซิงค์อัตโนมัติเมื่อเน็ตกลับ)">
-              ⏳ ค้างซิงค์ {pending}
+              <Icon name="clock" size={13} style={{ verticalAlign: "-2px", marginInlineEnd: 4 }} />ค้างซิงค์ {pending}
             </div>
           )}
         </div>
@@ -3627,7 +3628,7 @@ function ReportPage() {
 
       {noWeight.length > 0 && (
         <div className="card" style={{ background: "var(--danger-tint, #fff4f4)", borderColor: "var(--danger, #e11d1d)", color: "var(--danger-dk, #a01212)", fontSize: 12.5, padding: "10px 14px", marginBottom: 14, lineHeight: 1.6 }}>
-          ⚠️ <b>มี Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น — น้ำหนักจะถูกนับเป็น 0 กก.</b><br />
+          <Icon name="warn" size={14} style={{ verticalAlign: "-2px", marginInlineEnd: 4 }} /><b>มี Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น — น้ำหนักจะถูกนับเป็น 0 กก.</b><br />
           {noWeight.map((p) => `${p.partNo} (${fmtNum(p.pieces)} ชิ้น)`).join(" · ")}
           <br /><span style={{ opacity: .8 }}>ไปตั้งค่าน้ำหนัก/ชิ้นที่ Setup → Part Master เพื่อให้ กก. ครบถ้วน</span>
         </div>
@@ -3993,7 +3994,7 @@ function ProjectsPage({ user, goTo }) {
   async function toggleClose(p, e) {
     e.stopPropagation();
     const closing = p.status !== "closed";
-    if (closing && !window.confirm(`ปิดโปรเจกต์ "${p.code} — ${p.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`)) return;
+    if (closing && !(await askConfirm({ message: `ปิดโปรเจกต์ "${p.code} — ${p.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`, tone: "warn", confirmText: "ปิดโปรเจกต์", cancelText: "ยกเลิก" }))) return;
     setClosingId(p.id);
     try {
       await updateRow("projects", p.id, { status: closing ? "closed" : "active" });
@@ -4202,7 +4203,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
     if (impact.scannedCount > 0) {
       const typed = prompt(msg);
       if (typed !== project.code) { if (typed !== null) mlsToast("รหัสโปรเจคไม่ตรง ยกเลิกการลบ", "warn"); return; }
-    } else if (!confirm(msg)) {
+    } else if (!(await askConfirm({ message: msg, tone: "danger", confirmText: "ลบโปรเจค", cancelText: "ยกเลิก" }))) {
       return;
     }
 
@@ -4287,68 +4288,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
   );
 }
 
-function ProjectCrud() {
-  const [rows, setRows] = useState([]);
-  const [form, setForm] = useUndoable({});
-  const [editing, setEditing] = useState(null); // { project, impact }
-  const [err, setErr] = useState("");
-
-  const load = useCallback(async () => setRows(await listRows("projects", { order: "code" })), []);
-  useEffect(() => { load(); }, [load]);
-
-  async function add() {
-    const code = (form.code || "").trim(), name = (form.name || "").trim();
-    if (!code || !name) { setErr("กรอกรหัสและชื่อโปรเจคให้ครบ"); return; }
-    setErr("");
-    try {
-      await insertRow("projects", { code, name });
-      setForm({}); load();
-    } catch (e) {
-      setErr(isDuplicateError(e) ? `รหัสโปรเจค "${code}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : "เกิดข้อผิดพลาด: " + e.message);
-    }
-  }
-
-  async function openEdit(project) {
-    const impact = await getProjectImpact(project.id);
-    setEditing({ project, impact });
-  }
-
-  return (
-    <Card title="เพิ่มโปรเจคใหม่">
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-        <div style={{ minWidth: 170 }}>
-          <Field label="รหัสโปรเจค"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
-        </div>
-        <div style={{ minWidth: 220 }}>
-          <Field label="ชื่อโปรเจค"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-        </div>
-        <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
-      </div>
-      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead><tr><th>รหัสโปรเจค</th><th>ชื่อโปรเจค</th><th></th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td>{r.code}</td><td>{r.name}</td>
-                <td><span onClick={() => openEdit(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {editing && (
-        <ProjectEditModal
-          project={editing.project} impact={editing.impact} admin={isAdmin(getSession())}
-          onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); await load(); }}
-          onDeleted={async () => { setEditing(null); await load(); }}
-        />
-      )}
-    </Card>
-  );
-}
+// (ProjectCrud ถูกลบ — เป็นโค้ดตาย: SetupPage ไม่มีแท็บ "projects" · การจัดการโปรเจคอยู่ที่หน้า "โปรเจค" (ProjectsPage) แล้ว)
 
 // ─── ล้างข้อมูลสแกน (admin): ทั้ง Release / ราย Part / รายชิ้น — ลบบันทึกงาน + รีเซ็ตสถานะ ───
 // ─── ผู้ใช้ที่กำลังล็อกอินอยู่ + บังคับออกจากระบบ (เฉพาะ Admin) ───────────────────
@@ -4393,7 +4333,7 @@ function ActiveSessionsCard() {
   async function kick(row) {
     if (row.is_self) return;
     const who = `${row.code || "-"}${row.name ? " — " + row.name : ""}`;
-    if (!confirm(`บังคับ "${who}" ออกจากระบบ?\n\nเครื่องนั้นจะซิงค์งานที่ค้างให้เสร็จก่อน แล้วเด้งออกเอง (ข้อมูลไม่หาย) — ต้องล็อกอินใหม่ถึงจะใช้ต่อได้`)) return;
+    if (!(await askConfirm({ message: `บังคับ "${who}" ออกจากระบบ?\n\nเครื่องนั้นจะซิงค์งานที่ค้างให้เสร็จก่อน แล้วเด้งออกเอง (ข้อมูลไม่หาย) — ต้องล็อกอินใหม่ถึงจะใช้ต่อได้`, tone: "warn", confirmText: "บังคับออก", cancelText: "ยกเลิก" }))) return;
     setBusy(row.sid); setMsg("");
     try {
       const res = await forceLogoutSession(row.sid);
@@ -4706,7 +4646,7 @@ function ClearScansCard() {
   async function doClear() {
     const total = (preview?.machine_records || 0) + (preview?.scan_logs || 0);
     const scope = mode === "group" ? "ทั้ง Release นี้" : mode === "release" ? "Part นี้" : "ชิ้นนี้";
-    if (!confirm(`ยืนยันลบข้อมูลสแกนของ${scope} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`)) return;
+    if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scope} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
     setBusy(true);
     try {
       let res;
@@ -4788,7 +4728,6 @@ function SetupPage() {
       </div>
       {tab === "machines" && <MachineCrud />}
       {tab === "operations" && <OperationsCrud />}
-      {tab === "projects" && <ProjectCrud />}
       {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
       {tab === "employees" && <EmployeeCrud />}
       {tab === "sessions" && <><ActiveSessionsCard /><DeadLetterCard /></>}
@@ -5024,7 +4963,7 @@ function BackupCard() {
       return;
     }
     const rows = Object.values(tables).reduce((s, arr) => s + (Array.isArray(arr) ? arr.length : 0), 0);
-    if (!confirm(`นำเข้าไฟล์ "${file.name}" (${fmtNum(rows)} แถว)?\n\nระบบจะ "เติมเฉพาะข้อมูลที่หายไป" กลับเข้าระบบ — ของเดิมและงานที่ทำใหม่ทั้งหมดจะไม่ถูกทับ`)) return;
+    if (!(await askConfirm({ message: `นำเข้าไฟล์ "${file.name}" (${fmtNum(rows)} แถว)?\n\nระบบจะ "เติมเฉพาะข้อมูลที่หายไป" กลับเข้าระบบ — ของเดิมและงานที่ทำใหม่ทั้งหมดจะไม่ถูกทับ`, tone: "warn", confirmText: "นำเข้า", cancelText: "ยกเลิก" }))) return;
 
     setImpBusy(true);
     try {
@@ -5329,17 +5268,19 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
   }
 
   async function del() {
-    if (!confirm(`ลบเครื่อง "${machine.code} — ${machine.name}" ?`)) return;
+    if (!(await askConfirm({ message: `ลบเครื่อง "${machine.code} — ${machine.name}" ?`, tone: "danger", confirmText: "ลบเครื่อง", cancelText: "ยกเลิก" }))) return;
     setBusy(true); setErr("");
     try {
       let res = await deleteMachine(machine.id, false);
       if (res && res.ok === false && res.reason === "has_records") {
         setBusy(false);
-        const ok = confirm(
-          `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
-          `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
-          `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`
-        );
+        const ok = await askConfirm({
+          message:
+            `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
+            `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
+            `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`,
+          tone: "danger", confirmText: "ลบพร้อมประวัติ", cancelText: "ยกเลิก",
+        });
         if (!ok) return;
         setBusy(true);
         res = await deleteMachine(machine.id, true);
@@ -5417,7 +5358,7 @@ function OperationsCrud() {
     } catch (e) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
   async function remove(id) {
-    if (!confirm("ลบขั้นตอนนี้?")) return;
+    if (!(await askConfirm({ message: "ลบขั้นตอนนี้?", tone: "danger", confirmText: "ลบ", cancelText: "ยกเลิก" }))) return;
     try { await deleteRow("operations", id); load(); }
     catch (e) { mlsToast("ลบไม่ได้ — ขั้นตอนนี้ถูกใช้งานอยู่ (มีเครื่อง/งาน/การสแกนอ้างอิงถึง)", "error"); }
   }
@@ -5474,7 +5415,7 @@ function SimpleCrud({ table, fields }) {
     setForm({}); load();
   }
   async function remove(id) {
-    if (!confirm("ลบรายการนี้?")) return;
+    if (!(await askConfirm({ message: "ลบรายการนี้?", tone: "danger", confirmText: "ลบ", cancelText: "ยกเลิก" }))) return;
     try {
       await deleteRow(table, id);
       load();
@@ -5567,17 +5508,19 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
   }
 
   async function del() {
-    if (!confirm(`ลบพนักงาน "${employee.code} — ${employee.name}" ?`)) return;
+    if (!(await askConfirm({ message: `ลบพนักงาน "${employee.code} — ${employee.name}" ?`, tone: "danger", confirmText: "ลบพนักงาน", cancelText: "ยกเลิก" }))) return;
     setBusy(true); setErr("");
     try {
       let res = await deleteEmployee(employee.id, false);
       if (res && res.ok === false && res.reason === "has_records") {
         setBusy(false);
-        const ok = confirm(
-          `พนักงานคนนี้มีประวัติงานหน้าเครื่อง ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
-          `แนะนำให้ "ปิดใช้งาน" แทนการลบ เพื่อเก็บชื่อผู้ทำไว้ในประวัติ\n\n` +
-          `ถ้ายืนยันลบ: ตัวเลขการผลิตจะยังอยู่ครบ แต่ประวัติจะไม่ระบุว่าใครเป็นคนทำ\n\nยืนยันลบ?`
-        );
+        const ok = await askConfirm({
+          message:
+            `พนักงานคนนี้มีประวัติงานหน้าเครื่อง ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
+            `แนะนำให้ "ปิดใช้งาน" แทนการลบ เพื่อเก็บชื่อผู้ทำไว้ในประวัติ\n\n` +
+            `ถ้ายืนยันลบ: ตัวเลขการผลิตจะยังอยู่ครบ แต่ประวัติจะไม่ระบุว่าใครเป็นคนทำ\n\nยืนยันลบ?`,
+          tone: "danger", confirmText: "ลบพนักงาน", cancelText: "ยกเลิก",
+        });
         if (!ok) return;
         setBusy(true);
         res = await deleteEmployee(employee.id, true);
@@ -5907,7 +5850,7 @@ function PartMasterCrud() {
       mlsToast(`ลบ Part "${r?.part_no || ""}" ไม่ได้ — ยังมี ${fmtNum(rels.length)} Release และ ${fmtNum(units.length)} ชิ้น (QR) ผูกอยู่ · ให้ลบ Release ของ Part นี้ก่อน (ที่หน้า "ปล่อยงาน (Release)") แล้วจึงลบ Part ได้`, "error");
       return;
     }
-    if (confirm(`ลบ Part "${r?.part_no || ""}"?\n(ยังไม่มี Release/ชิ้นงานผูกอยู่ — ลบได้ปลอดภัย)`)) {
+    if (await askConfirm({ message: `ลบ Part "${r?.part_no || ""}"?\n(ยังไม่มี Release/ชิ้นงานผูกอยู่ — ลบได้ปลอดภัย)`, tone: "danger", confirmText: "ลบ Part", cancelText: "ยกเลิก" })) {
       await deleteRow("part_master", id); load();
     }
   }
@@ -6091,5 +6034,5 @@ export default function App() {
   const content = !user
     ? <Login onLogin={setUser} />
     : goStation ? null : <Shell user={user} onLogout={logout} />;
-  return <ErrorBoundary><UpdateBanner />{content}<Toaster /><UndoHint /></ErrorBoundary>;
+  return <ErrorBoundary><UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint /></ErrorBoundary>;
 }
