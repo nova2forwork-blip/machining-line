@@ -856,3 +856,44 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
 }
 .lot-search-clear:hover:not(:disabled) { background: #fbe9e9; border-color: #f2c2c2; color: #c0392b; }
 .lot-search-clear:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ═══ การ์ดยืนยันในแอป (confirm.jsx) — แทน window.confirm · ใช้ทั้งหน้าสำนักงาน/เครื่อง ═══ */
+.mls-confirm-backdrop {
+  position: fixed; inset: 0; z-index: 100000;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(8, 12, 16, .55); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  animation: mlsConfirmFade .16s ease;
+}
+@keyframes mlsConfirmFade { from { opacity: 0; } to { opacity: 1; } }
+.mls-confirm-card {
+  width: 100%; max-width: 440px; background: #fff; color: #1a2230;
+  border-radius: 16px; padding: 22px 22px 18px;
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, .45);
+  border-top: 4px solid #64748b;
+  animation: mlsConfirmPop .18s cubic-bezier(.2, .9, .3, 1.2);
+}
+.mls-confirm-card.tone-danger { border-top-color: #e5484d; }
+.mls-confirm-card.tone-warn { border-top-color: #f5a623; }
+@keyframes mlsConfirmPop {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+.mls-confirm-title { font-size: 17px; font-weight: 800; margin-bottom: 8px; color: #111827; }
+.mls-confirm-msg { font-size: 15px; line-height: 1.55; white-space: pre-line; color: #33415a; }
+.mls-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.mls-confirm-btn {
+  cursor: pointer; font-family: inherit; font-size: 15px; font-weight: 700;
+  padding: 11px 20px; border-radius: 10px; border: 1px solid transparent; min-width: 96px;
+  transition: transform .08s, filter .12s, background .12s;
+}
+.mls-confirm-btn.cancel { background: #eef1f5; color: #33415a; border-color: #dbe1ea; }
+.mls-confirm-btn.cancel:hover { background: #e4e9f0; }
+.mls-confirm-btn.ok { background: #2b6fff; color: #fff; }
+.mls-confirm-btn.ok:hover { filter: brightness(1.06); }
+.mls-confirm-btn.ok.tone-danger { background: #e5484d; }
+.mls-confirm-btn.ok.tone-warn { background: #f5a623; color: #3a2a00; }
+.mls-confirm-btn:active { transform: scale(.97); }
+@media (max-width: 480px) {
+  .mls-confirm-actions { flex-direction: column-reverse; }
+  .mls-confirm-btn { width: 100%; }
+}
