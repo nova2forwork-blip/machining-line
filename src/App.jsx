@@ -3988,21 +3988,7 @@ function ProjectsPage({ user, goTo }) {
     setEditing({ project: p, impact });
   }
 
-  // แอดมิน "ปิดโปรเจกต์ (เสร็จแล้ว)" → หน้าเครื่องบันทึกงานเพิ่มไม่ได้ · "เปิดใหม่" เพื่อแก้งาน
-  const admin = isAdmin(user);
-  const [closingId, setClosingId] = useState(null);
-  async function toggleClose(p, e) {
-    e.stopPropagation();
-    const closing = p.status !== "closed";
-    if (closing && !(await askConfirm({ message: `ปิดโปรเจกต์ "${p.code} — ${p.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`, tone: "warn", confirmText: "ปิดโปรเจกต์", cancelText: "ยกเลิก" }))) return;
-    setClosingId(p.id);
-    try {
-      await updateRow("projects", p.id, { status: closing ? "closed" : "active" });
-      auditRecord(closing ? "close_project" : "reopen_project", "project", p.id, { code: p.code, name: p.name });
-      await reload();
-    } catch (err) { alert("เปลี่ยนสถานะไม่สำเร็จ: " + (err?.message || err)); }
-    finally { setClosingId(null); }
-  }
+  // แอดมินปิด/เปิดโปรเจกต์ได้จากในกล่อง "แก้ไข" (ProjectEditModal) แล้ว — ไม่มีปุ่มแยกในแถว
 
   // กดเข้าไปดู Release ในโปรเจคนี้ (แล้วเจาะเข้า Part / รายละเอียด ต่อได้)
   if (viewProject) {
@@ -4080,14 +4066,12 @@ function ProjectsPage({ user, goTo }) {
                       <td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(s.weight)}</td>
                       {canEdit && (
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                          {admin && (
-                            <Btn variant="ghost" size="sm" disabled={closingId === p.id}
-                              onClick={(e) => toggleClose(p, e)}
-                              title={p.status === "closed" ? "เปิดโปรเจกต์อีกครั้ง (แก้งานได้)" : "ปิดโปรเจกต์ — ทำเสร็จแล้ว หน้าเครื่องบันทึกเพิ่มไม่ได้"}>
-                              {p.status === "closed"
-                                ? <><Icon name="refresh" size={13} /> เปิดใหม่</>
-                                : <><Icon name="check" size={13} /> ปิด (เสร็จ)</>}
-                            </Btn>
+                          {p.status === "closed" && (
+                            <span title="โปรเจกต์นี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข"
+                              style={{ fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fff4e5",
+                                       border: "1px solid #f5c98a", borderRadius: 999, padding: "3px 10px", marginRight: 8 }}>
+                              ปิดแล้ว
+                            </span>
                           )}
                           <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn>
                         </td>
@@ -4192,6 +4176,25 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
     setBusy(false);
   }
 
+  // ปิด/เปิดโปรเจกต์ (admin) — ย้ายมาจากปุ่มในแถวหน้า "โปรเจค" · ปิดแล้วหน้าเครื่องบันทึกงานเพิ่มไม่ได้
+  async function toggleStatus() {
+    const closing = project.status !== "closed";
+    if (closing && !(await askConfirm({
+      message: `ปิดโปรเจกต์ "${project.code} — ${project.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`,
+      tone: "warn", confirmText: "ปิดโปรเจกต์", cancelText: "ยกเลิก",
+    }))) return;
+    setBusy(true); setErr("");
+    try {
+      await updateRow("projects", project.id, { status: closing ? "closed" : "active" });
+      auditRecord(closing ? "close_project" : "reopen_project", "project", project.id, { code: project.code, name: project.name });
+      mlsToast(closing ? "ปิดโปรเจกต์แล้ว" : "เปิดโปรเจกต์อีกครั้งแล้ว", "success");
+      onSaved();   // ปิดกล่อง + รีโหลดรายการให้เห็นสถานะใหม่
+    } catch (e) {
+      setErr("เปลี่ยนสถานะไม่สำเร็จ: " + (e?.message || e));
+      setBusy(false);
+    }
+  }
+
   async function remove() {
     const hasData = impact.partCount > 0;
     const msg = impact.scannedCount > 0
@@ -4228,6 +4231,25 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
         ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
         {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
       </div>
+
+      {/* ปิด/เปิดโปรเจกต์ (แอดมิน) — ย้ายมาจากปุ่มในแถว */}
+      {admin && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          padding: "10px 12px", marginBottom: 12, borderRadius: 8,
+          background: project.status === "closed" ? "#fff4e5" : "var(--surface-2, #f3f6f4)",
+          border: `1px solid ${project.status === "closed" ? "#f5c98a" : "var(--border)"}` }}>
+          <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+            {project.status === "closed"
+              ? <>สถานะ: <b style={{ color: "#b45309" }}>ปิดแล้ว (เสร็จ)</b><br /><span style={{ color: "var(--muted)" }}>หน้าเครื่องบันทึกงานเพิ่มไม่ได้</span></>
+              : <>สถานะ: <b style={{ color: "var(--success, #0a7)" }}>กำลังทำ</b><br /><span style={{ color: "var(--muted)" }}>ปิดเมื่อทำเสร็จ เพื่อกันบันทึกงานเพิ่ม</span></>}
+          </div>
+          <Btn type="button" variant="ghost" size="sm" disabled={busy} onClick={toggleStatus}>
+            {project.status === "closed"
+              ? <><Icon name="refresh" size={13} /> เปิดโปรเจกต์อีกครั้ง</>
+              : <><Icon name="check" size={13} /> ปิดโปรเจกต์ (เสร็จ)</>}
+          </Btn>
+        </div>
+      )}
 
       {/* รายการ Release ในโปรเจคนี้ — รวมเป็น 1 Release Order ต่อ 1 แถว */}
       {(() => {
