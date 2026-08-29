@@ -32,7 +32,8 @@ function authToken() {
 // ── ตรวจ error ว่าเป็น "session หมดอายุ/ไม่ถูกต้อง" → ยิง event ให้แอปเด้งออกจากระบบ ──
 // (RPC authz_* จะ raise 'unauthorized: invalid session' / 'forbidden: ...' เมื่อ token ใช้ไม่ได้)
 export function isAuthError(error) {
-  return /unauthorized|invalid session|forbidden|not.*authenticated|jwt/i.test(error?.message || error?.hint || "");
+  // แยก authentication (token เสีย/หมดอายุ → เด้งออก) ออกจาก authorization (forbidden: admin only → แค่ไม่มีสิทธิ์ ไม่ต้องเด้งออก)
+  return /unauthorized|invalid session|not.*authenticated|jwt|account disabled/i.test(error?.message || error?.hint || "");
 }
 function flagAuth(error) {
   if (isAuthError(error)) { try { window.dispatchEvent(new Event("mls-session-invalid")); } catch (_) { /* ignore */ } }
@@ -593,7 +594,8 @@ export function listRejected() { return rjRead(); }
 export function retryRejected() {
   const rj = rjRead(); if (!rj.length) return;
   const q = qRead();
-  for (const it of rj) { const { reason, rejectedAt, ...orig } = it; q.push(orig); }
+  // ★ ตัด attempts ออกด้วย — ไม่งั้น item ที่เคยพลาด 11 ครั้งจะชน MAX_ATTEMPTS ทันทีที่ retry (ลองใหม่ไม่ได้จริง)
+  for (const it of rj) { const { reason, rejectedAt, attempts, ...orig } = it; q.push(orig); }
   qWrite(q); rjWrite([]); flushScanQueue();
 }
 export function clearRejected() { rjWrite([]); }
