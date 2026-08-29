@@ -109,6 +109,7 @@ export function partOpMatrix(logs) {
   const opNames = new Set();
 
   for (const l of logs || []) {
+    const releaseId = l.release_id || l.part_unit?.release_id || null;   // ★ จัดกลุ่มด้วย release_id (unique) — release_order อาจไม่ถูกคืนจาก RPC แล้ว
     const releaseOrder = l.release_order || "—";
     const partNo   = l.part_unit?.part_master?.part_no   || "ไม่ระบุ";
     const partName = l.part_unit?.part_master?.part_name || "";
@@ -118,9 +119,9 @@ export function partOpMatrix(logs) {
     const fin      = String(l.status).toLowerCase() === "finished" ? pcs : 0;
     opNames.add(op);
 
-    const key = `${releaseOrder} ${partNo}`;
+    const key = `${releaseId || releaseOrder}|${partNo}`;   // ★ ไม่ยุบ 2 Release ของ Part เดียวกันเข้าด้วยกัน
     if (!byKey.has(key)) {
-      byKey.set(key, { releaseOrder, partNo, partName, total: { count: 0, weight: 0, finished: 0 }, ops: {} });
+      byKey.set(key, { releaseId, releaseOrder, partNo, partName, total: { count: 0, weight: 0, finished: 0 }, ops: {} });
     }
     const entry = byKey.get(key);
     entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
