@@ -13,6 +13,8 @@ import {
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
+import { askConfirm, ConfirmHost } from "./confirm.jsx";
+import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
 import { newClientId } from "./offline.js";   // ตัวสร้าง UUID ที่ปลอดภัยเสมอ (แม้ไม่มี crypto.randomUUID)
 
@@ -97,7 +99,7 @@ function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
     <div className="stn-login-wrap">
       <div className="stn-login stn-deptredir" style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
-        <div className="stn-deptredir-emoji">🚧</div>
+        <div className="stn-deptredir-emoji"><Icon name="warn" size={40} /></div>
         <h1>{t(`บัญชีนี้ไม่ใช่แผนก “${here.word}”`, `This account isn't a ${here.wordEn} station`)}</h1>
         <p>{targets.length
           ? t("บัญชีนี้อยู่คนละแผนก — เปิดหน้าที่ถูกต้องด้านล่าง", "This account belongs to another department — open the correct page below")
@@ -473,18 +475,23 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function okBeep() { beep(1180, 80, 0.20); vibrate(45); }         // เสียงสั้นสูง = บันทึกสำเร็จ (ต่างจาก error ชัดเจน)
   function tickBeep() { beep(880, 45, 0.14); }                     // เสียงเบาๆ = สแกนเจอชิ้นงาน
 
-  function onScan() {
+  async function onScan() {
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
     // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง กลับไปหน้าจับเวลา (toggle)
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
     // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
     if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
+    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) — เรียกก่อน await กันเสียงเงียบหลังการ์ดยืนยัน
     // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
     if (step === STEP.PART && unit && (status || qty > 1)) {
-      if (!confirm(t("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?",
-                     "This scanned piece isn't saved yet — scanning again will discard it. Continue?"))) return;
+      if (!(await askConfirm({
+        message: t("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?",
+                   "This scanned piece isn't saved yet — scanning again will discard it. Continue?"),
+        tone: "warn",
+        confirmText: t("สแกนใหม่", "Scan again"),
+        cancelText: t("ยกเลิก", "Cancel"),
+      }))) return;
     }
-    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) เผื่อไว้ให้เสียงสแกนดังได้
     // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
     // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
     // ★ ล้าง client_id ด้วย — สแกนชิ้นใหม่ = การบันทึกครั้งใหม่ ถ้าไม่ล้างจะ reuse ตัวเดิม
@@ -561,14 +568,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
-  function confirmPart() {
+  async function confirmPart() {
     if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
     if (!Number.isInteger(qty)) { flash("จำนวนต้องเป็นจำนวนเต็ม", "warn"); return; }
     if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
     // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
-    if (qty > 2000 && !confirm(t(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`,
-                                 `${qty.toLocaleString()} pieces in a single record is unusually large — confirm?`))) return;
+    if (qty > 2000 && !(await askConfirm({
+      message: t(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`,
+                 `${qty.toLocaleString()} pieces in a single record is unusually large — confirm?`),
+      tone: "warn",
+      confirmText: t("ยืนยัน", "Confirm"),
+      cancelText: t("ยกเลิก", "Cancel"),
+    }))) return;
     // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
     //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
     doSave();
@@ -842,20 +854,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         {(!online || pending > 0) && (
           <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
             {!online ? (
-              <span>📴 {t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("โหมดนี้ต้องออนไลน์", "this mode needs online")}`}</span>
+              <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("โหมดนี้ต้องออนไลน์", "this mode needs online")}`}</span>
             ) : (
-              <span>🔄 {t("กำลังซิงค์งานค้าง", "Syncing")} · {pending}</span>
+              <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending}</span>
             )}
           </div>
         )}
         {storageFull && (
           <div className="stn-rejected" onClick={() => setStorageFull(false)} style={{ background: "#b91c1c" }}>
-            ⛔ {t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! แจ้งผู้ดูแล (แตะเพื่อซ่อน)", "Storage full — notify admin (tap to hide)")}
+            <Icon name="warn" size={15} className="stn-ico" />{t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! แจ้งผู้ดูแล (แตะเพื่อซ่อน)", "Storage full — notify admin (tap to hide)")}
           </div>
         )}
         {rejected > 0 && (
           <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}>
-            ⚠️ {t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} — {t("แตะเพื่อจัดการ", "tap to manage")}
+            <Icon name="warn" size={15} className="stn-ico" />{t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} — {t("แตะเพื่อจัดการ", "tap to manage")}
           </button>
         )}
         {showRejected && (
@@ -877,9 +889,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <div className="stn-asm-tools">
             <StnLangToggle />
             {!isStandalone() && (
-              <button className="stn-logout stn-fs" onClick={toggleFullscreen} title={t("เต็มจอ", "Fullscreen")}>⛶ {t("เต็มจอ", "Full")}</button>
+              <button className="stn-logout stn-fs" onClick={toggleFullscreen} title={t("เต็มจอ", "Fullscreen")}><Icon name="expand" size={15} className="stn-ico" />{t("เต็มจอ", "Full")}</button>
             )}
-            <button className="stn-logout" onClick={onLogout} title={t("ออกจากระบบ", "Log out")}>⏻ {t("ออก", "Exit")}</button>
+            <button className="stn-logout" onClick={onLogout} title={t("ออกจากระบบ", "Log out")}><Icon name="logout" size={15} className="stn-ico" />{t("ออก", "Exit")}</button>
           </div>
         </div>
 
@@ -907,13 +919,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       {(!online || pending > 0) && (
         <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
           {!online ? (
-            <span>📴 {t("ออฟไลน์", "Offline")}
+            <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}
               {pending > 0
                 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending} ${t("ชิ้น", "pcs")}`
                 : ` · ${t("ทำงานต่อได้ตามปกติ", "you can keep working")}`}
             </span>
           ) : (
-            <span>🔄 {t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}</span>
+            <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}</span>
           )}
         </div>
       )}
@@ -921,14 +933,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         <div className="stn-rejected" onClick={() => setStorageFull(false)}
           style={{ background: "#b91c1c" }}
           title={t("ที่เก็บข้อมูลในเครื่องเต็ม", "Device storage full")}>
-          ⛔ {t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)",
+          <Icon name="warn" size={15} className="stn-ico" />{t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)",
                 "Storage full — work may not be saved! Close other apps / clear browser data, then retry · notify admin (tap to hide)")}
         </div>
       )}
       {rejected > 0 && (
         <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}
           title={t("แตะเพื่อจัดการคิวที่ซิงค์ไม่สำเร็จ", "Tap to manage failed-sync queue")}>
-          ⚠️ {t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} {t("ชิ้น", "pcs")} — {t("แตะเพื่อจัดการ", "tap to manage")}
+          <Icon name="warn" size={15} className="stn-ico" />{t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} {t("ชิ้น", "pcs")} — {t("แตะเพื่อจัดการ", "tap to manage")}
         </button>
       )}
       {showRejected && (
@@ -961,11 +973,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         {/* top-left: machine code */}
         <div className="stn-cell stn-code" style={{ position: "relative" }}>
           {/* ปุ่มออกจากระบบมุมบนซ้าย — โผล่เฉพาะมือถือจอเล็ก (แท็บเล็ตใช้ปุ่มใหญ่ด้านล่าง) */}
-          <button className="stn-logout stn-toplogout" onClick={onLogout} title="ออกจากระบบ" aria-label="ออกจากระบบ">⏻ ออก</button>
+          <button className="stn-logout stn-toplogout" onClick={onLogout} title="ออกจากระบบ" aria-label="ออกจากระบบ"><Icon name="logout" size={15} className="stn-ico" />ออก</button>
           <StnLangToggle />
           {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
           {!isStandalone() && (
-            <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ">⛶ เต็มจอ</button>
+            <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ"><Icon name="expand" size={15} className="stn-ico" />เต็มจอ</button>
           )}
           {machine ? machine.code : "— ไม่มีเครื่อง —"}
         </div>
@@ -1230,7 +1242,7 @@ function PackPhotoCapture({ onCapture, onClose, count, t }) {
       </div>
       <div className="stn-photocap-bar">
         <button className="stn-photocap-close" onClick={onClose}>{t("เสร็จ", "Done")}{count > 0 ? ` (${count})` : ""}</button>
-        <button className="stn-photocap-snap" onClick={snap} disabled={!ready}>📷 {t("ถ่าย", "Capture")}</button>
+        <button className="stn-photocap-snap" onClick={snap} disabled={!ready}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่าย", "Capture")}</button>
       </div>
     </div>
   );
@@ -1264,7 +1276,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <div className="stn-asm-empty">
             <div className="stn-asm-title">{modeTitle}</div>
             <div className="stn-asm-sub">{t(`สแกน หรือ พิมพ์ QR ของ “${parentWord}”`, `Scan or type the ${parentWord} QR`)}</div>
-            <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t(`สแกน${parentWord}`, `Scan ${parentWord}`)}</button>
+            <button className="stn-asm-scan" onClick={asmOpenCam}><Icon name="camera" size={16} className="stn-ico" />{t(`สแกน${parentWord}`, `Scan ${parentWord}`)}</button>
             <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${parentWord}`, `type ${parentWord} QR`)} t={t} />
           </div>
         ) : (
@@ -1301,13 +1313,13 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
               </div>
             )}
             <div className="stn-asm-actions">
-              <button className="stn-asm-scan" onClick={asmOpenCam}>📷 {t(`สแกน${childWord}`, `Scan ${childWord}`)}</button>
+              <button className="stn-asm-scan" onClick={asmOpenCam}><Icon name="camera" size={16} className="stn-ico" />{t(`สแกน${childWord}`, `Scan ${childWord}`)}</button>
               <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
             </div>
             {isPack && (
               <div className="stn-asm-photos">
                 <button className="stn-asm-photobtn" onClick={openPhoto}>
-                  📷 {t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span>
+                  <Icon name="camera" size={16} className="stn-ico" />{t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span>
                 </button>
                 {packPhotos.length > 0 && (
                   <div className="stn-asm-thumbs">
@@ -1790,7 +1802,7 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
     <div className="stn-rej-backdrop" onClick={onClose}>
       <div className="stn-rej-modal" onClick={(e) => e.stopPropagation()}>
         <div className="stn-rej-head">
-          <b>⚠️ {t("คิวซิงค์ไม่สำเร็จ", "Failed-sync queue")} ({items.length})</b>
+          <b><Icon name="warn" size={15} className="stn-ico" />{t("คิวซิงค์ไม่สำเร็จ", "Failed-sync queue")} ({items.length})</b>
           <button type="button" className="stn-rej-x" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
         </div>
         <div className="stn-rej-note">
@@ -1811,10 +1823,10 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
           {!confirmClear ? (
             <>
               <button type="button" className="stn-pill yes" onClick={onRetry} disabled={!items.length}>
-                🔄 {t("ลองซิงค์ใหม่ทั้งหมด", "Retry all")}
+                <Icon name="refresh" size={15} className="stn-ico" />{t("ลองซิงค์ใหม่ทั้งหมด", "Retry all")}
               </button>
               <button type="button" className="stn-pill no" onClick={() => setConfirmClear(true)} disabled={!items.length}>
-                🗑 {t("ล้างทิ้ง", "Discard")}
+                <Icon name="trash" size={15} className="stn-ico" />{t("ล้างทิ้ง", "Discard")}
               </button>
             </>
           ) : (
@@ -1861,7 +1873,7 @@ export default function StationApp({ dept = "machine" } = {}) {
     const msg = pending > 0
       ? `ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อล็อกอินอีกครั้ง (ข้อมูลไม่หาย)\n\nออกจากระบบและปิดแอป?`
       : "ออกจากระบบและปิดแอป?";
-    if (!window.confirm(msg)) return;   // แจ้งเตือนก่อนล็อกเอาต์
+    if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await logoutSession(); } catch { /* ignore */ }
     clearSession();
     try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch { /* ignore */ }
@@ -1910,5 +1922,5 @@ export default function StationApp({ dept = "machine" } = {}) {
   } else {
     content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} dept={dept} />;
   }
-  return <><StationUpdateBanner />{content}</>;
+  return <><StationUpdateBanner />{content}<ConfirmHost /></>;
 }
