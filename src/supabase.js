@@ -704,6 +704,21 @@ export async function getPartMeta(ids) {
   return m;
 }
 
+// รายละเอียดยูนิต (QR + เบอร์ชิ้น) จาก part_unit id หลายตัว — ใช้หน้า "ตรวจงานประกอบ" หลังบ้าน
+// โชว์ว่าที่สแกนเข้าเบอร์แม่คือ QR/ชิ้นไหนบ้าง · อ่านตรง (anon SELECT part_units อนุญาต)
+export async function getUnitsByIds(ids) {
+  const list = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!list.length) return {};
+  const { data, error } = await supabase
+    .from("part_units")
+    .select("id, qr_code, part_master(part_no, part_name)")
+    .in("id", list);
+  if (error) { console.warn("getUnitsByIds error", error); return {}; }
+  const m = {};
+  (data || []).forEach((u) => { m[u.id] = { qr_code: u.qr_code, part_no: u.part_master?.part_no || "", part_name: u.part_master?.part_name || "" }; });
+  return m;
+}
+
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
 // assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจกต์ที่ปิด · อ่านตรง (anon SELECT)
 export async function listAssemblyParents(dept) {
