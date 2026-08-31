@@ -92,6 +92,17 @@ const DEPT_META = {
 };
 
 // ── บัญชีนี้ไม่ใช่แผนกของหน้านี้ → บอกเหตุผล + ลิงก์ไปหน้าที่ถูกต้อง ─────────────
+// อนิเมชันโหลดตอนล็อกอิน/เปลี่ยนหน้า (แบบ 3 — จุดเต้น + แถบกวาด) เต็มจอ · ใช้ร่วมกับหน้าสำนักงาน
+function LoginSplash({ text = "กำลังเข้าสู่ระบบ…" }) {
+  return (
+    <div className="mls-splash">
+      <div className="mls-splash-brand"><span className="m"><Icon name="bolt" size={18} /></span> MACHINING LINE</div>
+      <div className="mls-load3"><div className="mls-load3-dots"><i /><i /><i /></div><div className="mls-load3-bar" /></div>
+      <div className="mls-splash-text">{text}</div>
+    </div>
+  );
+}
+
 function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
   const here = DEPT_META[dept] || DEPT_META.machine;
   const targets = (acctDepts || []).filter((d) => DEPT_META[d]).map((d) => DEPT_META[d]);
@@ -118,15 +129,7 @@ function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
 // ── กำลังตรวจว่าบัญชีเป็นแผนกอะไร (ระหว่างโหลดรายการขั้นตอน) ─────────────────────
 function StnDeptChecking({ dept, t }) {
   const m = DEPT_META[dept] || DEPT_META.machine;
-  return (
-    <div className="stn-login-wrap">
-      <div className="stn-login stn-deptredir" style={{ position: "relative" }}>
-        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
-        <div className="stn-asm-spin" />
-        <p>{t(`กำลังเปิด${m.th}…`, `Opening ${m.en}…`)}</p>
-      </div>
-    </div>
-  );
+  return <LoginSplash text={t(`กำลังเปิด${m.th}…`, `Opening ${m.en}…`)} />;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -184,7 +187,7 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
             onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </div>
         {err && <div className="stn-err">{err}</div>}
-        <button className="stn-btn" disabled={busy}>{busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}</button>
+        <button className="stn-btn" disabled={busy}>{busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
           จอนี้สำหรับติดหน้า{meta.word} (แนวนอน)
         </div>
@@ -2105,7 +2108,7 @@ export default function StationApp({ dept = "machine" } = {}) {
   let content;
   if (!user) {
     content = stnOnline
-      ? <div className="stn-body" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh", color: "#9fb0a8", fontSize: 15 }}>กำลังไปหน้าเข้าสู่ระบบ…</div>
+      ? <LoginSplash text="กำลังไปหน้าเข้าสู่ระบบ…" />
       : <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
   } else if (!user.machine) {
     content = (
