@@ -123,8 +123,13 @@ export async function stationLogin(code, password) {
 export async function appLogin(code, password) {
   const key = code.trim().toLowerCase();
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+  let onlineFailed = false;
   if (!isOffline) {
-    const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
+    // ★ timeout กัน "หมุนค้าง" บน iPad/หน้างานที่ wifi กระตุก (online แต่ request ค้างไม่คืนค่า)
+    //   Supabase client ไม่มี timeout ในตัว → ถ้าเน็ตค้าง await จะไม่จบ ปุ่มหมุนตลอด · เกิน 9 วิ = ถือว่าเน็ตมีปัญหา แล้วไปลอง cache
+    const rpc = supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
+    const timeout = new Promise((resolve) => setTimeout(() => resolve({ error: { message: "timeout", _timeout: true } }), 9000));
+    const { data, error } = await Promise.race([rpc, timeout]);
     if (!error) {
       const row = Array.isArray(data) ? data[0] : data;
       if (!row) return { error: "bad" };            // รหัสผิด → ไม่ fallback
@@ -132,10 +137,10 @@ export async function appLogin(code, password) {
       await cacheCredential(code, password, user);   // จำไว้ล็อกอินออฟไลน์รอบหน้า (สำหรับคนงานหน้างาน)
       return { user, offline: false };
     }
-    // error = เน็ตมีปัญหา → ลองใช้ credential ที่แคชไว้
+    onlineFailed = true;   // เน็ต/timeout มีปัญหา (ไม่ใช่รหัสผิด) → ลองใช้ credential ที่แคชไว้
   }
   const e = readLoginCache()[key];
-  if (!e) return { error: isOffline ? "offline_first" : "bad" };
+  if (!e) return { error: isOffline ? "offline_first" : (onlineFailed ? "network" : "bad") };
   const hash = await sha256Hex(e.salt + ":" + password);
   if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };
   return { user: e.user, offline: true };
