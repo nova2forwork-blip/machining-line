@@ -675,6 +675,21 @@ export async function getAssemblyState(parentQr) {
   return data || { ok: false, reason: "error" };
 }
 
+// ข้อมูลชิ้นส่วน (ความยาว + kind) ของลูกใน BOM — ใช้เติมให้หน้าประกอบวาดผัง + ป้ายจุดติดตั้ง
+// อ่านตรง (anon SELECT part_master อนุญาต) ไม่ต้องแก้ RPC/ฐานข้อมูล
+export async function getPartMeta(ids) {
+  const list = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!list.length) return {};
+  const { data, error } = await supabase
+    .from("part_master")
+    .select("id, part_no, part_name, default_length_mm, kind")
+    .in("id", list);
+  if (error) { console.warn("getPartMeta error", error); return {}; }
+  const m = {};
+  (data || []).forEach((r) => { m[r.id] = r; });
+  return m;
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 export async function uploadPackingPhoto(blob, keyHint = "pack") {
