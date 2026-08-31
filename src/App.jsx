@@ -10,6 +10,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
+  getAssemblyState, listAssemblyParents, getUnitsByIds,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -508,6 +509,7 @@ const MENU = [
     { key: "release", label: "ปล่อยงาน (Release)", icon: "box" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
     { key: "report", label: "รายงานข้อมูลสแกน", icon: "chart" },
+    { key: "verify", label: "ตรวจงานประกอบ", icon: "check" },
   ] },
   { group: "สรุปภาพรวม", items: [
     { key: "machines", label: "สรุปเครื่องจักร", icon: "machine" },
@@ -697,6 +699,7 @@ function Shell({ user, onLogout }) {
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage />}
+          {tab === "verify" && <AssemblyVerifyPage />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
@@ -1967,6 +1970,179 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
         </Btn>
       </div>
     </Modal>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ตรวจงานประกอบ/แพ็ก (หลังบ้าน) — เทียบ "ที่สั่งจาก release (แผน/BOM)" กับ
+//   "ที่หน้างานสแกนมาจริง (แต่ละชิ้น + QR)" → ดูว่าทำถูก + ครบไหม
+//   หน้างาน (สเตชัน) ไม่โชว์รายการแล้ว = สแกนอย่างเดียว · การตรวจย้ายมาทำที่นี่
+// ══════════════════════════════════════════════════════════════════════════
+function verifyStatusColor(s) {
+  return s === "complete" ? { bg: "rgba(16,185,129,.12)", fg: "var(--accent-dk, #0e9d63)", bd: "rgba(16,185,129,.35)" }
+    : s === "partial" ? { bg: "rgba(217,164,65,.14)", fg: "#b45309", bd: "rgba(217,164,65,.4)" }
+    : { bg: "rgba(220,38,38,.10)", fg: "var(--danger-hi, #c0362c)", bd: "rgba(220,38,38,.3)" };
+}
+function AssemblyVerifyPage() {
+  const [parents, setParents] = useState([]);
+  const [q, setQ] = useState("");
+  const [manualQr, setManualQr] = useState("");
+  const [sel, setSel] = useState(null);       // parent meta ที่เลือก
+  const [result, setResult] = useState(null);  // ผลเทียบ
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
+        const seen = new Set(); const merged = [];
+        [...asm, ...pack].forEach((p) => { if (!seen.has(p.id)) { seen.add(p.id); merged.push(p); } });
+        setParents(merged);
+      } catch (e) { /* ยังพิมพ์ QR เองได้ */ }
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return parents;
+    return parents.filter((p) => (p.part_no || "").toLowerCase().includes(s)
+      || (p.qr_code || "").toLowerCase().includes(s) || (p.project_code || "").toLowerCase().includes(s));
+  }, [parents, q]);
+
+  async function load(qr, meta) {
+    if (!qr) return;
+    setBusy(true); setErr(""); setResult(null); setSel(meta || { part_no: qr, qr_code: qr });
+    try {
+      const st = await getAssemblyState(qr);
+      if (!st || !st.ok) {
+        setErr(st?.reason === "no_bom" ? "เบอร์นี้ยังไม่ได้ตั้ง BOM — ตั้งที่หน้า Part Master ก่อน"
+          : st?.reason === "not_found" ? "ไม่พบ QR นี้ในระบบ" : "โหลดสถานะไม่ได้ (" + (st?.reason || "error") + ")");
+        setBusy(false); return;
+      }
+      const bom = st.bom || [];
+      const installed = st.installed || [];
+      const unitMap = await getUnitsByIds(installed.map((x) => x.child_unit_id));
+      const byPm = {};
+      installed.forEach((x) => {
+        (byPm[x.child_pm_id] = byPm[x.child_pm_id] || []).push({
+          unit_id: x.child_unit_id,
+          qr: unitMap[x.child_unit_id]?.qr_code || "—",
+          part_no: unitMap[x.child_unit_id]?.part_no || "",
+        });
+      });
+      const rows = bom.map((b) => {
+        const sc = byPm[b.child_pm_id] || [];
+        return { part_no: b.part_no, part_name: b.part_name, planned: b.qty, scanned: sc.length, units: sc,
+          status: sc.length >= b.qty ? "complete" : (sc.length > 0 ? "partial" : "missing") };
+      });
+      const bomSet = new Set(bom.map((b) => b.child_pm_id));
+      const extra = [];
+      Object.keys(byPm).forEach((pm) => { if (!bomSet.has(pm)) extra.push(...byPm[pm]); });
+      const complete = rows.length > 0 && rows.every((r) => r.status === "complete");
+      setResult({
+        parentNo: meta?.part_no || st.parent?.part_no || qr,
+        parentName: meta?.part_name || "",
+        finished: st.parent?.status === "finished",
+        rows, extra, complete, ok: complete && extra.length === 0,
+        plannedTotal: bom.reduce((s, b) => s + b.qty, 0), scannedTotal: installed.length,
+      });
+    } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
+    setBusy(false);
+  }
+
+  const doing = (s) => /progress/i.test(s || "");
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">ตรวจงานประกอบ / แพ็ก</div>
+          <div className="page-sub">เทียบ "ที่สั่งจาก release (แผน)" กับ "ที่หน้างานสแกนมาจริง" — ดูว่าทำถูก + ครบไหม · เลือกเบอร์จากรายการ หรือสแกน/พิมพ์ QR (ดูของที่เสร็จแล้วได้)</div>
+        </div>
+      </div>
+
+      <Card title="เลือกเบอร์แม่ / เบอร์แพ็ก">
+        <div className="grid-2">
+          <Field label="ค้นหาจากรายการที่กำลังทำ">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="เบอร์ / โปรเจค / QR" />
+          </Field>
+          <Field label="หรือสแกน / พิมพ์ QR ตรงๆ (เสร็จแล้วก็ดูได้)">
+            <form onSubmit={(e) => { e.preventDefault(); const s = manualQr.trim(); if (s) load(s, null); }} style={{ display: "flex", gap: 8 }}>
+              <Input value={manualQr} onChange={(e) => setManualQr(e.target.value)} placeholder="เช่น UA3011B / QR" style={{ flex: 1 }} />
+              <Btn type="submit" variant="accent">โหลด</Btn>
+            </form>
+          </Field>
+        </div>
+        <div style={{ maxHeight: 260, overflow: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {filtered.slice(0, 300).map((p) => (
+            <div key={p.id} onClick={() => load(p.qr_code, p)}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 9, border: "1px solid var(--border)", background: sel && sel.id === p.id ? "var(--surface-2, #eef4f1)" : "var(--surface, #fff)", cursor: "pointer" }}>
+              <b style={{ fontFamily: "var(--font-mono)", fontSize: 15 }}>{p.part_no}</b>
+              <span style={{ color: "var(--muted)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.part_name}{p.project_code ? ` · ${p.project_code}` : ""}</span>
+              <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: doing(p.status) ? "rgba(217,164,65,.15)" : "rgba(120,140,190,.12)", color: doing(p.status) ? "#b45309" : "var(--muted)" }}>{doing(p.status) ? "กำลังทำ" : "ยังไม่เริ่ม"}</span>
+              <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, letterSpacing: ".03em", color: "var(--muted)" }}>{p.kind === "package" ? "แพ็ก" : p.kind === "panel" ? "แผง" : "ซับ"}</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: 14, textAlign: "center" }}>ไม่พบในรายการที่กำลังทำ — ถ้าเบอร์เสร็จแล้ว ให้สแกน/พิมพ์ QR ในช่องด้านบน</div>}
+        </div>
+      </Card>
+
+      {busy && <Card><div style={{ color: "var(--muted)", padding: 8 }}>กำลังโหลด…</div></Card>}
+      {err && !busy && <Card><div style={{ color: "var(--danger-hi)", fontSize: 13, padding: 8, lineHeight: 1.6 }}>{err}</div></Card>}
+
+      {result && !busy && (
+        <Card title={`ผลเทียบ — ${result.parentNo}${result.parentName ? "  ·  " + result.parentName : ""}${result.finished ? "  (เสร็จแล้ว)" : ""}`}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "11px 14px", borderRadius: 10, marginBottom: 14, fontWeight: 700,
+            ...(result.ok ? { background: "rgba(16,185,129,.12)", color: "var(--accent-dk, #0e9d63)", border: "1px solid rgba(16,185,129,.35)" }
+              : result.extra.length ? { background: "rgba(220,38,38,.10)", color: "var(--danger-hi, #c0362c)", border: "1px solid rgba(220,38,38,.3)" }
+                : { background: "rgba(217,164,65,.14)", color: "#b45309", border: "1px solid rgba(217,164,65,.4)" }),
+          }}>
+            <span style={{ fontSize: 16 }}>{result.ok ? "✓ ทำถูกและครบตามแผน" : result.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด/เกิน)" : "◐ ยังไม่ครบตามแผน"}</span>
+            <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {result.scannedTotal}/{result.plannedTotal} ชิ้น</span>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table" style={{ minWidth: 640 }}>
+              <thead><tr>
+                <th>เบอร์ชิ้น (แผน)</th><th>รายละเอียด</th>
+                <th style={{ textAlign: "center", width: 80 }}>ต้องใช้</th><th style={{ textAlign: "center", width: 90 }}>สแกนแล้ว</th>
+                <th style={{ width: 120 }}>สถานะ</th><th>QR/ชิ้นที่สแกนมา</th>
+              </tr></thead>
+              <tbody>
+                {result.rows.map((r, i) => {
+                  const c = verifyStatusColor(r.status);
+                  return (
+                    <tr key={i}>
+                      <td style={{ fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }}>{r.part_no}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12.5 }}>{r.part_name}</td>
+                      <td style={{ textAlign: "center", fontFamily: "var(--font-mono)" }}>{r.planned}</td>
+                      <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{r.scanned}</td>
+                      <td><span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>{r.status === "complete" ? "✓ ครบ" : r.status === "partial" ? `ขาด ${r.planned - r.scanned}` : "✗ ยังไม่สแกน"}</span></td>
+                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{r.units.length ? r.units.map((u) => u.qr).join(", ") : "—"}</td>
+                    </tr>
+                  );
+                })}
+                {result.rows.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>เบอร์นี้ไม่มี BOM (ไม่มีชิ้นที่ต้องประกอบ)</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          {result.extra.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 700, color: "var(--danger-hi)", marginBottom: 6 }}>⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน ({result.extra.length}) — ตรวจว่าใส่ผิดเบอร์ไหม</div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table" style={{ minWidth: 360 }}>
+                  <thead><tr><th>เบอร์ชิ้น</th><th>QR</th></tr></thead>
+                  <tbody>{result.extra.map((u, i) => <tr key={i}><td style={{ fontFamily: "var(--font-mono)" }}>{u.part_no || "?"}</td><td style={{ fontFamily: "var(--font-mono)" }}>{u.qr}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
   );
 }
 
