@@ -286,7 +286,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         // ★ ทำได้หลายขั้นตอน → บังคับให้แตะเลือกเอง (ไม่ default จากบัญชี กันบันทึกผิดขั้นตอนเงียบๆ)
         return null;
       });
-    });
+    }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept]);
   // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
@@ -832,9 +832,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const acctDepts = opsLoaded
     ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
     : [];
-  if (dept !== "machine" && !opsLoaded) return <StnDeptChecking dept={dept} t={t} />;
-  if (opsLoaded && !acctDepts.includes(dept)) {
-    return <StnDeptRedirect dept={dept} acctDepts={acctDepts} onLogout={onLogout} t={t} />;
+  if (!opsLoaded) return <StnDeptChecking dept={dept} t={t} />;   // รอรู้ "แผนกที่บัญชีทำได้" ก่อน (กันจอกระพริบ/เด้งผิด)
+  if (!acctDepts.includes(dept)) {
+    // บัญชีนี้ไม่ใช่แผนกนี้ → เด้งเข้า "แผนกแรก" ของบัญชีอัตโนมัติ (กันลูป: first ต่างจาก dept แน่ เพราะ !includes(dept))
+    const first = acctDepts.find((d) => DEPT_META[d]);
+    if (first && typeof window !== "undefined") { window.location.replace(DEPT_META[first].path); return <StnDeptChecking dept={first} t={t} />; }
+    return <StnDeptRedirect dept={dept} acctDepts={acctDepts} onLogout={onLogout} t={t} />;   // ไม่มีแผนกให้ไป → fallback
   }
 
   const recording = step !== STEP.IDLE;
@@ -2092,10 +2095,18 @@ export default function StationApp({ dept = "machine" } = {}) {
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
   useEffect(() => armFullscreenOnFirstTap(), []);
+  // ล็อกอินรวมหน้าเดียว: ยังไม่ล็อกอิน + ออนไลน์ → ส่งไปหน้าเข้าสู่ระบบรวม (/) · ออฟไลน์ = ใช้หน้าล็อกอินสถานีเดิม (มี cache)
+  const stnOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+  useEffect(() => {
+    if (!user && stnOnline) { try { window.location.replace("/"); } catch { /* ignore */ } }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   let content;
   if (!user) {
-    content = <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
+    content = stnOnline
+      ? <div className="stn-body" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh", color: "#9fb0a8", fontSize: 15 }}>กำลังไปหน้าเข้าสู่ระบบ…</div>
+      : <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
   } else if (!user.machine) {
     content = (
       <div className="stn-login-wrap">
