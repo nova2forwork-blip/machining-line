@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -5698,16 +5698,11 @@ function BackupCard() {
 // ── ซิงค์ "ขั้นตอนที่เครื่องทำได้" (machine_operations) ให้ตรงกับที่เลือก ──────────
 // ความสามารถผูกกับ "เครื่องจักร" (ไม่ใช่พนักงาน) — หน้าเครื่องอ่านตารางนี้ไปทำปุ่มเลือกขั้นตอน
 // ตั้งได้ทั้งจากแท็บเครื่องจักร (ความสามารถ) และจากฟอร์มพนักงาน (ขั้นตอนประจำ) — แหล่งข้อมูลเดียวกัน
-async function syncMachineOps(machineId, selectedIds, caps) {
+async function syncMachineOps(machineId, selectedIds, _caps) {
   if (!machineId) return;
-  const current = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
-  const sel = new Set(selectedIds);
-  const toAdd = [...sel].filter((id) => !current.has(id));
-  const toRemove = [...current].filter((id) => !sel.has(id));
-  if (toAdd.length) {
-    await insertRows("machine_operations", toAdd.map((operation_id) => ({ machine_id: machineId, operation_id })));
-  }
-  for (const operation_id of toRemove) await deleteCap(machineId, operation_id);
+  // ตั้งความสามารถทั้งชุดผ่าน RPC เฉพาะ (admin) — เลี่ยง insertRows generic ที่ไม่รองรับ machine_operations
+  // (chip ที่เลือก = ชุดเต็มที่ต้องการอยู่แล้ว จึง replace ได้ตรง) · _caps ไม่ใช้แล้ว คงไว้กันแก้ caller
+  await setMachineOps(machineId, [...new Set(selectedIds)]);
 }
 
 // ปุ่มแตะเลือกขั้นตอนได้หลายอัน (chip) — ใช้ทั้งฟอร์มเพิ่ม/แก้ไขพนักงาน
@@ -5746,18 +5741,10 @@ function MachineCapModal({ machine, operations, caps, onClose, onSaved }) {
   async function save() {
     setBusy(true); setErr("");
     try {
-      const current = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
-      const toAdd = [...selected].filter((id) => !current.has(id));
-      const toRemove = [...current].filter((id) => !selected.has(id));
-      if (toAdd.length) {
-        await insertRows("machine_operations", toAdd.map((operation_id) => ({ machine_id: machine.id, operation_id })));
-      }
-      for (const operation_id of toRemove) {
-        await deleteCap(machine.id, operation_id);
-      }
+      await setMachineOps(machine.id, [...selected]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
       onSaved();
     } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + e.message);
+      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
     }
     setBusy(false);
   }
