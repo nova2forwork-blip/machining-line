@@ -13,7 +13,7 @@ import {
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
-import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, isAdmin, canManage } from "./auth.js";
+import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -444,12 +444,17 @@ function Login({ onLogin }) {
   async function submit(e) {
     e.preventDefault();
     setErr(""); setBusy(true);
-    const user = await verifyLogin(code, password);
+    const res = await appLogin(code, password);   // ล็อกอินรวม (หน้าเดียวทั้งออฟฟิศ+คนงาน) — ออนไลน์เช็ค DB + จำรหัสไว้ล็อกอินออฟไลน์
     setBusy(false);
-    if (!user) { setErr("รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง"); return; }
-    setSession(user);
+    if (!res || !res.user) {
+      setErr(res && res.error === "offline_first"
+        ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
+        : "รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง");
+      return;
+    }
+    setSession(res.user);
     enterFullscreen();   // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
-    onLogin(user);
+    onLogin(res.user);   // operator จะถูก goStation เด้งไป /station → แล้วเข้าแผนกตัวเองอัตโนมัติ
   }
 
   return (
@@ -1662,11 +1667,11 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
 
               {g.children.length > 0 && (
               <div style={{ overflowX: "auto" }}>
-                <table className="data-table" style={{ fontSize: 12.5, minWidth: 520 }}>
+                <table className="data-table bom-child-table" style={{ fontSize: 12.5, width: "100%", minWidth: 620, tableLayout: "fixed" }}>
                   <thead><tr>
-                    <th style={{ width: "20%" }}>ลูก (Code)</th><th>รายละเอียด</th>
-                    <th style={{ width: 72 }}>L</th><th style={{ width: 92 }}>จำนวนรวม</th>
-                    <th style={{ width: 70 }}>ต่อชุด</th><th style={{ width: 34 }}></th>
+                    <th style={{ width: 132 }}>ลูก (Code)</th><th>รายละเอียด</th>
+                    <th style={{ width: 96 }}>L</th><th style={{ width: 92 }}>จำนวนรวม</th>
+                    <th style={{ width: 60 }}>ต่อชุด</th><th style={{ width: 30 }}></th>
                   </tr></thead>
                   <tbody>
                     {g.children.map((c, ci) => {
@@ -1675,10 +1680,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
                       const perTxt = per == null ? "—" : (Number.isInteger(per) ? String(per) : `≈${Math.round(per)}`);
                       return (
                         <tr key={ci}>
-                          <td><Input value={c.code} placeholder="AN04-001A" onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
-                          <td><Input value={c.desc} placeholder="ANCHOR BASE PLATE" onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
-                          <td><Input value={c.len} inputMode="decimal" onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
-                          <td><Input value={c.totalQty} inputMode="numeric" onChange={(e) => setChild(gi, ci, "totalQty", e.target.value)} /></td>
+                          <td><Input value={c.code} title={c.code} placeholder="AN04-001A" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
+                          <td><Input value={c.desc} title={c.desc} placeholder="ANCHOR BASE PLATE" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
+                          <td><Input value={c.len} title={c.len} inputMode="decimal" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
+                          <td><Input value={c.totalQty} inputMode="numeric" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "totalQty", e.target.value)} /></td>
                           <td style={{ textAlign: "center", color: per != null && !Number.isInteger(per) ? "var(--warning, #b45309)" : "var(--muted)", fontFamily: "var(--font-mono)" }}>{perTxt}</td>
                           <td style={{ textAlign: "center" }}>
                             <span onClick={() => removeChild(gi, ci)} title="ลบลูก" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span>
