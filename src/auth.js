@@ -127,11 +127,33 @@ const SESSION_KEY = "mls-session";
 // ★ iPad/Safari (โหมด private, "Block All Cookies", kiosk, บาง PWA) — localStorage อาจ throw
 //   หรือเขียนแล้วอ่านไม่ติด → session หาย → ล็อกอินแล้วเด้งกลับ · จึงทำ fallback หลายชั้น:
 //   localStorage → sessionStorage (รอดข้ามการ redirect ในแท็บเดียว) → in-memory (รอดอย่างน้อยจนปิดแอป)
+// ★ cookie = ชั้นเก็บ session ที่ "รอดข้ามการรีโหลด" แม้ localStorage/sessionStorage ถูกบล็อก
+//   (kiosk/PWA/Safari private) — แก้อาการ "กดอัปเดต/รีโหลดแล้วเด้งให้ล็อกอินใหม่" (in-memory หายตอนรีโหลด)
+//   first-party + SameSite=Lax → ส่งเฉพาะ origin ตัวเอง (ไม่รั่วไป Supabase) · เท่ากับ exposure ของ localStorage เดิม
+const COOKIE_KEY = "mls_session";
+function readCookie(name) {
+  try {
+    const m = (typeof document !== "undefined" ? document.cookie || "" : "").match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch { return null; }
+}
+function writeCookie(name, val, maxAgeSec) {
+  try {
+    const secure = (typeof location !== "undefined" && location.protocol === "https:") ? "; Secure" : "";
+    document.cookie = name + "=" + encodeURIComponent(val) + "; path=/; max-age=" + maxAgeSec + "; SameSite=Lax" + secure;
+  } catch { /* ignore */ }
+}
+function deleteCookie(name) {
+  try { document.cookie = name + "=; path=/; max-age=0; SameSite=Lax"; } catch { /* ignore */ }
+}
+
 export function getSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
     if (raw) return JSON.parse(raw);
   } catch { /* storage ถูกบล็อก — ไป fallback ต่อ */ }
+  // cookie: รอดข้ามรีโหลด/กดอัปเดต แม้ localStorage/sessionStorage ใช้ไม่ได้
+  try { const c = readCookie(COOKIE_KEY); if (c) return JSON.parse(c); } catch { /* ignore */ }
   try { return globalThis.__mlsSession || null; } catch { return null; }
 }
 export function setSession(user) {
@@ -143,9 +165,11 @@ export function setSession(user) {
     if (stored) sessionStorage.removeItem(SESSION_KEY);
     else sessionStorage.setItem(SESSION_KEY, raw);   // localStorage ใช้ไม่ได้ → เก็บ sessionStorage แทน
   } catch { /* ignore */ }
+  writeCookie(COOKIE_KEY, raw, 12 * 60 * 60);   // ★ เขียน cookie ควบเสมอ (อายุ 12 ชม. = เท่า token DB) → กดอัปเดต/รีโหลดแล้วไม่หลุด
 }
 export function clearSession() {
   try { globalThis.__mlsSession = null; } catch { /* ignore */ }
   try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  deleteCookie(COOKIE_KEY);   // ★ ล้าง cookie ด้วย (กันล็อกอินค้างหลังกดออก)
 }
