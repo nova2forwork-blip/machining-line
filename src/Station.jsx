@@ -9,7 +9,7 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly,
-  uploadPackingPhoto, recordPackingPhotos, getPartMeta,
+  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -1504,6 +1504,73 @@ function PackPhotoCapture({ onCapture, onClose, count, t }) {
   );
 }
 
+// หน้าเลือกเบอร์แม่ (ก่อนเริ่มประกอบ) — สแกน + ค้นหา + ฟิลเตอร์ + รายการเบอร์แม่ที่ค้างอยู่ (แตะเลือก)
+function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
+  const [rows, setRows] = useState(null);   // null = กำลังโหลด
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
+
+  useEffect(() => {
+    let alive = true; setRows(null);
+    listAssemblyParents(dept).then((r) => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, [dept]);
+
+  const doing = (s) => /progress/i.test(s || "");
+  const all = rows || [];
+  const filtered = all.filter((r) => {
+    if (q.trim()) { const s = q.trim().toLowerCase(); if (!`${r.part_no} ${r.part_name} ${r.project_code}`.toLowerCase().includes(s)) return false; }
+    if (filter === "panel") return r.kind === "panel";
+    if (filter === "package") return r.kind === "package";
+    if (filter === "sub") return r.kind === "subassembly";
+    if (filter === "doing") return doing(r.status);
+    if (filter === "todo") return !doing(r.status);
+    return true;
+  });
+  const kindLabel = (k) => k === "subassembly" ? t("ซับ", "SUB") : k === "package" ? t("บั้ง", "PKG") : t("แผง", "PANEL");
+  const kindCls = (k) => k === "subassembly" ? "sub" : "panel";
+  const submit = (e) => { e.preventDefault(); const s = q.trim(); if (s) onPick(s); };
+  const chips = isPack
+    ? [["all", t("ทั้งหมด", "All")], ["package", t("บั้ง", "Pkg")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]]
+    : [["all", t("ทั้งหมด", "All")], ["panel", t("แผง", "Panel")], ["sub", t("ซับ", "Sub")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]];
+
+  return (
+    <div className="asw-pick">
+      <div className="asw-pick-h">{t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {all.length} {t("รายการที่ค้างอยู่", "pending")}</span></div>
+      <div className="asw-pick-srow">
+        <form className="asw-pick-search" onSubmit={submit}>
+          <Icon name="search" size={18} className="stn-ico" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t(`ค้นหา / พิมพ์${parentWord}`, `Search / type ${parentWord}`)} inputMode="text" autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
+        </form>
+        <button type="button" className="asw-pick-scan" onClick={onScan}><Icon name="camera" size={18} className="stn-ico" />{t("สแกน", "Scan")}</button>
+      </div>
+      <div className="asw-pick-chips">
+        {chips.map(([k, label]) => (
+          <button key={k} type="button" className={"asw-pick-chip" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{label}</button>
+        ))}
+      </div>
+      <div className="asw-pick-list">
+        {rows === null ? (
+          <div className="asw-pick-msg"><div className="stn-asm-spin" />{t("กำลังโหลดรายการ…", "Loading…")}</div>
+        ) : filtered.length === 0 ? (
+          <div className="asw-pick-msg">{all.length === 0 ? t(`ไม่มี${parentWord}ที่ค้างอยู่ — สแกน QR เพื่อเริ่ม`, "nothing pending — scan to start") : t("ไม่พบตามที่ค้นหา", "no match")}</div>
+        ) : filtered.map((r) => (
+          <button type="button" key={r.qr_code || r.id} className="asw-pick-row" onClick={() => onPick(r.qr_code || r.part_no)}>
+            <span className={"asw-pick-kind " + kindCls(r.kind)}>{kindLabel(r.kind)}</span>
+            <span className="asw-pick-mid">
+              <span className="asw-pick-pno">{r.part_no}</span>
+              <span className="asw-pick-name">{r.part_name}{r.project_code ? <> · <span className="proj">{r.project_code}</span></> : null}</span>
+            </span>
+            <span className={"asw-pick-pill " + (doing(r.status) ? "doing" : "todo")}>{doing(r.status) ? t("กำลังทำ", "in progress") : t("ยังไม่เริ่ม", "not started")}</span>
+            <span className="asw-pick-go">›</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam,
   packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
@@ -1526,14 +1593,9 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const prevFor = (pmId) => (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length; // ติดจากสเตชันก่อน
     const sessFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;                  // สแกนรอบนี้
     return (
-      <div className={"stn-asm" + (asmParent ? " stn-asm-ws" : "")}>
+      <div className={"stn-asm" + (asmParent ? " stn-asm-ws" : " stn-asm-pick")}>
         {!asmParent ? (
-          <div className="stn-asm-empty">
-            <div className="stn-asm-title">{modeTitle}</div>
-            <div className="stn-asm-sub">{t(`สแกน หรือ พิมพ์ QR ของ “${parentWord}”`, `Scan or type the ${parentWord} QR`)}</div>
-            <button className="stn-asm-scan" onClick={asmOpenCam}><Icon name="camera" size={16} className="stn-ico" />{t(`สแกน${parentWord}`, `Scan ${parentWord}`)}</button>
-            <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${parentWord}`, `type ${parentWord} QR`)} t={t} />
-          </div>
+          <AsmParentPicker dept={asmType} isPack={isPack} onScan={asmOpenCam} onPick={asmScan} t={t} />
         ) : (
           <AsmWorksheet
             asmParent={asmParent} asmChildren={asmChildren} prevFor={prevFor} sessFor={sessFor}
