@@ -913,6 +913,27 @@ svg.asw-elev { width: 100%; height: 100%; display: block; }
   .asw-left { min-height: 180px; }
 }
 
+/* ═══ หน้าประกอบ "สแกนอย่างเดียว" (ไม่โชว์รายการ/ผัง — คนงานสแกน เห็นแค่ที่สแกน) ═══ */
+.asw-scan { max-width: 720px; margin: 0 auto; width: 100%; }
+.asw-scan .asw-scount { flex-shrink: 0; text-align: center; padding: 4px 16px; border-left: 1px solid #1e5a45; }
+.asw-scan .asw-scount b { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 800; color: #eafff5; line-height: 1; }
+.asw-scan .asw-scount span { font-size: 10px; color: #6fd3a6; letter-spacing: .05em; text-transform: uppercase; }
+.asw-scanwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.asw-scanhead { flex-shrink: 0; display: flex; gap: 10px; align-items: stretch; }
+.asw-scanbtn { flex: 1.3; display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: linear-gradient(180deg, #1a9f74, #0e8a5b); color: #fff; border: none; border-radius: 14px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 0 #0a6b47; font-family: inherit; }
+.asw-scanbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #0a6b47; } .asw-scanbtn .stn-ico { color: #fff; }
+.asw-scanhead .stn-asm-manual { flex: 1; }
+.asw-scanlist { flex: 1; min-height: 0; overflow: hidden auto; border: 1px solid #22332c; border-radius: 12px; background: #0c1712; display: flex; flex-direction: column; }
+.asw-scanrow { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid #16241d; cursor: pointer; }
+.asw-scanrow:last-child { border-bottom: none; } .asw-scanrow:active { background: #12251c; }
+.asw-scanrow .n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 7px; background: rgba(22,184,119,.16); border: 1px solid #2f6b52; color: #7fe3b8; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.asw-scanrow .pn { font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 800; color: #eafff5; }
+.asw-scanrow .qr { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #7fae97; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.asw-scanrow .x { flex-shrink: 0; color: #c0564e; font-size: 15px; font-weight: 700; }
+.asw-scanempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #5b7a6c; text-align: center; padding: 30px 16px; }
+.asw-scanempty .stn-ico { color: #2f5a48; } .asw-scanempty .t1 { font-size: 15px; font-weight: 700; color: #7fae97; } .asw-scanempty span { font-size: 12.5px; line-height: 1.5; max-width: 260px; }
+.asw-scanconfirm { flex-shrink: 0; padding: 16px; font-size: 17px; }
+
 /* ═══ หน้าเลือกเบอร์แม่ (ก่อนเริ่มประกอบ) — สแกน + ค้นหา + ฟิลเตอร์ + รายการ ═══ */
 .stn-asm.stn-asm-pick { overflow: hidden; height: 100%; padding: 0; }
 .asw-pick { height: 100%; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; width: 100%; max-width: 780px; margin: 0 auto; min-height: 0; }
