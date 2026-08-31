@@ -1232,228 +1232,57 @@ function asmRole(name) {
 
 // ── หน้าประกอบ (โหมดเต็ม): ตารางชิ้นงาน (ซ้าย) + ผังแผง/ผังกล่องอัตโนมัติ (ขวา) ──
 //    แตะชิ้น → ผังไฮไลต์ตำแหน่งที่ต้องติด · ยังสแกนบันทึกได้เหมือนเดิม
-function AsmWorksheet({ asmParent, asmChildren, prevFor, sessFor, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, isPack, childWord, confirmVerb, openPhoto, packPhotos = [], photoRemove }) {
-  const [sel, setSel] = useState(null);
-  useEffect(() => { setSel(null); }, [asmParent?.unit?.id]);
-
-  const rows = (asmParent?.bom || []).map((b, i) => {
-    const prev = prevFor(b.child_pm_id), sess = sessFor(b.child_pm_id), have = prev + sess;
-    const done = have >= b.qty;
-    return {
-      ...b, idx: i + 1, prev, sess, have, done,
-      stt: done ? "done" : (have > 0 ? "partial" : "todo"),
-      role: asmRole(b.part_name), len: (b.length_mm != null ? Number(b.length_mm) : null),
-      isSub: !!(b.kind && b.kind !== "part"),
-    };
-  });
-  const total = rows.length, doneLines = rows.filter((r) => r.done).length;
-  const pct = total ? Math.round((doneLines / total) * 100) : 0;
-
-  const mullions = rows.filter((r) => r.role === "mullion");
-  const transoms = rows.filter((r) => r.role === "transom");
-  const glasses = rows.filter((r) => r.role === "glass");
-  const useElev = mullions.length > 0 && glasses.length > 0;   // เหมือนแผงกระจก → วาด elevation
-  const mL = mullions[0], mR = mullions[1] || mullions[0];
-  const tItem = transoms.find((x) => !/SILL/i.test(x.part_name)) || transoms[0];
-  const sItem = transoms.find((x) => /SILL/i.test(x.part_name)) || transoms[transoms.length - 1];
-  const sortedGlass = glasses.slice().sort((a, b) => (/SPANDREL/i.test(a.part_name) ? 1 : 0) - (/SPANDREL/i.test(b.part_name) ? 1 : 0));
-  const visionPm = (sortedGlass.find((g) => !/SPANDREL/i.test(g.part_name)) || sortedGlass[0] || {}).child_pm_id;
-  const spandrelPm = (sortedGlass.find((g) => /SPANDREL/i.test(g.part_name)) || {}).child_pm_id;
-
-  function place(r) {
-    const d = String(r.part_name || "").toUpperCase();
-    if (!useElev) return { label: "", target: r.child_pm_id, confident: true };
-    if (r.role === "mullion") return { label: r === mL ? "เสาซ้าย" : (r === mR ? "เสาขวา" : "เสาตั้ง"), target: r.child_pm_id, confident: true };
-    if (r.role === "transom") return { label: /SILL/.test(d) ? "ธรณีล่าง" : (/HEAD/.test(d) ? "คานบน" : "คานขวาง"), target: r.child_pm_id, confident: true };
-    if (r.role === "glass") return { label: /SPANDREL/.test(d) ? "ช่องล่าง · สแปนเดรล" : "ช่องบน · กระจกใส", target: r.child_pm_id, confident: true };
-    if (/BEAD/.test(d)) return { label: "รอบกระจก", target: visionPm, confident: false };
-    if (/SUPPORT/.test(d)) return { label: "ร่องรับกระจก", target: visionPm, confident: false };
-    if (/STIFF/.test(d)) return { label: "เสริมในเสา", target: mL ? mL.child_pm_id : null, confident: false };
-    if (r.role === "infill" || /PRESSING/.test(d)) return { label: "หลังช่องทึบ", target: spandrelPm, confident: false };
-    if (r.role === "fastener") return { label: "สกรูยึด", target: null, confident: false };
-    return { label: "", target: null, confident: false };
-  }
-  rows.forEach((r) => (r.place = place(r)));
-
-  const selRow = rows.find((r) => r.child_pm_id === sel) || null;
-  const strongPm = selRow && selRow.place.confident ? selRow.place.target : null;
-  const softPm = selRow && !selRow.place.confident ? selRow.place.target : null;
-  const hcls = (pm) => (pm != null && pm === strongPm ? " hl" : (pm != null && pm === softPm ? " hlsoft" : ""));
-
-  // ── ผัง elevation (เสา/คาน/กระจก) ──
-  function renderElevation() {
-    const L = 200, R = 320, T = 44, B = 356, MULL = 14, HS = 10, TT = 9;
-    const innerT = T + HS, innerB = B - HS, innerH = innerB - innerT;
-    const innerX = L + MULL, innerW = (R - MULL) - innerX;
-    const nZ = Math.max(1, sortedGlass.length);
-    const avail = innerH - TT * (nZ - 1);
-    const sumL = sortedGlass.reduce((s, g) => s + (g.len || 1), 0) || 1;
-    let y = innerT; const zones = [];
-    sortedGlass.forEach((g, i) => { const zh = Math.round(avail * (g.len || 1) / sumL); zones.push({ g, y0: y, y1: y + zh }); y += zh; if (i < nZ - 1) y += TT; });
-    const stFill = (r, sp) => r && r.done ? "rgba(22,184,119,.5)" : (sp ? "rgba(200,170,70,.16)" : "rgba(80,160,220,.18)");
-    const memFill = (r) => r && r.done ? "var(--green, #16b877)" : (r && r.stt === "partial" ? "#7a6a2f" : "#26493c");
-    const Balloon = ({ r, bx, by, tx, ty }) => r ? (
-      <g className={"asw-bl " + (r.done ? "done " : "") + (sel === r.child_pm_id ? "hl" : "")} onClick={() => setSel(r.child_pm_id)} style={{ cursor: "pointer" }}>
-        <line x1={bx} y1={by} x2={tx} y2={ty} /><circle cx={bx} cy={by} r={12.5} /><text x={bx} y={by + 4}>{r.idx}</text>
-      </g>
-    ) : null;
-    return (
-      <svg viewBox="146 28 232 348" className="asw-elev" role="img" aria-label="ผังแผง">
-        {zones.map((z, i) => {
-          const sp = /SPANDREL/i.test(z.g.part_name);
-          return (
-            <g key={"z" + i}>
-              <rect className={"zone " + z.g.stt + hcls(z.g.child_pm_id)} x={innerX} y={z.y0} width={innerW} height={z.y1 - z.y0} fill={stFill(z.g, sp)} onClick={() => setSel(z.g.child_pm_id)} style={{ cursor: "pointer" }} />
-              <text className="zlab" x={innerX + innerW / 2} y={(z.y0 + z.y1) / 2 + 4}>{sp ? "SPANDREL" : "VISION"}</text>
-            </g>
-          );
-        })}
-        {zones.slice(0, -1).map((z, i) => (
-          <rect key={"t" + i} className={"mem" + hcls(tItem && tItem.child_pm_id)} x={innerX} y={z.y1} width={innerW} height={TT} fill={memFill(tItem)} onClick={() => tItem && setSel(tItem.child_pm_id)} style={{ cursor: "pointer" }} />
-        ))}
-        <rect className={"mem" + hcls(tItem && tItem.child_pm_id)} x={L} y={T} width={R - L} height={HS} fill={memFill(tItem)} onClick={() => tItem && setSel(tItem.child_pm_id)} style={{ cursor: "pointer" }} />
-        <rect className={"mem" + hcls(sItem && sItem.child_pm_id)} x={L} y={innerB} width={R - L} height={HS} fill={memFill(sItem)} onClick={() => sItem && setSel(sItem.child_pm_id)} style={{ cursor: "pointer" }} />
-        <rect className={"mem" + hcls(mL && mL.child_pm_id)} x={L} y={T} width={MULL} height={B - T} fill={memFill(mL)} onClick={() => mL && setSel(mL.child_pm_id)} style={{ cursor: "pointer" }} />
-        <rect className={"mem" + hcls(mR && mR.child_pm_id)} x={R - MULL} y={T} width={MULL} height={B - T} fill={memFill(mR)} onClick={() => mR && setSel(mR.child_pm_id)} style={{ cursor: "pointer" }} />
-        <rect className="asw-outline" x={L} y={T} width={R - L} height={B - T} />
-        <Balloon r={mL} bx={165} by={118} tx={L} ty={118} />
-        <Balloon r={mR} bx={355} by={108} tx={R} ty={108} />
-        {tItem ? <Balloon r={tItem} bx={355} by={zones.length > 1 ? zones[0].y1 + TT / 2 : 70} tx={R - MULL} ty={zones.length > 1 ? zones[0].y1 + TT / 2 : 70} /> : null}
-        {sItem ? <Balloon r={sItem} bx={165} by={innerB + 5} tx={L + 22} ty={innerB + 5} /> : null}
-        {zones.map((z, i) => <Balloon key={"gb" + i} r={z.g} bx={355} by={i === 0 ? 150 : 300} tx={R - MULL} ty={(z.y0 + z.y1) / 2} />)}
-      </svg>
-    );
-  }
-
-  // ── ผังกล่อง (ซับ/ชิ้นงานทั่วไป) ──
-  function renderBoxes() {
-    const bars = rows.filter((r) => r.role !== "fastener");
-    const fasts = rows.filter((r) => r.role === "fastener");
-    const maxLen = Math.max(1, ...bars.map((r) => r.len || 1));
-    const boxW = (r) => Math.round(46 + Math.sqrt(r.len || 1) / Math.sqrt(maxLen) * 150);
-    return (
-      <>
-        <div className="asw-bwrap">
-          {bars.map((r) => {
-            const w = boxW(r), wide = w >= 96;
-            return (
-              <div key={r.child_pm_id} className={"asw-box " + r.stt + (sel === r.child_pm_id ? " hl" : "") + (wide ? " wide" : " narrow")} style={{ width: w, height: 44 }} onClick={() => setSel(r.child_pm_id)} title={`#${r.idx} ${r.part_no}`}>
-                <span className="bn">{r.idx}</span>
-                {wide ? <span className="blab"><span className="bpn">{r.part_no}</span><span className="bmeta">{r.len != null ? r.len : ""}{r.qty > 1 ? ` ·×${r.qty}` : ""}</span></span> : (r.qty > 1 ? <span className="bq">×{r.qty}</span> : null)}
-                {r.done ? <span className="btick">✓</span> : null}
-              </div>
-            );
-          })}
-        </div>
-        {fasts.length > 0 && <div className="asw-flabel">{t("สกรู/ตัวยึด", "Fasteners")}</div>}
-        {fasts.length > 0 && (
-          <div className="asw-fstrip">
-            {fasts.map((r) => (
-              <div key={r.child_pm_id} className={"asw-fchip " + r.stt + (sel === r.child_pm_id ? " hl" : "")} onClick={() => setSel(r.child_pm_id)}>
-                <span className="bn">{r.idx}</span><span className="fpn">{r.part_no}</span><span className="fq">×{r.qty}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </>
-    );
-  }
-
+function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, childWord, confirmVerb }) {
+  // หน้าประกอบ (สเตชัน) = "สแกนอย่างเดียว" — ไม่โชว์รายการ/ผัง/เบอร์พาร์ทที่ต้องใช้
+  //   คนงานเห็นแค่ "เบอร์แม่ที่กำลังทำ" + ชิ้นที่ตัวเองสแกนรอบนี้ (เบอร์ + QR) · เทียบว่าถูก/ครบ ไปดูที่หลังบ้าน (office)
   const parentNo = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
   const parentName = asmParent.unit.part_master?.part_name || "";
   const pkind = asmParent.parentKind;
-  const kindTh = pkind === "panel" ? "แผง" : pkind === "subassembly" ? "ซับประกอบ" : pkind === "package" ? "แพ็ก" : "";
+  const kindTh = pkind === "panel" ? "แผง" : pkind === "subassembly" ? "ซับประกอบ" : "";
+  const scannedN = asmChildren.length;
 
   return (
-    <div className="asw">
+    <div className="asw asw-scan">
       <div className="asw-head">
         <div className="asw-hgrow">
-          <div className="asw-hlabel">{isPack ? t("เบอร์แพ็ก", "PACKAGE") : t("เบอร์แม่", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
+          <div className="asw-hlabel">{t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
           <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
-          <div className="asw-hbar"><i style={{ width: pct + "%" }} /></div>
-          <div className="asw-hmeta"><span>{t("ครบแล้ว", "done")} {doneLines}/{total} {t("รายการ", "items")}</span><span>{pct}%</span></div>
         </div>
-        <div className="asw-ring" style={{ "--p": pct }}><i>{pct}%</i></div>
-        <button className="asw-change" onClick={asmReset}>{t("เปลี่ยน", "Change")}</button>
+        <div className="asw-scount"><b>{scannedN}</b><span>{t("สแกนรอบนี้", "scanned")}</span></div>
+        <button className="asw-change" onClick={asmReset}>{t("เปลี่ยนเบอร์", "Change")}</button>
       </div>
 
-      <div className="asw-split">
-        <div className="asw-left">
-          <div className="asw-stitle">{t("รายการชิ้นงานที่ต้องใช้", "Parts needed")} <span className="hint">· {total} {t("รายการ · แตะแถวดูตำแหน่ง", "items · tap a row")}</span></div>
-          <div className="asw-sheet">
-            <table className="asw-tab">
-              <thead><tr>
-                <th className="c-n">#</th><th className="c-pn">{t("เบอร์ชิ้น", "Part No")}</th>
-                <th className="c-desc">{t("รายละเอียด · จุดติดตั้ง", "Description · where")}</th>
-                <th className="c-len">{t("ขนาด/ยาว", "Size")}</th><th className="c-qty">{t("จำนวน", "Qty")}</th><th className="c-prog">{t("ประกอบแล้ว", "Done")}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.child_pm_id} className={"asw-r " + r.stt + (sel === r.child_pm_id ? " hl" : "")} onClick={() => setSel(r.child_pm_id)}>
-                    <td className="c-n"><span className="nb">{r.idx}</span></td>
-                    <td className="c-pn">{r.part_no}{r.isSub ? <span className="asw-subtag">{t("ซับ", "sub")}</span> : null}</td>
-                    <td className="c-desc">{r.part_name || ""}{r.place.label ? <span className={"asw-postag " + (r.place.confident ? "sure" : "soft")}>{r.place.label}</span> : null}</td>
-                    <td className="c-len">{r.len != null ? r.len : "—"}{r.len != null ? <span className="u"> mm</span> : null}</td>
-                    <td className="c-qty">{r.qty}</td>
-                    <td className="c-prog"><span className="chk">{r.done ? "✓" : (r.have > 0 ? "◐" : "○")}</span>{r.have}/{r.qty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <div className="asw-scanwrap">
+        <div className="asw-scanhead">
+          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
+          <AsmManualInput onSubmit={asmScan} placeholder={t(`หรือพิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
         </div>
 
-        <div className="asw-right">
-          <div className="asw-stitle">{useElev ? t("ผังแผง", "Panel view") : t("ผังชิ้นส่วน", "Parts view")} <span className="hint">· {useElev ? t("แตะชิ้น = ไฮไลต์ตำแหน่ง", "tap = where it goes") : t("แตะชิ้น = ไฮไลต์", "tap to highlight")}</span></div>
-          <div className={"asw-draw " + (useElev ? "elev" : "box")}>
-            {useElev ? renderElevation() : renderBoxes()}
-            {selRow ? (
-              <div className="asw-callout">
-                <span className="cn">{selRow.idx}</span>
-                <span className="cpn">{selRow.part_no}</span>
-                {!useElev
-                  ? <span className="cmuted">{selRow.part_name || ""}</span>
-                  : (selRow.place.confident && selRow.place.label
-                    ? <span className="cpos">{t("อยู่ตรงนี้ ·", "here ·")} {selRow.place.label}</span>
-                    : (selRow.place.target != null
-                      ? <span className="cmuted">{t("แถวๆ", "near")} {selRow.place.label} · {t("ดูแบบจริงเพื่อจุดแน่นอน", "see real drawing")}</span>
-                      : <span className="cmuted">{selRow.part_name || ""} · {t("ไม่มีจุดในผังจำลอง", "not in schematic")}</span>))}
-              </div>
-            ) : null}
-          </div>
-          <div className="asw-actions">
-            {asmChildren.length > 0 && (
-              <div className="asw-scanned">
-                {asmChildren.map((c) => (
-                  <span key={c.unit_id} className="asw-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>{c.part_no} · {c.qr} ✕</span>
-                ))}
-              </div>
-            )}
-            <div className="asw-arow">
-              <button className="asw-scan" onClick={asmOpenCam}><Icon name="camera" size={16} className="stn-ico" />{t(`สแกน${childWord}`, `Scan ${childWord}`)}</button>
-              <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
+        <div className="asw-stitle">{t("ชิ้นที่สแกนรอบนี้", "Scanned this round")} <span className="hint">· {scannedN} {t("ชิ้น · แตะแถวเพื่อเอาออก", "items · tap to remove")}</span></div>
+        <div className="asw-scanlist">
+          {asmChildren.length === 0 ? (
+            <div className="asw-scanempty">
+              <Icon name="scan" size={30} className="stn-ico" />
+              <div className="t1">{t("ยังไม่ได้สแกน", "Nothing scanned yet")}</div>
+              <span>{t("กดปุ่มสแกน แล้วสแกนชิ้นที่ประกอบเข้าเบอร์นี้", "press scan, then scan the parts you assembled")}</span>
             </div>
-            {isPack && (
-              <div className="asw-photos">
-                <button className="asw-photobtn" onClick={openPhoto}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span></button>
-                {packPhotos.length > 0 && (
-                  <div className="asw-thumbs">
-                    {packPhotos.map((p, i) => (
-                      <div key={i} className="asw-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}><img src={p.url} alt="" /><span className="x">✕</span></div>
-                    ))}
-                  </div>
-                )}
+          ) : (
+            asmChildren.map((c, i) => (
+              <div key={c.unit_id} className="asw-scanrow" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>
+                <span className="n">{i + 1}</span>
+                <span className="pn">{c.part_no}</span>
+                <span className="qr">{c.qr}</span>
+                <span className="x">✕</span>
               </div>
-            )}
-            <button className={"asw-confirm" + (asmComplete ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
-              {busy ? "..." : asmChildren.length === 0
-                ? t(`สแกน${childWord}ที่ติดรอบนี้ก่อน`, `scan the ${childWord}s you installed`)
-                : asmComplete
-                  ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
-                  : t(`บันทึกรอบนี้ (${asmChildren.length} ชิ้น) — ยังไม่ครบ`, `Save batch (${asmChildren.length}) — partial`)}
-            </button>
-          </div>
+            ))
+          )}
         </div>
+
+        <button className={"asw-confirm asw-scanconfirm" + (asmComplete ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
+          {busy ? "..." : asmChildren.length === 0
+            ? t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`)
+            : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`)}
+        </button>
       </div>
     </div>
   );
