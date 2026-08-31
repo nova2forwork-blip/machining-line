@@ -342,3 +342,84 @@ function parsePanelReleaseRows(rows) {
   if (items.length === 0) throw new Error("ไม่พบรายชื่อแผง — ตรวจว่ากรอก Panel No + Qty ครบ");
   return { projectName, releaseOrder, items };
 }
+
+// ── ฟอร์มบั้ง (packing bunk list) ─────────────────────────────────────────────
+// หัว: BUNK NO / ELEVATION / LEVEL / PROJECT (label ซ้าย, ค่าอยู่คอลัมน์ขวา)
+// ตาราง: No | Unit No | Bunk Position | Address Sequence | Description | Width | Height | Sqm | Quantity | Weight
+// คืน { meta:{bunk_no,elevation,level,project,total_qty,total_sqm,total_weight},
+//        units:[{no,unit_no,position,address_seq,description,width,height,sqm,qty,weight}] }
+export async function parseBunkExcel(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  return parseBunkRows(rows);
+}
+export function parseBunkText(text) {
+  return parseBunkRows(tsvToRows(text));
+}
+function parseBunkRows(rows) {
+  const norm = (s) => String(s == null ? "" : s).trim();
+  const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isFinite(n) ? n : null; };
+  const lastCell = (r) => { for (let i = r.length - 1; i >= 0; i--) { if (norm(r[i]) !== "") return norm(r[i]); } return ""; };
+  const meta = { bunk_no: "", elevation: "", level: "", project: "" };
+  let hIdx = -1; const cols = {};
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const U = r.map(norm).join(" ").toUpperCase();
+    if (!meta.bunk_no && /BUNK\s*NO/.test(U)) meta.bunk_no = lastCell(r);
+    if (!meta.elevation && /ELEVATION/.test(U)) meta.elevation = lastCell(r);
+    if (!meta.level && /(^|[^A-Z])LEVEL([^A-Z]|$)/.test(U) && !/UNIT/.test(U)) meta.level = lastCell(r);
+    if (!meta.project && /PROJECT/.test(U)) meta.project = lastCell(r);
+    if (hIdx < 0 && /UNIT\s*NO/.test(U) && /(POSITION|WEIGHT|WIDTH|DESCRIPTION)/.test(U)) {
+      hIdx = i;
+      r.forEach((c, ci) => {
+        const h = norm(c).toUpperCase();
+        if (cols.unit == null && /UNIT\s*NO/.test(h)) cols.unit = ci;
+        else if (cols.pos == null && /POSITION/.test(h)) cols.pos = ci;
+        else if (cols.addr == null && /ADDRESS/.test(h)) cols.addr = ci;
+        else if (cols.desc == null && /DESCRIPTION/.test(h)) cols.desc = ci;
+        else if (cols.w == null && /WIDTH/.test(h)) cols.w = ci;
+        else if (cols.h == null && /HEIGHT/.test(h)) cols.h = ci;
+        else if (cols.sqm == null && /SQ\.?\s*M|SQM|AREA/.test(h)) cols.sqm = ci;
+        else if (cols.qty == null && /QUANT|QTY/.test(h)) cols.qty = ci;
+        else if (cols.wt == null && /WEIGHT/.test(h)) cols.wt = ci;
+        else if (cols.no == null && (h === "NO" || h === "NO." || h === "ITEM")) cols.no = ci;
+      });
+    }
+  }
+  const units = [];
+  let totalRow = null;
+  if (hIdx >= 0 && cols.unit != null) {
+    for (let i = hIdx + 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const unit_no = norm(r[cols.unit]);
+      if (!unit_no) {
+        if (/\bTOTAL\b/.test(r.map(norm).join(" ").toUpperCase())) { totalRow = r; break; }   // แถว TOTAL → เก็บไว้ แล้วจบ
+        continue;                                                                              // แถวว่าง → ข้าม
+      }
+      units.push({
+        no: cols.no != null ? (norm(r[cols.no]) || String(units.length + 1)) : String(units.length + 1),
+        unit_no,
+        position: cols.pos != null ? norm(r[cols.pos]) : "",
+        address_seq: cols.addr != null ? norm(r[cols.addr]) : "",
+        description: cols.desc != null ? norm(r[cols.desc]) : "",
+        width: cols.w != null ? num(r[cols.w]) : null,
+        height: cols.h != null ? num(r[cols.h]) : null,
+        sqm: cols.sqm != null ? num(r[cols.sqm]) : null,
+        qty: cols.qty != null ? (num(r[cols.qty]) || 1) : 1,
+        weight: cols.wt != null ? num(r[cols.wt]) : null,
+      });
+    }
+  }
+  if (units.length === 0) throw new Error("ไม่พบรายการยูนิตในบั้ง — ตรวจว่ามีหัวตาราง Unit No + Weight/Position");
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const tot = (col, sum) => {   // ใช้ค่าจากแถว TOTAL ของฟอร์มถ้ามี (ตรงกับฟอร์มเป๊ะ) ไม่งั้นรวมเอง
+    if (totalRow && col != null) { const v = num(totalRow[col]); if (v != null) return v; }
+    return round2(sum);
+  };
+  meta.total_qty = tot(cols.qty, units.reduce((s, u) => s + (u.qty || 0), 0));
+  meta.total_sqm = tot(cols.sqm, units.reduce((s, u) => s + (u.sqm || 0), 0));
+  meta.total_weight = tot(cols.wt, units.reduce((s, u) => s + (u.weight || 0), 0));
+  return { meta, units };
+}
