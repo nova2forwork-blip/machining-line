@@ -717,6 +717,16 @@ export async function listAssemblyParents(dept) {
   return rows;
 }
 
+// บันทึก "ฟอร์มบั้ง (packing manifest)" ลง part_master ของ package (office ขึ้นไป)
+// ผ่าน RPC เฉพาะ authz_set_manifest (เลี่ยง allow-list ของ authz_update ที่ไม่รู้จักคอลัมน์ใหม่)
+export async function setPkgManifest(pmId, manifest, meta) {
+  const { data, error } = await supabase.rpc("authz_set_manifest", {
+    p_token: authToken(), p_pm_id: pmId, p_manifest: manifest ?? null, p_meta: meta ?? null,
+  });
+  if (error) { console.warn("authz_set_manifest error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 export async function uploadPackingPhoto(blob, keyHint = "pack") {
