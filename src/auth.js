@@ -116,6 +116,31 @@ export async function stationLogin(code, password) {
   return { user: e.user, offline: true };
 }
 
+// ─── Login รวม (หน้าเดียวทั้งออฟฟิศ + คนงาน) ──────────────────────────────────
+// เหมือน stationLogin แต่ "ไม่ probe/บล็อก" → ทุก role ล็อกอินได้จากหน้าเดียว
+// (single-session ยังบังคับด้วย trigger ฝั่ง DB = ล็อกอินใหม่เตะเก่า) · ยังจำรหัสไว้ล็อกอินออฟไลน์
+// คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
+export async function appLogin(code, password) {
+  const key = code.trim().toLowerCase();
+  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+  if (!isOffline) {
+    const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
+    if (!error) {
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) return { error: "bad" };            // รหัสผิด → ไม่ fallback
+      const user = mapLoginRow(row);
+      await cacheCredential(code, password, user);   // จำไว้ล็อกอินออฟไลน์รอบหน้า (สำหรับคนงานหน้างาน)
+      return { user, offline: false };
+    }
+    // error = เน็ตมีปัญหา → ลองใช้ credential ที่แคชไว้
+  }
+  const e = readLoginCache()[key];
+  if (!e) return { error: isOffline ? "offline_first" : "bad" };
+  const hash = await sha256Hex(e.salt + ":" + password);
+  if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };
+  return { user: e.user, offline: true };
+}
+
 // ─── Session ────────────────────────────────────────────────────────────────
 // ใช้ localStorage: ล็อกอินค้างไว้ ไม่หลุดเมื่อปิดแท็บ/เบราว์เซอร์ (เหมาะกับจอหน้าเครื่อง
 // ที่เปิดค้างทั้งวัน) — ออกจากระบบเมื่อกดปุ่ม "ออก" เท่านั้น
