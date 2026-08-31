@@ -353,12 +353,33 @@ export async function parseBunkExcel(file) {
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
-  return parseBunkRows(rows);
+  return parseBunkSheet(rows);
 }
 export function parseBunkText(text) {
-  return parseBunkRows(tsvToRows(text));
+  return parseBunkSheet(tsvToRows(text));
 }
-function parseBunkRows(rows) {
+// ไฟล์เดียวมักมีหลายบั้ง (ทั้ง shipment) — แบ่งช่วงที่ขึ้นต้นด้วย "BUNK NO." แล้ว parse ทีละบั้ง
+// คืน { bunks: [ { meta, units }, ... ] }
+function parseBunkSheet(rows) {
+  const c0 = (i) => String(((rows[i] || [])[0]) == null ? "" : (rows[i] || [])[0]).trim();
+  const starts = [];
+  for (let i = 0; i < rows.length; i++) if (/^BUNK\s*NO/i.test(c0(i))) starts.push(i);
+  const bunks = [];
+  if (starts.length === 0) {
+    const one = parseOneBunk(rows);              // ไม่มี label "BUNK NO." → ลอง parse ทั้งแผ่นเป็นบั้งเดียว
+    if (one) bunks.push(one);
+  } else {
+    starts.push(rows.length);
+    for (let b = 0; b < starts.length - 1; b++) {
+      const one = parseOneBunk(rows.slice(starts[b], starts[b + 1]));
+      if (one) bunks.push(one);
+    }
+  }
+  if (bunks.length === 0) throw new Error("ไม่พบข้อมูลบั้ง — ตรวจว่ามีหัว 'BUNK NO.' + ตาราง Unit No/Weight");
+  return { bunks };
+}
+// parse 1 บั้ง (segment) → { meta, units } หรือ null ถ้าไม่มียูนิต
+function parseOneBunk(rows) {
   const norm = (s) => String(s == null ? "" : s).trim();
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isFinite(n) ? n : null; };
   const lastCell = (r) => { for (let i = r.length - 1; i >= 0; i--) { if (norm(r[i]) !== "") return norm(r[i]); } return ""; };
@@ -394,10 +415,9 @@ function parseBunkRows(rows) {
     for (let i = hIdx + 1; i < rows.length; i++) {
       const r = rows[i] || [];
       const unit_no = norm(r[cols.unit]);
-      if (!unit_no) {
-        if (/\bTOTAL\b/.test(r.map(norm).join(" ").toUpperCase())) { totalRow = r; break; }   // แถว TOTAL → เก็บไว้ แล้วจบ
-        continue;                                                                              // แถวว่าง → ข้าม
-      }
+      // แถว TOTAL: บางฟอร์มวาง "TOTAL" ไว้ในคอลัมน์ Unit No เอง → เจอเมื่อไหร่จบ (เก็บ TOTAL ไว้ใช้ยอดรวม)
+      if (/^TOTAL\b/i.test(unit_no) || (!unit_no && /\bTOTAL\b/.test(r.map(norm).join(" ").toUpperCase()))) { totalRow = r; break; }
+      if (!unit_no) continue;   // แถวว่าง → ข้าม
       units.push({
         no: cols.no != null ? (norm(r[cols.no]) || String(units.length + 1)) : String(units.length + 1),
         unit_no,
@@ -412,11 +432,13 @@ function parseBunkRows(rows) {
       });
     }
   }
-  if (units.length === 0) throw new Error("ไม่พบรายการยูนิตในบั้ง — ตรวจว่ามีหัวตาราง Unit No + Weight/Position");
+  if (units.length === 0) return null;   // segment ว่าง (เช่น footer) → ข้าม
   const round2 = (n) => Math.round(n * 100) / 100;
-  const tot = (col, sum) => {   // ใช้ค่าจากแถว TOTAL ของฟอร์มถ้ามี (ตรงกับฟอร์มเป๊ะ) ไม่งั้นรวมเอง
-    if (totalRow && col != null) { const v = num(totalRow[col]); if (v != null) return v; }
-    return round2(sum);
+  const tot = (col, sum) => {   // ใช้ค่าจากแถว TOTAL ของฟอร์มถ้ามี ไม่งั้นรวมเอง · ปัด 2 ตำแหน่ง
+    let v = null;
+    if (totalRow && col != null) { const t = num(totalRow[col]); if (t != null) v = t; }
+    if (v == null) v = sum;
+    return round2(v);
   };
   meta.total_qty = tot(cols.qty, units.reduce((s, u) => s + (u.qty || 0), 0));
   meta.total_sqm = tot(cols.sqm, units.reduce((s, u) => s + (u.sqm || 0), 0));
