@@ -26,6 +26,12 @@ function authToken() {
     const raw = localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session");
     if (raw) return JSON.parse(raw)?.token || null;
   } catch { /* storage ถูกบล็อก (iPad private/kiosk/Block-All-Cookies) → ไป fallback */ }
+  // ★ cookie (คีย์ "mls_session" — ตรงกับ auth.js) : iPad/Safari ที่บล็อก localStorage/sessionStorage
+  //   ต้องอ่านชั้นนี้ด้วย ไม่งั้น getSession เห็น user (จาก cookie) แต่ authToken หา token ไม่เจอ → ยืนยันตัวตนพัง เด้งออก
+  try {
+    const m = (typeof document !== "undefined" ? (document.cookie || "") : "").match(/(?:^|; )mls_session=([^;]*)/);
+    if (m) { const raw = decodeURIComponent(m[1]); if (raw) return JSON.parse(raw)?.token || null; }
+  } catch { /* ignore */ }
   try { return globalThis.__mlsSession?.token || null; } catch { return null; }
 }
 
