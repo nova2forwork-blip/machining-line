@@ -912,3 +912,36 @@ svg.asw-elev { width: 100%; height: 100%; display: block; }
   .asw-right { max-width: none; min-width: 0; }
   .asw-left { min-height: 180px; }
 }
+
+/* ═══ หน้าเลือกเบอร์แม่ (ก่อนเริ่มประกอบ) — สแกน + ค้นหา + ฟิลเตอร์ + รายการ ═══ */
+.stn-asm.stn-asm-pick { overflow: hidden; height: 100%; padding: 0; }
+.asw-pick { height: 100%; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; width: 100%; max-width: 780px; margin: 0 auto; min-height: 0; }
+.asw-pick-h { font-size: 18px; font-weight: 800; color: #eafff5; }
+.asw-pick-h span { font-size: 13px; color: #7fae97; font-weight: 500; }
+.asw-pick-srow { display: flex; gap: 10px; }
+.asw-pick-search { flex: 1; display: flex; align-items: center; gap: 10px; background: #0b1410; border: 1px solid #2a3a33; border-radius: 13px; padding: 0 14px; }
+.asw-pick-search .stn-ico { color: #5b6f66; flex-shrink: 0; }
+.asw-pick-search input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: #eaf2ee; font-size: 16px; font-family: 'IBM Plex Mono', monospace; padding: 13px 0; }
+.asw-pick-search input::placeholder { color: #5b6f66; }
+.asw-pick-scan { flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(180deg, #1a9f74, #0e8a5b); color: #fff; border: none; border-radius: 13px; padding: 0 20px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 0 #0a6b47; font-family: inherit; }
+.asw-pick-scan:active { transform: translateY(2px); box-shadow: 0 2px 0 #0a6b47; }
+.asw-pick-scan .stn-ico { color: #fff; }
+.asw-pick-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.asw-pick-chip { font-family: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 999px; border: 1px solid #2a3a33; background: #0f1c17; color: #9fb0a8; cursor: pointer; }
+.asw-pick-chip.on { background: #16b877; border-color: #16b877; color: #06251a; font-weight: 700; }
+.asw-pick-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 2px; }
+.asw-pick-msg { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #7fae97; font-size: 14px; padding: 44px 10px; text-align: center; line-height: 1.6; }
+.asw-pick-row { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; background: #0e1a15; border: 1px solid #22332c; border-radius: 14px; padding: 13px 15px; cursor: pointer; font-family: inherit; transition: border-color .1s, background .1s; }
+.asw-pick-row:hover { border-color: #2f6b52; } .asw-pick-row:active { background: #12251c; }
+.asw-pick-kind { flex-shrink: 0; font-size: 11px; font-weight: 800; letter-spacing: .03em; padding: 4px 11px; border-radius: 8px; }
+.asw-pick-kind.panel { background: rgba(22,184,119,.16); color: #7fe3b8; border: 1px solid #2f6b52; }
+.asw-pick-kind.sub { background: rgba(201,154,43,.16); color: #e6c35a; border: 1px solid #7a6224; }
+.asw-pick-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.asw-pick-pno { font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 800; color: #eafff5; line-height: 1.15; }
+.asw-pick-name { font-size: 12.5px; color: #93a49c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asw-pick-name .proj { color: #6fae90; font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+.asw-pick-pill { flex-shrink: 0; font-size: 11.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; font-family: 'IBM Plex Sans Thai', sans-serif; white-space: nowrap; }
+.asw-pick-pill.doing { background: rgba(217,164,65,.15); color: #f0c667; border: 1px solid #7a6224; }
+.asw-pick-pill.todo { background: rgba(120,140,190,.12); color: #9fb0c8; border: 1px solid #3a4358; }
+.asw-pick-go { flex-shrink: 0; color: #3a6b55; font-size: 22px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+@media (max-width: 560px) { .asw-pick-name { display: none } .asw-pick-h span { display: none } }
