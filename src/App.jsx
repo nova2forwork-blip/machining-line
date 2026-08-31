@@ -480,11 +480,6 @@ function Login({ onLogin }) {
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
           ลืมรหัสผ่าน? ติดต่อผู้ดูแลระบบ
         </div>
-        <div style={{ textAlign: "center", marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-          <a href="/station" style={{ fontSize: 13.5, fontWeight: 600, color: "var(--accent-dk)", textDecoration: "none" }}>
-            → ไปหน้าเครื่อง (สแกนงาน)
-          </a>
-        </div>
       </form>
     </div>
   );
