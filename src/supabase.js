@@ -205,6 +205,14 @@ export async function deleteCap(machineId, operationId) {
   const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
   if (error) { console.warn("deleteCap error", error); flagAuth(error); throw error; }
 }
+// ตั้ง "ขั้นตอนที่ทำได้" (ความสามารถ) ของเครื่อง/สถานี = แทนที่ทั้งชุด (admin) — ผ่าน RPC เฉพาะ
+// เลี่ยง authz_insert_many (generic) ที่ไม่รองรับตาราง machine_operations → เพิ่ม cap แรกไม่ได้ (forbidden)
+export async function setMachineOps(machineId, operationIds) {
+  const ids = Array.from(new Set((operationIds || []).filter(Boolean)));
+  const { data, error } = await supabase.rpc("authz_set_machine_ops", { p_token: authToken(), p_machine_id: machineId, p_operation_ids: ids });
+  if (error) { console.warn("authz_set_machine_ops error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
 
 // ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
 export async function clearScansRelease(releaseId, { preview = false } = {}) {
