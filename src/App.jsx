@@ -9,7 +9,7 @@ import {
   createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
-  listDeadLetter, resolveDeadLetter, setBom, getBom, createOperation, setOperationType,
+  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
 } from "./supabase.js";
@@ -1723,6 +1723,251 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// นำเข้า "ฟอร์มบั้ง (Packing List)" — ไฟล์เดียวหลายบั้ง → สร้าง package + BOM + manifest
+//   1 บั้ง = 1 package (kind=package + QR) · ยูนิตในบั้ง = BOM (จับคู่ part_no) · ฟอร์มเต็ม = pkg_manifest
+//   หน้าแพ็กที่สเตชันจะโชว์ manifest นี้ (ตำแหน่ง/ขนาด/น้ำหนัก) แล้วสแกนยูนิตเข้าเพื่อติดตามแพ็ก
+// ══════════════════════════════════════════════════════════════════════════
+function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
+  const [releaseOrder, setReleaseOrder] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [projectId, setProjectId] = useState(projects[0]?.id || "");
+  const [bunks, setBunks] = useState([]);      // [{ meta, units }]
+  const [openIdx, setOpenIdx] = useState(-1);  // การ์ดที่กางดูยูนิต
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [progress, setProgress] = useState("");
+  const fileRef = useRef(null);
+  const pasteRef = useRef(null);
+  const lastPasteRef = useRef(0);
+
+  function matchProject(projectName) {
+    if (!projectName) return;
+    const nm = String(projectName).toLowerCase();
+    const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm
+      || nm.includes((p.code || "").toLowerCase()) || (p.name || "").toLowerCase().includes(nm));
+    if (pj) setProjectId(pj.id);
+  }
+  function applyBunks(parsed, src) {
+    const list = (parsed?.bunks || []).filter((b) => b && b.units && b.units.length);
+    if (!list.length) { setErr("ไม่พบข้อมูลบั้งในไฟล์/ข้อความ — ตรวจว่ามีหัว 'BUNK NO.' + ตาราง Unit No/Weight"); return; }
+    setBunks(list);
+    setOpenIdx(-1);
+    matchProject(list[0]?.meta?.project);
+    setErr("");
+    mlsToast(`${src} ${list.length} บั้ง · ${list.reduce((s, b) => s + b.units.length, 0)} ยูนิต — ตรวจแล้วกดบันทึก`, "success");
+  }
+  async function onPickFile(e) {
+    const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
+    try {
+      const mod = await import("./excelImport.js");
+      applyBunks(await mod.parseBunkExcel(file), "อ่านไฟล์ได้");
+    } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
+  }
+  async function handlePastedText(text) {
+    if (!text || (!text.includes("\t") && !text.includes("\n"))) {
+      setErr("ยังไม่ใช่ตาราง — ก็อปจาก Excel ทั้งฟอร์มบั้ง (รวมหัว BUNK NO. + ตาราง Unit No) ก่อน"); return;
+    }
+    const now = Date.now(); if (now - lastPasteRef.current < 400) return; lastPasteRef.current = now;
+    setErr("");
+    try {
+      const mod = await import("./excelImport.js");
+      applyBunks(mod.parseBunkText(text), "วางข้อมูลได้");
+    } catch (e2) { setErr("อ่านข้อมูลที่วางไม่สำเร็จ: " + (e2?.message || e2)); }
+  }
+  function onPasteTextarea(e) {
+    const text = e.clipboardData?.getData("text") || "";
+    if (!text.includes("\t") && !text.includes("\n")) return;
+    e.preventDefault(); handlePastedText(text);
+  }
+  useEffect(() => {
+    try { pasteRef.current?.focus(); } catch { /* ignore */ }
+    const onDocPaste = (ev) => {
+      const text = ev.clipboardData?.getData("text") || "";
+      if (!text.includes("\t") && !text.includes("\n")) return;
+      ev.preventDefault(); handlePastedText(text);
+    };
+    document.addEventListener("paste", onDocPaste);
+    return () => document.removeEventListener("paste", onDocPaste);
+  }, []);
+
+  const removeBunk = (i) => setBunks((bs) => bs.filter((_, j) => j !== i));
+
+  // บันทึก 1 บั้ง: หา/สร้าง package (+QR) → kind=package → BOM (รวมตาม unit_no) → manifest
+  //   คืนรายชื่อยูนิตที่ "สร้างใหม่" (ยังไม่มีในระบบ = ยังไม่มี QR ให้สแกน) ไว้เตือน office
+  async function saveOneBunk(bunk, ro) {
+    const code = String(bunk.meta?.bunk_no || "").trim();
+    if (!code) throw new Error("บั้งนี้ไม่มีเลข BUNK NO.");
+    let parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+    if (!parentPm) {
+      await createReleaseBatch({
+        projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
+        rows: [{ code, qty: 1, unit_weight: Number(bunk.meta?.total_weight) || 0, length_mm: null, material: null,
+          remark: [bunk.meta?.project, bunk.meta?.elevation, bunk.meta?.level].filter(Boolean).join(" · ") || null, routing: [] }],
+      });
+      parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+    }
+    if (!parentPm?.id) throw new Error(`ไม่พบบั้ง ${code} หลังสร้าง`);
+    if (parentPm.kind !== "package") await updateRow("part_master", parentPm.id, { kind: "package" });
+
+    // รวมยูนิตตาม unit_no (sum qty) → BOM
+    const byNo = new Map();
+    for (const u of bunk.units) {
+      const key = String(u.unit_no || "").trim();
+      if (!key) continue;
+      byNo.set(key, (byNo.get(key) || 0) + (Number(u.qty) > 0 ? Number(u.qty) : 1));
+    }
+    const components = []; const createdUnits = [];
+    for (const [unitNo, qty] of byNo) {
+      let pm = (await listRows("part_master", { filters: { project_id: projectId, part_no: unitNo } }))[0];
+      if (!pm) {
+        const sample = bunk.units.find((u) => String(u.unit_no).trim() === unitNo) || {};
+        const created = await insertRow("part_master", {
+          project_id: projectId, part_no: unitNo, part_name: sample.description || unitNo,
+          material: null, unit_weight: Number(sample.weight) || 0, default_length_mm: null, routing: [], kind: "part",
+        });
+        pm = created && created.id ? created : (await listRows("part_master", { filters: { project_id: projectId, part_no: unitNo } }))[0];
+        createdUnits.push(unitNo);
+      }
+      if (!pm?.id) throw new Error(`สร้าง/หายูนิต ${unitNo} ไม่สำเร็จ`);
+      components.push({ child_pm_id: pm.id, qty });
+    }
+    if (components.length) await setBom(parentPm.id, components);
+    await setPkgManifest(parentPm.id, bunk.units, bunk.meta || {});
+    return { createdUnits };
+  }
+
+  async function doSave() {
+    const ro = normalizeReleaseOrder(releaseOrder);
+    if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-100'); return; }
+    if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
+    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    if (!bunks.length) { setErr("ยังไม่มีบั้ง — นำเข้าไฟล์ หรือวางฟอร์มบั้งก่อน"); return; }
+    const bad = bunks.find((b) => !String(b.meta?.bunk_no || "").trim());
+    if (bad) { setErr("มีบั้งที่ไม่มีเลข BUNK NO. — ตรวจไฟล์อีกครั้ง"); return; }
+
+    setBusy(true); setErr(""); let done = 0; const allCreated = new Set();
+    try {
+      for (const b of bunks) {
+        setProgress(`กำลังบันทึกบั้ง ${b.meta.bunk_no} (${done + 1}/${bunks.length})...`);
+        const { createdUnits } = await saveOneBunk(b, ro);
+        (createdUnits || []).forEach((u) => allCreated.add(u));
+        done++;
+      }
+    } catch (e2) {
+      setBunks((bs) => bs.slice(done));   // เหลือเฉพาะบั้งที่ยังไม่บันทึก กันบันทึกซ้ำ
+      setErr(`บันทึกไม่สำเร็จที่บั้ง "${bunks[done]?.meta?.bunk_no || "-"}": ${e2?.message || e2}`
+        + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} บั้ง (เอาออกให้แล้ว)` : ""));
+      setBusy(false); setProgress("");
+      return;
+    }
+    setBusy(false); setProgress("");
+    onSaved({ releaseOrder: ro, bunks: done, createdUnits: Array.from(allCreated) });
+  }
+
+  const totalUnits = bunks.reduce((s, b) => s + b.units.length, 0);
+  const fmt2 = (n) => (n == null || isNaN(Number(n)) ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }));
+
+  return (
+    <Modal title="นำเข้าฟอร์มบั้ง (Packing List)" wide
+      sub="1 บั้ง = 1 แพ็ก (package + QR) · ยูนิตในบั้งจะตั้งเป็น BOM ให้อัตโนมัติ · ฟอร์มเต็ม (ตำแหน่ง/ขนาด/น้ำหนัก) เก็บไว้โชว์ที่หน้าแพ็ก — ไฟล์เดียวหลายบั้งได้"
+      onClose={onClose} closeOnBackdrop={false} locked={busy}>
+      <div className="modal-lock-hint"><Icon name="lock" size={12} /> หน้าต่างนี้ล็อกไว้ — กด "ยกเลิก" หรือ ✕ เพื่อออก</div>
+
+      <div className="release-header-fields" style={{ marginBottom: 12 }}>
+        <Field label="เลขที่ Release Order *">
+          <Input value={releaseOrder} placeholder="เช่น P-100"
+            onChange={(e) => setReleaseOrder(e.target.value)}
+            onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} />
+        </Field>
+        <Field label="วันที่ *"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field label="โปรเจค *">
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+            options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+        </Field>
+        <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
+          onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={onPickFile} />
+        <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
+          <Icon name="folder" size={14} /> นำเข้าจากไฟล์ Excel
+        </Btn>
+        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>หรือก็อปฟอร์มบั้งจาก Excel แล้ว <b>กด Ctrl+V</b> (ช่องด้านล่างพร้อมวางแล้ว)</span>
+      </div>
+      <textarea ref={pasteRef} onPaste={onPasteTextarea} rows={2} disabled={busy}
+        placeholder="⬇ วางฟอร์มบั้งที่นี่ด้วย Ctrl+V — ก็อปจาก Excel รวมหัว BUNK NO. + ตาราง Unit No/Position/Weight · หลายบั้งในครั้งเดียวได้"
+        style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: "11px 12px", borderRadius: 8, marginBottom: 10,
+          border: "2px dashed #2b8cff", background: "var(--surface-2, #f4f8f6)", fontSize: 13, fontFamily: "inherit", color: "var(--muted)" }} />
+
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
+      {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
+
+      {bunks.length > 0 ? (
+        <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10 }}>
+          พร้อมบันทึก <b>{fmtNum(bunks.length)}</b> บั้ง · รวม <b>{fmtNum(totalUnits)}</b> ยูนิต — แตะการ์ดเพื่อดูรายละเอียด
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12, padding: "18px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>
+          ยังไม่มีบั้ง — นำเข้าไฟล์ Excel หรือวางฟอร์มบั้งด้านบน
+        </div>
+      )}
+
+      <div style={{ maxHeight: "46vh", overflow: "auto", paddingRight: 4 }}>
+        {bunks.map((b, i) => {
+          const m = b.meta || {};
+          const meta = [m.project, m.elevation, m.level].filter(Boolean).join(" · ");
+          const open = openIdx === i;
+          return (
+            <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 10, marginBottom: 10, background: "var(--surface-2, #f6f8f7)", overflow: "hidden" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "11px 13px", cursor: "pointer" }} onClick={() => setOpenIdx(open ? -1 : i)}>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 15, color: "var(--ink, #123)" }}>{m.bunk_no || "(ไม่มีเลขบั้ง)"}</span>
+                {meta ? <span style={{ fontSize: 12, color: "var(--muted)" }}>{meta}</span> : null}
+                <span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                  {b.units.length} ยูนิต · {fmt2(m.total_weight)} Lbs
+                </span>
+                <span onClick={(e) => { e.stopPropagation(); removeBunk(i); }} title="เอาบั้งนี้ออก" style={{ cursor: "pointer", color: "var(--danger-hi)", padding: "0 4px" }}>✕</span>
+                <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+              </div>
+              {open && (
+                <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                  <table className="data-table" style={{ fontSize: 12, width: "100%", minWidth: 640 }}>
+                    <thead><tr>
+                      <th style={{ width: 34 }}>#</th><th style={{ width: 96 }}>ยูนิต</th><th style={{ width: 60 }}>ตำแหน่ง</th>
+                      <th>รายละเอียด</th><th style={{ width: 110 }}>ขนาด (มม.)</th><th style={{ width: 64 }}>จำนวน</th><th style={{ width: 88 }}>น้ำหนัก</th>
+                    </tr></thead>
+                    <tbody>
+                      {b.units.map((u, j) => (
+                        <tr key={j}>
+                          <td style={{ fontFamily: "var(--font-mono)", color: "var(--muted)" }}>{u.no || j + 1}</td>
+                          <td style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{u.unit_no}</td>
+                          <td style={{ fontFamily: "var(--font-mono)", textAlign: "center" }}>{u.position || "—"}</td>
+                          <td style={{ color: "var(--muted)" }}>{u.description || ""}{u.address_seq ? ` · ${u.address_seq}` : ""}</td>
+                          <td style={{ fontFamily: "var(--font-mono)", textAlign: "right" }}>{u.width != null && u.height != null ? `${fmt2(u.width)} × ${fmt2(u.height)}` : "—"}</td>
+                          <td style={{ fontFamily: "var(--font-mono)", textAlign: "center" }}>{u.qty || 1}</td>
+                          <td style={{ fontFamily: "var(--font-mono)", textAlign: "right" }}>{u.weight != null ? `${fmt2(u.weight)}` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="modal-actions" style={{ marginTop: 14 }}>
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn type="button" variant="accent" onClick={doSave} disabled={busy || !bunks.length}>
+          {busy ? "กำลังบันทึก..." : `บันทึก ${bunks.length ? fmtNum(bunks.length) + " บั้ง" : ""} + ปล่อยงาน`}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
 // จัดกลุ่ม release หลายแถวที่มาจากไฟล์ Excel เดียวกัน (release_order เดียวกัน) ให้เป็น
 // "การปล่อยงาน 1 ครั้ง" 1 แถวในตารางสรุป — ส่วน release เดี่ยวที่ไม่มี release_order
 // (ปล่อยทีละ Part ตามปกติ) ก็ยังคงแยกเป็นคนละแถวเหมือนเดิม
@@ -2269,6 +2514,7 @@ function ReleasePage({ user, goTo }) {
   const [showImport, setShowImport] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showSubAsm, setShowSubAsm] = useState(false);
+  const [showBunk, setShowBunk] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
@@ -2333,6 +2579,9 @@ function ReleasePage({ user, goTo }) {
           </Btn>
           <Btn variant="accent" className="release-import-btn" onClick={() => setShowSubAsm(true)}>
             <Icon name="box" size={15} />เบอร์ประกอบ / แผง
+          </Btn>
+          <Btn variant="accent" className="release-import-btn" onClick={() => setShowBunk(true)}>
+            <Icon name="weight" size={15} />นำเข้าฟอร์มบั้ง (แพ็ก)
           </Btn>
         </div>
       </div>
@@ -2474,6 +2723,25 @@ function ReleasePage({ user, goTo }) {
             setShowSubAsm(false);
             await load();
             mlsToast(`บันทึก ${releaseOrder} สำเร็จ — ${groups} เบอร์ (ตั้ง BOM/ปล่อยงานแล้ว)`, "success");
+          }}
+        />
+      )}
+
+      {showBunk && (
+        <BunkImportModal
+          user={user}
+          projects={projects}
+          onClose={() => setShowBunk(false)}
+          onNeedProject={() => setShowNewProject(true)}
+          onSaved={async ({ releaseOrder, bunks, createdUnits }) => {
+            setShowBunk(false);
+            await load();
+            const warn = createdUnits && createdUnits.length;
+            mlsToast(
+              `นำเข้าบั้งสำเร็จ: ${bunks} บั้ง (${releaseOrder})` +
+              (warn ? ` · ⚠ สร้างยูนิตใหม่ ${createdUnits.length} รายการที่ยังไม่มีในระบบ (ยังไม่มี QR ให้สแกน) — ${createdUnits.slice(0, 8).join(", ")}${createdUnits.length > 8 ? "…" : ""} · ปล่อยงานยูนิตเหล่านี้ก่อนถึงจะสแกนแพ็กได้` : ""),
+              warn ? "warn" : "success"
+            );
           }}
         />
       )}
