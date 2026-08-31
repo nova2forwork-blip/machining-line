@@ -435,6 +435,17 @@ function RoutingRail({ routing, doneOps }) {
 // ══════════════════════════════════════════════════════════════════════════
 // LOGIN
 // ══════════════════════════════════════════════════════════════════════════
+// อนิเมชันโหลดตอนล็อกอิน/เปลี่ยนหน้า (แบบ 3 — จุดเต้น + แถบกวาด) เต็มจอ
+function LoginSplash({ text = "กำลังเข้าสู่ระบบ…" }) {
+  return (
+    <div className="mls-splash">
+      <div className="mls-splash-brand"><span className="m"><Icon name="bolt" size={18} /></span> MACHINING LINE</div>
+      <div className="mls-load3"><div className="mls-load3-dots"><i /><i /><i /></div><div className="mls-load3-bar" /></div>
+      <div className="mls-splash-text">{text}</div>
+    </div>
+  );
+}
+
 function Login({ onLogin }) {
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -475,7 +486,7 @@ function Login({ onLogin }) {
         </Field>
         {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
         <Btn variant="accent" size="lg" className="btn-block" disabled={busy}>
-          {busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+          {busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}
         </Btn>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
           ลืมรหัสผ่าน? ติดต่อผู้ดูแลระบบ
@@ -6390,6 +6401,6 @@ export default function App() {
 
   const content = !user
     ? <Login onLogin={setUser} />
-    : goStation ? null : <Shell user={user} onLogout={logout} />;
+    : goStation ? <LoginSplash text="กำลังเปิดหน้างาน…" /> : <Shell user={user} onLogout={logout} />;
   return <ErrorBoundary><UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint /></ErrorBoundary>;
 }
