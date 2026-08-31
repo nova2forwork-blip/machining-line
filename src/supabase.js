@@ -690,6 +690,33 @@ export async function getPartMeta(ids) {
   return m;
 }
 
+// รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
+// assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจกต์ที่ปิด · อ่านตรง (anon SELECT)
+export async function listAssemblyParents(dept) {
+  const kinds = dept === "packing" ? ["package"] : ["panel", "subassembly"];
+  const { data, error } = await supabase
+    .from("part_units")
+    .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, projects(code, name, status))")
+    .in("part_master.kind", kinds)
+    .neq("status", "finished")
+    .limit(600);
+  if (error) { console.warn("listAssemblyParents error", error); return []; }
+  const rows = (data || []).map((u) => ({
+    id: u.id,
+    qr_code: u.qr_code,
+    status: u.status,
+    part_no: u.part_master?.part_no || u.qr_code,
+    part_name: u.part_master?.part_name || "",
+    kind: u.part_master?.kind || "part",
+    project_code: u.part_master?.projects?.code || "",
+    project_status: u.part_master?.projects?.status || "",
+  })).filter((r) => r.project_status !== "closed");
+  // กำลังทำ (in_progress) ขึ้นก่อน แล้วเรียงตามเบอร์
+  const doing = (s) => /progress/i.test(s || "");
+  rows.sort((a, b) => (doing(b.status) - doing(a.status)) || String(a.part_no).localeCompare(String(b.part_no)));
+  return rows;
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 export async function uploadPackingPhoto(blob, keyHint = "pack") {
