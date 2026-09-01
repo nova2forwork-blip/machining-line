@@ -798,18 +798,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
-      // แพ็ก: อัปรูปขึ้น Storage ก่อน (ถ้าถ่ายไว้) — พังตรงนี้ = หยุด ให้ลองใหม่ (ยังไม่บันทึก)
-      // ★ offline = ข้ามอัปรูป (Storage ต้องออนไลน์) → บันทึกยอดแพ็กเข้าคิวได้ รูปค่อยถ่ายซ้ำตอนออนไลน์
-      let photoPaths = [];
-      const offlineNow = typeof navigator !== "undefined" && navigator.onLine === false;
-      if (isPack && packPhotos.length > 0 && !offlineNow) {
-        try {
-          for (const p of packPhotos) photoPaths.push(await uploadPackingPhoto(p.blob, asmParent.unit.qr_code));
-        } catch (e) {
-          errorBeep(); flash(t("อัปรูปไม่สำเร็จ — ตรวจเน็ต/สิทธิ์ Storage แล้วลองใหม่", "photo upload failed — check network/storage"), "warn");
-          setBusy(false); savingRef.current = false; return;
-        }
-      }
+      // แพ็ก: อัปรูปทำ "หลัง" บันทึกสำเร็จ (ในสาขา res.ok) — เดิมอัปก่อน record ถ้า record ตกไปเข้าคิว (network-err) รูปจะค้าง Storage ไม่ถูกผูก
       const res = await recordAssembly({
         parentQr: asmParent.unit.qr_code,
         childQrs: asmChildren.map((c) => c.qr),
@@ -840,7 +829,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         }
         reload();
       } else if (res && res.ok) {
-        if (photoPaths.length) { try { await recordPackingPhotos(asmParent.unit.qr_code, photoPaths); } catch { /* ผูกไม่ได้แต่ไฟล์อยู่ Storage */ } }
+        // อัปรูปแพ็กหลังบันทึกสำเร็จ (ออนไลน์แน่แล้ว) · อัป/ผูกไม่สำเร็จ = ไม่ล้มงาน (รูปไม่บังคับ · record บันทึกไปแล้ว)
+        if (isPack && packPhotos.length > 0) {
+          try {
+            const photoPaths = [];
+            for (const p of packPhotos) photoPaths.push(await uploadPackingPhoto(p.blob, asmParent.unit.qr_code));
+            if (photoPaths.length) await recordPackingPhotos(asmParent.unit.qr_code, photoPaths);
+          } catch { flash(t("บันทึกแพ็กแล้ว แต่แนบรูปไม่สำเร็จ (รูปไม่บังคับ)", "packed OK · photo attach failed (optional)"), "warn"); }
+        }
         tickBeep();
         if (res.complete) {
           flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t("✓ ประกอบครบแล้ว — ปิดงาน", "✓ Assembled & complete"), "ok");
