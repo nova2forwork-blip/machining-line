@@ -368,9 +368,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ทำเงียบๆ เบื้องหลัง + รีเฟรชทุกครั้งที่เน็ตกลับมา
   useEffect(() => {
     const isAsmDept = dept === "assembly" || dept === "packing";
+    const isOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
+    // ★ อุ่น chunk ตัวถอด QR (jsQR) ตอนออนไลน์ → service worker แคชไว้ → สแกนกล้อง "ออฟไลน์" ได้
+    //   (เดิม import("jsqr") ตอนเปิดกล้องครั้งแรก ถ้าครั้งแรกดันเป็นตอนออฟไลน์ = chunk ไม่ถูกแคช สแกนกล้องไม่ทำงาน)
+    const warmScanner = () => { if (isOnline()) import("jsqr").catch(() => {}); };
+    warmScanner();
     prefetchUnitsForOffline().catch(() => {});
     if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});   // แคชสถานะเบอร์แม่ที่กำลังทำ → เปิด offline ได้
     const onOnline = () => {
+      warmScanner();
       prefetchUnitsForOffline().catch(() => {});
       if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});
     };
@@ -1993,6 +1999,8 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
   const whatText = (it) => {
     const mw = it.machineWork;
     if (mw) return `${mw.p_qr || "-"}${mw.p_quantity ? ` × ${mw.p_quantity}` : ""}`;
+    // ★ งานประกอบ/แพ็ก (it.assembly) — เดิมตกไป it.qr = "-" (ไม่รู้ว่าเบอร์ไหนพัง) → โชว์เบอร์แม่ + จำนวนลูก
+    if (it.assembly) { const a = it.assembly; const n = (a.p_child_qrs || []).length; return `${a.p_parent_qr || "-"} · ${n} ${t("ชิ้น", "pcs")}`; }
     return it.qr || "-";
   };
   const whenText = (it) => {
