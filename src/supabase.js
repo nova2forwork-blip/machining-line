@@ -467,7 +467,7 @@ export async function getAllUnitsFull(statusFilter) {
 export async function deleteProjectCascade(projectId) {
   // cascade (scan_logs → part_units → releases → part_master → projects) ใน RPC เดียว
   const { error } = await supabase.rpc("authz_delete_project", { p_token: authToken(), p_project_id: projectId });
-  if (error) { console.warn("deleteProjectCascade error", error); throw error; }
+  if (error) { console.warn("deleteProjectCascade error", error); flagAuth(error); throw error; }
 }
 
 // ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
@@ -553,7 +553,7 @@ export async function getEmployees() {
 // (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
 export async function recordScan({ unitId }) {
   const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
-  if (error) { console.warn("record_scan error", error); return { ok: false, reason: "error", message: error.message }; }
+  if (error) { console.warn("record_scan error", error); flagAuth(error); return { ok: false, reason: "error", message: error.message }; }
   return data || { ok: false, reason: "error" };
 }
 
@@ -843,6 +843,7 @@ export async function recordScanByQr(qr, { allowQueue = true } = {}) {
       return { ok: true, queued: true };
     }
     console.warn("record_scan_by_qr error", error);
+    flagAuth(error);   // token หมดอายุ → เด้ง login (network-err ไปเข้าคิวข้างบนแล้ว)
     return { ok: false, reason: "error", message: error.message };
   }
   return data || { ok: false, reason: "error" };
