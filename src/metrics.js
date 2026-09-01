@@ -183,6 +183,7 @@ function bangkokDay(iso) {
   if (!iso) return "-";
   // แปลงเป็นเวลาไทยแล้วตัดเป็น YYYY-MM-DD (ไม่พึ่ง locale ของเครื่องผู้ใช้)
   const d = new Date(iso);
+  if (!isFinite(d.getTime())) return "-";   // ★ กันวันที่พัง (NaN → toISOString throw → ทั้งรายงานล่ม)
   const t = new Date(d.getTime() + 7 * 3600 * 1000);
   return t.toISOString().slice(0, 10);
 }
