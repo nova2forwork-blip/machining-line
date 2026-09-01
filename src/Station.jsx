@@ -632,6 +632,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         okBeep();
         flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
         resetAll(true);        // เก็บความยาววัสดุไว้ (มักเท่าเดิมทั้งชุด)
+        reload();              // ★ อัปเดตยอด "วันนี้" + ตารางจากคิวออฟไลน์ (offlineMachineDay รวมงานค้าง) — กันคนงานเห็นยอดนิ่งแล้วสแกนซ้ำ
         return;
       }
       // update table + daily from server response
@@ -847,10 +848,25 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         } else {
           const added = res.added ?? asmChildren.length;
           flash(t(`✓ บันทึกแล้ว ${added} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
-          // รีเฟรชยอดสะสมจากเซิร์ฟเวอร์ → เห็น "ที่ติดแล้ว" อัปเดต · เคลียร์รายการรอบนี้ · รอบใหม่ใช้ client_id ใหม่
+          // อัปเดต "ที่ติดแล้ว" แบบ optimistic ก่อน แล้ว reconcile กับเซิร์ฟเวอร์ · เก็บ length_mm/kind ที่เติมตอนสแกนไว้ (get_assembly_state ไม่คืนมา → กันคอลัมน์ขนาด/ยาวหาย)
+          const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id }));
           let st = null;
           try { st = await getAssemblyState(asmParent.unit.qr_code); } catch { st = null; }
-          if (st && st.ok) setAsmParent((p) => (p ? { ...p, bom: st.bom || p.bom, installed: st.installed || [] } : p));
+          setAsmParent((p) => {
+            if (!p) return p;
+            if (st && st.ok) {
+              const meta = {};
+              (p.bom || []).forEach((b) => { if (b.child_pm_id != null) meta[b.child_pm_id] = { length_mm: b.length_mm, kind: b.kind }; });
+              const bom = (st.bom || p.bom).map((b) => ({
+                ...b,
+                length_mm: b.length_mm ?? meta[b.child_pm_id]?.length_mm ?? null,
+                kind: b.kind || meta[b.child_pm_id]?.kind || "part",
+              }));
+              return { ...p, bom, installed: st.installed || [] };
+            }
+            // รีเฟรชพลาด → ใช้ยอด optimistic (ชิ้นที่เพิ่งเซฟไม่หายจากจอ · เซิร์ฟเวอร์ยังเป็นตัวจริงตอน reload/สแกนรอบหน้า)
+            return { ...p, installed: [...(p.installed || []), ...addNow] };
+          });
           setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         }
         reload();
