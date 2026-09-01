@@ -25,7 +25,9 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 function authToken() {
   try {
     const raw = localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session");
-    if (raw) return JSON.parse(raw)?.token || null;
+    // ★ คืนเฉพาะเมื่อ "เจอ token จริง" — ถ้า blob ใน storage ไม่มี token ให้ตกไป cookie/in-memory
+    //   (เดิม return ...||null ทันที → getSession เห็น user จาก cookie แต่ authToken คืน null = เด้งออก)
+    if (raw) { const tk = JSON.parse(raw)?.token; if (tk) return tk; }
   } catch { /* storage ถูกบล็อก (iPad private/kiosk/Block-All-Cookies) → ไป fallback */ }
   // ★ cookie (คีย์ "mls_session" — ตรงกับ auth.js) : iPad/Safari ที่บล็อก localStorage/sessionStorage
   //   ต้องอ่านชั้นนี้ด้วย ไม่งั้น getSession เห็น user (จาก cookie) แต่ authToken หา token ไม่เจอ → ยืนยันตัวตนพัง เด้งออก
