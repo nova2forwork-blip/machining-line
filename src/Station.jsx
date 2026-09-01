@@ -1264,219 +1264,123 @@ function asmRole(name) {
   return "accessory";
 }
 
-// ── หน้าประกอบ (โหมดเต็ม): ตารางชิ้นงาน (ซ้าย) + ผังแผง/ผังกล่องอัตโนมัติ (ขวา) ──
-//    แตะชิ้น → ผังไฮไลต์ตำแหน่งที่ต้องติด · ยังสแกนบันทึกได้เหมือนเดิม
-function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, childWord, confirmVerb }) {
-  // หน้าประกอบ (สเตชัน) = "สแกนอย่างเดียว" — ไม่โชว์รายการ/ผัง/เบอร์พาร์ทที่ต้องใช้
-  //   คนงานเห็นแค่ "เบอร์แม่ที่กำลังทำ" + ชิ้นที่ตัวเองสแกนรอบนี้ (เบอร์ + QR) · เทียบว่าถูก/ครบ ไปดูที่หลังบ้าน (office)
-  const parentNo = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
-  const parentName = asmParent.unit.part_master?.part_name || "";
-  const pkind = asmParent.parentKind;
-  const kindTh = pkind === "panel" ? "แผง" : pkind === "subassembly" ? "ซับประกอบ" : "";
-  const scannedN = asmChildren.length;
-
-  return (
-    <div className="asw asw-scan">
-      <div className="asw-head">
-        <div className="asw-hgrow">
-          <div className="asw-hlabel">{t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
-          <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
-        </div>
-        <div className="asw-scount"><b>{scannedN}</b><span>{t("สแกนรอบนี้", "scanned")}</span></div>
-        <button className="asw-change" onClick={asmReset}>{t("เปลี่ยนเบอร์", "Change")}</button>
-      </div>
-
-      <div className="asw-scanwrap">
-        <div className="asw-scanhead">
-          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
-          <AsmManualInput onSubmit={asmScan} placeholder={t(`หรือพิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
-        </div>
-
-        <div className="asw-stitle">{t("ชิ้นที่สแกนรอบนี้", "Scanned this round")} <span className="hint">· {scannedN} {t("ชิ้น · แตะแถวเพื่อเอาออก", "items · tap to remove")}</span></div>
-        <div className="asw-scanlist">
-          {asmChildren.length === 0 ? (
-            <div className="asw-scanempty">
-              <Icon name="scan" size={30} className="stn-ico" />
-              <div className="t1">{t("ยังไม่ได้สแกน", "Nothing scanned yet")}</div>
-              <span>{t("กดปุ่มสแกน แล้วสแกนชิ้นที่ประกอบเข้าเบอร์นี้", "press scan, then scan the parts you assembled")}</span>
-            </div>
-          ) : (
-            asmChildren.map((c, i) => (
-              <div key={c.unit_id} className="asw-scanrow" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>
-                <span className="n">{i + 1}</span>
-                <span className="pn">{c.part_no}</span>
-                <span className="qr">{c.qr}</span>
-                <span className="x">✕</span>
-              </div>
-            ))
-          )}
-        </div>
-
-        <button className={"asw-confirm asw-scanconfirm" + (asmComplete ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
-          {busy ? "..." : asmChildren.length === 0
-            ? t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`)
-            : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`)}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── หน้าแพ็ก (บั้ง/packing manifest — ธีมน้ำเงิน) ──────────────────────────────
-//   โชว์ "ฟอร์มบั้ง" เต็ม (ยูนิต/ตำแหน่ง/ขนาด/น้ำหนัก จาก part_master.pkg_manifest)
-//   ติดตาม "แพ็กแล้ว" จาก BOM เดิม (จับคู่ manifest.unit_no = bom.part_no) · สแกน/บันทึกเหมือนเดิม
-//   ถ้ายังไม่ได้ import ฟอร์มบั้ง → fallback แสดงรายการจาก BOM (ยังใช้งานได้)
-function PackWorksheet({ asmParent, asmChildren, prevFor, sessFor, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, childWord, confirmVerb, openPhoto, packPhotos = [], photoRemove }) {
-  const [sel, setSel] = useState(null);
-  useEffect(() => { setSel(null); }, [asmParent?.unit?.id]);
-
+// ── หน้าประกอบ/แพ็ก (สเตชัน) = ตารางรายการชิ้นงาน (เช็กลิสต์) + สแกนติ๊กความคืบหน้า ───────────────
+//    คอลัมน์: # · เบอร์ชิ้น/ยูนิต · รายละเอียด · ขนาด/ยาว(ประกอบ)|น้ำหนัก(แพ็ก) · จำนวน · ประกอบแล้ว/แพ็กแล้ว (X/Y)
+//    ✓ = ครบ · ◐ = บางส่วน · ○ = ยังไม่ทำ (นับสะสม: ที่ติดไปแล้ว + ที่สแกนรอบนี้) · สแกนลูก = ติ๊กเพิ่มอัตโนมัติ
+//    ใช้คอมโพเนนต์เดียวทั้งประกอบ (ธีมเขียว) และแพ็ก (isPack → ธีมน้ำเงินจาก .dept-packing + ปุ่มถ่ายรูป)
+function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, childWord, confirmVerb, isPack = false, openPhoto, packPhotos = [], photoRemove }) {
   const pm = asmParent.unit.part_master || {};
-  const manifest = Array.isArray(pm.pkg_manifest) ? pm.pkg_manifest : [];
   const meta = pm.pkg_meta || {};
-  const useManifest = manifest.length > 0;
+  // เบอร์ที่กำลังทำ — แพ็ก: เลขบั้ง (bunk_no) ถ้ามี · ประกอบ: เบอร์พาร์ทแม่
+  const parentNo = isPack ? (meta.bunk_no || pm.part_no || asmParent.unit.qr_code) : (pm.part_no || asmParent.unit.qr_code);
+  const parentName = isPack
+    ? [meta.project, meta.elevation, meta.level ? (String(meta.level).match(/level/i) ? meta.level : `LEVEL ${meta.level}`) : ""].filter(Boolean).join(" · ")
+    : (pm.part_name || "");
+  const pkind = asmParent.parentKind;
+  const kindTh = isPack ? "" : (pkind === "panel" ? "แผง" : pkind === "subassembly" ? "ซับประกอบ" : "");
+  const fmtNum = (n, d) => Number(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d });
 
-  // รวม "แพ็กแล้ว" ต่อ unit_no จาก BOM (ติดจากรอบก่อน + สแกนรอบนี้)
-  const bomByNo = {};
-  (asmParent.bom || []).forEach((b) => {
-    const key = String(b.part_no || "").toUpperCase();
-    if (!bomByNo[key]) bomByNo[key] = { child_pm_id: b.child_pm_id, qty: 0, have: 0 };
-    bomByNo[key].qty += b.qty;
-    bomByNo[key].have += prevFor(b.child_pm_id) + sessFor(b.child_pm_id);
+  // น้ำหนักต่อยูนิต (หน้าแพ็ก) — จับจากฟอร์มบั้ง (pkg_manifest.unit_no = เบอร์พาร์ท)
+  const wtByNo = {};
+  if (isPack) (Array.isArray(pm.pkg_manifest) ? pm.pkg_manifest : []).forEach((u) => {
+    const k = String(u.unit_no || "").toUpperCase();
+    if (k && u.weight != null && u.weight !== "" && !isNaN(Number(u.weight))) wtByNo[k] = Number(u.weight);
   });
 
-  const num = (x) => (x == null || x === "" || isNaN(Number(x)) ? null : Number(x));
-  const fmt = (n, d = 2) => (n == null ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d }));
+  // นับสะสม: ที่ติดไปแล้ว (installed จากรอบก่อน/สเตชันก่อน) + ที่สแกนรอบนี้ → ต่อ child_pm_id
+  const prevFor = (pmId) => (asmParent.installed || []).filter((x) => x.child_pm_id === pmId).length;
+  const sessFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;
 
-  // แถวตาราง: ใช้ manifest ถ้ามี · ไม่งั้นกาง BOM เป็นแถวต่อชิ้น
-  let rows;
-  if (useManifest) {
-    const consumed = {};
-    rows = manifest.map((u, i) => {
-      const key = String(u.unit_no || "").toUpperCase();
-      const b = bomByNo[key];
-      const seen = consumed[key] || 0; consumed[key] = seen + 1;
-      return {
-        idx: u.no != null ? u.no : (i + 1),
-        unit_no: u.unit_no || "", position: u.position || "", address_seq: u.address_seq || "",
-        description: u.description || "", width: u.width, height: u.height, sqm: u.sqm, qty: u.qty, weight: u.weight,
-        done: b ? seen < b.have : false, tracked: !!b,
-      };
-    });
-  } else {
-    rows = [];
-    (asmParent.bom || []).forEach((b) => {
-      const have = prevFor(b.child_pm_id) + sessFor(b.child_pm_id);
-      for (let k = 0; k < (b.qty || 1); k++) {
-        rows.push({ idx: rows.length + 1, unit_no: b.part_no, position: "", address_seq: "", description: b.part_name || "", width: null, height: null, sqm: null, qty: 1, weight: null, done: k < have, tracked: true });
-      }
-    });
-  }
+  const rows = (asmParent.bom || []).map((b, i) => {
+    const qty = b.qty || 1;
+    const have = Math.min(prevFor(b.child_pm_id) + sessFor(b.child_pm_id), qty);
+    const measure = isPack
+      ? (wtByNo[String(b.part_no || "").toUpperCase()] ?? null)
+      : (b.length_mm != null && !isNaN(Number(b.length_mm)) ? Number(b.length_mm) : null);
+    return { key: b.child_pm_id ?? ("r" + i), part_no: b.part_no, name: b.part_name || "", qty, have, measure };
+  });
+  const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
+  const doneUnits = rows.reduce((s, r) => s + r.have, 0);
 
-  const total = rows.length;
-  const doneN = rows.filter((r) => r.done).length;
-  const pct = total ? Math.round((doneN / total) * 100) : 0;
-
-  const sumW = rows.reduce((s, r) => s + (num(r.weight) || 0), 0);
-  const sumSqm = rows.reduce((s, r) => s + (num(r.sqm) || 0), 0);
-  const totalW = num(meta.total_weight) != null ? num(meta.total_weight) : (sumW > 0 ? sumW : null);
-  const totalSqm = num(meta.total_sqm) != null ? num(meta.total_sqm) : (sumSqm > 0 ? sumSqm : null);
-
-  const bunkNo = meta.bunk_no || pm.part_no || asmParent.unit.qr_code;
-  const headMeta = [meta.project, meta.elevation, meta.level ? (String(meta.level).match(/level/i) ? meta.level : `LEVEL ${meta.level}`) : ""].filter(Boolean).join(" · ");
+  const measHead = isPack ? t("น้ำหนัก", "Weight") : t("ขนาด/ยาว", "Size/Len");
+  const measUnit = isPack ? "Lbs" : "mm";
+  const measDigits = isPack ? 1 : 0;
 
   return (
-    <div className="pkw">
-      <div className="pkw-head">
-        <div className="pkw-hgrow">
-          <div className="pkw-hlabel">{t("บั้ง (Bunk)", "BUNK")}</div>
-          <div className="pkw-hno">{bunkNo}{headMeta ? <span className="pkw-hmetaname">{headMeta}</span> : null}</div>
-          <div className="pkw-hbar"><i style={{ width: pct + "%" }} /></div>
-          <div className="pkw-hmeta"><span>{t("แพ็กแล้ว", "packed")} {doneN}/{total} {t("ยูนิต", "units")}</span><span>{pct}%</span></div>
+    <div className="asw">
+      <div className="asw-head">
+        <div className="asw-hgrow">
+          <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
+          <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
         </div>
-        {totalW != null ? <div className="pkw-hweight"><b>{fmt(totalW)}</b><span>Lbs {t("รวม", "total")}</span></div> : null}
-        <div className="pkw-ring" style={{ "--p": pct }}><i>{pct}%</i></div>
-        <button className="pkw-change" onClick={asmReset}>{t("เปลี่ยนบั้ง", "Change")}</button>
+        <div className="asw-scount"><b>{doneUnits}/{totalUnits}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : t("ประกอบแล้ว", "assembled")}</span></div>
+        <button className="asw-change" onClick={asmReset}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
       </div>
 
-      <div className="pkw-split">
-        <div className="pkw-left">
-          <div className="pkw-stitle">{t("รายการยูนิตในบั้งนี้", "Units in this bunk")} <span className="hint">· {total} {t("ยูนิต · แตะแถวดูตำแหน่ง", "units · tap a row")}</span></div>
-          <div className="pkw-sheet">
-            <table className="pkw-tab">
-              <thead><tr>
-                <th className="c-n">#</th><th className="c-unit">{t("ยูนิต", "Unit No")}</th>
-                <th className="c-pos">{t("ตำแหน่ง", "Pos")}</th><th className="c-desc">{t("รายละเอียด", "Description")}</th>
-                <th className="c-size">{t("ขนาด (มม.)", "Size")}</th><th className="c-wt">{t("น้ำหนัก", "Weight")}</th><th className="c-st">{t("สถานะ", "Status")}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className={"pkw-r " + (r.done ? "done" : "") + (sel === i ? " hl" : "")} onClick={() => setSel(sel === i ? null : i)}>
-                    <td className="c-n"><span className="nb">{r.idx}</span></td>
-                    <td className="c-unit">{r.unit_no || "—"}</td>
-                    <td className="c-pos">{r.position ? <span className="pos">{r.position}</span> : <span className="pmuted">—</span>}</td>
-                    <td className="c-desc">{r.description}{r.address_seq ? <span className="addr"> · {r.address_seq}</span> : null}</td>
-                    <td className="c-size">{num(r.width) != null && num(r.height) != null ? <>{fmt(r.width, 0)} × {fmt(r.height, 0)}</> : "—"}</td>
-                    <td className="c-wt">{num(r.weight) != null ? <>{fmt(r.weight)}<span className="u"> Lbs</span></> : "—"}</td>
-                    <td className="c-st">{r.done ? <span className="pill ok">✓ {t("แพ็กแล้ว", "packed")}</span> : <span className="pill wait">{t("รอแพ็ก", "waiting")}</span>}</td>
-                  </tr>
-                ))}
-                {rows.length === 0 ? (
-                  <tr><td colSpan={7} className="pkw-empty">{t("ยังไม่มีรายการยูนิตในบั้งนี้ — import ฟอร์มบั้ง หรือกำหนด BOM ที่หน้า Part Master", "no units yet — import the bunk form or set the BOM")}</td></tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {rows.length} {t("รายการ", "items")}</span></div>
+      <div className="asw-sheet">
+        <table className="asw-tab">
+          <thead><tr>
+            <th className="c-n">#</th>
+            <th className="c-pn">{isPack ? t("ยูนิต", "Unit No") : t("เบอร์ชิ้น", "Part No")}</th>
+            <th>{t("รายละเอียด", "Description")}</th>
+            <th className="c-len">{measHead}</th>
+            <th className="c-qty">{t("จำนวน", "Qty")}</th>
+            <th className="c-prog">{isPack ? t("แพ็กแล้ว", "Packed") : t("ประกอบแล้ว", "Assembled")}</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const done = r.have >= r.qty;
+              const partial = r.have > 0 && r.have < r.qty;
+              return (
+                <tr key={r.key} className={"asw-r" + (done ? " done" : partial ? " partial" : "")}>
+                  <td className="c-n"><span className="nb">{i + 1}</span></td>
+                  <td className="c-pn">{r.part_no}</td>
+                  <td className="c-desc">{r.name || "—"}</td>
+                  <td className="c-len">{r.measure != null ? <>{fmtNum(r.measure, measDigits)}<span className="u"> {measUnit}</span></> : "—"}</td>
+                  <td className="c-qty">{r.qty}</td>
+                  <td className="c-prog"><span className="chk">{done ? "✓" : partial ? "◐" : "○"}</span>{r.have}/{r.qty}</td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 ? (
+              <tr><td colSpan={6} className="asw-tabempty">{isPack ? t("บั้งนี้ยังไม่ได้ตั้งรายการ — import ฟอร์มบั้ง หรือกำหนด BOM ที่หน้า Part Master", "no units yet — import the bunk form or set the BOM") : t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master")}</td></tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
 
-        <div className="pkw-right">
-          <div className="pkw-stitle">{t("สรุปบั้ง", "Bunk summary")}</div>
-          <div className="pkw-sum">
-            <div className="row"><span className="k">{t("ยูนิตทั้งหมด", "Total units")}</span><span className="v">{total}</span></div>
-            <div className="row"><span className="k">{t("แพ็กแล้ว", "Packed")}</span><span className="v">{doneN} / {total}</span></div>
-            <div className="row"><span className="k">{t("พื้นที่รวม", "Total area")}</span><span className="v">{fmt(totalSqm)} <span className="vu">Sqm</span></span></div>
-            <div className="row"><span className="k">{t("น้ำหนักรวม", "Total weight")}</span><span className="v big">{fmt(totalW)} <span className="vu">Lbs</span></span></div>
+      <div className="asw-actions">
+        {asmChildren.length > 0 && (
+          <div className="asw-scanned">
+            {asmChildren.map((c) => (
+              <span key={c.unit_id} className="asw-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>{c.part_no} · {c.qr} ✕</span>
+            ))}
           </div>
-          {rows.length > 0 ? (
-            <div className="pkw-bunk">
-              <div className="bt">{t("ตำแหน่งในบั้ง", "Bunk positions")} <span className="opt">· {t("แตะเพื่อไฮไลต์", "tap to highlight")}</span></div>
-              <div className="pkw-slots">
-                {rows.map((r, i) => (
-                  <div key={i} className={"pkw-slot" + (r.done ? " on" : "") + (sel === i ? " hl" : "")} onClick={() => setSel(sel === i ? null : i)} title={r.unit_no}>
-                    <b>{r.position || r.idx}</b><span>{r.done ? (r.unit_no || "✓") : t("รอ", "wait")}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div className="pkw-actions">
-            {asmChildren.length > 0 && (
-              <div className="pkw-scanned">
-                {asmChildren.map((c) => (
-                  <span key={c.unit_id} className="pkw-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>{c.part_no} · {c.qr} ✕</span>
-                ))}
-              </div>
-            )}
-            <div className="pkw-arow">
-              <button className="pkw-scan" onClick={asmOpenCam}><Icon name="camera" size={16} className="stn-ico" />{t(`สแกน${childWord}`, `Scan ${childWord}`)}</button>
-              <AsmManualInput onSubmit={asmScan} placeholder={t(`พิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
-            </div>
-            <button className="pkw-photobtn" onClick={openPhoto}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span></button>
-            {packPhotos.length > 0 && (
-              <div className="pkw-thumbs">
-                {packPhotos.map((p, i) => (
-                  <div key={i} className="pkw-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}><img src={p.url} alt="" /><span className="x">✕</span></div>
-                ))}
-              </div>
-            )}
-            <button className={"pkw-confirm" + (asmComplete ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
-              {busy ? "..." : asmChildren.length === 0
-                ? t(`สแกน${childWord}ที่ใส่รอบนี้ก่อน`, `scan the ${childWord}s you packed`)
-                : asmComplete
-                  ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
-                  : t(`บันทึกรอบนี้ (${asmChildren.length}) — ยังไม่ครบ`, `Save batch (${asmChildren.length}) — partial`)}
-            </button>
-          </div>
+        )}
+        <div className="asw-scanhead">
+          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{isPack ? t(`สแกน${childWord}`, `Scan ${childWord}`) : t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
+          <AsmManualInput onSubmit={asmScan} placeholder={t(`หรือพิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
         </div>
+        {isPack ? (
+          <div className="asw-photos">
+            <button className="asw-photobtn" onClick={openPhoto}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span></button>
+            {packPhotos.length > 0 && (
+              <div className="asw-thumbs">
+                {packPhotos.map((p, i) => (
+                  <div key={i} className="asw-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}><img src={p.url} alt="" /><span className="x">✕</span></div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+        <button className={"asw-confirm" + (asmChildren.length > 0 ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
+          {busy ? "..." : asmChildren.length === 0
+            ? (isPack ? t(`สแกน${childWord}ที่ใส่รอบนี้ก่อน`, `scan the ${childWord}s first`) : t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`))
+            : (asmComplete
+              ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
+              : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
+        </button>
       </div>
     </div>
   );
@@ -1613,23 +1517,15 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     if (isPack && photoOpen) {
       return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
     }
-    const prevFor = (pmId) => (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length; // ติดจากสเตชันก่อน
-    const sessFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;                  // สแกนรอบนี้
+    // ประกอบ + แพ็ก ใช้หน้า "สแกนอย่างเดียว" เดียวกัน (AsmWorksheet) — คนงานสแกนเหมือนหน้าตัด
+    //   ไม่โชว์ list/manifest ที่หน้างาน · ดูรายการ/เทียบครบไปที่หลังบ้าน (office → "ตรวจงานประกอบ")
     return (
       <div className={"stn-asm" + (asmParent ? " stn-asm-ws" : " stn-asm-pick")}>
         {!asmParent ? (
           <AsmParentPicker dept={asmType} isPack={isPack} onScan={asmOpenCam} onPick={asmScan} t={t} />
-        ) : isPack ? (
-          <PackWorksheet
-            asmParent={asmParent} asmChildren={asmChildren} prevFor={prevFor} sessFor={sessFor}
-            asmComplete={asmComplete} asmReset={asmReset} asmOpenCam={asmOpenCam} asmScan={asmScan}
-            asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} busy={busy} t={t}
-            childWord={childWord} confirmVerb={confirmVerb}
-            openPhoto={openPhoto} packPhotos={packPhotos} photoRemove={photoRemove}
-          />
         ) : (
           <AsmWorksheet
-            asmParent={asmParent} asmChildren={asmChildren} prevFor={prevFor} sessFor={sessFor}
+            asmParent={asmParent} asmChildren={asmChildren}
             asmComplete={asmComplete} asmReset={asmReset} asmOpenCam={asmOpenCam} asmScan={asmScan}
             asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} busy={busy} t={t}
             isPack={isPack} childWord={childWord} confirmVerb={confirmVerb}
