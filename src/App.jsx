@@ -6753,6 +6753,8 @@ function UpdateBanner() {
 // กู้อัตโนมัติจาก chunk ที่ค้างไม่ตรงเวอร์ชัน: ล้างแคช SW + ถอน SW แล้วโหลดใหม่
 function mlsHardReload() {
   const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+  // ★ ออฟไลน์: ห้ามล้างแคช/ถอน SW (จะเปิดแอปไม่ได้จนกว่าจะออนไลน์) — โหลดใหม่จาก shell ที่แคชไว้เฉยๆ
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { reload(); return; }
   try {
     const cc = (window.caches && caches.keys)
       ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
@@ -6774,7 +6776,8 @@ class ErrorBoundary extends Component {
     if (/#130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported/i.test(msg)) {
       let healed = false;
       try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
-      if (!healed) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } mlsHardReload(); }
+      // ★ ออฟไลน์: ไม่ auto-heal (โหลดใหม่ตอนออฟไลน์ไม่ช่วย + เสี่ยงวน) → โชว์การ์ด crash ให้เลือกเอง
+      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } mlsHardReload(); }
     }
   }
   render() {
