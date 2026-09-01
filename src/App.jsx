@@ -1512,16 +1512,21 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
   async function saveOneGroup(g, ro) {
     const parentCode = g.parentCode.trim();
     const pQty = parseInt(g.parentQty, 10) || 1;
-    // 1) release เบอร์แม่ → สร้าง part_master (ถ้ายังไม่มี) + release + QR
-    await createReleaseBatch({
-      projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
-      rows: [{ code: parentCode, qty: pQty, unit_weight: 0,
-        length_mm: g.parentLen === "" || g.parentLen == null ? null : Number(g.parentLen),
-        material: null, remark: null, routing: [] }],
-    });
-    // 2) หา part_master ของแม่ + ตั้ง kind=subassembly
+    // 1) release เบอร์แม่ → หา/สร้าง part_master (ถ้ายังไม่มี) + release + QR
+    //    ★ หาแม่ก่อนเสมอ (เหมือน saveOneBunk) — ถ้ามีแล้วข้าม createReleaseBatch
+    //    กัน retry หลังพลาดกลางกลุ่ม สร้าง release + QR ซ้ำ (createReleaseBatch ไม่ idempotent)
     let parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: parentCode } }))[0];
+    if (!parentPm) {
+      await createReleaseBatch({
+        projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
+        rows: [{ code: parentCode, qty: pQty, unit_weight: 0,
+          length_mm: g.parentLen === "" || g.parentLen == null ? null : Number(g.parentLen),
+          material: null, remark: null, routing: [] }],
+      });
+      parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: parentCode } }))[0];
+    }
     if (!parentPm) throw new Error(`ไม่พบเบอร์แม่ ${parentCode} หลังสร้าง`);
+    // 2) ตั้ง kind=subassembly (replace-style, idempotent)
     await updateRow("part_master", parentPm.id, { kind: g.parentKind || "subassembly" });
     // 3) upsert ลูก → id + ตั้ง BOM (ต่อชุด = รวม ÷ จำนวนแม่)
     const components = [];
@@ -1749,8 +1754,11 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
   function matchProject(projectName) {
     if (!projectName) return;
     const nm = String(projectName).toLowerCase();
-    const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm
-      || nm.includes((p.code || "").toLowerCase()) || (p.name || "").toLowerCase().includes(nm));
+    // ★ กัน code/name ว่าง: "..".includes("") = true เสมอ → เดิมเลือกโปรเจคที่ code ว่างมั่ว
+    const pj = projects.find((p) => {
+      const code = (p.code || "").toLowerCase(), name = (p.name || "").toLowerCase();
+      return (name && name === nm) || (code && code === nm) || (code && nm.includes(code)) || (name && name.includes(nm));
+    });
     if (pj) setProjectId(pj.id);
   }
   function applyBunks(parsed, src) {
@@ -2033,18 +2041,20 @@ function AssemblyVerifyPage() {
       });
       const rows = bom.map((b) => {
         const sc = byPm[b.child_pm_id] || [];
-        return { part_no: b.part_no, part_name: b.part_name, planned: b.qty, scanned: sc.length, units: sc,
-          status: sc.length >= b.qty ? "complete" : (sc.length > 0 ? "partial" : "missing") };
+        // เกิน (over) = สแกนมากกว่าแผน · ครบ = เท่ากับแผนเป๊ะ · ขาด = partial · ยังไม่สแกน = missing
+        const status = sc.length > b.qty ? "over" : sc.length === b.qty ? "complete" : sc.length > 0 ? "partial" : "missing";
+        return { part_no: b.part_no, part_name: b.part_name, planned: b.qty, scanned: sc.length, units: sc, status };
       });
       const bomSet = new Set(bom.map((b) => b.child_pm_id));
       const extra = [];
       Object.keys(byPm).forEach((pm) => { if (!bomSet.has(pm)) extra.push(...byPm[pm]); });
+      const hasOver = rows.some((r) => r.status === "over");
       const complete = rows.length > 0 && rows.every((r) => r.status === "complete");
       setResult({
         parentNo: meta?.part_no || st.parent?.part_no || qr,
         parentName: meta?.part_name || "",
         finished: st.parent?.status === "finished",
-        rows, extra, complete, ok: complete && extra.length === 0,
+        rows, extra, complete, hasOver, ok: complete && extra.length === 0 && !hasOver,
         plannedTotal: bom.reduce((s, b) => s + b.qty, 0), scannedTotal: installed.length,
       });
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
@@ -2096,10 +2106,10 @@ function AssemblyVerifyPage() {
           <div style={{
             display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "11px 14px", borderRadius: 10, marginBottom: 14, fontWeight: 700,
             ...(result.ok ? { background: "rgba(16,185,129,.12)", color: "var(--accent-dk, #0e9d63)", border: "1px solid rgba(16,185,129,.35)" }
-              : result.extra.length ? { background: "rgba(220,38,38,.10)", color: "var(--danger-hi, #c0362c)", border: "1px solid rgba(220,38,38,.3)" }
+              : (result.extra.length || result.hasOver) ? { background: "rgba(220,38,38,.10)", color: "var(--danger-hi, #c0362c)", border: "1px solid rgba(220,38,38,.3)" }
                 : { background: "rgba(217,164,65,.14)", color: "#b45309", border: "1px solid rgba(217,164,65,.4)" }),
           }}>
-            <span style={{ fontSize: 16 }}>{result.ok ? "✓ ทำถูกและครบตามแผน" : result.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด/เกิน)" : "◐ ยังไม่ครบตามแผน"}</span>
+            <span style={{ fontSize: 16 }}>{result.ok ? "✓ ทำถูกและครบตามแผน" : result.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด/เกิน)" : result.hasOver ? "⚠ มีชิ้นเกินจำนวนที่แผนกำหนด" : "◐ ยังไม่ครบตามแผน"}</span>
             <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {result.scannedTotal}/{result.plannedTotal} ชิ้น</span>
           </div>
 
@@ -2119,7 +2129,7 @@ function AssemblyVerifyPage() {
                       <td style={{ color: "var(--muted)", fontSize: 12.5 }}>{r.part_name}</td>
                       <td style={{ textAlign: "center", fontFamily: "var(--font-mono)" }}>{r.planned}</td>
                       <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{r.scanned}</td>
-                      <td><span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>{r.status === "complete" ? "✓ ครบ" : r.status === "partial" ? `ขาด ${r.planned - r.scanned}` : "✗ ยังไม่สแกน"}</span></td>
+                      <td><span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>{r.status === "complete" ? "✓ ครบ" : r.status === "over" ? `เกิน +${r.scanned - r.planned}` : r.status === "partial" ? `ขาด ${r.planned - r.scanned}` : "✗ ยังไม่สแกน"}</span></td>
                       <td style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{r.units.length ? r.units.map((u) => u.qr).join(", ") : "—"}</td>
                     </tr>
                   );
