@@ -22,6 +22,9 @@ if (typeof window !== "undefined") {
     let healed = false;
     try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
     if (healed) return;
+    // ★ ออฟไลน์: อย่าล้างแคช/ถอน service worker + reload — จะทำให้แอปออฟไลน์พังถาวร (ไม่มีอะไรให้เสิร์ฟ)
+    //   การ heal ช่วยได้เฉพาะตอนออนไลน์ (ดึงเวอร์ชันใหม่ได้) · ออฟไลน์ปล่อยให้ error ไปโผล่ที่ ErrorBoundary
+    try { if (typeof navigator !== "undefined" && navigator.onLine === false) return; } catch { /* ignore */ }
     try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ }
     const reload = () => { try { location.reload(); } catch { /* ignore */ } };
     const clearCaches = () =>
