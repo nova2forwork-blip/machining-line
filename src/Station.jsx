@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Component } from "react";
 import "./styles.css";
 import "./station.css";
 import {
@@ -6,7 +6,7 @@ import {
 } from "./auth.js";
 import {
   findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
-  scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline,
+  scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
@@ -16,7 +16,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { askConfirm, ConfirmHost } from "./confirm.jsx";
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
-import { newClientId } from "./offline.js";   // ตัวสร้าง UUID ที่ปลอดภัยเสมอ (แม้ไม่มี crypto.randomUUID)
+import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
 
 // ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง (ใช้ตัวแปล DOM ตัวเดียวกับหน้าสำนักงาน · ซิงค์ผ่าน localStorage)
 function StnLangToggle() {
@@ -367,8 +367,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
   // ทำเงียบๆ เบื้องหลัง + รีเฟรชทุกครั้งที่เน็ตกลับมา
   useEffect(() => {
+    const isAsmDept = dept === "assembly" || dept === "packing";
     prefetchUnitsForOffline().catch(() => {});
-    const onOnline = () => prefetchUnitsForOffline().catch(() => {});
+    if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});   // แคชสถานะเบอร์แม่ที่กำลังทำ → เปิด offline ได้
+    const onOnline = () => {
+      prefetchUnitsForOffline().catch(() => {});
+      if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});
+    };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, []);
@@ -733,14 +738,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       let st = null;
       try { st = await getAssemblyState(u.qr_code); } catch { st = null; }
       setBusy(false);
-      if (!st) { errorBeep(); flash(t("โหลดสถานะไม่ได้ — โหมดนี้ต้องออนไลน์", "couldn't load state — needs online"), "warn"); return false; }
+      if (!st) { errorBeep(); flash(t("โหลดสถานะไม่ได้ — เน็ตมีปัญหา ลองใหม่", "couldn't load state — network problem"), "warn"); return false; }
       if (!st.ok) {
         errorBeep();
         flash(st.reason === "no_bom"
           ? t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master")
-          : asmReason(st.reason), "warn");
+          : st.reason === "offline_no_cache"
+            ? t("เน็ตหลุด + เบอร์นี้ยังไม่เคยเปิดตอนออนไลน์ — ต่อเน็ตเปิด 1 ครั้งก่อน", "offline + never loaded online — connect once first")
+            : asmReason(st.reason), "warn");
         return false;
       }
+      if (st.offline) flash(t("โหมดออฟไลน์ — บันทึกเข้าคิว จะซิงค์เมื่อเน็ตกลับ", "offline — will queue & sync"), "info");
       if (st.parent?.status === "finished") {
         flash(t("เบอร์นี้ประกอบครบแล้ว (เปิดดูได้ ใส่เพิ่มไม่ได้)", "already complete (view only)"), "warn");
       } else {
@@ -790,8 +798,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
       // แพ็ก: อัปรูปขึ้น Storage ก่อน (ถ้าถ่ายไว้) — พังตรงนี้ = หยุด ให้ลองใหม่ (ยังไม่บันทึก)
+      // ★ offline = ข้ามอัปรูป (Storage ต้องออนไลน์) → บันทึกยอดแพ็กเข้าคิวได้ รูปค่อยถ่ายซ้ำตอนออนไลน์
       let photoPaths = [];
-      if (isPack && packPhotos.length > 0) {
+      const offlineNow = typeof navigator !== "undefined" && navigator.onLine === false;
+      if (isPack && packPhotos.length > 0 && !offlineNow) {
         try {
           for (const p of packPhotos) photoPaths.push(await uploadPackingPhoto(p.blob, asmParent.unit.qr_code));
         } catch (e) {
@@ -805,7 +815,30 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         operationId: op?.id || null,
         clientId: asmClientRef.current,
       });
-      if (res && res.ok) {
+      if (res && res.queued) {
+        // ── offline: เก็บเข้าคิว → อัปเดต "ที่ติดแล้ว" ในเครื่อง (กันสแกนซ้ำ/นับต่อ) + แคชสถานะใหม่ → ซิงค์เองเมื่อเน็ตกลับ ──
+        tickBeep();
+        const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id }));
+        const newInstalled = [...(asmParent.installed || []), ...addNow];
+        const bom = asmParent.bom || [];
+        const complete = bom.length > 0 && bom.every((b) => newInstalled.filter((x) => x.child_pm_id === b.child_pm_id).length >= b.qty);
+        try {
+          setCachedAsmState(asmParent.unit.qr_code, {
+            ok: true, bom, installed: newInstalled,
+            parent: { part_no: asmParent.unit.part_master?.part_no, status: complete ? "finished" : "in_progress" },
+          });
+        } catch { /* ignore */ }
+        const photoNote = (isPack && packPhotos.length > 0) ? t(" · รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)", " · photos not saved offline") : "";
+        if (complete) {
+          flash((isPack ? t("✓ แพ็กครบ — เก็บเข้าคิว รอซิงค์", "✓ Packed — queued for sync") : t("✓ ประกอบครบ — เก็บเข้าคิว รอซิงค์", "✓ Assembled — queued for sync")) + photoNote, "ok");
+          setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+        } else {
+          flash(t(`✓ เก็บเข้าคิว ${asmChildren.length} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ`, `✓ Queued ${asmChildren.length} — will sync`) + photoNote, "ok");
+          setAsmParent((p) => (p ? { ...p, installed: newInstalled } : p));
+          setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+        }
+        reload();
+      } else if (res && res.ok) {
         if (photoPaths.length) { try { await recordPackingPhotos(asmParent.unit.qr_code, photoPaths); } catch { /* ผูกไม่ได้แต่ไฟล์อยู่ Storage */ } }
         tickBeep();
         if (res.complete) {
@@ -821,13 +854,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         }
         reload();
+      } else if (res && res.reason === "storage_full") {
+        errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
       } else {
         errorBeep(); flash(asmReason(res?.reason), "warn");
       }
     } catch (e) {
-      const off = typeof navigator !== "undefined" && navigator.onLine === false;
       errorBeep();
-      flash(off ? t("โหมดประกอบ/แพ็กต้องออนไลน์ (ตรวจชิ้นกับระบบ)", "assembly/packing needs to be online") : t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
+      flash(t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
     } finally { setBusy(false); savingRef.current = false; }
   }
 
@@ -870,7 +904,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         {(!online || pending > 0) && (
           <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
             {!online ? (
-              <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("โหมดนี้ต้องออนไลน์", "this mode needs online")}`}</span>
+              <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("บันทึกจะเข้าคิว ซิงค์เมื่อเน็ตกลับ", "saves will queue & sync")}`}</span>
             ) : (
               <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending}</span>
             )}
@@ -2124,6 +2158,47 @@ function StationUpdateBanner() {
   );
 }
 
+// ── กันจอขาวหน้าสเตชัน — จับ error ตอนเรนเดอร์ → โชว์การ์ด (ธีมมืด) + ปุ่มโหลดใหม่/ออกจากระบบ ──
+//   ถ้าเป็น error จาก chunk ค้าง (deploy ใหม่ทับของเก่า) กู้เอง 1 ครั้ง (เหมือน auto-heal ใน main.jsx)
+function stnHardReload() {
+  const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+  try {
+    const cc = (window.caches && caches.keys) ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {}) : Promise.resolve();
+    const sw = (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {}) : Promise.resolve();
+    Promise.all([cc, sw]).finally(reload);
+  } catch { reload(); }
+}
+class StationErrorBoundary extends Component {
+  constructor(p) { super(p); this.state = { err: null, stack: "" }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) {
+    console.error("Station crashed:", err, info?.componentStack);
+    this.setState({ stack: info?.componentStack || "" });
+    const msg = String(err?.message || err || "");
+    if (/#130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported/i.test(msg)) {
+      let healed = false;
+      try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
+      if (!healed) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(); }
+    }
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div className="stn-crash">
+        <div className="stn-crash-card">
+          <div className="stn-crash-title">หน้าจอมีปัญหาชั่วคราว</div>
+          <div className="stn-crash-sub">งานที่บันทึกไปแล้วไม่หาย · กด “โหลดใหม่” เพื่อใช้งานต่อ — ถ้ายังไม่หาย แคปข้อความด้านล่างส่งแอดมิน</div>
+          <pre className="stn-crash-pre">{String(this.state.err?.message || this.state.err)}{this.state.stack ? "\n\n" + this.state.stack.split("\n").slice(0, 6).join("\n") : ""}</pre>
+          <div className="stn-crash-btns">
+            <button className="stn-crash-reload" onClick={stnHardReload}>โหลดใหม่ (ล้างแคช)</button>
+            {this.props.onLogout ? <button className="stn-crash-logout" onClick={() => { try { this.props.onLogout(); } catch { stnHardReload(); } }}>ออกจากระบบ</button> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
 export default function StationApp({ dept = "machine" } = {}) {
   const meta = DEPT_META[dept] || DEPT_META.machine;
   const [user, setUser] = useState(getSession());
@@ -2191,5 +2266,5 @@ export default function StationApp({ dept = "machine" } = {}) {
   } else {
     content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} dept={dept} />;
   }
-  return <><StationUpdateBanner />{content}<ConfirmHost /></>;
+  return <><StationUpdateBanner /><StationErrorBoundary onLogout={logout}>{content}</StationErrorBoundary><ConfirmHost /></>;
 }
