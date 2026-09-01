@@ -2070,6 +2070,9 @@ function StationUpdateBanner() {
 //   ถ้าเป็น error จาก chunk ค้าง (deploy ใหม่ทับของเก่า) กู้เอง 1 ครั้ง (เหมือน auto-heal ใน main.jsx)
 function stnHardReload() {
   const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+  // ★ ออฟไลน์: ห้ามล้างแคช/ถอน service worker (จะทำให้เปิดแอปไม่ได้เลยจนกว่าจะออนไลน์)
+  //   — โหลดใหม่จาก app shell ที่แคชไว้เฉยๆ · การล้างแคชช่วยได้เฉพาะตอนออนไลน์ (ดึงเวอร์ชันใหม่ได้)
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { reload(); return; }
   try {
     const cc = (window.caches && caches.keys) ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {}) : Promise.resolve();
     const sw = (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {}) : Promise.resolve();
@@ -2086,7 +2089,8 @@ class StationErrorBoundary extends Component {
     if (/#130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported/i.test(msg)) {
       let healed = false;
       try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
-      if (!healed) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(); }
+      // ★ ออฟไลน์: ไม่ auto-heal (โหลดใหม่ตอนออฟไลน์ไม่ช่วย + เสี่ยงวน) → โชว์การ์ด crash ให้เลือกเอง
+      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(); }
     }
   }
   render() {
