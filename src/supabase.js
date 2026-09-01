@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
   setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
+  setCachedAsmState, getCachedAsmState,
 } from "./offline.js";
 
 // ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
@@ -672,21 +673,74 @@ export async function setOperationType(operationId, opType) {
   return data || { ok: false, reason: "error" };
 }
 
-// บันทึกการประกอบจากหน้าเครื่อง (ใช้ใน Phase 1 ส่วนที่ 3) — คืนผลตรวจครบตาม BOM
-export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt }) {
+// เก็บ "บันทึกประกอบ/แพ็ก" เข้าคิว offline (localStorage เดียวกับงานตัด) → ซิงค์เองเมื่อเน็ตกลับ
+// qid = client_id (uuid) → กันซ้ำทั้งฝั่ง flush และฝั่ง DB (record_assembly idempotent ด้วย p_client_id)
+function queueAssembly(p) {
+  const a = qRead();
+  a.push({ assembly: {
+    p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
+    p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
+  }, qid: p.clientId, ts: Date.now() });
+  if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+  return { ok: true, queued: true };
+}
+
+// บันทึกการประกอบจากหน้าเครื่อง — คืนผลตรวจครบตาม BOM · เน็ตหลุด/สะดุด = เก็บเข้าคิวซิงค์ทีหลัง
+export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt }, { allowQueue = true } = {}) {
+  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString() };
+  if (allowQueue && typeof navigator !== "undefined" && navigator.onLine === false) return queueAssembly(p);
   const { data, error } = await supabase.rpc("record_assembly", {
-    p_token: authToken(), p_parent_qr: parentQr, p_child_qrs: childQrs,
-    p_operation_id: operationId, p_client_id: clientId ?? null, p_recorded_at: recordedAt ?? null,
+    p_token: authToken(), p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
+    p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt,
   });
-  if (error) { console.warn("record_assembly error", error); flagAuth(error); throw error; }
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) return queueAssembly(p);   // เน็ตสะดุด → เข้าคิว (ไม่ทิ้งงาน)
+    console.warn("record_assembly error", error); flagAuth(error); throw error;
+  }
   return data || { ok: false, reason: "error" };
 }
 
 // โหลดสถานะประกอบ "สะสม" ของเบอร์แม่ (BOM + ที่ติดตั้งไปแล้วข้ามสเตชัน) — ใช้ตอนสแกนเบอร์แม่
+// รองรับ offline: ออนไลน์ = โหลดจาก DB + แคชไว้ · ออฟไลน์/เน็ตสะดุด = อ่านจากแคช (เปิดเบอร์ที่เคยโหลดได้)
 export async function getAssemblyState(parentQr) {
+  const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  if (offline) {
+    const c = await getCachedAsmState(parentQr);
+    return c ? { ...c, offline: true } : { ok: false, reason: "offline_no_cache" };
+  }
   const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: parentQr });
-  if (error) { console.warn("get_assembly_state error", error); flagAuth(error); throw error; }
-  return data || { ok: false, reason: "error" };
+  if (error) {
+    flagAuth(error);
+    if (isNetworkErr(error)) {                                   // เน็ตสะดุด → ลองแคช
+      const c = await getCachedAsmState(parentQr);
+      if (c) return { ...c, offline: true };
+    }
+    console.warn("get_assembly_state error", error); throw error;
+  }
+  const st = data || { ok: false, reason: "error" };
+  if (st && st.ok) { try { await setCachedAsmState(parentQr, st); } catch { /* ignore */ } }   // แคชไว้ใช้ offline
+  return st;
+}
+
+// prefetch สถานะเบอร์แม่ที่กำลังทำ (assembly+packing) ลงแคช — เรียกตอนเข้าหน้า/เน็ตกลับ
+// best-effort + bounded (กันยิง RPC เยอะ) → เปิดเบอร์ที่ยังไม่เคยสแกนตอน offline ได้
+export async function prefetchAssemblyForOffline(limit = 120) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  let parents = [];
+  try {
+    const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
+    const seen = new Set();
+    [...asm, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
+  } catch { return 0; }
+  let n = 0;
+  for (const qr of parents.slice(0, limit)) {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) break;   // เน็ตหลุดกลางคัน → หยุด
+    try {
+      const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: qr });
+      if (!error && data && data.ok) { await setCachedAsmState(qr, data); n++; }
+    } catch { /* ข้ามตัวที่พลาด */ }
+  }
+  return n;
 }
 
 // ข้อมูลชิ้นส่วน (ความยาว + kind) ของลูกใน BOM — ใช้เติมให้หน้าประกอบวาดผัง + ป้ายจุดติดตั้ง
@@ -815,7 +869,9 @@ export async function flushScanQueue() {
   try {
     for (const item of a) {
       let data, error;
-      if (item.machineWork) {
+      if (item.assembly) {
+        ({ data, error } = await supabase.rpc("record_assembly", { ...item.assembly, p_token: authToken() }));
+      } else if (item.machineWork) {
         ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
       } else {
         ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
