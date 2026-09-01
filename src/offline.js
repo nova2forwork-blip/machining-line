@@ -102,3 +102,15 @@ export function setDaySnapshot(snap) {
 export function getDaySnapshot() {
   return tx(ST_KV, "readonly", (s) => s.get("machineDay")).then((v) => (v ? v.snap : null));
 }
+
+// ── Assembly/Packing state cache (BOM + installed) ต่อเบอร์แม่ — ให้ประกอบ/แพ็กทำ offline ได้ ──
+//   เก็บผล getAssemblyState ตอนออนไลน์ (cache-on-scan + prefetch) → เปิดเบอร์แม่ตอนเน็ตหลุดได้
+//   key = "asm:<parent_qr>" · เก็บทั้งก้อน { bom, installed, parent, ok } เหมือนที่ RPC คืน
+export function setCachedAsmState(parentQr, state) {
+  if (!parentQr || !state) return Promise.resolve();
+  return tx(ST_KV, "readwrite", (s) => s.put({ state, ts: Date.now() }, "asm:" + String(parentQr).trim()));
+}
+export function getCachedAsmState(parentQr) {
+  if (!parentQr) return Promise.resolve(null);
+  return tx(ST_KV, "readonly", (s) => s.get("asm:" + String(parentQr).trim())).then((v) => (v ? v.state : null));
+}
