@@ -592,6 +592,11 @@ function isNetworkErr(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
   return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
 }
+// ★ V7: ตรวจว่า error = "ยังไม่มี RPC record_scan_by_qr_idem" (ยังไม่ได้รัน migration) → fallback ใช้ตัวเดิม
+//   กัน deploy ผิดลำดับ (วางไฟล์ก่อนรัน SQL) แล้วสแกนออฟฟิศพัง
+function isMissingFnErr(error) {
+  return /PGRST202|could not find|does not exist|schema cache|record_scan_by_qr_idem/i.test((error && (error.message || error.hint || error.code)) || "");
+}
 
 // ── คิว "ซิงค์ไม่สำเร็จถาวร" — งานที่ทำออฟไลน์แล้วพอจะซิงค์ กลับเจอว่า QR/ล็อตถูกลบ
 //    หรือถูกแก้ฝั่งออฟฟิศ (not_found ฯลฯ) → ไม่ทิ้งเงียบ เก็บไว้ให้แจ้ง/ลองใหม่ได้
@@ -622,16 +627,23 @@ export function clearRejected() { rjWrite([]); }
 export async function reportDeadLetter(items) {
   const list = (items || rjRead()).filter((it) => it && it.qid);
   if (!list.length) return;
-  const payload = list.map((it) => ({
-    qid: it.qid,
-    kind: it.machineWork ? "machine_work" : "qr",
-    qr: it.qr || null,
-    detail: it.machineWork
-      ? { release_id: it.machineWork.p_release_id, operation_id: it.machineWork.p_operation_id, quantity: it.machineWork.p_quantity }
-      : null,
-    reason: it.reason || null,
-    client_ts: String(it.rejectedAt || it.ts || Date.now()),
-  }));
+  const payload = list.map((it) => {
+    const mw = it.machineWork, asm = it.assembly;
+    // ★ V5: งานประกอบ/แพ็ก (asm) เดิมส่ง qr=null detail=null → office ไม่รู้ว่าเบอร์ไหนพัง
+    //   คงค่า kind เดิม {machine_work|qr} (กันชน CHECK constraint) · ใส่เบอร์แม่ที่ช่อง qr + รายละเอียดลง detail (jsonb)
+    return {
+      qid: it.qid,
+      kind: mw ? "machine_work" : "qr",
+      qr: mw ? null : (it.qr || asm?.p_parent_qr || null),
+      detail: mw
+        ? { release_id: mw.p_release_id, operation_id: mw.p_operation_id, quantity: mw.p_quantity }
+        : asm
+          ? { type: "assembly", parent_qr: asm.p_parent_qr, child_qrs: asm.p_child_qrs, child_count: (asm.p_child_qrs || []).length, operation_id: asm.p_operation_id }
+          : null,
+      reason: it.reason || null,
+      client_ts: String(it.rejectedAt || it.ts || Date.now()),
+    };
+  });
   try { await supabase.rpc("report_dead_letter", { p_token: authToken(), p_items: payload }); }
   catch (e) { console.warn("reportDeadLetter failed:", e?.message || e); }
 }
@@ -835,10 +847,14 @@ export async function recordPackingPhotos(parentQr, paths) {
 
 // สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
 export async function recordScanByQr(qr, { allowQueue = true } = {}) {
-  const { data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr });
+  const clientId = newClientId();   // ★ V7: 1 client_id ต่อการสแกน → ใช้ทั้งตอนยิงตรง + ตอนเข้าคิว (idem กันบันทึกซ้ำ)
+  let { data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: qr, p_client_id: clientId });
+  if (error && isMissingFnErr(error)) {   // ยังไม่ได้รัน migration idem → ใช้ตัวเดิม (สแกนได้ แต่ยังไม่กันซ้ำ)
+    ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr }));
+  }
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ qr, qid: newClientId(), ts: Date.now() });
+      const a = qRead(); a.push({ qr, qid: clientId, ts: Date.now() });   // ★ qid = clientId เดิม → flush ส่ง client_id เดิม → idem กันซ้ำข้าม direct↔queue
       if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
     }
@@ -877,7 +893,9 @@ export async function flushScanQueue() {
       } else if (item.machineWork) {
         ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
       } else {
-        ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
+        // ★ V7: ผ่านตัวห่อ idem (p_client_id = qid เดิมของ item) → commit-แล้ว-response-หาย ลองซ้ำไม่บันทึกซ้ำ
+        ({ data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: item.qr, p_client_id: item.qid }));
+        if (error && isMissingFnErr(error)) ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
       }
       if (error) {
         if (isAuthError(error)) { authExpired = true; continue; }  // token หมดอายุ/ไม่ถูกต้อง → คงไว้รอ login ใหม่ (ไม่นับ attempt/ไม่ reject)
