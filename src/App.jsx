@@ -5474,13 +5474,14 @@ function ClearScansCard() {
         setProgress("");
         setPreview({ machine_records: mr, scan_logs: sl, units: un, releases: rp, whole: true });
       } else if (scope === "group") {
-        const g = groups[Number(grpKey)];
+        const g = grpKey === "" ? null : groups[Number(grpKey)];   // ★ Number("")===0 → กันเผลอมองว่าเป็นชุดแรก
         if (!g) { mlsToast("เลือกชุด Release ก่อน", "warn"); return; }
         setPreview({ ...(await clearScansReleaseGroup(projId, g.releaseOrder, { preview: true })), grp: g });
       } else if (scope === "part") {
         if (!relId) { mlsToast("เลือก Part ก่อน", "warn"); return; }
         setPreview(await clearScansRelease(relId, { preview: true }));
       } else {
+        if (!qr.trim()) { mlsToast("พิมพ์/สแกน QR ก่อน", "warn"); return; }
         const u = await findUnitByQr(qr.trim());
         if (!u) { setMsg({ ok: false, text: "ไม่พบ QR นี้ในระบบ" }); return; }
         setPreview({ ...(await clearScansUnit(u.id, { preview: true })), unit: u });
@@ -5495,17 +5496,17 @@ function ClearScansCard() {
       : scope === "group" ? "ชุด Release นี้" : scope === "part" ? "Part นี้" : "ชิ้นนี้";
     if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scopeLabel} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
     setBusy(true); setProgress("");
+    let mr = 0, sl = 0, doneGroups = 0;
     try {
-      let mr = 0, sl = 0;
       if (scope === "project") {
-        let i = 0;
         for (const g of groups) {
-          i += 1; setProgress(`กำลังลบ ${i}/${groups.length}`);
+          setProgress(`กำลังลบ ${doneGroups + 1}/${groups.length}`);
           const res = await clearScansReleaseGroup(projId, g.releaseOrder, {});
-          mr += res.machine_records || 0; sl += res.scan_logs || 0;
+          mr += res.machine_records || 0; sl += res.scan_logs || 0; doneGroups += 1;
         }
       } else if (scope === "group") {
-        const g = groups[Number(grpKey)];
+        const g = grpKey === "" ? null : groups[Number(grpKey)];
+        if (!g) { mlsToast("เลือกชุด Release ก่อน", "warn"); return; }
         const res = await clearScansReleaseGroup(projId, g.releaseOrder, {}); mr = res.machine_records || 0; sl = res.scan_logs || 0;
       } else if (scope === "part") {
         const res = await clearScansRelease(relId, {}); mr = res.machine_records || 0; sl = res.scan_logs || 0;
@@ -5516,7 +5517,12 @@ function ClearScansCard() {
       auditRecord("clear_scans", "scan_data", null, { scope, project: projId || null, machine_records: mr, scan_logs: sl });
       setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${fmtNum(mr)} · สแกนสำนักงาน ${fmtNum(sl)} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
       setPreview(null); setGrpKey(""); setRelId(""); setQr(""); setProgress("");
-    } catch (e) { setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) }); }
+    } catch (e) {
+      // ★ whole-project วนลบทีละชุด (ไม่ atomic) — ถ้าพังกลางคัน บอกว่าลบไปแล้วกี่ชุด กด "ลบ" ซ้ำลบต่อได้
+      const partial = (scope === "project" && doneGroups > 0)
+        ? ` (ลบไปแล้ว ${doneGroups}/${groups.length} ชุด — กด “ลบข้อมูลสแกน” ซ้ำเพื่อลบส่วนที่เหลือ)` : "";
+      setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) + partial });
+    }
     finally { setBusy(false); setProgress(""); }
   }
 
@@ -5587,7 +5593,7 @@ function ClearScansCard() {
             <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
               พบ: บันทึกงานหน้าเครื่อง <b>{fmtNum(preview.machine_records || 0)}</b> · สแกนสำนักงาน <b>{fmtNum(preview.scan_logs || 0)}</b>
               {preview.units != null ? <> · รีเซ็ตชิ้นงาน <b>{fmtNum(preview.units)}</b></> : null}
-              {preview.whole && preview.releases != null ? <> · ครอบคลุม <b>{preview.releases}</b> Part</> : null}
+              {preview.releases != null ? <> · ครอบคลุม <b>{fmtNum(preview.releases)}</b> Part</> : null}
               {preview.unit ? <> · ชิ้น {preview.unit.part_master?.part_no || ""} ({preview.unit.qr_code})</> : null}
               {totalPrev === 0 ? <> — <b>ไม่มีข้อมูลสแกนให้ลบ</b></> : null}
             </div>
