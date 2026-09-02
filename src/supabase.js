@@ -369,22 +369,27 @@ export async function findManualPartOptions(partNo, operationId = null) {
 
 // โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
 // จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
+let _prefetchingUnits = false;
 export async function prefetchUnitsForOffline(limit = 4000) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
-  const pageSize = 1000; let from = 0; let total = 0;
-  for (; from < limit;) {
-    const { data, error } = await supabase
-      .from("part_units").select(UNIT_SELECT)
-      .order("created_at", { ascending: false })
-      .range(from, Math.min(from + pageSize, limit) - 1);
-    if (error) { console.warn("prefetchUnits error", error); break; }
-    if (!data || !data.length) break;
-    await cacheUnitsBulk(data);
-    total += data.length;
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return total;
+  if (_prefetchingUnits) return 0;                 // ★ กันรันซ้อน (mount + online event + เน็ตกระพริบ) = โหลดซ้ำหลายพันแถวโดยเปล่าประโยชน์
+  _prefetchingUnits = true;
+  try {
+    const pageSize = 1000; let from = 0; let total = 0;
+    for (; from < limit;) {
+      const { data, error } = await supabase
+        .from("part_units").select(UNIT_SELECT)
+        .order("created_at", { ascending: false })
+        .range(from, Math.min(from + pageSize, limit) - 1);
+      if (error) { console.warn("prefetchUnits error", error); break; }
+      if (!data || !data.length) break;
+      await cacheUnitsBulk(data);
+      total += data.length;
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return total;
+  } finally { _prefetchingUnits = false; }
 }
 
 // จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
@@ -401,14 +406,21 @@ export async function getReleaseProgress(releaseId, operationId = null) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return (await getCachedProgress(key)) + queued;
   }
-  let q = supabase.from("machine_records").select("quantity").eq("release_id", releaseId);
-  if (operationId) q = q.eq("operation_id", operationId);   // เฉพาะขั้นตอนของเครื่องนี้
-  const { data, error } = await q;
-  if (error) {
-    console.warn("getReleaseProgress error", error);
-    return (await getCachedProgress(key)) + queued;
+  // ★ page 1000 กัน PostgREST ตัดที่ 1000 แถวเงียบ ๆ → running number undercount บน release ใหญ่ (>1000 records/operation)
+  let done = 0; const pageSize = 1000; let from = 0;
+  for (;;) {
+    let q = supabase.from("machine_records").select("quantity").eq("release_id", releaseId);
+    if (operationId) q = q.eq("operation_id", operationId);   // เฉพาะขั้นตอนของเครื่องนี้
+    q = q.range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) {
+      console.warn("getReleaseProgress error", error);
+      return (await getCachedProgress(key)) + queued;
+    }
+    done += (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
   }
-  const done = (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
   setCachedProgress(key, done);                           // snapshot ไว้ใช้ออฟไลน์ (แยกตาม operation)
   return done + queued;
 }
@@ -492,7 +504,7 @@ export async function getProjectImpact(projectId) {
 export async function getReleasesFull() {
   const { data, error } = await supabase
     .from("releases")
-    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name)), employee:employees(name, code)")
+    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
     .order("release_date", { ascending: false });
   if (error) {
     console.warn("getReleasesFull error", error);
@@ -738,23 +750,35 @@ export async function getAssemblyState(parentQr) {
 
 // prefetch สถานะเบอร์แม่ที่กำลังทำ (assembly+packing) ลงแคช — เรียกตอนเข้าหน้า/เน็ตกลับ
 // best-effort + bounded (กันยิง RPC เยอะ) → เปิดเบอร์ที่ยังไม่เคยสแกนตอน offline ได้
+let _prefetchingAsm = false;
 export async function prefetchAssemblyForOffline(limit = 120) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
-  let parents = [];
+  if (_prefetchingAsm) return 0;                   // ★ กันรันซ้อน (mount + online event + เน็ตกระพริบ) = ยิง RPC ซ้ำเป็นชุด
+  _prefetchingAsm = true;
   try {
-    const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
-    const seen = new Set();
-    [...asm, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
-  } catch { return 0; }
-  let n = 0;
-  for (const qr of parents.slice(0, limit)) {
-    if (typeof navigator !== "undefined" && navigator.onLine === false) break;   // เน็ตหลุดกลางคัน → หยุด
+    let parents = [];
     try {
-      const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: qr });
-      if (!error && data && data.ok) { await setCachedAsmState(qr, data); n++; }
-    } catch { /* ข้ามตัวที่พลาด */ }
-  }
-  return n;
+      const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
+      const seen = new Set();
+      [...asm, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
+    } catch { return 0; }
+    parents = parents.slice(0, limit);
+    // ★ ขนานแบบจำกัด concurrency (เดิม sequential ทีละตัว = ช้ามาก ~120 round-trip/เครื่อง + burst ตอนหลายเครื่อง reconnect พร้อมกัน)
+    let n = 0, idx = 0;
+    const CONC = 4;
+    const worker = async () => {
+      while (idx < parents.length) {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return;   // เน็ตหลุดกลางคัน → หยุด
+        const qr = parents[idx++];
+        try {
+          const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: qr });
+          if (!error && data && data.ok) { await setCachedAsmState(qr, data); n++; }
+        } catch { /* ข้ามตัวที่พลาด */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONC, parents.length) }, worker));
+    return n;
+  } finally { _prefetchingAsm = false; }
 }
 
 // ข้อมูลชิ้นส่วน (ความยาว + kind) ของลูกใน BOM — ใช้เติมให้หน้าประกอบวาดผัง + ป้ายจุดติดตั้ง
