@@ -502,15 +502,22 @@ export async function getProjectImpact(projectId) {
   };
 }
 export async function getReleasesFull() {
-  const { data, error } = await supabase
-    .from("releases")
-    .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
-    .order("release_date", { ascending: false });
-  if (error) {
-    console.warn("getReleasesFull error", error);
-    return [];
+  // ★ page 1000 กัน PostgREST ตัดที่ 1000 แถวเงียบ ๆ — ที่ 10 ปี releases เกิน 1000 แล้ว
+  //   (ถ้าไม่ page ตัวเลือก "ล้างข้อมูลสแกน" จะขาดโปรเจค/Release เก่าไป)
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    const { data, error } = await supabase
+      .from("releases")
+      .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
+      .order("release_date", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) { console.warn("getReleasesFull error", error); break; }
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
   }
-  return data || [];
+  return all;
 }
 
 // สถิติ part_units (total / finished / in_progress) จัดกลุ่มตาม release_id
