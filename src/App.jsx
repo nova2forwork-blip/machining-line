@@ -5415,47 +5415,69 @@ function AuditLogCard() {
 }
 
 function ClearScansCard() {
-  const [mode, setMode] = useState("group");     // group (ทั้ง Release) | release (ราย Part) | unit (QR)
   const [releases, setReleases] = useState([]);
-  const [grpKey, setGrpKey] = useState("");       // "projectId|releaseOrder"
+  const [projId, setProjId] = useState("");
+  const [scope, setScope] = useState("project");   // project (ทั้งโปรเจค) | group (ชุด Release) | part | unit (QR)
+  const [grpKey, setGrpKey] = useState("");         // index (string) ใน groups
   const [relId, setRelId] = useState("");
   const [qr, setQr] = useState("");
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   const [msg, setMsg] = useState(null);
   useEffect(() => { getReleasesFull().then(setReleases); }, []);
 
-  // จับกลุ่ม release เป็น "ชุด" (project + release_order เดียวกัน = 1 Release จากไฟล์เดียว)
-  const groups = useMemo(() => {
+  // โปรเจค (dedupe จาก releases) — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (ลิสต์สั้น เลือกง่าย)
+  const projects = useMemo(() => {
     const m = new Map();
     for (const r of releases) {
-      const pid = r.part_master?.project_id || "";
-      const ro = r.release_order || "";
-      const key = `${pid}|${ro}`;
-      const g = m.get(key) || {
-        key, projectId: pid, releaseOrder: r.release_order || null,
-        projName: r.part_master?.projects?.name || "-", parts: 0, qty: 0,
+      const pid = r.part_master?.project_id; if (!pid) continue;
+      const p = m.get(pid) || {
+        id: pid, name: r.part_master?.projects?.name || "-",
+        code: r.part_master?.projects?.code || "", status: r.part_master?.projects?.status || "",
+        parts: 0, qty: 0,
       };
-      g.parts += 1; g.qty += Number(r.qty) || 0;
-      m.set(key, g);
+      p.parts += 1; p.qty += Number(r.qty) || 0; m.set(pid, p);
     }
-    return Array.from(m.values());
+    return Array.from(m.values()).sort((a, b) =>
+      ((a.status === "closed") - (b.status === "closed")) || String(a.name).localeCompare(String(b.name)));
   }, [releases]);
 
-  const relLabel = (r) =>
-    `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""}`
-    + ` · ${r.part_master?.projects?.name || ""} × ${r.qty} ชิ้น`;
+  const proj = projects.find((p) => p.id === projId) || null;
+  const projReleases = useMemo(() => releases.filter((r) => r.part_master?.project_id === projId), [releases, projId]);
+  // ชุด Release (release_order) ภายในโปรเจคที่เลือก
+  const groups = useMemo(() => {
+    const m = new Map();
+    for (const r of projReleases) {
+      const ro = r.release_order || "";
+      const g = m.get(ro) || { releaseOrder: r.release_order || null, parts: 0, qty: 0 };
+      g.parts += 1; g.qty += Number(r.qty) || 0; m.set(ro, g);
+    }
+    return Array.from(m.values());
+  }, [projReleases]);
 
-  function reset() { setPreview(null); setMsg(null); }
+  function resetSel() { setPreview(null); setMsg(null); setProgress(""); }
+  function pickProject(id) { setProjId(id); setScope("project"); setGrpKey(""); setRelId(""); setQr(""); resetSel(); }
 
   async function doPreview() {
-    setMsg(null); setPreview(null); setBusy(true);
+    setMsg(null); setPreview(null); setProgress(""); setBusy(true);
     try {
-      if (mode === "group") {
-        const g = groups.find((x) => x.key === grpKey);
-        if (!g) { mlsToast("เลือก Release ก่อน", "warn"); return; }
-        setPreview({ ...(await clearScansReleaseGroup(g.projectId, g.releaseOrder, { preview: true })), grp: g });
-      } else if (mode === "release") {
+      if (scope === "project") {
+        if (!projId) { mlsToast("เลือกโปรเจคก่อน", "warn"); return; }
+        // รวมผลตรวจของทุกชุดในโปรเจค (แต่ละชุดแยกกันตาม release_order → บวกกันได้)
+        let mr = 0, sl = 0, un = 0, rp = 0, i = 0;
+        for (const g of groups) {
+          i += 1; setProgress(`กำลังตรวจ ${i}/${groups.length}`);
+          const p = await clearScansReleaseGroup(projId, g.releaseOrder, { preview: true });
+          mr += p.machine_records || 0; sl += p.scan_logs || 0; un += p.units || 0; rp += p.releases || 0;
+        }
+        setProgress("");
+        setPreview({ machine_records: mr, scan_logs: sl, units: un, releases: rp, whole: true });
+      } else if (scope === "group") {
+        const g = groups[Number(grpKey)];
+        if (!g) { mlsToast("เลือกชุด Release ก่อน", "warn"); return; }
+        setPreview({ ...(await clearScansReleaseGroup(projId, g.releaseOrder, { preview: true })), grp: g });
+      } else if (scope === "part") {
         if (!relId) { mlsToast("เลือก Part ก่อน", "warn"); return; }
         setPreview(await clearScansRelease(relId, { preview: true }));
       } else {
@@ -5464,68 +5486,116 @@ function ClearScansCard() {
         setPreview({ ...(await clearScansUnit(u.id, { preview: true })), unit: u });
       }
     } catch (e) { setMsg({ ok: false, text: "ตรวจสอบไม่สำเร็จ: " + (e?.message || e) }); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(""); }
   }
 
   async function doClear() {
     const total = (preview?.machine_records || 0) + (preview?.scan_logs || 0);
-    const scope = mode === "group" ? "ทั้ง Release นี้" : mode === "release" ? "Part นี้" : "ชิ้นนี้";
-    if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scope} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
-    setBusy(true);
+    const scopeLabel = scope === "project" ? `ทั้งโปรเจค “${proj?.name || ""}”`
+      : scope === "group" ? "ชุด Release นี้" : scope === "part" ? "Part นี้" : "ชิ้นนี้";
+    if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scopeLabel} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
+    setBusy(true); setProgress("");
     try {
-      let res;
-      if (mode === "group") { const g = preview?.grp || groups.find((x) => x.key === grpKey); res = await clearScansReleaseGroup(g.projectId, g.releaseOrder, {}); }
-      else if (mode === "release") res = await clearScansRelease(relId, {});
-      else { const u = preview?.unit || await findUnitByQr(qr.trim()); res = await clearScansUnit(u.id, {}); }
-      auditRecord("clear_scans", "scan_data", null, { scope: mode, machine_records: res.machine_records || 0, scan_logs: res.scan_logs || 0 });
-      setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${res.machine_records || 0} · สแกนสำนักงาน ${res.scan_logs || 0} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
-      setPreview(null); setGrpKey(""); setRelId(""); setQr("");
+      let mr = 0, sl = 0;
+      if (scope === "project") {
+        let i = 0;
+        for (const g of groups) {
+          i += 1; setProgress(`กำลังลบ ${i}/${groups.length}`);
+          const res = await clearScansReleaseGroup(projId, g.releaseOrder, {});
+          mr += res.machine_records || 0; sl += res.scan_logs || 0;
+        }
+      } else if (scope === "group") {
+        const g = groups[Number(grpKey)];
+        const res = await clearScansReleaseGroup(projId, g.releaseOrder, {}); mr = res.machine_records || 0; sl = res.scan_logs || 0;
+      } else if (scope === "part") {
+        const res = await clearScansRelease(relId, {}); mr = res.machine_records || 0; sl = res.scan_logs || 0;
+      } else {
+        const u = preview?.unit || await findUnitByQr(qr.trim());
+        const res = await clearScansUnit(u.id, {}); mr = res.machine_records || 0; sl = res.scan_logs || 0;
+      }
+      auditRecord("clear_scans", "scan_data", null, { scope, project: projId || null, machine_records: mr, scan_logs: sl });
+      setMsg({ ok: true, text: `ลบแล้ว — บันทึกงานหน้าเครื่อง ${fmtNum(mr)} · สแกนสำนักงาน ${fmtNum(sl)} รายการ · รีเซ็ตสถานะชิ้นงานแล้ว` });
+      setPreview(null); setGrpKey(""); setRelId(""); setQr(""); setProgress("");
     } catch (e) { setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) }); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(""); }
   }
+
+  const chipCls = (v) => `chip ${scope === v ? "active" : ""}`;
+  const totalPrev = preview ? (preview.machine_records || 0) + (preview.scan_logs || 0) : 0;
 
   return (
     <Card title="ล้างข้อมูลสแกน (เฉพาะ Admin)">
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-        ลบเฉพาะ “ข้อมูลการสแกน/บันทึกงาน” ของขอบเขตที่เลือก และรีเซ็ตสถานะชิ้นงานกลับเป็น “ยังไม่ทำ” — โปรเจค / Release / Part / QR ยังอยู่ครบ · <b>ลบแล้วกู้คืนไม่ได้</b> (แนะนำสำรองข้อมูลก่อน)
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.6 }}>
+        ลบเฉพาะ “ข้อมูลการสแกน/บันทึกงาน” ของขอบเขตที่เลือก แล้วรีเซ็ตสถานะชิ้นงานกลับเป็น “ยังไม่ทำ” — โปรเจค / Release / Part / QR ยังอยู่ครบ · <b style={{ color: "var(--danger, #e11d1d)" }}>ลบแล้วกู้คืนไม่ได้</b> แนะนำสำรองข้อมูลก่อน
       </div>
-      <div className="chip-row" style={{ marginBottom: 12 }}>
-        <span className={`chip ${mode === "group" ? "active" : ""}`} onClick={() => { setMode("group"); reset(); }}>ทั้ง Release</span>
-        <span className={`chip ${mode === "release" ? "active" : ""}`} onClick={() => { setMode("release"); reset(); }}>ราย Part</span>
-        <span className={`chip ${mode === "unit" ? "active" : ""}`} onClick={() => { setMode("unit"); reset(); }}>รายชิ้น (QR)</span>
-      </div>
-      {mode === "group" ? (
-        <Field label="เลือก Release (ทั้งชุด — ทุก Part)">
-          <Select value={grpKey} onChange={(e) => { setGrpKey(e.target.value); setPreview(null); }}
-            options={groups.map((g) => ({ value: g.key, label: `${g.projName} · ${g.releaseOrder || "(ไม่มีเลข)"} — ${g.parts} Part × ${g.qty} ชิ้น` }))} />
-        </Field>
-      ) : mode === "release" ? (
-        <Field label="เลือก Part (ราย Release)">
-          <Select value={relId} onChange={(e) => { setRelId(e.target.value); setPreview(null); }}
-            options={releases.map((r) => ({ value: r.id, label: relLabel(r) }))} />
-        </Field>
-      ) : (
-        <Field label="รหัส QR ของชิ้นงาน">
-          <Input value={qr} onChange={(e) => { setQr(e.target.value); setPreview(null); }} placeholder="สแกน/พิมพ์รหัส QR" />
-        </Field>
+
+      <Field label="1) เลือกโปรเจค">
+        <Select value={projId} onChange={(e) => pickProject(e.target.value)}
+          options={[{ value: "", label: "— เลือกโปรเจค —" }, ...projects.map((p) => ({
+            value: p.id,
+            label: `${p.name}${p.code ? " (" + p.code + ")" : ""} — ${p.parts} Part × ${fmtNum(p.qty)} ชิ้น${p.status === "closed" ? " · ปิดแล้ว" : ""}`,
+          }))]} />
+      </Field>
+
+      {projId && (
+        <>
+          <Field label="2) ขอบเขตที่จะลบ">
+            <div className="chip-row">
+              <span className={chipCls("project")} onClick={() => { setScope("project"); resetSel(); }}>ทั้งโปรเจค</span>
+              <span className={chipCls("group")} onClick={() => { setScope("group"); resetSel(); }}>รายชุด Release</span>
+              <span className={chipCls("part")} onClick={() => { setScope("part"); resetSel(); }}>ราย Part</span>
+              <span className={chipCls("unit")} onClick={() => { setScope("unit"); resetSel(); }}>รายชิ้น (QR)</span>
+            </div>
+          </Field>
+
+          {scope === "project" && (
+            <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+              จะลบข้อมูลสแกนของ <b>ทุก Part / ทุกชุด</b> ในโปรเจคนี้ — {groups.length} ชุด · {proj?.parts || 0} Part × {fmtNum(proj?.qty || 0)} ชิ้น
+            </div>
+          )}
+          {scope === "group" && (
+            <Field label="เลือกชุด Release">
+              <Select value={grpKey} onChange={(e) => { setGrpKey(e.target.value); setPreview(null); }}
+                options={[{ value: "", label: "— เลือกชุด —" }, ...groups.map((g, i) => ({
+                  value: String(i), label: `${g.releaseOrder || "(ไม่มีเลข)"} — ${g.parts} Part × ${fmtNum(g.qty)} ชิ้น`,
+                }))]} />
+            </Field>
+          )}
+          {scope === "part" && (
+            <Field label="เลือก Part">
+              <Select value={relId} onChange={(e) => { setRelId(e.target.value); setPreview(null); }}
+                options={[{ value: "", label: "— เลือก Part —" }, ...projReleases.map((r) => ({
+                  value: r.id, label: `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""} × ${r.qty} ชิ้น`,
+                }))]} />
+            </Field>
+          )}
+          {scope === "unit" && (
+            <Field label="รหัส QR ของชิ้นงาน">
+              <Input value={qr} onChange={(e) => { setQr(e.target.value); setPreview(null); }} placeholder="สแกน/พิมพ์รหัส QR" />
+            </Field>
+          )}
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+            <Btn variant="ghost" onClick={doPreview} disabled={busy}>ตรวจจำนวนก่อนลบ</Btn>
+            {preview && (
+              <Btn variant="danger" onClick={doClear} disabled={busy}>ลบข้อมูลสแกน ({fmtNum(totalPrev)} รายการ)</Btn>
+            )}
+            {progress && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{progress}</span>}
+          </div>
+
+          {preview && (
+            <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
+              พบ: บันทึกงานหน้าเครื่อง <b>{fmtNum(preview.machine_records || 0)}</b> · สแกนสำนักงาน <b>{fmtNum(preview.scan_logs || 0)}</b>
+              {preview.units != null ? <> · รีเซ็ตชิ้นงาน <b>{fmtNum(preview.units)}</b></> : null}
+              {preview.whole && preview.releases != null ? <> · ครอบคลุม <b>{preview.releases}</b> Part</> : null}
+              {preview.unit ? <> · ชิ้น {preview.unit.part_master?.part_no || ""} ({preview.unit.qr_code})</> : null}
+              {totalPrev === 0 ? <> — <b>ไม่มีข้อมูลสแกนให้ลบ</b></> : null}
+            </div>
+          )}
+        </>
       )}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
-        <Btn variant="ghost" onClick={doPreview} disabled={busy}>ตรวจจำนวนก่อนลบ</Btn>
-        {preview && (
-          <Btn variant="danger" onClick={doClear} disabled={busy}>
-            ลบข้อมูลสแกน ({(preview.machine_records || 0) + (preview.scan_logs || 0)} รายการ)
-          </Btn>
-        )}
-      </div>
-      {preview && (
-        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
-          พบ: บันทึกงานหน้าเครื่อง <b>{preview.machine_records || 0}</b> · สแกนสำนักงาน <b>{preview.scan_logs || 0}</b>
-          {mode === "group" && preview.releases != null ? <> · ครอบคลุม <b>{preview.releases}</b> Part · รีเซ็ตชิ้นงาน <b>{preview.units || 0}</b></> : null}
-          {mode === "release" && preview.units != null ? <> · ชิ้นที่จะรีเซ็ตสถานะ <b>{preview.units}</b></> : null}
-          {mode === "unit" && preview.unit ? <> · ชิ้น {preview.unit.part_master?.part_no || ""} ({preview.unit.qr_code})</> : null}
-        </div>
-      )}
-      {msg && <div style={{ fontSize: 13, fontWeight: 600, marginTop: 10, color: msg.ok ? "var(--accent-dk, #0a7)" : "var(--danger, #e11d1d)" }}>{msg.ok ? "✓ " : "⚠ "}{msg.text}</div>}
+
+      {msg && <div style={{ fontSize: 13, fontWeight: 600, marginTop: 12, color: msg.ok ? "var(--accent-dk, #0a7)" : "var(--danger, #e11d1d)" }}>{msg.ok ? "✓ " : "⚠ "}{msg.text}</div>}
     </Card>
   );
 }
