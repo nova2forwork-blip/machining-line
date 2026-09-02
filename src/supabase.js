@@ -899,8 +899,12 @@ export async function flushScanQueue() {
       }
       if (error) {
         if (isAuthError(error)) { authExpired = true; continue; }  // token หมดอายุ/ไม่ถูกต้อง → คงไว้รอ login ใหม่ (ไม่นับ attempt/ไม่ reject)
-        // แยก "เน็ต/DB สะดุด" (retry) ออกจาก "พลาดถาวร" (วนไม่จบ) — H3
+        // แยก "เน็ต/DB สะดุด" (retry เรื่อยๆ) ออกจาก "พลาดถาวร" (payload พัง = วนไม่จบ) — H3 / R1
         if (typeof navigator !== "undefined" && navigator.onLine === false) continue; // ออฟไลน์ = ไม่ถือเป็นครั้ง
+        // ★ R1: server ไม่ถึง/ไทม์เอาต์ (เน็ตเครื่องยังขึ้น) = network err → retry ไม่จำกัด ไม่นับเพดาน
+        //   กัน Supabase ล่มยาว (>3 นาที) ดัน record ที่สมบูรณ์ดีเข้า dead-letter · เหลือเฉพาะ error ที่ไม่ใช่เน็ต
+        //   (เช่น RPC 500 จาก payload พัง = poison จริง) ที่จะ exhaust → rejected
+        if (isNetworkErr(error)) continue;
         const at = (Number(item.attempts) || 0) + 1;
         if (at >= MAX_ATTEMPTS) { rejects.push({ item, reason: "retry_exhausted" }); done.add(item.qid); }
         else bumped.set(item.qid, at);                            // ยังไม่ถึงเพดาน → คงไว้ retry (บันทึกจำนวนครั้ง)
