@@ -206,6 +206,7 @@ const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "
 // เก็บ "งานที่กำลังทำ" (ยังไม่กด OK) ไว้ใน localStorage → กดอัปเดต/รีโหลด/แอปเด้ง แล้วกู้กลับมาได้ ไม่หาย
 const DRAFT_KEY = "mls-station-draft";
 const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
+const ASM_WIP_KEY = "mls-asm-wip";          // WIP ประกอบ/แพ็ก: เบอร์แม่ + ลูกที่สแกนแต่ "ยังไม่กดยืนยัน" → refresh/อัปเดตแล้วไม่หาย
 
 function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" }) {
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
@@ -233,6 +234,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
   const [asmPending, setAsmPending] = useState(null);   // ลูกที่เพิ่งสแกน รอกด "ใส่เข้าเบอร์แม่" (แผงยืนยันต่อชิ้น — โหมดประกอบ)
+  const [asmDone, setAsmDone] = useState(null);         // แจ้งเตือน "ประกอบ/แพ็กเสร็จ" เด้งกลางจอหลังยืนยันสำเร็จ { partNo, count, isPack, queued }
   const asmClientRef = useRef(null);
   const [packPhotos, setPackPhotos] = useState([]);     // รูปตอนแพ็ก (ยังไม่อัป) [{ blob, url }]
   const [photoOpen, setPhotoOpen] = useState(false);    // เปิดกล้องถ่ายรูปแพ็ก
@@ -700,6 +702,52 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
   useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
 
+  // ── กัน "ลูกที่สแกนยังไม่ยืนยัน หายตอน refresh / กดอัปเดต" (โหมดประกอบ/แพ็ก) ──
+  //   เก็บ WIP (เบอร์แม่ + ลูกที่สแกนรอบนี้) ลง localStorage แบบสด แล้วกู้กลับตอนเปิดแอปใหม่
+  const asmWipKey = ASM_WIP_KEY + ":" + (machine?.id || "x");
+  const asmWipLoadedRef = useRef(false);
+  // กู้ครั้งเดียวตอนเปิด — วางไว้ "หลัง" effect ล้างสถานะข้างบน + รอ opsLoaded (op นิ่งแล้ว) → การกู้ชนะ ไม่โดน effect ล้าง op ทับ
+  useEffect(() => {
+    if (asmWipLoadedRef.current) return;                                 // กู้ครั้งเดียวพอ
+    if (dept === "machine") { asmWipLoadedRef.current = true; return; }   // เครื่องใช้ draft แยก (ไม่เกี่ยว)
+    if (!opsLoaded) return;                                               // รอ ops เซ็ตตัว (op auto-select เสร็จ) ก่อน — กัน effect ล้าง op มาลบ WIP ที่เพิ่งกู้
+    try {
+      const raw = localStorage.getItem(asmWipKey);
+      if (raw) {
+        const w = JSON.parse(raw);
+        const tooOld = w && w.savedAt && (Date.now() - w.savedAt > DRAFT_MAX_AGE_MS);
+        if (w && w.v === 1 && w.parent && !tooOld) {
+          setAsmParent(w.parent);
+          const kids = Array.isArray(w.children) ? w.children : [];
+          setAsmChildren(kids);
+          flash(kids.length
+            ? t("กู้รายการที่สแกนค้างไว้ (" + kids.length + ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย", "Restored " + kids.length + " scanned item(s) — review & confirm")
+            : t("กู้เบอร์แม่ที่ค้างไว้กลับมาแล้ว", "Restored the parent you were working on"), "ok");
+        } else if (tooOld) {
+          localStorage.removeItem(asmWipKey);
+        }
+      }
+    } catch { /* localStorage ปิด/เสีย — ข้าม (ไม่ทำแอปพัง) */ }
+    asmWipLoadedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opsLoaded]);
+  // เขียน WIP แบบสดทุกครั้งที่เบอร์แม่/ลูกเปลี่ยน (หลังผ่านขั้นกู้แล้วเท่านั้น กันเขียนทับตอนโหลด)
+  useEffect(() => {
+    if (dept === "machine" || !asmWipLoadedRef.current) return;
+    try {
+      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, savedAt: Date.now() }));
+      else localStorage.removeItem(asmWipKey);   // ไม่มีเบอร์แม่ (Back / ยืนยันแล้ว) → ล้าง WIP
+    } catch { /* เต็ม/ปิด — ข้าม */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asmParent, asmChildren]);
+
+  // แจ้งเตือน "ประกอบเสร็จ" เด้งกลางจอ → หายเองใน 2.6 วิ (หรือแตะ/กดตกลง)
+  useEffect(() => {
+    if (!asmDone) return;
+    const id = setTimeout(() => setAsmDone(null), 2600);
+    return () => clearTimeout(id);
+  }, [asmDone]);
+
   function asmReset() { setAsmParent(null); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
   function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
   // แผงยืนยันต่อชิ้น (โหมดประกอบ): กด "ใส่เข้าเบอร์แม่" → เข้ารายการรอปิดงาน · "ยกเลิก" → ทิ้งชิ้นที่เพิ่งสแกน
@@ -790,6 +838,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if ((asmParent.installed || []).some((x) => x.child_unit_id === u.id)) {
       flash(t("ชิ้นนี้ติดตั้งไปแล้ว (สเตชันก่อนหน้า)", "already installed (earlier station)"), "warn"); return false;
     }
+    // ── กฎ "ชนิดลูก" ตามชนิดเบอร์แม่ (อัตโนมัติ) — sub → รับ part · แผง → รับ sub/part (กันสแกนผิดชั้น) ──
+    //   แพ็ก(package): ไม่คุมด้วยกฎนี้ — ใช้ manifest/บั้ง (โหมดเข้ม) คุมเอง รับได้ทั้ง part/sub/แผงตามบั้ง · เบอร์แม่ชนิดอื่นไม่จำกัด
+    {
+      const allowByParent = { subassembly: ["part"], panel: ["subassembly", "part"] };
+      const allowed = allowByParent[asmParent.parentKind];
+      const cKind = u.part_master?.kind || "part";
+      if (allowed && !allowed.includes(cKind)) {
+        const kName = (k) => k === "subassembly" ? "sub" : k === "panel" ? t("แผง", "panel") : k === "package" ? t("แพ็ก", "package") : t("part (ชิ้นเครื่อง)", "part");
+        errorBeep();
+        flash(t(`เบอร์แม่นี้ต้องใส่ ${allowed.map(kName).join(" หรือ ")} — เบอร์นี้เป็น ${kName(cKind)} ใส่ไม่ได้`,
+                `this parent takes ${allowed.map(kName).join(" / ")} — this is ${kName(cKind)}`), "warn");
+        return false;
+      }
+    }
     // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้ (ทั้ง 2 โหมด)
     if (u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
       errorBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${u.part_master?.part_no || u.qr_code} isn't finished yet`), "warn"); return false;
@@ -856,6 +918,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         const photoNote = (isPack && packPhotos.length > 0) ? t(" · รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)", " · photos not saved offline") : "";
         if (complete) {
           flash((isPack ? t("✓ แพ็กครบ — เก็บเข้าคิว รอซิงค์", "✓ Packed — queued for sync") : t("✓ ประกอบครบ — เก็บเข้าคิว รอซิงค์", "✓ Assembled — queued for sync")) + photoNote, "ok");
+          setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: asmChildren.length, isPack, queued: true });
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
           flash(t(`✓ เก็บเข้าคิว ${asmChildren.length} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ`, `✓ Queued ${asmChildren.length} — will sync`) + photoNote, "ok");
@@ -875,6 +938,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         tickBeep();
         if (res.complete) {
           flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t("✓ ประกอบครบแล้ว — ปิดงาน", "✓ Assembled & complete"), "ok");
+          setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: asmChildren.length, isPack, queued: false });
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
           const added = res.added ?? asmChildren.length;
@@ -1160,6 +1224,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <div className="stn-work-area">
             {workAreaEl}
             {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
+            {/* แจ้งเตือน "ประกอบ/แพ็กเสร็จ" เด้งกลางจอ (auto-hide 2.6 วิ · แตะ/กดตกลง เพื่อปิดเลย) */}
+            {asmDone ? (
+              <div onClick={() => setAsmDone(null)}
+                style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(4,20,12,.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                <div onClick={(e) => e.stopPropagation()}
+                  style={{ width: "min(92vw, 420px)", background: "linear-gradient(180deg,#12241a,#0e1b14)", border: "1px solid #2f7d55", borderRadius: 20, padding: "30px 26px 22px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
+                  <div style={{ width: 78, height: 78, margin: "0 auto 14px", borderRadius: "50%", background: "#1f9d5a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 46, color: "#fff", boxShadow: "0 0 0 6px rgba(31,157,90,.22)" }}>✓</div>
+                  <div style={{ fontSize: 21, fontWeight: 800, color: "#eafff5" }}>{asmDone.isPack ? t("แพ็กเสร็จแล้ว", "Packing done") : t("ประกอบเสร็จแล้ว", "Assembly done")}</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#8ff0c0", margin: "10px 0 4px", wordBreak: "break-all" }}>{asmDone.partNo}</div>
+                  <div style={{ fontSize: 13.5, color: "#bfe6d3" }}>{t("ใส่ลูกเข้าไป", "Assembled")} {asmDone.count} {t("ชิ้น", "pcs")} · {t("ปิดงานแล้ว", "closed")}{asmDone.queued ? t(" · รอซิงค์", " · queued") : ""}</div>
+                  <button onClick={() => setAsmDone(null)} className="stn-pill ok" style={{ marginTop: 18, width: "100%" }}>{t("ตกลง", "OK")}</button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="stn-control">
