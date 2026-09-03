@@ -521,12 +521,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
   //   ★ H1: ต้องรู้ "ขั้นตอน (operation)" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้ โชว์เป็นไม่ทราบ
-  // คืน true=แสดงชิ้นเข้าหน้าเลือกจำนวน · false=ถูกบล็อก (เช่นโปรเจกต์ปิดแล้ว)
+  // คืน true=แสดงชิ้นเข้าหน้าเลือกจำนวน · false=ถูกบล็อก (เช่นโปรเจคปิดแล้ว)
   async function showScannedUnit(u) {
-    // ★ กันไว้ตั้งแต่ต้น: โปรเจกต์ปิดแล้ว → เตือนทันที ไม่ให้เข้าหน้าทำงาน (ไม่ต้องเสียเวลาแล้วโดนเด้งตอนกด OK)
+    // ★ กันไว้ตั้งแต่ต้น: โปรเจคปิดแล้ว → เตือนทันที ไม่ให้เข้าหน้าทำงาน (ไม่ต้องเสียเวลาแล้วโดนเด้งตอนกด OK)
     if (u?.part_master?.projects?.status === "closed") {
       errorBeep();
-      flash(t("โปรเจกต์นี้ปิดแล้ว (ทำเสร็จ) — บันทึกงานเพิ่มไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน",
+      flash(t("โปรเจคนี้ปิดแล้ว (ทำเสร็จ) — บันทึกงานเพิ่มไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน",
               "This project is closed — can't add work · ask admin to reopen for rework"), "warn");
       return false;
     }
@@ -548,22 +548,22 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function onDecoded(qr) {
     if (!qr) return false;
     setBusy(true);
-    const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจกต์/ใบเจาะจงเสมอ
-    if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจกต์ปิด → คืน false ให้สแกนต่อได้
-    // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจกต์เดียวใช้เลย · หลายโปรเจกต์ → อย่าเดา ให้พิมพ์เลือก
+    const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจค/ใบเจาะจงเสมอ
+    if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจคปิด → คืน false ให้สแกนต่อได้
+    // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจคเดียวใช้เลย · หลายโปรเจค → อย่าเดา ให้พิมพ์เลือก
     const opts = await findManualPartOptions(qr, curOpId());
     setBusy(false);
     if (opts.length === 1) { return await showScannedUnit(opts[0].unit); }
     if (opts.length >= 2) {
       errorBeep();
-      flash(t("เบอร์นี้อยู่หลายโปรเจกต์ — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจกต์",
+      flash(t("เบอร์นี้อยู่หลายโปรเจค — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจค",
               "This number is in several projects — type it below and pick the project"), "warn");
       return false;
     }
     errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false;
   }
-  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจกต์ → ให้เลือก "โปรเจกต์" (ไม่ต้องเลือก release)
-  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจกต์ · { ok:false } เมื่อไม่พบ
+  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจค → ให้เลือก "โปรเจค" (ไม่ต้องเลือก release)
+  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจค · { ok:false } เมื่อไม่พบ
   async function onManualEntry(text) {
     const s = String(text || "").trim();
     if (!s) return { ok: false };
@@ -571,14 +571,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
     const u = await findUnitByQr(s);
     if (u) { setBusy(false); return { ok: await showScannedUnit(u) }; }
-    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจกต์ (findManualPartOptions ตัดโปรเจกต์ปิดออกให้แล้ว)
+    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจค (findManualPartOptions ตัดโปรเจคปิดออกให้แล้ว)
     const opts = await findManualPartOptions(s, curOpId());
     setBusy(false);
     if (!opts.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
     if (opts.length === 1) { return { ok: await showScannedUnit(opts[0].unit) }; }
-    return { ok: false, choose: opts };   // หลายโปรเจกต์ → ให้เลือก
+    return { ok: false, choose: opts };   // หลายโปรเจค → ให้เลือก
   }
-  // คนงานเลือกโปรเจกต์แล้ว → ใช้ชิ้นตัวแทนของโปรเจกต์นั้น
+  // คนงานเลือกโปรเจคแล้ว → ใช้ชิ้นตัวแทนของโปรเจคนั้น
   async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
@@ -627,7 +627,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
         const msg = res?.reason === "project_closed"
-          ? t("โปรเจกต์นี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
+          ? t("โปรเจคนี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
           : (res?.message || "บันทึกไม่สำเร็จ");
         flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
@@ -739,7 +739,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
     if (!asmParent) {
       if (u.part_master?.projects?.status === "closed") {
-        errorBeep(); flash(t("โปรเจกต์นี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
+        errorBeep(); flash(t("โปรเจคนี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
       }
       setBusy(true);
       let st = null;
@@ -1673,8 +1673,8 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
   const doneRef = useRef(false);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState("");
-  const [pickList, setPickList] = useState(null);   // [options] ให้เลือก "โปรเจกต์" เมื่อเบอร์พาร์ทอยู่หลายโปรเจกต์
-  const [pickFilter, setPickFilter] = useState("");   // ค้นหาโปรเจกต์ในตัวเลือก (กรณีมีหลายสิบโปรเจกต์)
+  const [pickList, setPickList] = useState(null);   // [options] ให้เลือก "โปรเจค" เมื่อเบอร์พาร์ทอยู่หลายโปรเจค
+  const [pickFilter, setPickFilter] = useState("");   // ค้นหาโปรเจคในตัวเลือก (กรณีมีหลายสิบโปรเจค)
   const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
@@ -1885,7 +1885,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
     e.preventDefault();
     if (!manual.trim()) return;
     setPickList(null); setPickFilter("");
-    // เบอร์พาร์ทอยู่หลายโปรเจกต์ → คืน choose ให้เลือกโปรเจกต์ · โปรเจกต์เดียว → ระบุเลย
+    // เบอร์พาร์ทอยู่หลายโปรเจค → คืน choose ให้เลือกโปรเจค · โปรเจคเดียว → ระบุเลย
     onManualEntry(manual.trim()).then((r) => {
       if (r && r.ok) { doneRef.current = true; }
       else if (r && r.choose) { setPickList(r.choose); setPickFilter(""); }
@@ -1937,8 +1937,8 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
         <button type="button" className="stn-pill stn-cam-cancel" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
       </div>
 
-      {/* เบอร์พาร์ทอยู่หลายโปรเจกต์ → เลือก "โปรเจกต์" อย่างเดียว (ไม่ต้องเลือก release)
-          ★ โปรเจกต์ที่ "ยังไม่ได้ทำขั้นตอนนี้" ขึ้นก่อน · ที่ทำแล้วอยู่ล่าง (ไว้แก้งานเสีย)
+      {/* เบอร์พาร์ทอยู่หลายโปรเจค → เลือก "โปรเจค" อย่างเดียว (ไม่ต้องเลือก release)
+          ★ โปรเจคที่ "ยังไม่ได้ทำขั้นตอนนี้" ขึ้นก่อน · ที่ทำแล้วอยู่ล่าง (ไว้แก้งานเสีย)
           ★ โชว์ ความยาว ให้เทียบกับชิ้นจริง (เบอร์ซ้ำแต่คนละความยาว) */}
       {pickList && pickList.length > 0 && (() => {
         const q = pickFilter.trim().toLowerCase();
@@ -1950,18 +1950,18 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
             <div className="stn-pick" onClick={(e) => e.stopPropagation()}>
               <div className="stn-pick-head">
                 <b>{pickList[0]?.unit?.part_master?.part_no || ""}</b>
-                <span>{t("อยู่", "in")} {pickList.length} {t("โปรเจกต์ — เลือกให้ตรงชิ้นจริง (ดูความยาว)", "projects — pick the one matching the piece (check length)")}</span>
+                <span>{t("อยู่", "in")} {pickList.length} {t("โปรเจค — เลือกให้ตรงชิ้นจริง (ดูความยาว)", "projects — pick the one matching the piece (check length)")}</span>
               </div>
-              {/* มีหลายโปรเจกต์ → ช่องค้นหา (พิมพ์โค้ด/ชื่อโปรเจกต์ให้แคบลง) */}
+              {/* มีหลายโปรเจค → ช่องค้นหา (พิมพ์โค้ด/ชื่อโปรเจคให้แคบลง) */}
               {pickList.length > 6 && (
                 <input className="stn-input stn-pick-search" value={pickFilter} autoFocus
-                  placeholder={t("ค้นหาโปรเจกต์ (โค้ด/ชื่อ)…", "Search project (code/name)…")}
+                  placeholder={t("ค้นหาโปรเจค (โค้ด/ชื่อ)…", "Search project (code/name)…")}
                   onChange={(e) => setPickFilter(e.target.value)} />
               )}
               <div className="stn-pick-list">
-                {filtered.length === 0 && <div className="stn-pick-empty">{t("ไม่พบโปรเจกต์ที่ค้นหา", "No matching project")}</div>}
+                {filtered.length === 0 && <div className="stn-pick-empty">{t("ไม่พบโปรเจคที่ค้นหา", "No matching project")}</div>}
                 {filtered.map((o, i) => {
-                  const projText = [o.code, o.name].filter(Boolean).join(" · ") || t("ไม่ระบุโปรเจกต์", "No project");
+                  const projText = [o.code, o.name].filter(Boolean).join(" · ") || t("ไม่ระบุโปรเจค", "No project");
                   const done = o.doneCount > 0;
                   return (
                     <button type="button" key={o.pmId || i} className={`stn-pick-item${done ? " done" : ""}`} onClick={() => pickOption(o)}>
