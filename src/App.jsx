@@ -6361,11 +6361,9 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
   });
   // ขั้นตอนประจำ = เลือกได้หลายอัน · ค่าเริ่มต้นดึงจาก "ความสามารถของเครื่อง" ที่ผูกอยู่
   // (ถ้าเครื่องยังไม่มีความสามารถ แต่มี operation_id เดิม → ใช้ค่านั้นเป็นตัวเริ่ม)
-  const capsForMachine = (mid) => {
-    const ids = new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id));
-    if (ids.size === 0 && employee.operation_id && mid === (employee.machine_id || "")) ids.add(employee.operation_id);
-    return ids;
-  };
+  // ★ ใช้ "ความสามารถจริงของเครื่อง" อย่างเดียว — ไม่ seed จาก employee.operation_id เดิม
+  //   (เดิม seed ค่านั้นเมื่อเครื่องไม่มี caps แล้วพอ save จะเขียนทับ = เผลอล็อกเครื่องที่ตั้ง "ไม่จำกัด" ให้เหลือขั้นตอนเดียว)
+  const capsForMachine = (mid) => new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id));
   const [opSel, setOpSel] = useUndoable(() => capsForMachine(employee.machine_id || ""));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
