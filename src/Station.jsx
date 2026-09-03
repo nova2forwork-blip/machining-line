@@ -797,6 +797,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (u.part_master?.projects?.status === "closed") {
         errorBeep(); flash(t("โปรเจคนี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
       }
+      // เบอร์แม่ต้องเป็น "ตัวประกอบ" (sub / แผง / แพ็ก) — part ธรรมดาเป็นชิ้นปลายทาง เปิดเป็นเบอร์แม่ไม่ได้
+      if ((u.part_master?.kind || "part") === "part") {
+        errorBeep();
+        flash(t("เบอร์นี้เป็น part ธรรมดา — เปิดเป็นเบอร์แม่ไม่ได้ (เอาไปสแกนเป็น 'ลูก' แทน)", "this is a plain part — can't be a parent (scan it as a child instead)"), "warn");
+        return false;
+      }
       setBusy(true);
       let st = null;
       try { st = await getAssemblyState(u.qr_code); } catch { st = null; }
