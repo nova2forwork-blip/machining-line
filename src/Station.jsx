@@ -1338,6 +1338,14 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   }));
   const scannedCount = installedRows.length + asmChildren.length;   // ติดตั้งแล้ว + สแกนรอบนี้
 
+  // ยกเลิก/ย้อนกลับ — เคลียร์เบอร์แม่ กลับไปหน้าสแกน · กันเผลอทิ้งที่สแกนค้างไว้รอบนี้
+  const asmBack = () => {
+    if (asmChildren.length > 0 && !window.confirm(
+      t(`ทิ้ง${childWord}ที่สแกนไว้รอบนี้ ${asmChildren.length} ชิ้น แล้วย้อนกลับ?`,
+        `Discard ${asmChildren.length} scanned ${childWord}(s) this round and go back?`))) return;
+    asmReset();
+  };
+
   const measHead = isPack ? t("น้ำหนัก", "Weight") : t("ขนาด/ยาว", "Size/Len");
   const measUnit = isPack ? "Lbs" : "mm";
   const measDigits = isPack ? 1 : 0;
@@ -1345,12 +1353,13 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   return (
     <div className="asw">
       <div className="asw-head">
+        <button className="asw-change" onClick={asmBack} title={t("ย้อนกลับ / ยกเลิก", "Back / cancel")}>← {t("ย้อนกลับ", "Back")}</button>
         <div className="asw-hgrow">
           <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
           <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
         </div>
         <div className="asw-scount"><b>{free ? scannedCount : `${doneUnits}/${totalUnits}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
-        <button className="asw-change" onClick={asmReset}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
+        <button className="asw-change" onClick={asmBack}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
       </div>
 
       <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : free ? t("ลูกที่สแกนเข้าไปแล้ว", "Children scanned in") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {free ? scannedCount : rows.length} {t("รายการ", "items")}</span></div>
