@@ -261,6 +261,31 @@ const DICT = {
   "บันทึกแล้ว ✓ พร้อมงานถัดไป": "Saved ✓ ready for the next job",
   "บันทึกไม่สำเร็จ": "Save failed",
   "บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก": "Account used on another device — syncing pending work before exit",
+
+  // ── ปิด/เปิด/ลบ โปรเจค (admin) + สถานะ ──
+  "พนักงานออฟฟิศ": "Office staff",
+  "ปิดโปรเจค": "Close project", "ปิดโปรเจค (เสร็จ)": "Close project (done)",
+  "เปิดโปรเจค": "Reopen project", "เปิดโปรเจคอีกครั้ง": "Reopen project",
+  "ลบโปรเจค": "Delete project", "ปิดโปรเจคแล้ว": "Project closed",
+  "เปิดโปรเจคอีกครั้งแล้ว": "Project reopened", "โปรเจคถูกปิด": "Project is closed",
+  "โปรเจคนี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข": "This project is closed — reopen/edit via Edit",
+  "สถานะ:": "Status:", "ปิดแล้ว (เสร็จ)": "Closed (done)",
+  "หน้าเครื่องบันทึกงานเพิ่มไม่ได้": "Terminal can't record more work",
+  "ปิดเมื่อทำเสร็จ เพื่อกันบันทึกงานเพิ่ม": "Close when done to prevent more records",
+
+  // ── ล้างข้อมูลสแกน (Clear scans · admin) ──
+  "ล้างข้อมูลสแกน (เฉพาะ Admin)": "Clear scan data (Admin only)",
+  "1) เลือกโปรเจค": "1) Select project", "2) ขอบเขตที่จะลบ": "2) Scope to clear",
+  "ทั้งโปรเจค": "Whole project", "รายชุด Release": "By Release batch",
+  "ราย Part": "By Part", "รายชิ้น (QR)": "By piece (QR)",
+  "เลือกชุด Release": "Select Release batch", "เลือก Part": "Select Part",
+  "รหัส QR ของชิ้นงาน": "Piece QR code", "สแกน/พิมพ์รหัส QR": "Scan/type QR code",
+  "ตรวจจำนวนก่อนลบ": "Check count before deleting", "ลบข้อมูลสแกน": "Clear scan data",
+  "ไม่มีข้อมูลสแกนให้ลบ": "No scan data to delete",
+  "— เลือกโปรเจค —": "— Select project —", "— เลือกชุด —": "— Select batch —", "— เลือก Part —": "— Select Part —",
+  "เลือกโปรเจคก่อน": "Select a project first", "เลือกชุด Release ก่อน": "Select a Release batch first",
+  "เลือก Part ก่อน": "Select a Part first", "พิมพ์/สแกน QR ก่อน": "Type/scan a QR first",
+  "ไม่พบ QR นี้ในระบบ": "This QR isn't in the system",
 };
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
@@ -289,6 +314,9 @@ const RULES = [
   [/^หมายเหตุทั้งหมด:\s*(.+)$/, (m) => `All remarks: ${m[1]}`],
   [/^ทั้งหมด\s+(.+)$/, (m) => `all ${m[1]}`],
   [/^⚠\s*ชิ้นนี้เคยทำขั้นตอนนี้แล้ว\s+(\d+)\s*ครั้ง$/, (m) => `⚠ This piece already ran this step ${m[1]}×`],
+  [/^ลบข้อมูลสแกน\s*\((\d[\d,]*)\s*รายการ\)$/, (m) => `Clear scan data (${m[1]} items)`],
+  [/^กำลังตรวจ\s+(\d+\/\d+)$/, (m) => `Checking ${m[1]}`],
+  [/^กำลังลบ\s+(\d+\/\d+)$/, (m) => `Deleting ${m[1]}`],
 ];
 
 function toEN(trimmed) {
