@@ -4277,6 +4277,12 @@ function ReportPage() {
 
   const [logs, setLogs] = useState([]);
 
+  // ── เลือกตารางก่อน export + สถานะระหว่างสร้างไฟล์ ──
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState("");
+  const [pick, setPick] = useState({ op: true, machine: true, cycle: true, part: true, daily: true });
+
   useEffect(() => { listRows("part_master", { order: "part_no" }).then(setParts); }, []);
 
   useEffect(() => {
@@ -4328,9 +4334,9 @@ function ReportPage() {
   const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
   const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
 
-  // ── ดาวน์โหลดทุกตารางในหน้านี้เป็นไฟล์ Excel หลายชีต (โหลด xlsx เฉพาะตอนกด) ──
-  async function exportExcel() {
-    const { downloadSheets, round2 } = await import("./excelExport.js");
+  // ── สร้างข้อมูลทุกตารางของหน้านี้ (คีย์ = ใช้กับกล่องเลือก · rows พร้อมเข้า exceljs) ──
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  function buildAllSheets() {
     const opRows = chartData.map((o) => ({ "ขั้นตอน": o.name, "จำนวน (ชิ้น)": o.count, "น้ำหนัก (กก.)": round2(o.weight) }));
     const mOps = matrix.opNames;
     const machineRows = matrix.machines.map((m) => {
@@ -4373,13 +4379,35 @@ function ReportPage() {
         "น้ำหนัก (กก.)": round2(d.weight), "เวลา (วินาที)": Math.round(d.seconds || 0),
       });
     }));
-    downloadSheets(`report-${todayStr()}${partFilter ? "-" + partFilter : ""}.xlsx`, [
-      { name: "สรุปตามขั้นตอน", rows: opRows },
-      { name: "เครื่องจักรxขั้นตอน", rows: machineRows },
-      { name: "Cycle-time วินาทีต่อชิ้น", rows: cycleRows },
-      { name: "ReleasexPart", rows: partRows },
-      { name: "รายวันต่อเครื่อง", rows: dailyRows },
-    ]);
+    return [
+      { key: "op", name: "สรุปตามขั้นตอน", rows: opRows },
+      { key: "machine", name: "เครื่องจักรxขั้นตอน", rows: machineRows },
+      { key: "cycle", name: "Cycle-time วินาทีต่อชิ้น", rows: cycleRows },
+      { key: "part", name: "ReleasexPart", rows: partRows },
+      { key: "daily", name: "รายวันต่อเครื่อง", rows: dailyRows },
+    ];
+  }
+  const allSheets = buildAllSheets();
+  const pickedCount = allSheets.filter((s) => pick[s.key]).length;
+
+  // ── ดาวน์โหลดเฉพาะตารางที่ติ๊กเลือก เป็นไฟล์ Excel มีสไตล์ (โหลด exceljs เฉพาะตอนกด) ──
+  async function doDownload() {
+    const chosen = allSheets.filter((s) => pick[s.key]);
+    if (!chosen.length) return;
+    setExporting(true); setExportErr("");
+    try {
+      const { downloadSheets } = await import("./excelExport.js");
+      await downloadSheets(
+        `report-${todayStr()}${partFilter ? "-" + partFilter : ""}.xlsx`,
+        chosen.map((s) => ({ name: s.name, rows: s.rows })),
+      );
+      setExportOpen(false);
+    } catch (e) {
+      console.warn("export excel error", e);
+      setExportErr("สร้างไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -4390,12 +4418,51 @@ function ReportPage() {
           <div className="page-sub">สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="accent" onClick={exportExcel} disabled={filteredLogs.length === 0}
-            title="ดาวน์โหลดทุกตารางในหน้านี้เป็นไฟล์ Excel (หลายชีต)">
+          <Btn variant="accent" onClick={() => { setExportErr(""); setExportOpen(true); }} disabled={filteredLogs.length === 0}
+            title="เลือกตารางแล้วดาวน์โหลดเป็นไฟล์ Excel">
             <Icon name="grid" size={15} /> ดาวน์โหลด Excel
           </Btn>
         </div>
       </div>
+
+      {exportOpen && (
+        <Modal title="เลือกตารางที่จะดาวน์โหลด" sub="ติ๊กเฉพาะตารางที่ต้องการ แล้วดาวน์โหลดเป็นไฟล์ Excel (.xlsx)"
+          onClose={() => { if (!exporting) setExportOpen(false); }} locked={exporting}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>เลือกแล้ว {pickedCount}/{allSheets.length} ตาราง</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <Btn variant="ghost" onClick={() => setPick({ op: true, machine: true, cycle: true, part: true, daily: true })} disabled={exporting}>เลือกทั้งหมด</Btn>
+              <Btn variant="ghost" onClick={() => setPick({ op: false, machine: false, cycle: false, part: false, daily: false })} disabled={exporting}>ล้าง</Btn>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {allSheets.map((s) => (
+              <label key={s.key}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 10,
+                  cursor: exporting ? "default" : "pointer",
+                  background: pick[s.key] ? "var(--accent-soft, rgba(37,99,235,0.08))" : "transparent",
+                  border: "1px solid var(--border, #e5e7eb)" }}>
+                <input type="checkbox" checked={!!pick[s.key]} disabled={exporting}
+                  onChange={(e) => setPick((p) => ({ ...p, [s.key]: e.target.checked }))}
+                  style={{ accentColor: "var(--accent)", width: 16, height: 16, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{s.name}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    {s.rows.length ? `${s.rows.length.toLocaleString()} แถว` : "ไม่มีข้อมูลในช่วงนี้"}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+          {exportErr && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 10 }}>{exportErr}</div>}
+          <div className="modal-actions" style={{ marginTop: 16 }}>
+            <Btn variant="ghost" onClick={() => setExportOpen(false)} disabled={exporting}>ยกเลิก</Btn>
+            <Btn variant="accent" onClick={doDownload} disabled={exporting || pickedCount === 0}>
+              {exporting ? "กำลังสร้างไฟล์..." : `ดาวน์โหลด Excel (${pickedCount})`}
+            </Btn>
+          </div>
+        </Modal>
+      )}
 
       <Card title="ช่วงเวลาที่ต้องการดู">
         {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรอง Part (ขวา) */}
