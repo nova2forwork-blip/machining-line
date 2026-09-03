@@ -52,7 +52,7 @@ function flagAuth(error) {
 // อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
 // (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
 
-export async function listRows(table, { order, ascending = true, filters } = {}) {
+export async function listRows(table, { order, ascending = true, filters, strict = false } = {}) {
   // แบ่งหน้าเอง (page 1000) — กันเพดาน 1,000 แถวของ PostgREST ที่ตัดข้อมูลเงียบๆ (H5)
   const pageSize = 1000; let from = 0; let all = [];
   for (;;) {
@@ -61,7 +61,7 @@ export async function listRows(table, { order, ascending = true, filters } = {})
     if (order) q = q.order(order, { ascending });
     q = q.range(from, from + pageSize - 1);
     const { data, error } = await q;
-    if (error) { console.warn("listRows error", table, error); return all; }
+    if (error) { console.warn("listRows error", table, error); if (strict) throw error; return all; }
     all = all.concat(data || []);
     if (!data || data.length < pageSize) break;
     from += pageSize;
@@ -492,13 +492,17 @@ export async function getProjectImpact(projectId) {
   const releaseIds = (rel || []).map((r) => r.id);
   if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
 
-  const { data: units } = await supabase.from("part_units").select("status").in("release_id", releaseIds);
-  const unitList = units || [];
+  // ★ นับ units/scanned ด้วย count query (head:true) — ไม่ดึงแถว ไม่ติดเพดาน 1000
+  //   เดิม select แถวมานับ → โปรเจคที่มี >1000 ชิ้น นับต่ำ → ด่านยืนยันลบโปรเจค (พิมพ์รหัส) อาจหลุดเป็นแค่กดยืนยันเฉยๆ
+  const { count: unitCount } = await supabase.from("part_units")
+    .select("id", { count: "exact", head: true }).in("release_id", releaseIds);
+  const { count: scannedCount } = await supabase.from("part_units")
+    .select("id", { count: "exact", head: true }).in("release_id", releaseIds).neq("status", "released");
   return {
     partCount: partIds.length,
     releaseCount: releaseIds.length,
-    unitCount: unitList.length,
-    scannedCount: unitList.filter((u) => u.status !== "released").length,
+    unitCount: unitCount || 0,
+    scannedCount: scannedCount || 0,
   };
 }
 export async function getReleasesFull() {
@@ -637,7 +641,9 @@ export function retryRejected() {
   const q = qRead();
   // ★ ตัด attempts ออกด้วย — ไม่งั้น item ที่เคยพลาด 11 ครั้งจะชน MAX_ATTEMPTS ทันทีที่ retry (ลองใหม่ไม่ได้จริง)
   for (const it of rj) { const { reason, rejectedAt, attempts, ...orig } = it; q.push(orig); }
-  qWrite(q); rjWrite([]); flushScanQueue();
+  // ★ กันข้อมูลหายตอนที่เก็บเต็ม: ถ้าเขียนคิวหลักไม่สำเร็จ ห้ามล้างคิว rejected ทิ้ง (เดิมล้างทันที = งานที่ทำจริงหาย)
+  if (!qWrite(q)) { try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ } return; }
+  rjWrite([]); flushScanQueue();
 }
 export function clearRejected() { rjWrite([]); }
 
@@ -994,6 +1000,21 @@ export async function createReleaseBatch({ projectId, releaseOrder, releaseDate,
   return data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
 }
 
+// เช็คว่ามี Release ที่ (โปรเจค + เลขที่ Release Order) นี้อยู่แล้วไหม — กันสร้าง/นำเข้าซ้ำตอน retry หลังเน็ตวูบ
+// (create_release_batch ไม่ idempotent) · เลข Order ว่าง = ระบุไม่ได้ ข้ามการเช็ค (fail-open) · เช็คไม่ได้ = ไม่บล็อก
+export async function releaseOrderExists(projectId, releaseOrder) {
+  const ro = String(releaseOrder || "").trim();
+  if (!projectId || !ro) return false;
+  const { data, error } = await supabase
+    .from("releases")
+    .select("id, part_master!inner(project_id)")
+    .eq("part_master.project_id", projectId)
+    .eq("release_order", ro)
+    .limit(1);
+  if (error) { console.warn("releaseOrderExists error", error); return false; }
+  return (data || []).length > 0;
+}
+
 // สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
 // ส่ง id=null เพื่อสร้างใหม่, password="" เพื่อไม่เปลี่ยนรหัสตอนแก้ไข
 export async function upsertEmployee(emp) {
@@ -1041,7 +1062,7 @@ export async function exportAllData(onProgress) {
   for (let i = 0; i < BACKUP_TABLES.length; i++) {
     const t = BACKUP_TABLES[i];
     if (onProgress) onProgress({ table: t, index: i, total: BACKUP_TABLES.length });
-    const rows = await listRows(t);
+    const rows = await listRows(t, { strict: true });   // ★ backup ต้องครบ — error กลางคันให้ล้ม ไม่ใช่คืนบางส่วนเงียบ (ป้องกัน backup ขาด)
     tables[t] = rows;
     counts[t] = rows.length;
   }
@@ -1224,6 +1245,7 @@ export async function recordMachineWork(
       return { ok: true, queued: true };
     }
     console.warn("record_machine_work error", error);
+    flagAuth(error);   // ★ token หมด/เพี้ยน → เด้ง login (path นี้เดิมตกหล่น = บันทึกหน้าเครื่องหลุดเงียบตอน token หมด ไม่เด้งออก)
     return { ok: false, reason: "error", message: error.message };
   }
   return data || { ok: false, reason: "error" };
