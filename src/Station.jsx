@@ -8,7 +8,7 @@ import {
   findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
-  countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly,
+  countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
@@ -750,6 +750,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   function asmReset() { setAsmParent(null); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
   function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
+  // ลบลูกที่ "บันทึกแล้ว" (installed) ออกจากเบอร์แม่ — ไว้แก้งานที่เสร็จ · ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
+  async function asmRemoveInstalled(childUnitId, partNo) {
+    if (!asmParent || !childUnitId) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      errorBeep(); flash(t("ลบชิ้นที่บันทึกแล้วต้องออนไลน์ก่อน", "removing a saved child needs to be online"), "warn"); return;
+    }
+    if (!window.confirm(t(`เอา ${partNo || "ลูกนี้"} ออกจากเบอร์แม่? (ลบชิ้นที่บันทึกไปแล้ว)`, `Remove ${partNo || "this child"} from the parent?`))) return;
+    setBusy(true);
+    try {
+      const res = await removeAssemblyChild(asmParent.unit.id, childUnitId);
+      if (res && res.ok) {
+        setAsmParent((p) => (p ? { ...p, installed: (p.installed || []).filter((x) => x.child_unit_id !== childUnitId) } : p));
+        tickBeep(); flash(t("เอาลูกออกแล้ว", "child removed"), "ok");
+      } else { errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn"); }
+    } catch (e) {
+      errorBeep(); flash(t("ลบไม่สำเร็จ: ", "remove failed: ") + (e?.message || e?.details || String(e)), "warn");
+    } finally { setBusy(false); }
+  }
   // แผงยืนยันต่อชิ้น (โหมดประกอบ): กด "ใส่เข้าเบอร์แม่" → เข้ารายการรอปิดงาน · "ยกเลิก" → ทิ้งชิ้นที่เพิ่งสแกน
   function asmAddPending() {
     if (!asmPending) return;
@@ -819,7 +837,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       if (st.offline) flash(t("โหมดออฟไลน์ — บันทึกเข้าคิว จะซิงค์เมื่อเน็ตกลับ", "offline — will queue & sync"), "info");
       if (st.parent?.status === "finished") {
-        flash(t("เบอร์นี้ประกอบครบแล้ว (เปิดดูได้ ใส่เพิ่มไม่ได้)", "already complete (view only)"), "warn");
+        tickBeep(); flash(t("เบอร์นี้เสร็จแล้ว — เปิดโหมดแก้ไข (เพิ่ม/ลบลูกได้ ยอดผลิตไม่นับซ้ำ)", "already done — edit mode (add/remove children, no double count)"), "info");
       } else {
         tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
       }
@@ -833,7 +851,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           kind: b.kind || meta[b.child_pm_id]?.kind || "part",
         }));
       } catch { /* ไม่เป็นไร ใช้ bom เดิม */ }
-      setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [] });
+      setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [], parentStatus: st.parent?.status || null });
       setAsmChildren([]); asmClientRef.current = null;
       return true;
     }
@@ -1009,7 +1027,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       closeScan={closeScan} rescan={rescan} dupCount={dupCount}
       isAsm={isAsm} asmType={dept === "packing" ? "packing" : "assembly"} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
       asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
-      asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
+      asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} asmReset={asmReset} asmOpenCam={asmOpenCam}
       asmPending={asmPending} asmAddPending={asmAddPending} asmCancelPending={asmCancelPending}
       packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
       photoCapture={photoCapture} photoRemove={photoRemove}
@@ -1402,7 +1420,7 @@ function asmRole(name) {
 //    คอลัมน์: # · เบอร์ชิ้น/ยูนิต · รายละเอียด · ขนาด/ยาว(ประกอบ)|น้ำหนัก(แพ็ก) · จำนวน · ประกอบแล้ว/แพ็กแล้ว (X/Y)
 //    ✓ = ครบ · ◐ = บางส่วน · ○ = ยังไม่ทำ (นับสะสม: ที่ติดไปแล้ว + ที่สแกนรอบนี้) · สแกนลูก = ติ๊กเพิ่มอัตโนมัติ
 //    ใช้คอมโพเนนต์เดียวทั้งประกอบ (ธีมเขียว) และแพ็ก (isPack → ธีมน้ำเงินจาก .dept-packing + ปุ่มถ่ายรูป)
-function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, busy, t, childWord, confirmVerb, isPack = false, openPhoto, packPhotos = [], photoRemove }) {
+function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, busy, t, childWord, confirmVerb, isPack = false, openPhoto, packPhotos = [], photoRemove }) {
   const pm = asmParent.unit.part_master || {};
   const meta = pm.pkg_meta || {};
   // เบอร์ที่กำลังทำ — แพ็ก: เลขบั้ง (bunk_no) ถ้ามี · ประกอบ: เบอร์พาร์ทแม่
@@ -1441,7 +1459,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   const free = pkind !== "package";
   // ตารางประกอบ: ที่ติดตั้งแล้ว (จากสเตชันก่อน/เซิร์ฟเวอร์) + ที่สแกนเข้ารายการรอบนี้ (ลบออกได้)
   const installedRows = (asmParent.installed || []).map((x, i) => ({
-    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, wt: null, qty: 1,
+    key: "i" + (x.child_unit_id || i), unit_id: x.child_unit_id, part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, wt: null, qty: 1,
   }));
   const thisRoundRows = asmChildren.map((c) => ({
     key: "n" + c.unit_id, unit_id: c.unit_id, part_no: c.part_no || "—", qr: c.qr || "—", now: true, len: c.len ?? null, wt: c.wt ?? null, qty: c.qty ?? 1,
@@ -1496,7 +1514,11 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
                 <td className="c-len">{r.wt != null && !isNaN(Number(r.wt)) ? <>{fmtNum(r.wt, 2)}<span className="u"> kg</span></> : "—"}</td>
                 <td className="c-qty">{r.qty ?? 1}</td>
                 <td className="c-prog" style={{ textAlign: "center" }}>
-                  {r.now ? <span onClick={() => asmRemoveChild(r.unit_id)} title={t("เอาออก", "remove")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700 }}>✕</span> : null}
+                  {r.now
+                    ? <span onClick={() => asmRemoveChild(r.unit_id)} title={t("เอาออก", "remove")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700 }}>✕</span>
+                    : (r.unit_id && asmRemoveInstalled
+                        ? <span onClick={() => asmRemoveInstalled(r.unit_id, r.part_no)} title={t("เอาออก (ลบชิ้นที่บันทึกแล้ว)", "remove (saved)")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700, opacity: .8 }}>✕</span>
+                        : null)}
                 </td>
               </tr>
             ))}
@@ -1690,7 +1712,7 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
 }
 
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
-  isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam,
+  isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
   asmPending = null, asmAddPending, asmCancelPending,
   packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
   const [lang] = useLang();
@@ -1719,7 +1741,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <AsmWorksheet
             asmParent={asmParent} asmChildren={asmChildren}
             asmComplete={asmComplete} asmReset={asmReset} asmOpenCam={asmOpenCam} asmScan={asmScan}
-            asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} busy={busy} t={t}
+            asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} busy={busy} t={t}
             isPack={isPack} childWord={childWord} confirmVerb={confirmVerb}
             openPhoto={openPhoto} packPhotos={packPhotos} photoRemove={photoRemove}
           />
