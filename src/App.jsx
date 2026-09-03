@@ -1425,7 +1425,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
 // บันทึกต่อกลุ่ม 3 ขั้น: (1) release เบอร์แม่ (createReleaseBatch → part+QR) (2) ตั้ง kind=subassembly
 //   (3) upsert ลูก + ตั้ง BOM (ต่อชุด = จำนวนรวมของลูก ÷ จำนวนแม่)
 // รองรับทั้งกรอกมือและนำเข้า Excel (ปุ่มนำเข้าเติมกลุ่มให้ แล้วผู้ใช้ตรวจก่อนบันทึก)
-function emptySubAsmChild() { return { code: "", desc: "", len: "", totalQty: "" }; }
+function emptySubAsmChild() { return { code: "", desc: "", len: "", perSet: "" }; }
 function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [] }; }
 
 function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
@@ -1458,7 +1458,11 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
       parentKind: g.parentKind || "subassembly",
       parentCode: g.parentCode, parentDesc: g.parentDesc,
       parentLen: g.parentLen ?? "", parentQty: String(g.parentQty || 1),
-      children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len ?? "", totalQty: String(c.totalQty) })),
+      // ไฟล์/วาง คืน "จำนวนรวมทุกแม่" (totalQty) → แปลงเป็น "ต่อชุด" (÷ จำนวนแม่) ให้ฟอร์มใหม่ที่กรอกต่อชุดตรง ๆ
+      children: g.children.map((c) => ({
+        code: c.code, desc: c.desc, len: c.len ?? "",
+        perSet: Number(c.totalQty) > 0 ? String(Math.max(1, Math.round(Number(c.totalQty) / (Number(g.parentQty) || 1)))) : "",
+      })),
     }));
     setGroups(gs.length ? gs : [emptySubAsmGroup()]);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
@@ -1538,11 +1542,11 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
     if (!parentPm) throw new Error(`ไม่พบเบอร์แม่ ${parentCode} หลังสร้าง`);
     // 2) ตั้ง kind=subassembly (replace-style, idempotent)
     await updateRow("part_master", parentPm.id, { kind: g.parentKind || "subassembly" });
-    // 3) upsert ลูก → id + ตั้ง BOM (ต่อชุด = รวม ÷ จำนวนแม่)
+    // 3) upsert ลูก → id + ตั้ง BOM (qty = "ต่อชุด" ที่กรอกโดยตรง — 1 แม่ใช้ลูกกี่ชิ้น)
     const components = [];
     for (const ch of g.children) {
       const code = ch.code.trim();
-      if (!code || !(Number(ch.totalQty) > 0)) continue;
+      if (!code || !(Number(ch.perSet) > 0)) continue;
       let pm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
       if (!pm) {
         const created = await insertRow("part_master", {
@@ -1554,7 +1558,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
         pm = created && created.id ? created : (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
       }
       if (!pm?.id) throw new Error(`สร้าง/หาลูก ${code} ไม่สำเร็จ`);
-      const perUnit = Math.max(1, Math.round(Number(ch.totalQty) / pQty));
+      const perUnit = Math.max(1, Math.round(Number(ch.perSet)));   // "ต่อชุด" = qty ใน BOM โดยตรง (ไม่ต้องหารแล้ว)
       components.push({ child_pm_id: pm.id, qty: perUnit });
     }
     if (components.length) await setBom(parentPm.id, components);
@@ -1566,29 +1570,16 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
     if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
     const clean = groups
-      .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.totalQty) > 0) }))
+      .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.perSet) > 0) }))
       .filter((g) => g.parentCode);   // มีเบอร์แม่พอ · มีลูก = ตั้ง BOM · ไม่มีลูก = ปล่อยงานเฉยๆ (เช่นแผง)
     if (clean.length === 0) { setErr("ต้องมีอย่างน้อย 1 เบอร์แม่ (กรอก Code)"); return; }
     for (const g of clean) {
       const pq = Number(g.parentQty);
       if (!Number.isInteger(pq) || pq < 1) { setErr(`จำนวนแม่ของ "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
       for (const c of g.children) {
-        const tq = Number(c.totalQty);
-        if (!Number.isInteger(tq) || tq < 1) { setErr(`จำนวนลูก "${c.code}" ใน "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
+        const ps = Number(c.perSet);
+        if (!Number.isInteger(ps) || ps < 1) { setErr(`จำนวนต่อชุดของลูก "${c.code}" ใน "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
       }
-    }
-    // เตือนถ้าจำนวนลูกหารจำนวนแม่ไม่ลงตัว (จะปัด "ต่อชุด")
-    const nonDiv = [];
-    for (const g of clean) {
-      const pq = Number(g.parentQty);
-      for (const c of g.children) if (pq > 0 && Number(c.totalQty) % pq !== 0) nonDiv.push(`${c.code} (${c.totalQty}÷${pq})`);
-    }
-    if (nonDiv.length) {
-      const ok = await askConfirm({
-        message: `จำนวนลูกบางรายการหาร "จำนวนแม่" ไม่ลงตัว — ระบบจะปัด "ต่อชุด" เป็นจำนวนเต็มที่ใกล้ที่สุด:\n${nonDiv.join(", ")}\n\nดำเนินการต่อไหม?`,
-        tone: "warn", confirmText: "ดำเนินการต่อ", cancelText: "กลับไปแก้",
-      });
-      if (!ok) return;
     }
     setBusy(true); setErr("");
     let done = 0;
@@ -1603,7 +1594,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
       // เก็บเฉพาะเบอร์ที่ "ยังไม่บันทึก" ไว้ในฟอร์ม กันกดซ้ำแล้วสร้าง release ซ้ำ
       const remaining = clean.slice(done).map((g) => ({
         parentCode: g.parentCode, parentDesc: g.parentDesc, parentLen: g.parentLen, parentQty: String(g.parentQty),
-        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, totalQty: String(c.totalQty) })),
+        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet) })),
       }));
       setGroups(remaining.length ? remaining : [emptySubAsmGroup()]);
       setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${e2?.message || e2}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
@@ -1696,21 +1687,21 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
                 <table className="data-table bom-child-table" style={{ fontSize: 12.5, width: "100%", minWidth: 620, tableLayout: "fixed" }}>
                   <thead><tr>
                     <th style={{ width: 132 }}>ลูก (Code)</th><th>รายละเอียด</th>
-                    <th style={{ width: 96 }}>L</th><th style={{ width: 92 }}>จำนวนรวม</th>
-                    <th style={{ width: 60 }}>ต่อชุด</th><th style={{ width: 30 }}></th>
+                    <th style={{ width: 96 }}>L</th><th style={{ width: 96 }}>ต่อชุด *</th>
+                    <th style={{ width: 84 }}>รวมทุกแม่</th><th style={{ width: 30 }}></th>
                   </tr></thead>
                   <tbody>
                     {g.children.map((c, ci) => {
-                      const tq = Number(c.totalQty);
-                      const per = pq > 0 && tq > 0 ? tq / pq : null;
-                      const perTxt = per == null ? "—" : (Number.isInteger(per) ? String(per) : `≈${Math.round(per)}`);
+                      const per = Number(c.perSet);
+                      const total = pq > 0 && per > 0 ? per * pq : null;   // ต่อชุด × จำนวนแม่ = ลูกที่ต้องใช้ทั้งหมด (โชว์เฉย ๆ)
+                      const totalTxt = total == null ? "—" : fmtNum(total);
                       return (
                         <tr key={ci}>
                           <td><Input value={c.code} title={c.code} placeholder="AN04-001A" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
                           <td><Input value={c.desc} title={c.desc} placeholder="ANCHOR BASE PLATE" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
                           <td><Input value={c.len} title={c.len} inputMode="decimal" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
-                          <td><Input value={c.totalQty} inputMode="numeric" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "totalQty", e.target.value)} /></td>
-                          <td style={{ textAlign: "center", color: per != null && !Number.isInteger(per) ? "var(--warning, #b45309)" : "var(--muted)", fontFamily: "var(--font-mono)" }}>{perTxt}</td>
+                          <td><Input value={c.perSet} inputMode="numeric" placeholder="ใส่จำนวน" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "perSet", e.target.value)} /></td>
+                          <td style={{ textAlign: "center", color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{totalTxt}</td>
                           <td style={{ textAlign: "center" }}>
                             <span onClick={() => removeChild(gi, ci)} title="ลบลูก" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span>
                           </td>
@@ -4271,9 +4262,12 @@ function ReportPage() {
   const [customFrom, setCustomFrom] = useState(() => daysAgoStr(7));
   const [customTo, setCustomTo] = useState(() => todayStr());
 
-  // ── Filter by a specific Part number ──
+  // ── กรองรายโปรเจค + ราย Part ──
   const [parts, setParts] = useState([]);
   const [partFilter, setPartFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");   // "" = ทุกโปรเจค
+  const [projects, setProjects] = useState([]);              // รายชื่อโปรเจค (dedupe จาก releases)
+  const [relProj, setRelProj] = useState({});                // release_id → project_id (แม่นยำ ไม่ติดปัญหา part_no ซ้ำข้ามโปรเจค)
 
   const [logs, setLogs] = useState([]);
 
@@ -4285,6 +4279,25 @@ function ReportPage() {
 
   useEffect(() => { listRows("part_master", { order: "part_no" }).then(setParts); }, []);
 
+  // โหลด releases ครั้งเดียว → map release→โปรเจค (สำหรับกรอง log) + รายชื่อโปรเจค (สำหรับ dropdown)
+  // ใช้ release_id เพราะ 1 release ผูกโปรเจคเดียวชัดเจน — เลี่ยงปัญหา part_no ซ้ำข้ามโปรเจค (K)
+  useEffect(() => {
+    getReleasesFull().then((rels) => {
+      const rp = {};
+      const pmap = new Map();
+      for (const r of rels || []) {
+        const pid = r.part_master?.project_id;
+        if (r.id && pid) rp[r.id] = pid;
+        if (pid && !pmap.has(pid)) {
+          const pj = r.part_master?.projects || {};
+          pmap.set(pid, { id: pid, code: pj.code || "", name: pj.name || "", status: pj.status || "" });
+        }
+      }
+      setRelProj(rp);
+      setProjects(Array.from(pmap.values()));
+    });
+  }, []);
+
   useEffect(() => {
     const range =
       rangeMode === "month" ? monthRangeFor(monthValue) :
@@ -4293,9 +4306,25 @@ function ReportPage() {
     getScanLogsBetween(range.from, range.to).then(setLogs);
   }, [rangeMode, preset, monthValue, customFrom, customTo]);
 
-  const filteredLogs = partFilter
-    ? logs.filter((l) => l.part_unit?.part_master?.part_no === partFilter)
-    : logs;
+  // อ่าน project ของแต่ละ log จาก release_id (เหมือน metrics.js) แล้วเทียบตัวกรอง
+  const logProjectId = (l) => {
+    const rid = l.release_id || l.part_unit?.release_id || null;
+    return rid ? relProj[rid] : undefined;
+  };
+  const filteredLogs = logs.filter((l) => {
+    if (projectFilter && logProjectId(l) !== projectFilter) return false;
+    if (partFilter && l.part_unit?.part_master?.part_no !== partFilter) return false;
+    return true;
+  });
+
+  // Part ที่โชว์ในตัวกรอง — เลือกโปรเจคแล้วโชว์เฉพาะ Part ของโปรเจคนั้น
+  const visibleParts = projectFilter ? parts.filter((p) => p.project_id === projectFilter) : parts;
+  // ตัวเลือกโปรเจค — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (มิเรอร์การ์ดล้างข้อมูลสแกน)
+  const projectOptions = [...projects]
+    .sort((a, b) => ((a.status === "closed") - (b.status === "closed"))
+      || String(a.code || "").localeCompare(String(b.code || ""), undefined, { numeric: true }))
+    .map((p) => ({ value: p.id, label: `${p.code || "?"} — ${p.name || ""}${p.status === "closed" ? " (ปิดแล้ว)" : ""}` }));
+  const selProj = projects.find((p) => p.id === projectFilter);
 
   // แยกน้ำหนักเป็น 2 ตัวเลขคนละความหมาย (ดู metrics.js):
   //   material  = น้ำหนักวัสดุจริง นับแต่ละชิ้นครั้งเดียว
@@ -4398,7 +4427,7 @@ function ReportPage() {
     try {
       const { downloadSheets } = await import("./excelExport.js");
       await downloadSheets(
-        `report-${todayStr()}${partFilter ? "-" + partFilter : ""}.xlsx`,
+        `report-${todayStr()}${selProj?.code ? "-" + selProj.code : ""}${partFilter ? "-" + partFilter : ""}.xlsx`,
         chosen.map((s) => ({ name: s.name, rows: s.rows })),
       );
       setExportOpen(false);
@@ -4465,7 +4494,7 @@ function ReportPage() {
       )}
 
       <Card title="ช่วงเวลาที่ต้องการดู">
-        {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรอง Part (ขวา) */}
+        {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรองโปรเจค + Part (ขวา) */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
           <div className="chip-row">
             {RANGE_MODES.map((m) => (
@@ -4474,10 +4503,19 @@ function ReportPage() {
               </span>
             ))}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>โปรเจค:</span>
+            <Select value={projectFilter} style={{ minWidth: 200 }}
+              onChange={(e) => {
+                const pid = e.target.value;
+                setProjectFilter(pid);
+                // ถ้า Part ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรอง Part
+                if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
+              }}
+              options={projectOptions} />
             <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>Part:</span>
             <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ minWidth: 200 }}
-              options={parts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
+              options={visibleParts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
           </div>
         </div>
 
