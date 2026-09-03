@@ -807,9 +807,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
     const cno = u.part_master?.part_no || u.qr_code;
     const clen = u.length_mm ?? u.part_master?.default_length_mm ?? null;   // ความยาว: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
+    const cwt = u.weight ?? u.part_master?.unit_weight ?? null;             // น้ำหนัก: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
     tickBeep();
     // เด้งแผงยืนยันต่อชิ้น (เหมือนหน้าเครื่อง) — ยังไม่เข้ารายการจนกว่าจะกด "ใส่เข้าเบอร์แม่"
-    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, qty: 1 });
+    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1 });
     return true;
   }
   const asmDecoded = async (qr) => {
@@ -1356,10 +1357,10 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   const free = pkind !== "package";
   // ตารางประกอบ: ที่ติดตั้งแล้ว (จากสเตชันก่อน/เซิร์ฟเวอร์) + ที่สแกนเข้ารายการรอบนี้ (ลบออกได้)
   const installedRows = (asmParent.installed || []).map((x, i) => ({
-    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, qty: 1,
+    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, wt: null, qty: 1,
   }));
   const thisRoundRows = asmChildren.map((c) => ({
-    key: "n" + c.unit_id, unit_id: c.unit_id, part_no: c.part_no || "—", qr: c.qr || "—", now: true, len: c.len ?? null, qty: c.qty ?? 1,
+    key: "n" + c.unit_id, unit_id: c.unit_id, part_no: c.part_no || "—", qr: c.qr || "—", now: true, len: c.len ?? null, wt: c.wt ?? null, qty: c.qty ?? 1,
   }));
   const freeRows = [...installedRows, ...thisRoundRows];
   const scannedCount = freeRows.length;
@@ -1397,6 +1398,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
             <th className="c-pn">{t("เบอร์ชิ้น", "Part No")}</th>
             <th>QR</th>
             <th className="c-len">{t("ยาว (มม.)", "Len (mm)")}</th>
+            <th className="c-len">{t("น้ำหนัก (กก.)", "Wt (kg)")}</th>
             <th className="c-qty">{t("จำนวน", "Qty")}</th>
             <th className="c-prog"></th>
           </tr></thead>
@@ -1407,6 +1409,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
                 <td className="c-pn">{r.part_no}</td>
                 <td className="c-desc" style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{r.qr}</td>
                 <td className="c-len">{r.len != null && !isNaN(Number(r.len)) ? <>{fmtNum(r.len, 0)}<span className="u"> mm</span></> : "—"}</td>
+                <td className="c-len">{r.wt != null && !isNaN(Number(r.wt)) ? <>{fmtNum(r.wt, 2)}<span className="u"> kg</span></> : "—"}</td>
                 <td className="c-qty">{r.qty ?? 1}</td>
                 <td className="c-prog" style={{ textAlign: "center" }}>
                   {r.now ? <span onClick={() => asmRemoveChild(r.unit_id)} title={t("เอาออก", "remove")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700 }}>✕</span> : null}
@@ -1414,7 +1417,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
               </tr>
             ))}
             {freeRows.length === 0 ? (
-              <tr><td colSpan={6} className="asw-tabempty">{t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
+              <tr><td colSpan={7} className="asw-tabempty">{t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
             ) : null}
           </tbody>
         </table>
@@ -1648,7 +1651,11 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
                 <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{asmPending.part_no}</div>
                 {asmPending.part_name ? <div style={{ fontSize: 13.5, color: "#cfe7dc" }}>{asmPending.part_name}</div> : null}
-                {asmPending.len != null && !isNaN(Number(asmPending.len)) ? <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>{t("ยาว", "Length")} {Number(asmPending.len).toLocaleString()} {t("มม.", "mm")} · {t("จำนวน", "Qty")} 1</div> : <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>{t("จำนวน", "Qty")} 1</div>}
+                <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>
+                  {asmPending.len != null && !isNaN(Number(asmPending.len)) ? <>{t("ยาว", "Len")} {Number(asmPending.len).toLocaleString()} {t("มม.", "mm")} · </> : null}
+                  {asmPending.wt != null && !isNaN(Number(asmPending.wt)) ? <>{t("น้ำหนัก", "Wt")} {Number(asmPending.wt).toLocaleString()} {t("กก.", "kg")} · </> : null}
+                  {t("จำนวน", "Qty")} 1
+                </div>
                 <div style={{ fontSize: 12, color: "#7fa694", fontFamily: "monospace", marginTop: 6, wordBreak: "break-all" }}>{asmPending.qr}</div>
               </div>
               <div className="stn-row-btns">
