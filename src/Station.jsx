@@ -782,16 +782,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if ((asmParent.installed || []).some((x) => x.child_unit_id === u.id)) {
       flash(t("ชิ้นนี้ติดตั้งไปแล้ว (สเตชันก่อนหน้า)", "already installed (earlier station)"), "warn"); return false;
     }
-    const inBom = asmParent.bom.find((b) => b.child_pm_id === u.part_master_id);
-    if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ใน BOM ของเบอร์แม่", "not in this BOM"), "warn"); return false; }
-    // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้
+    // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้ (ทั้ง 2 โหมด)
     if (u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
-      errorBeep(); flash(t(`${inBom.part_no} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${inBom.part_no} isn't finished yet`), "warn"); return false;
+      errorBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${u.part_master?.part_no || u.qr_code} isn't finished yet`), "warn"); return false;
     }
-    const have = asmHave(u.part_master_id);
-    if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบตาม BOM แล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
-    tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
-    setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
+    const strict = asmParent.parentKind === "package";   // แพ็ก = เข้ม BOM/manifest · ประกอบ = อิสระ
+    if (strict) {
+      const inBom = asmParent.bom.find((b) => b.child_pm_id === u.part_master_id);
+      if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ในรายการบั้ง", "not in this bunk list"), "warn"); return false; }
+      const have = asmHave(u.part_master_id);
+      if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบแล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
+      tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
+      setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
+      return true;
+    }
+    // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
+    const cno = u.part_master?.part_no || u.qr_code;
+    tickBeep(); flash(`+ ${cno}`, "ok");
+    setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno }]);
     return true;
   }
   const asmDecoded = async (qr) => { await asmScan(qr); return false; };          // false = กล้องสแกนต่อ (ใส่ลูกได้เรื่อยๆ)
@@ -801,6 +809,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function asmConfirm() {
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
     const isPack = dept === "packing";
+    const free = asmParent.parentKind !== "package";   // ประกอบอิสระ = ปิดเมื่อกดยืนยัน (แพ็ก = ครบตาม BOM)
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     try {
@@ -817,7 +826,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id }));
         const newInstalled = [...(asmParent.installed || []), ...addNow];
         const bom = asmParent.bom || [];
-        const complete = bom.length > 0 && bom.every((b) => newInstalled.filter((x) => x.child_pm_id === b.child_pm_id).length >= b.qty);
+        // ประกอบอิสระ (ไม่ใช่แพ็ก): กดยืนยัน = ปิดงานเลย · แพ็ก: ครบตาม BOM เป๊ะ
+        const complete = free ? true : (bom.length > 0 && bom.every((b) => newInstalled.filter((x) => x.child_pm_id === b.child_pm_id).length >= b.qty));
         try {
           setCachedAsmState(asmParent.unit.qr_code, {
             ok: true, bom, installed: newInstalled,
@@ -1320,6 +1330,14 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
   const doneUnits = rows.reduce((s, r) => s + r.have, 0);
 
+  // ── โหมดประกอบอิสระ (เบอร์แม่ที่ไม่ใช่ package): โชว์ "ลูกที่สแกนเข้าไปแล้ว" แทนเช็กลิสต์ BOM
+  //    (เช็กลิสต์อยู่หลังบ้าน) · แยกด้วย kind ให้ตรงกับ RPC — แพ็ก (package) = เช็กลิสต์เหมือนเดิม ──
+  const free = pkind !== "package";
+  const installedRows = (asmParent.installed || []).map((x, i) => ({
+    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—",
+  }));
+  const scannedCount = installedRows.length + asmChildren.length;   // ติดตั้งแล้ว + สแกนรอบนี้
+
   const measHead = isPack ? t("น้ำหนัก", "Weight") : t("ขนาด/ยาว", "Size/Len");
   const measUnit = isPack ? "Lbs" : "mm";
   const measDigits = isPack ? 1 : 0;
@@ -1331,12 +1349,35 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
           <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
           <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
         </div>
-        <div className="asw-scount"><b>{doneUnits}/{totalUnits}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : t("ประกอบแล้ว", "assembled")}</span></div>
+        <div className="asw-scount"><b>{free ? scannedCount : `${doneUnits}/${totalUnits}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
         <button className="asw-change" onClick={asmReset}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
       </div>
 
-      <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {rows.length} {t("รายการ", "items")}</span></div>
+      <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : free ? t("ลูกที่สแกนเข้าไปแล้ว", "Children scanned in") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {free ? scannedCount : rows.length} {t("รายการ", "items")}</span></div>
       <div className="asw-sheet">
+        {free ? (
+        <table className="asw-tab">
+          <thead><tr>
+            <th className="c-n">#</th>
+            <th className="c-pn">{t("เบอร์ชิ้น", "Part No")}</th>
+            <th>QR</th>
+          </tr></thead>
+          <tbody>
+            {installedRows.map((r, i) => (
+              <tr key={r.key} className="asw-r done">
+                <td className="c-n"><span className="nb">{i + 1}</span></td>
+                <td className="c-pn">{r.part_no}</td>
+                <td className="c-desc" style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{r.qr}</td>
+              </tr>
+            ))}
+            {installedRows.length === 0 ? (
+              <tr><td colSpan={3} className="asw-tabempty">{asmChildren.length > 0
+                ? t("สแกนลูกไว้รอบนี้แล้ว — กดยืนยันเพื่อบันทึก + ปิดงาน", "scanned this round — press confirm to save & finish")
+                : t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
+            ) : null}
+          </tbody>
+        </table>
+        ) : (
         <table className="asw-tab">
           <thead><tr>
             <th className="c-n">#</th>
@@ -1366,6 +1407,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
             ) : null}
           </tbody>
         </table>
+        )}
       </div>
 
       <div className="asw-actions">
@@ -1395,9 +1437,11 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
         <button className={"asw-confirm" + (asmChildren.length > 0 ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
           {busy ? "..." : asmChildren.length === 0
             ? (isPack ? t(`สแกน${childWord}ที่ใส่รอบนี้ก่อน`, `scan the ${childWord}s first`) : t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`))
-            : (asmComplete
-              ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
-              : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
+            : (free
+              ? t(`✓ ยืนยัน + ปิดงาน (${asmChildren.length})`, `✓ Confirm & finish (${asmChildren.length})`)
+              : asmComplete
+                ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
+                : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
         </button>
       </div>
     </div>
