@@ -232,6 +232,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no }]
+  const [asmPending, setAsmPending] = useState(null);   // ลูกที่เพิ่งสแกน รอกด "ใส่เข้าเบอร์แม่" (แผงยืนยันต่อชิ้น — โหมดประกอบ)
   const asmClientRef = useRef(null);
   const [packPhotos, setPackPhotos] = useState([]);     // รูปตอนแพ็ก (ยังไม่อัป) [{ blob, url }]
   const [photoOpen, setPhotoOpen] = useState(false);    // เปิดกล้องถ่ายรูปแพ็ก
@@ -699,8 +700,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
   useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
 
-  function asmReset() { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
+  function asmReset() { setAsmParent(null); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
   function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
+  // แผงยืนยันต่อชิ้น (โหมดประกอบ): กด "ใส่เข้าเบอร์แม่" → เข้ารายการรอปิดงาน · "ยกเลิก" → ทิ้งชิ้นที่เพิ่งสแกน
+  function asmAddPending() {
+    if (!asmPending) return;
+    setAsmChildren((prev) => (prev.some((c) => c.unit_id === asmPending.unit_id) ? prev : [...prev, asmPending]));
+    setAsmPending(null);
+  }
+  function asmCancelPending() { setAsmPending(null); }
   function asmOpenCam() {
     if (machineOps.length > 1 && !op) { flash(t("เลือกขั้นตอนก่อนสแกน", "pick an operation first"), "warn"); return; }   // ★ ต้องเลือกขั้นตอนก่อน
     warmAudio(); setStep(STEP.SCAN);
@@ -798,15 +806,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     }
     // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
     const cno = u.part_master?.part_no || u.qr_code;
-    tickBeep(); flash(`+ ${cno}`, "ok");
-    setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno }]);
+    tickBeep();
+    // เด้งแผงยืนยันต่อชิ้น (เหมือนหน้าเครื่อง) — ยังไม่เข้ารายการจนกว่าจะกด "ใส่เข้าเบอร์แม่"
+    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "" });
     return true;
   }
   const asmDecoded = async (qr) => {
     const hadParent = !!asmParent;
+    const free = !asmParent || asmParent.parentKind !== "package";   // ประกอบ = อิสระ · แพ็ก = เข้ม
     const ok = await asmScan(qr);
-    if (ok && !hadParent) closeScan();   // สแกน "เบอร์แม่" สำเร็จ → ปิดกล้อง เด้งเข้าหน้าเบอร์นั้นทันที
-    return false;                          // สแกน "ลูก" (มีเบอร์แม่แล้ว) → เปิดกล้องต่อ สแกนได้เรื่อย ๆ
+    // เบอร์แม่ (ยังไม่มี parent) → ปิดกล้อง เด้งเข้าหน้าเบอร์นั้น · ลูกโหมดประกอบ → ปิดกล้อง เด้งแผงยืนยันต่อชิ้น
+    //   ลูกโหมดแพ็ก → เปิดกล้องต่อ สแกนรัวได้เหมือนเดิม
+    if (ok && (!hadParent || free)) closeScan();
+    return false;
   };
   const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
 
@@ -924,6 +936,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       isAsm={isAsm} asmType={dept === "packing" ? "packing" : "assembly"} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
       asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
       asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmReset={asmReset} asmOpenCam={asmOpenCam}
+      asmPending={asmPending} asmAddPending={asmAddPending} asmCancelPending={asmCancelPending}
       packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
       photoCapture={photoCapture} photoRemove={photoRemove}
     />
@@ -1576,6 +1589,7 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
 
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmReset, asmOpenCam,
+  asmPending = null, asmAddPending, asmCancelPending,
   packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
@@ -1592,6 +1606,23 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const confirmVerb = isPack ? t("ยืนยันแพ็ก", "Confirm pack") : t("ยืนยันประกอบ", "Confirm assembly");
     if (isPack && photoOpen) {
       return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
+    }
+    // แผงยืนยันต่อชิ้น (โหมดประกอบ) — สแกนลูกได้ 1 ชิ้น → เด้งแผงนี้ให้กด "ใส่เข้าเบอร์แม่" (เหมือนหน้าเครื่อง)
+    if (asmPending) {
+      return (
+        <div className="stn-part-panel">
+          <div style={{ textAlign: "center", padding: "10px 0 2px" }}>
+            <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
+            <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px" }}>{asmPending.part_no}</div>
+            {asmPending.part_name ? <div style={{ fontSize: 14, color: "#cfe7dc" }}>{asmPending.part_name}</div> : null}
+            <div style={{ fontSize: 12, color: "#7fa694", fontFamily: "monospace", marginTop: 6 }}>{asmPending.qr}</div>
+          </div>
+          <div className="stn-row-btns">
+            <button className="stn-pill no" onClick={asmCancelPending} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
+            <button className="stn-pill ok" onClick={asmAddPending} disabled={busy}>{t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
+          </div>
+        </div>
+      );
     }
     // ประกอบ + แพ็ก ใช้หน้า "สแกนอย่างเดียว" เดียวกัน (AsmWorksheet) — คนงานสแกนเหมือนหน้าตัด
     //   ไม่โชว์ list/manifest ที่หน้างาน · ดูรายการ/เทียบครบไปที่หลังบ้าน (office → "ตรวจงานประกอบ")
