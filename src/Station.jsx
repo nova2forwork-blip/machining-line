@@ -903,11 +903,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       } else if (res && res.reason === "storage_full") {
         errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
       } else {
-        errorBeep(); flash(asmReason(res?.reason), "warn");
+        errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn");
       }
     } catch (e) {
       errorBeep();
-      flash(t("บันทึกไม่สำเร็จ — ลองใหม่", "failed — retry"), "warn");
+      // โชว์ error จริงจาก server (ไว้ไล่ปัญหา) — message/details/hint/code
+      const emsg = e?.message || e?.details || e?.hint || e?.code || String(e);
+      flash(t("บันทึกไม่สำเร็จ: ", "save failed: ") + emsg, "warn");
     } finally { setBusy(false); savingRef.current = false; }
   }
 
