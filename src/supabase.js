@@ -613,7 +613,10 @@ function queuedQtyForRelease(releaseId, operationId = null) {
 }
 function isNetworkErr(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
-  return /failed to fetch|networkerror|load failed|timeout|fetch|connection/i.test(error?.message || "");
+  // เน็ตสะดุด + server ล่มชั่วคราว (5xx / รับโหลดไม่ไหว) = retriable ทั้งหมด
+  //   (logical reject ที่ "ห้าม retry" มาทาง data.ok=false ไม่ได้ throw → error ที่ throw = infra/เน็ตเสมอ)
+  const msg = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`;
+  return /failed to fetch|network ?error|load failed|timed? ?out|fetch|connection|econn|socket|unavailable|temporar|overload|too many request|rate limit|bad gateway|gateway time|internal server|server error/i.test(msg);
 }
 // ★ V7: ตรวจว่า error = "ยังไม่มี RPC record_scan_by_qr_idem" (ยังไม่ได้รัน migration) → fallback ใช้ตัวเดิม
 //   กัน deploy ผิดลำดับ (วางไฟล์ก่อนรัน SQL) แล้วสแกนออฟฟิศพัง
