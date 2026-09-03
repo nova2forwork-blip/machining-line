@@ -742,6 +742,15 @@ export async function recordAssembly({ parentQr, childQrs, operationId, clientId
   return data || { ok: false, reason: "error" };
 }
 
+// เอาลูกที่ติดตั้งแล้วออกจากเบอร์แม่ (ไว้ "แก้" งานที่เสร็จแล้ว) — ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
+export async function removeAssemblyChild(parentUnitId, childUnitId) {
+  const { data, error } = await supabase.rpc("remove_assembly_child", {
+    p_token: authToken(), p_parent_unit_id: parentUnitId, p_child_unit_id: childUnitId,
+  });
+  if (error) { console.warn("remove_assembly_child error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // โหลดสถานะประกอบ "สะสม" ของเบอร์แม่ (BOM + ที่ติดตั้งไปแล้วข้ามสเตชัน) — ใช้ตอนสแกนเบอร์แม่
 // รองรับ offline: ออนไลน์ = โหลดจาก DB + แคชไว้ · ออฟไลน์/เน็ตสะดุด = อ่านจากแคช (เปิดเบอร์ที่เคยโหลดได้)
 export async function getAssemblyState(parentQr) {
