@@ -802,7 +802,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno }]);
     return true;
   }
-  const asmDecoded = async (qr) => { await asmScan(qr); return false; };          // false = กล้องสแกนต่อ (ใส่ลูกได้เรื่อยๆ)
+  const asmDecoded = async (qr) => {
+    const hadParent = !!asmParent;
+    const ok = await asmScan(qr);
+    if (ok && !hadParent) closeScan();   // สแกน "เบอร์แม่" สำเร็จ → ปิดกล้อง เด้งเข้าหน้าเบอร์นั้นทันที
+    return false;                          // สแกน "ลูก" (มีเบอร์แม่แล้ว) → เปิดกล้องต่อ สแกนได้เรื่อย ๆ
+  };
   const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
 
   // บันทึก "รอบนี้" (สะสมได้ — ไม่ต้องครบก็เซฟ) · ครบ BOM สะสม → ปิดงานอัตโนมัติ · ไม่ครบ → รีเฟรชยอด แล้วสแกนต่อ/ส่งสเตชันถัดไป
