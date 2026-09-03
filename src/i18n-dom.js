@@ -52,7 +52,7 @@ const DICT = {
   "ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)": "Download backup file (JSON)",
   "ตารางที่รวมอยู่ในไฟล์สำรอง": "Tables included in the backup",
   "กำลังเตรียมข้อมูล...": "Preparing data…",
-  "จุดกู้คืนในแอป (ย้อนหลัง 30 วัน)": "In-app restore points (last 30 days)",
+  "จุดกู้คืนในแอป (ย้อนหลัง 7 วัน)": "In-app restore points (last 7 days)",
   "สร้างจุดกู้คืนตอนนี้": "Create restore point now", "กำลังสร้าง...": "Creating…",
   "กู้คืน": "Restore", "กู้คืนข้อมูลโปรเจค": "Restore project data",
   "อัตโนมัติ": "Auto", "สร้างเอง": "Manual", "ชนิด": "Type", "จำนวนแถว": "Rows", "วันที่/เวลา": "Date/Time",
