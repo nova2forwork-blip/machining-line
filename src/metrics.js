@@ -82,13 +82,14 @@ export function machineOpMatrix(logs) {
   const opNames = new Set();
 
   for (const l of logs || []) {
-    const m = l.machine?.name || "ไม่ระบุ";
+    const mName = l.machine?.name || "ไม่ระบุ";
+    const m = l.machine?.code || mName;   // ★ key ด้วย code (unique) กันเครื่องชื่อซ้ำถูกยุบรวม · โชว์ชื่อตามเดิม
     const op = l.operation?.name || "ไม่ระบุ";
     const wt = logWeight(l);
     opNames.add(op);
 
     if (!byMachine.has(m)) {
-      byMachine.set(m, { name: m, total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
+      byMachine.set(m, { name: mName, total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
     }
     const entry = byMachine.get(m);
     const pcs = q(l);
@@ -191,11 +192,12 @@ export function machineDailyMatrix(logs) {
   const byMachine = new Map();
   const days = new Set();
   for (const l of logs || []) {
-    const m = l.machine?.name || "ไม่ระบุ";
+    const mName = l.machine?.name || "ไม่ระบุ";
+    const m = l.machine?.code || mName;   // ★ key ด้วย code (unique) กันเครื่องชื่อซ้ำถูกยุบรวม · โชว์ชื่อตามเดิม
     const day = bangkokDay(l.scanned_at);
     days.add(day);
     if (!byMachine.has(m)) {
-      byMachine.set(m, { name: m, days: {}, total: { count: 0, weight: 0, seconds: 0 } });
+      byMachine.set(m, { name: mName, days: {}, total: { count: 0, weight: 0, seconds: 0 } });
     }
     const e = byMachine.get(m);
     e.days[day] = e.days[day] || { count: 0, weight: 0, seconds: 0 };
