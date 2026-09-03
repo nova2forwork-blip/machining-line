@@ -6,7 +6,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
-  createReleaseBatch, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
+  createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
@@ -1104,6 +1104,11 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         remark: r.remark?.trim() || null,
         routing: [],                      // ไม่ใช้ Routing แล้ว — ขั้นตอนขึ้นกับเครื่องที่ทำ
       }));
+      // ★ กัน Release ซ้ำ: ถ้า (โปรเจค+เลข Order) นี้มีแล้ว (เช่นกดแล้วเน็ตวูบตอนตอบกลับ) อย่าสร้างซ้ำ
+      if (await releaseOrderExists(projectId, ro)) {
+        setErr(`Release Order "${ro}" มีอยู่แล้วในโปรเจคนี้ — ถ้าเพิ่งกดแล้วเน็ตหลุด อาจบันทึกไปแล้ว · รีเฟรช/ตรวจในรายการ Release ก่อนกดซ้ำ (กันบันทึกซ้ำ)`);
+        setBusy(false); setProgress(""); return;
+      }
       const res = await createReleaseBatch({
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
         releasedBy: user.id, makeQr, rows,
@@ -1123,7 +1128,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       }
       onSaved({ releaseOrder: ro, ...res });
     } catch (e2) {
-      setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ระบบยกเลิกทั้งใบอัตโนมัติ ไม่มีข้อมูลค้าง");
+      setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ถ้าเน็ตหลุดหลังกดบันทึก อาจบันทึกไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนกดซ้ำ (กันซ้ำ)");
     }
     setBusy(false); setProgress("");
   }
@@ -1316,6 +1321,11 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
         remark: r.remark,
         routing: [],
       }));
+      // ★ กัน Release ซ้ำตอน retry: ถ้า (โปรเจค+เลข Order) นี้มีแล้ว อย่านำเข้าซ้ำ
+      if (await releaseOrderExists(projectId, parsed.releaseOrder)) {
+        setErr(`Release Order "${parsed.releaseOrder}" มีอยู่แล้วในโปรเจคนี้ — อาจนำเข้าไปแล้ว · ตรวจในรายการ Release ก่อนนำเข้าซ้ำ`);
+        setBusy(false); setProgress(""); return;
+      }
       const res = await createReleaseBatch({
         projectId, releaseOrder: parsed.releaseOrder, releaseDate: null,
         releasedBy: user.id, makeQr: true, rows,
@@ -1323,7 +1333,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
       onImported({ releaseOrder: parsed.releaseOrder, ...res });
       onClose();
     } catch (e2) {
-      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + " — ระบบยกเลิกทั้งใบอัตโนมัติ ไม่มีข้อมูลค้าง");
+      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + " — ถ้าเน็ตหลุดหลังกดนำเข้า อาจนำเข้าไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนนำเข้าซ้ำ");
     }
     setBusy(false); setProgress("");
   }
