@@ -1351,10 +1351,15 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
   // ── โหมดประกอบอิสระ (เบอร์แม่ที่ไม่ใช่ package): โชว์ "ลูกที่สแกนเข้าไปแล้ว" แทนเช็กลิสต์ BOM
   //    (เช็กลิสต์อยู่หลังบ้าน) · แยกด้วย kind ให้ตรงกับ RPC — แพ็ก (package) = เช็กลิสต์เหมือนเดิม ──
   const free = pkind !== "package";
+  // ตารางประกอบ: ที่ติดตั้งแล้ว (จากสเตชันก่อน/เซิร์ฟเวอร์) + ที่สแกนเข้ารายการรอบนี้ (ลบออกได้)
   const installedRows = (asmParent.installed || []).map((x, i) => ({
-    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—",
+    key: "i" + (x.child_unit_id || i), part_no: x.part_no || "—", qr: x.qr || "—", now: false,
   }));
-  const scannedCount = installedRows.length + asmChildren.length;   // ติดตั้งแล้ว + สแกนรอบนี้
+  const thisRoundRows = asmChildren.map((c) => ({
+    key: "n" + c.unit_id, unit_id: c.unit_id, part_no: c.part_no || "—", qr: c.qr || "—", now: true,
+  }));
+  const freeRows = [...installedRows, ...thisRoundRows];
+  const scannedCount = freeRows.length;
 
   // ยกเลิก/ย้อนกลับ — เคลียร์เบอร์แม่ กลับไปหน้าสแกน · กันเผลอทิ้งที่สแกนค้างไว้รอบนี้
   const asmBack = () => {
@@ -1388,19 +1393,21 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
             <th className="c-n">#</th>
             <th className="c-pn">{t("เบอร์ชิ้น", "Part No")}</th>
             <th>QR</th>
+            <th className="c-prog"></th>
           </tr></thead>
           <tbody>
-            {installedRows.map((r, i) => (
-              <tr key={r.key} className="asw-r done">
+            {freeRows.map((r, i) => (
+              <tr key={r.key} className={"asw-r" + (r.now ? " partial" : " done")}>
                 <td className="c-n"><span className="nb">{i + 1}</span></td>
                 <td className="c-pn">{r.part_no}</td>
                 <td className="c-desc" style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{r.qr}</td>
+                <td className="c-prog" style={{ textAlign: "center" }}>
+                  {r.now ? <span onClick={() => asmRemoveChild(r.unit_id)} title={t("เอาออก", "remove")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700 }}>✕</span> : null}
+                </td>
               </tr>
             ))}
-            {installedRows.length === 0 ? (
-              <tr><td colSpan={3} className="asw-tabempty">{asmChildren.length > 0
-                ? t("สแกนลูกไว้รอบนี้แล้ว — กดยืนยันเพื่อบันทึก + ปิดงาน", "scanned this round — press confirm to save & finish")
-                : t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
+            {freeRows.length === 0 ? (
+              <tr><td colSpan={4} className="asw-tabempty">{t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
             ) : null}
           </tbody>
         </table>
@@ -1438,7 +1445,8 @@ function AsmWorksheet({ asmParent, asmChildren, asmComplete, asmReset, asmOpenCa
       </div>
 
       <div className="asw-actions">
-        {asmChildren.length > 0 && (
+        {/* ชิป "รอคอนเฟิร์ม" นอกตาราง — เหลือเฉพาะแพ็ก (ประกอบ: ที่กดใส่แล้วอยู่ในตารางเลย) */}
+        {!free && asmChildren.length > 0 && (
           <div className="asw-scanned">
             {asmChildren.map((c) => (
               <span key={c.unit_id} className="asw-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>{c.part_no} · {c.qr} ✕</span>
@@ -1607,23 +1615,6 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     if (isPack && photoOpen) {
       return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
     }
-    // แผงยืนยันต่อชิ้น (โหมดประกอบ) — สแกนลูกได้ 1 ชิ้น → เด้งแผงนี้ให้กด "ใส่เข้าเบอร์แม่" (เหมือนหน้าเครื่อง)
-    if (asmPending) {
-      return (
-        <div className="stn-part-panel">
-          <div style={{ textAlign: "center", padding: "10px 0 2px" }}>
-            <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px" }}>{asmPending.part_no}</div>
-            {asmPending.part_name ? <div style={{ fontSize: 14, color: "#cfe7dc" }}>{asmPending.part_name}</div> : null}
-            <div style={{ fontSize: 12, color: "#7fa694", fontFamily: "monospace", marginTop: 6 }}>{asmPending.qr}</div>
-          </div>
-          <div className="stn-row-btns">
-            <button className="stn-pill no" onClick={asmCancelPending} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
-            <button className="stn-pill ok" onClick={asmAddPending} disabled={busy}>{t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
-          </div>
-        </div>
-      );
-    }
     // ประกอบ + แพ็ก ใช้หน้า "สแกนอย่างเดียว" เดียวกัน (AsmWorksheet) — คนงานสแกนเหมือนหน้าตัด
     //   ไม่โชว์ list/manifest ที่หน้างาน · ดูรายการ/เทียบครบไปที่หลังบ้าน (office → "ตรวจงานประกอบ")
     return (
@@ -1639,6 +1630,26 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             openPhoto={openPhoto} packPhotos={packPhotos} photoRemove={photoRemove}
           />
         )}
+
+        {/* แผงยืนยันต่อชิ้น (โหมดประกอบ) — popup กลางจอ ซ้อนบนตาราง · กด "ใส่เข้าเบอร์แม่" → เข้าตารางเลย */}
+        {asmPending ? (
+          <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+            onClick={asmCancelPending}>
+            <div onClick={(e) => e.stopPropagation()}
+              style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
+                <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{asmPending.part_no}</div>
+                {asmPending.part_name ? <div style={{ fontSize: 13.5, color: "#cfe7dc" }}>{asmPending.part_name}</div> : null}
+                <div style={{ fontSize: 12, color: "#7fa694", fontFamily: "monospace", marginTop: 6, wordBreak: "break-all" }}>{asmPending.qr}</div>
+              </div>
+              <div className="stn-row-btns">
+                <button className="stn-pill no" onClick={asmCancelPending} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
+                <button className="stn-pill ok" onClick={asmAddPending} disabled={busy}>{t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
