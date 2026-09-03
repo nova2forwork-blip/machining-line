@@ -312,22 +312,22 @@ export async function findUnitByPartNo(partNo) {
   return u;
 }
 
-// พิมพ์เบอร์พาร์ท → คืน "ตัวเลือกระดับโปรเจกต์" (part_no ไม่ซ้ำในโปรเจกต์เดียว = 1 โปรเจกต์ 1 part_master)
-// ★ ผู้ใช้เลือกแค่ "โปรเจกต์" พอ (ไม่ต้องเลือก release) — ระบบ resolve unit ให้เอง
-//   • done = ขั้นตอนนี้ (operation) "เคยทำ" ของโปรเจกต์นี้ไปกี่ครั้ง → เรียงโปรเจกต์ที่ยังไม่เคยทำขึ้นก่อน
-//     (โปรเจกต์ที่ทำแล้วยังเลือกได้ ไว้แก้งานเสีย)
-//   • unit ตัวแทน = ชิ้นของ "release ที่ยังทำอยู่" (record ล่าสุดของขั้นตอนนี้) ไม่งั้นชิ้นแรกของโปรเจกต์
+// พิมพ์เบอร์พาร์ท → คืน "ตัวเลือกระดับโปรเจค" (part_no ไม่ซ้ำในโปรเจคเดียว = 1 โปรเจค 1 part_master)
+// ★ ผู้ใช้เลือกแค่ "โปรเจค" พอ (ไม่ต้องเลือก release) — ระบบ resolve unit ให้เอง
+//   • done = ขั้นตอนนี้ (operation) "เคยทำ" ของโปรเจคนี้ไปกี่ครั้ง → เรียงโปรเจคที่ยังไม่เคยทำขึ้นก่อน
+//     (โปรเจคที่ทำแล้วยังเลือกได้ ไว้แก้งานเสีย)
+//   • unit ตัวแทน = ชิ้นของ "release ที่ยังทำอยู่" (record ล่าสุดของขั้นตอนนี้) ไม่งั้นชิ้นแรกของโปรเจค
 // คืน [{ pmId, code, name, partName, length, doneCount, unit }] เรียงยังไม่เคยทำก่อน · [] ถ้าไม่พบ/ออฟไลน์
 export async function findManualPartOptions(partNo, operationId = null) {
   const p = String(partNo || "").trim();
   if (!p) return [];
   if (typeof navigator !== "undefined" && navigator.onLine === false) return [];  // ต้องมีเน็ต
-  // 1) part_master (1 ต่อ 1 โปรเจกต์) ที่ part_no ตรง
+  // 1) part_master (1 ต่อ 1 โปรเจค) ที่ part_no ตรง
   const { data: pms, error: e1 } = await supabase
     .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name, status)")
     .ilike("part_no", p);
   if (e1) { console.warn("findManualPartOptions (part_master) error", e1); return []; }
-  // ตัดโปรเจกต์ที่ "ปิดแล้ว" ออก — บันทึกไม่ได้อยู่แล้ว ไม่ต้องให้เลือก (ถ้าต้องแก้งาน ให้แอดมินเปิดโปรเจกต์ก่อน)
+  // ตัดโปรเจคที่ "ปิดแล้ว" ออก — บันทึกไม่ได้อยู่แล้ว ไม่ต้องให้เลือก (ถ้าต้องแก้งาน ให้แอดมินเปิดโปรเจคก่อน)
   const masters = (pms || []).filter((m) => m.projects?.status !== "closed");
   if (!masters.length) return [];
   const ids = masters.map((m) => m.id);
@@ -335,7 +335,7 @@ export async function findManualPartOptions(partNo, operationId = null) {
   const { data: units } = await supabase.from("part_units").select(UNIT_SELECT)
     .in("part_master_id", ids).order("unit_no", { ascending: true });
   const allUnits = units || [];
-  // 3) บันทึกของ "ขั้นตอนนี้" (ไว้หา doneCount + release ที่ยังทำอยู่ ต่อโปรเจกต์)
+  // 3) บันทึกของ "ขั้นตอนนี้" (ไว้หา doneCount + release ที่ยังทำอยู่ ต่อโปรเจค)
   let recs = [];
   if (operationId) {
     const { data: r } = await supabase.from("machine_records")
@@ -351,14 +351,14 @@ export async function findManualPartOptions(partNo, operationId = null) {
     const mRecs = recs.filter((r) => r.part_master_id === m.id);   // เรียงใหม่→เก่าอยู่แล้ว
     let unit = null;
     if (mRecs.length && mRecs[0].release_id) unit = mUnits.find((u) => u.release_id === mRecs[0].release_id) || null;
-    if (!unit) unit = mUnits[0];                           // ยังไม่เคยทำ → ชิ้นแรกของโปรเจกต์
+    if (!unit) unit = mUnits[0];                           // ยังไม่เคยทำ → ชิ้นแรกของโปรเจค
     out.push({
       pmId: m.id, code: m.projects?.code || "", name: m.projects?.name || "",
       partName: m.part_name || "", length: unit.length_mm ?? m.default_length_mm,
       doneCount: mRecs.length, lastTs: mRecs[0]?.recorded_at || null, unit,
     });
   }
-  // ยังไม่เคยทำขั้นตอนนี้ (0) ขึ้นก่อน · ในกลุ่มเดียวกันเรียง "งานล่าสุด" ขึ้นก่อน (โปรเจกต์ที่กำลังทำลอยขึ้น)
+  // ยังไม่เคยทำขั้นตอนนี้ (0) ขึ้นก่อน · ในกลุ่มเดียวกันเรียง "งานล่าสุด" ขึ้นก่อน (โปรเจคที่กำลังทำลอยขึ้น)
   out.sort((a, b) => {
     const af = a.doneCount === 0 ? 0 : 1, bf = b.doneCount === 0 ? 0 : 1;
     if (af !== bf) return af - bf;
@@ -678,7 +678,7 @@ export async function resolveDeadLetter(id) {
 }
 
 // ── BOM (ประกอบ/แพ็ก) — กำหนด/อ่าน รายการลูกของเบอร์แม่ ─────────────────────
-// components = [{ child_pm_id, qty }] · แทนที่ทั้งชุด · ลูกต้องอยู่โปรเจกต์เดียวกัน (DB บังคับ)
+// components = [{ child_pm_id, qty }] · แทนที่ทั้งชุด · ลูกต้องอยู่โปรเจคเดียวกัน (DB บังคับ)
 export async function setBom(parentPmId, components) {
   const { data, error } = await supabase.rpc("authz_set_bom", { p_token: authToken(), p_parent_pm_id: parentPmId, p_components: components });
   if (error) { console.warn("authz_set_bom error", error); flagAuth(error); throw error; }
@@ -819,7 +819,7 @@ export async function getUnitsByIds(ids) {
 }
 
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
-// assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจกต์ที่ปิด · อ่านตรง (anon SELECT)
+// assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
 export async function listAssemblyParents(dept) {
   const kinds = dept === "packing" ? ["package"] : ["panel", "subassembly"];
   const { data, error } = await supabase
