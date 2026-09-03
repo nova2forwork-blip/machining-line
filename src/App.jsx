@@ -4790,7 +4790,7 @@ function ProjectsPage({ user, goTo }) {
     setEditing({ project: p, impact });
   }
 
-  // แอดมินปิด/เปิดโปรเจกต์ได้จากในกล่อง "แก้ไข" (ProjectEditModal) แล้ว — ไม่มีปุ่มแยกในแถว
+  // แอดมินปิด/เปิดโปรเจคได้จากในกล่อง "แก้ไข" (ProjectEditModal) แล้ว — ไม่มีปุ่มแยกในแถว
 
   // กดเข้าไปดู Release ในโปรเจคนี้ (แล้วเจาะเข้า Part / รายละเอียด ต่อได้)
   if (viewProject) {
@@ -4869,7 +4869,7 @@ function ProjectsPage({ user, goTo }) {
                       {canEdit && (
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           {p.status === "closed" && (
-                            <span title="โปรเจกต์นี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข"
+                            <span title="โปรเจคนี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข"
                               style={{ fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fff4e5",
                                        border: "1px solid #f5c98a", borderRadius: 999, padding: "3px 10px", marginRight: 8 }}>
                               ปิดแล้ว
@@ -4978,18 +4978,18 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
     setBusy(false);
   }
 
-  // ปิด/เปิดโปรเจกต์ (admin) — ย้ายมาจากปุ่มในแถวหน้า "โปรเจค" · ปิดแล้วหน้าเครื่องบันทึกงานเพิ่มไม่ได้
+  // ปิด/เปิดโปรเจค (admin) — ย้ายมาจากปุ่มในแถวหน้า "โปรเจค" · ปิดแล้วหน้าเครื่องบันทึกงานเพิ่มไม่ได้
   async function toggleStatus() {
     const closing = project.status !== "closed";
     if (closing && !(await askConfirm({
-      message: `ปิดโปรเจกต์ "${project.code} — ${project.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`,
-      tone: "warn", confirmText: "ปิดโปรเจกต์", cancelText: "ยกเลิก",
+      message: `ปิดโปรเจค "${project.code} — ${project.name}"?\nหน้าเครื่องจะบันทึกงานเพิ่มไม่ได้ จนกว่าจะเปิดใหม่`,
+      tone: "warn", confirmText: "ปิดโปรเจค", cancelText: "ยกเลิก",
     }))) return;
     setBusy(true); setErr("");
     try {
       await updateRow("projects", project.id, { status: closing ? "closed" : "active" });
       auditRecord(closing ? "close_project" : "reopen_project", "project", project.id, { code: project.code, name: project.name });
-      mlsToast(closing ? "ปิดโปรเจกต์แล้ว" : "เปิดโปรเจกต์อีกครั้งแล้ว", "success");
+      mlsToast(closing ? "ปิดโปรเจคแล้ว" : "เปิดโปรเจคอีกครั้งแล้ว", "success");
       onSaved();   // ปิดกล่อง + รีโหลดรายการให้เห็นสถานะใหม่
     } catch (e) {
       setErr("เปลี่ยนสถานะไม่สำเร็จ: " + (e?.message || e));
@@ -5034,7 +5034,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
         {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
       </div>
 
-      {/* ปิด/เปิดโปรเจกต์ (แอดมิน) — ย้ายมาจากปุ่มในแถว */}
+      {/* ปิด/เปิดโปรเจค (แอดมิน) — ย้ายมาจากปุ่มในแถว */}
       {admin && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
           padding: "10px 12px", marginBottom: 12, borderRadius: 8,
@@ -5047,8 +5047,8 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
           </div>
           <Btn type="button" variant="ghost" size="sm" disabled={busy} onClick={toggleStatus}>
             {project.status === "closed"
-              ? <><Icon name="refresh" size={13} /> เปิดโปรเจกต์อีกครั้ง</>
-              : <><Icon name="check" size={13} /> ปิดโปรเจกต์ (เสร็จ)</>}
+              ? <><Icon name="refresh" size={13} /> เปิดโปรเจคอีกครั้ง</>
+              : <><Icon name="check" size={13} /> ปิดโปรเจค (เสร็จ)</>}
           </Btn>
         </div>
       )}
@@ -5246,7 +5246,7 @@ function ActiveSessionsCard() {
 // ─── งานค้างซิงค์ราย "เครื่อง" (dead-letter) — ทำแล้วแต่เข้าระบบไม่ได้ (เฉพาะ Admin) ───
 const DL_REASONS = {
   not_found: "QR/ล็อตถูกลบหรือแก้",
-  project_closed: "โปรเจกต์ถูกปิด",
+  project_closed: "โปรเจคถูกปิด",
   retry_exhausted: "ลองซิงค์หลายครั้งไม่สำเร็จ",
 };
 function DeadLetterCard() {
@@ -5314,7 +5314,7 @@ function DeadLetterCard() {
 
 // ─── ประวัติการแก้ไข (audit log) — ใครทำอะไรที่สำคัญ/ลบข้อมูลได้ (เฉพาะ Admin) ───
 const AUDIT_ACTIONS = {
-  delete_project:      { label: "ลบโปรเจกต์", tone: "danger" },
+  delete_project:      { label: "ลบโปรเจค", tone: "danger" },
   delete_release:      { label: "ลบ Release", tone: "danger" },
   delete_employee:     { label: "ลบพนักงาน", tone: "danger" },
   delete_machine:      { label: "ลบเครื่องจักร", tone: "danger" },
@@ -5322,8 +5322,8 @@ const AUDIT_ACTIONS = {
   restore_backup:      { label: "กู้คืน Backup", tone: "warning" },
   force_logout:        { label: "บังคับออกจากระบบ", tone: "warning" },
   edit_release_header: { label: "แก้หัวเอกสาร Release", tone: "steel" },
-  close_project:       { label: "ปิดโปรเจกต์", tone: "muted" },
-  reopen_project:      { label: "เปิดโปรเจกต์", tone: "muted" },
+  close_project:       { label: "ปิดโปรเจค", tone: "muted" },
+  reopen_project:      { label: "เปิดโปรเจค", tone: "muted" },
 };
 
 function auditDetailText(row) {
@@ -5332,7 +5332,7 @@ function auditDetailText(row) {
   if (d.code || d.name) parts.push([d.code, d.name].filter(Boolean).join(" — "));
   if (d.part_no) parts.push(`Part ${d.part_no}`);
   if (d.release_order) parts.push(d.release_order);
-  if (d.project && !d.code) parts.push(`โปรเจกต์ ${d.project}`);
+  if (d.project && !d.code) parts.push(`โปรเจค ${d.project}`);
   if (d.parts != null) parts.push(`${fmtNum(d.parts)} Part`);
   if (d.qty != null) parts.push(`${fmtNum(d.qty)} ชิ้น`);
   if (d.scope) parts.push(`ขอบเขต: ${d.scope}`);
@@ -5372,7 +5372,7 @@ function AuditLogCard() {
   return (
     <Card title="ประวัติการแก้ไข (เฉพาะ Admin)" right={<Btn variant="ghost" size="sm" onClick={load} disabled={rows === null}>รีเฟรช</Btn>}>
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-        บันทึกการกระทำสำคัญ/ที่ลบข้อมูลได้ — ใครทำ อะไร เมื่อไหร่ (ลบโปรเจกต์/Release, ล้างสแกน, บังคับออกจากระบบ, แก้หัวเอกสาร, ปิด/เปิดโปรเจกต์, กู้คืน)
+        บันทึกการกระทำสำคัญ/ที่ลบข้อมูลได้ — ใครทำ อะไร เมื่อไหร่ (ลบโปรเจค/Release, ล้างสแกน, บังคับออกจากระบบ, แก้หัวเอกสาร, ปิด/เปิดโปรเจค, กู้คืน)
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       {rows === null ? (
@@ -6608,7 +6608,7 @@ const PM_KINDS = [
 ];
 const kindLabel = (k) => (PM_KINDS.find((x) => x.value === (k || "part"))?.label || "พาร์ท");
 
-// กำหนด BOM ของเบอร์แม่ (ซับ/แผง/แพ็ก) — เลือกลูกในโปรเจกต์เดียวกัน + จำนวน
+// กำหนด BOM ของเบอร์แม่ (ซับ/แผง/แพ็ก) — เลือกลูกในโปรเจคเดียวกัน + จำนวน
 function BomEditorModal({ parent, allParts, onClose, onSaved }) {
   const [rows, setRows] = useState(null);   // null = loading · [{child_pm_id, qty, part_no, part_name, kind}]
   const [pick, setPick] = useState("");
@@ -6650,14 +6650,14 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
   const avail = rows ? candidates.filter((c) => !rows.some((r) => r.child_pm_id === c.id)) : [];
 
   return (
-    <Modal title={`กำหนด BOM — ${parent.part_no}`} sub={`${kindLabel(parent.kind)} · ประกอบจากลูก (ต้องอยู่โปรเจกต์เดียวกัน)`} onClose={onClose} locked={busy} wide>
+    <Modal title={`กำหนด BOM — ${parent.part_no}`} sub={`${kindLabel(parent.kind)} · ประกอบจากลูก (ต้องอยู่โปรเจคเดียวกัน)`} onClose={onClose} locked={busy} wide>
       {rows === null ? (
         <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
       ) : (
         <>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <Field label="เพิ่มลูก (Part / ซับ ในโปรเจกต์นี้)">
+              <Field label="เพิ่มลูก (Part / ซับ ในโปรเจคนี้)">
                 <Select value={pick} onChange={(e) => setPick(e.target.value)}
                   options={avail.map((c) => ({ value: c.id, label: `${c.part_no} — ${c.part_name || ""}${c.kind && c.kind !== "part" ? " [" + kindLabel(c.kind) + "]" : ""}` }))} />
               </Field>
