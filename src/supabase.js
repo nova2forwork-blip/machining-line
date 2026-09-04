@@ -512,7 +512,7 @@ export async function getReleasesFull() {
   for (;;) {
     const { data, error } = await supabase
       .from("releases")
-      .select("*, part_master(part_no, part_name, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
+      .select("*, part_master(part_no, part_name, kind, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
       .order("release_date", { ascending: false })
       .range(from, from + pageSize - 1);
     if (error) { console.warn("getReleasesFull error", error); break; }
