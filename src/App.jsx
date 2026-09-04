@@ -596,6 +596,7 @@ function Shell({ user, onLogout }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);   // หน้าต่างเปลี่ยนรหัสผ่านตัวเอง
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
+  const [verifyPreselect, setVerifyPreselect] = useState(""); // parent QR ส่งมาจากรายงานประกอบ/แพ็ก → เปิดหน้าตรวจเบอร์นั้นอัตโนมัติ
 
   const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
@@ -605,6 +606,7 @@ function Shell({ user, onLogout }) {
     setTab(key);
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
+    if (opts?.qr) setVerifyPreselect(opts.qr);
   }
 
   // (เอาการสแกนออกจากหน้าสำนักงานแล้ว — การสแกนทำที่หน้าเครื่อง /station เท่านั้น
@@ -698,8 +700,8 @@ function Shell({ user, onLogout }) {
         <div className="content-inner">
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
-          {tab === "report" && <ReportPage />}
-          {tab === "verify" && <AssemblyVerifyPage />}
+          {tab === "report" && <ReportPage goTo={go} />}
+          {tab === "verify" && <AssemblyVerifyPage initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
@@ -1992,7 +1994,7 @@ function verifyStatusColor(s) {
     : s === "partial" ? { bg: "rgba(217,164,65,.14)", fg: "#b45309", bd: "rgba(217,164,65,.4)" }
     : { bg: "rgba(220,38,38,.10)", fg: "var(--danger-hi, #c0362c)", bd: "rgba(220,38,38,.3)" };
 }
-function AssemblyVerifyPage() {
+function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
   const [parents, setParents] = useState([]);
   const [q, setQ] = useState("");
   const [manualQr, setManualQr] = useState("");
@@ -2061,6 +2063,12 @@ function AssemblyVerifyPage() {
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
     setBusy(false);
   }
+
+  // เปิดมาจากรายงานประกอบ/แพ็ก (กดเบอร์แม่) → โหลดเบอร์นั้นให้อัตโนมัติ
+  useEffect(() => {
+    if (initialQr) { load(initialQr); onConsumeInitial && onConsumeInitial(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQr]);
 
   const doing = (s) => /progress/i.test(s || "");
 
@@ -4256,7 +4264,7 @@ const RANGE_MODES = [
 
 // ── วิวรายงาน "ประกอบ / แพ็ก" — ลูกที่ประกอบเข้าเบอร์แม่ (เบอร์ + ความยาว + จำนวน) จาก assembly_links ──
 //   แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่: package = แพ็ก · อื่น ๆ (sub/แผง) = ประกอบ
-function AssemblyReportView({ from, to, isPack, projectFilter, partFilter }) {
+function AssemblyReportView({ from, to, isPack, projectFilter, partFilter, goTo }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -4315,7 +4323,16 @@ function AssemblyReportView({ from, to, isPack, projectFilter, partFilter }) {
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={i}>
-                      <td><b>{r.parent_no}</b><div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div></td>
+                      <td>
+                        <span onClick={() => goTo && goTo("verify", { qr: r.parent_qr })}
+                          title={goTo ? "กดเพื่อเปิดหน้าตรวจเบอร์นี้" : undefined}
+                          style={{ fontWeight: 700, cursor: goTo ? "pointer" : "default",
+                            color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit",
+                            textDecoration: goTo ? "underline" : "none", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+                          {r.parent_no}
+                        </span>
+                        <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
+                      </td>
                       <td>{r.child_no}</td>
                       <td>{kindTh(r.child_kind)}</td>
                       <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtL(r.length_mm)}</td>
@@ -4331,7 +4348,7 @@ function AssemblyReportView({ from, to, isPack, projectFilter, partFilter }) {
   );
 }
 
-function ReportPage() {
+function ReportPage({ goTo }) {
   // ── Flexible date filter: quick preset / specific month / custom from–to ──
   const [rangeMode, setRangeMode] = useState("preset");
   const [preset, setPreset] = useState("week");
@@ -4803,7 +4820,7 @@ function ReportPage() {
       <FinishedPartSection />
       </>
       ) : (
-        <AssemblyReportView from={curRange.from} to={curRange.to} isPack={deptFilter === "packing"} projectFilter={projectFilter} partFilter={partFilter} />
+        <AssemblyReportView from={curRange.from} to={curRange.to} isPack={deptFilter === "packing"} projectFilter={projectFilter} partFilter={partFilter} goTo={goTo} />
       )}
     </div>
   );
