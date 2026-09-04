@@ -2758,6 +2758,7 @@ function ReleasePage({ user, goTo }) {
   const [toDate, setToDate] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
+  const [deptFilter, setDeptFilter] = useState("machine"); // แยกตามแผนก (เหมือนรายงาน): machine / assembly / packing
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2774,8 +2775,11 @@ function ReleasePage({ user, goTo }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // แยกแผนกจากชนิดของ Part ที่ปล่อย: package = แพ็ก · sub/แผง = ประกอบ · อื่น ๆ = เครื่องจักร
+  const deptOfKind = (k) => (k === "package" ? "packing" : (k === "subassembly" || k === "panel") ? "assembly" : "machine");
   // กรองที่ระดับ release ก่อน แล้วค่อยจัดกลุ่ม เพื่อให้ค้นหาครอบคลุมทั้งประวัติ
   const filteredReleases = recent.filter((r) => {
+    if (deptFilter && deptOfKind(r.part_master?.kind) !== deptFilter) return false;
     if (projectFilter && r.part_master?.projects?.code !== projectFilter) return false;
     if (fromDate && new Date(r.release_date) < new Date(`${fromDate}T00:00:00`)) return false;
     if (toDate && new Date(r.release_date) > new Date(`${toDate}T23:59:59.999`)) return false;
@@ -2840,6 +2844,32 @@ function ReleasePage({ user, goTo }) {
           </div>
         )}
       </Card>
+
+      {/* แยกดูตามแผนก — เครื่องจักร / ประกอบ / แพ็ก (เหมือนหน้ารายงาน) */}
+      <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
+        {[
+          { value: "machine",  label: "เครื่องจักร", sub: "งานตัด / เจาะ (part)", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
+          { value: "assembly", label: "ประกอบ",      sub: "ซับ / แผง",            color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "check" },
+          { value: "packing",  label: "แพ็ก",        sub: "แพ็ก (package)",        color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
+        ].map((d) => {
+          const active = deptFilter === d.value;
+          return (
+            <button key={d.value} type="button" onClick={() => setDeptFilter(d.value)}
+              style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", font: "inherit", appearance: "none",
+                border: active ? `2px solid ${d.color}` : "1px solid var(--border, #e5e7eb)",
+                background: active ? d.soft : "var(--card, #fff)",
+                boxShadow: active ? "0 4px 16px rgba(0,0,0,.06)" : "none", transition: "border-color .15s, background .15s, box-shadow .15s" }}>
+              <div style={{ width: 42, height: 42, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: active ? d.color : "var(--bg-soft, #f1f5f9)", color: active ? "#fff" : "var(--muted, #64748b)", transition: "background .15s, color .15s" }}>
+                <Icon name={d.icon} size={21} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15.5, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <SortControl sort={sort} options={[
