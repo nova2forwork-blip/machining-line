@@ -2004,6 +2004,8 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
   const [result, setResult] = useState(null);  // ผลเทียบ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [projSel, setProjSel] = useState(""); // กรองโปรเจค (เหมือนหน้าพิมพ์ QR)
+  const [partSel, setPartSel] = useState(""); // กรองเบอร์ (Part)
 
   useEffect(() => {
     (async () => {
@@ -2016,12 +2018,28 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
     })();
   }, []);
 
+  // ตัวเลือก dropdown (เหมือนหน้าพิมพ์ QR) — โปรเจค → Part (Part กรองตามโปรเจคที่เลือก)
+  const projOptions = useMemo(
+    () => [...new Set(parents.map((p) => p.project_code).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+      .map((c) => ({ value: c, label: c })),
+    [parents]);
+  const partOptions = useMemo(
+    () => [...new Set(parents.filter((p) => !projSel || p.project_code === projSel).map((p) => p.part_no).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+      .map((n) => ({ value: n, label: n })),
+    [parents, projSel]);
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return parents;
-    return parents.filter((p) => (p.part_no || "").toLowerCase().includes(s)
-      || (p.qr_code || "").toLowerCase().includes(s) || (p.project_code || "").toLowerCase().includes(s));
-  }, [parents, q]);
+    return parents.filter((p) => {
+      if (projSel && p.project_code !== projSel) return false;
+      if (partSel && p.part_no !== partSel) return false;
+      if (s && !((p.part_no || "").toLowerCase().includes(s)
+        || (p.qr_code || "").toLowerCase().includes(s)
+        || (p.project_code || "").toLowerCase().includes(s))) return false;
+      return true;
+    });
+  }, [parents, q, projSel, partSel]);
 
   async function load(qr, meta) {
     if (!qr) return;
@@ -2084,9 +2102,13 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
       </div>
 
       <Card title="เลือกเบอร์แม่ / เบอร์แพ็ก">
-        <div className="grid-2">
-          <Field label="ค้นหาจากรายการที่กำลังทำ">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="เบอร์ / โปรเจค / QR" />
+        {/* กรองแบบเดียวกับหน้าพิมพ์ QR: เลือกโปรเจค → Part · หรือสแกน/พิมพ์ QR ตรง ๆ */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, alignItems: "end" }}>
+          <Field label="โปรเจค">
+            <Select value={projSel} onChange={(e) => { setProjSel(e.target.value); setPartSel(""); }} options={projOptions} />
+          </Field>
+          <Field label="เบอร์ (Part)">
+            <Select value={partSel} onChange={(e) => setPartSel(e.target.value)} options={partOptions} />
           </Field>
           <Field label="หรือสแกน / พิมพ์ QR ตรงๆ (เสร็จแล้วก็ดูได้)">
             <form onSubmit={(e) => { e.preventDefault(); const s = manualQr.trim(); if (s) load(s, null); }} style={{ display: "flex", gap: 8 }}>
@@ -2095,11 +2117,17 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
             </form>
           </Field>
         </div>
-        <div style={{ maxHeight: 260, overflow: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเพิ่ม (เบอร์ / โปรเจค / QR)" style={{ flex: "1 1 240px" }} />
+          {(projSel || partSel || q) && <Btn variant="ghost" onClick={() => { setProjSel(""); setPartSel(""); setQ(""); }}>× ล้างตัวกรอง</Btn>}
+          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>{filtered.length.toLocaleString()} รายการ</span>
+        </div>
+        <div style={{ maxHeight: 300, overflow: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           {filtered.slice(0, 300).map((p) => (
             <div key={p.id} onClick={() => load(p.qr_code, p)}
               style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 9, border: "1px solid var(--border)", background: sel && sel.id === p.id ? "var(--surface-2, #eef4f1)" : "var(--surface, #fff)", cursor: "pointer" }}>
-              <b style={{ fontFamily: "var(--font-mono)", fontSize: 15 }}>{p.part_no}</b>
+              <b style={{ fontFamily: "var(--font-mono)", fontSize: 15, flexShrink: 0 }}>{p.part_no}</b>
+              <span style={{ color: "var(--muted)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>{p.qr_code}</span>
               <span style={{ color: "var(--muted)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.part_name}{p.project_code ? ` · ${p.project_code}` : ""}</span>
               <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: doing(p.status) ? "rgba(217,164,65,.15)" : "rgba(120,140,190,.12)", color: doing(p.status) ? "#b45309" : "var(--muted)" }}>{doing(p.status) ? "กำลังทำ" : "ยังไม่เริ่ม"}</span>
               <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, letterSpacing: ".03em", color: "var(--muted)" }}>{p.kind === "package" ? "แพ็ก" : p.kind === "panel" ? "แผง" : "ซับ"}</span>
