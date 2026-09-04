@@ -2452,6 +2452,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
   const totalQty = releases.reduce((s, r) => s + (r.qty || 0), 0);
   const totalWeight = releases.reduce((s, r) => s + (r.qty || 0) * (r.unit_weight || 0), 0);
+  // ประกอบ/แพ็ก (ลูกเป็น sub/แผง/แพ็ก) ไม่ต้องโชว์น้ำหนัก — คงไว้เฉพาะงานเครื่อง (part)
+  const isAsmGroup = releases.length > 0 && releases.every((r) => { const k = r.part_master?.kind || "part"; return k === "subassembly" || k === "panel" || k === "package"; });
   const notes = new Set(releases.map((r) => r.note).filter(Boolean));
   const noteLabel = notes.size === 0 ? "-" : notes.size === 1 ? [...notes][0] : `${notes.size} หมายเหตุ`;
 
@@ -2550,10 +2552,12 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <div className="label-el">จำนวนรวม</div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalQty)} ชิ้น</div>
         </Card>
-        <Card>
-          <div className="label-el">น้ำหนักรวม</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalWeight)} กก.</div>
-        </Card>
+        {!isAsmGroup && (
+          <Card>
+            <div className="label-el">น้ำหนักรวม</div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalWeight)} กก.</div>
+          </Card>
+        )}
         <Card>
           <div className="label-el">Part No.</div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>{releases.length} Part</div>
@@ -2570,9 +2574,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(totalQty)} ชิ้น</span>
               </div>
               <ProgressBar pct={pctOverall} finished={totalFinished} total={totalQty} />
-              <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
-                น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
-              </div>
+              {!isAsmGroup && (
+                <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
+                  น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
+                </div>
+              )}
               {stationDrove && lastOp && (
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
                   * นับจากขั้นตอนสุดท้าย ({lastOp.op}) ของงานหน้าเครื่อง
@@ -2619,7 +2625,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         <SortControl sort={sort} options={[
           { k: "part_no", label: "Part No." }, { k: "part_name", label: "ชื่อ Part" }, { k: "qty", label: "จำนวน" },
           { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" },
-          { k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }, { k: "len", label: "ความยาว/ชิ้น" },
+          ...(!isAsmGroup ? [{ k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }] : []), { k: "len", label: "ความยาว/ชิ้น" },
         ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
@@ -2630,8 +2636,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 <SortTh k="qty" sort={sort}>จำนวน</SortTh>
                 <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
                 <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
-                <SortTh k="uw" sort={sort}>น้ำหนัก/ชิ้น</SortTh>
-                <SortTh k="tw" sort={sort}>น้ำหนักรวม</SortTh>
+                {!isAsmGroup && <SortTh k="uw" sort={sort}>น้ำหนัก/ชิ้น</SortTh>}
+                {!isAsmGroup && <SortTh k="tw" sort={sort}>น้ำหนักรวม</SortTh>}
                 <SortTh k="len" sort={sort}>ความยาว/ชิ้น</SortTh>
                 <th>หมายเหตุ</th>
                 {canEdit && <th>จัดการ</th>}
@@ -2674,8 +2680,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                         <ProgressBar pct={pct} finished={finished} total={total} />
                       )}
                     </td>
-                    <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                    <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>
+                    {!isAsmGroup && <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>}
+                    {!isAsmGroup && <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>}
                     <td data-label="ความยาว/ชิ้น">{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
                     <td data-label="หมายเหตุ">{r.note || "-"}</td>
                     {canEdit && (
