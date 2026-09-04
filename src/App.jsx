@@ -4322,15 +4322,14 @@ function AssemblyReportView({ from, to, isPack, projectFilter, partFilter, goTo 
                 </tr></thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={i}>
+                    <tr key={i}
+                      onClick={() => goTo && goTo("verify", { qr: r.parent_qr })}
+                      title={goTo ? "กดเพื่อเปิดหน้าตรวจเบอร์นี้" : undefined}
+                      style={{ cursor: goTo ? "pointer" : "default" }}
+                      onMouseEnter={(e) => { if (goTo) e.currentTarget.style.background = "var(--accent-soft, rgba(16,185,129,.07))"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>
                       <td>
-                        <span onClick={() => goTo && goTo("verify", { qr: r.parent_qr })}
-                          title={goTo ? "กดเพื่อเปิดหน้าตรวจเบอร์นี้" : undefined}
-                          style={{ fontWeight: 700, cursor: goTo ? "pointer" : "default",
-                            color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit",
-                            textDecoration: goTo ? "underline" : "none", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
-                          {r.parent_no}
-                        </span>
+                        <span style={{ fontWeight: 700, color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit" }}>{r.parent_no}</span>
                         <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
                       </td>
                       <td>{r.child_no}</td>
