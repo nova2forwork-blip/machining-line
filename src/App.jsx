@@ -4589,44 +4589,50 @@ function ReportPage() {
       )}
 
       <Card title="ช่วงเวลาที่ต้องการดู">
-        {/* แถวบน: เลือกโหมดช่วงเวลา (ซ้าย) · กรองโปรเจค + Part (ขวา) */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
-          <div className="chip-row">
-            {RANGE_MODES.map((m) => (
-              <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
-                {m.label}
-              </span>
-            ))}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>โปรเจค:</span>
-            <Select value={projectFilter} style={{ minWidth: 200 }}
-              onChange={(e) => {
-                const pid = e.target.value;
-                setProjectFilter(pid);
-                // ถ้า Part ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรอง Part
-                if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
-              }}
-              options={projectOptions} />
-            <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>Part:</span>
-            <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ minWidth: 200 }}
-              options={visibleParts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
-          </div>
-        </div>
-
-        {/* แถวล่าง: ค่าตามโหมดที่เลือก */}
-        <div style={{ marginTop: 12 }}>
-          {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
-          {rangeMode === "month" && (
-            <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 200 }} />
-          )}
-          {rangeMode === "custom" && (
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
-              <span style={{ color: "var(--muted)" }}>–</span>
-              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 22, alignItems: "start" }}>
+          {/* ── ซ้าย: ช่วงเวลา (โหมด + ค่า เรียงชิดกัน) ── */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 9 }}>ช่วงเวลา</div>
+            <div className="chip-row" style={{ marginBottom: 12 }}>
+              {RANGE_MODES.map((m) => (
+                <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
+                  {m.label}
+                </span>
+              ))}
             </div>
-          )}
+            <div>
+              {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
+              {rangeMode === "month" && (
+                <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 220 }} />
+              )}
+              {rangeMode === "custom" && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
+                  <span style={{ color: "var(--muted)" }}>–</span>
+                  <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
+                </div>
+              )}
+            </div>
+          </div>
+          {/* ── ขวา: กรองโปรเจค + Part (ป้ายบน · เต็มความกว้าง) ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>โปรเจค</div>
+              <Select value={projectFilter} style={{ width: "100%" }}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  setProjectFilter(pid);
+                  // ถ้า Part ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรอง Part
+                  if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
+                }}
+                options={projectOptions} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Part</div>
+              <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ width: "100%" }}
+                options={visibleParts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
+            </div>
+          </div>
         </div>
       </Card>
 
