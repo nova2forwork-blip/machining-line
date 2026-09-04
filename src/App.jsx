@@ -597,6 +597,7 @@ function Shell({ user, onLogout }) {
   const [pwOpen, setPwOpen] = useState(false);   // หน้าต่างเปลี่ยนรหัสผ่านตัวเอง
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
   const [verifyPreselect, setVerifyPreselect] = useState(""); // parent QR ส่งมาจากรายงานประกอบ/แพ็ก → เปิดหน้าตรวจเบอร์นั้นอัตโนมัติ
+  const [verifyNonce, setVerifyNonce] = useState(0); // บั๊มพ์ทุกครั้งที่เข้าหน้าตรวจ → remount หน้าใหม่ (กดเมนูซ้ำ = เคลียร์ผลเดิม)
 
   const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
@@ -607,6 +608,7 @@ function Shell({ user, onLogout }) {
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
     if (opts?.qr) setVerifyPreselect(opts.qr);
+    if (key === "verify") setVerifyNonce((n) => n + 1);   // เข้าหน้าตรวจทุกครั้ง → หน้าใหม่ (กดเมนูซ้ำ = เคลียร์ผลเดิม)
   }
 
   // (เอาการสแกนออกจากหน้าสำนักงานแล้ว — การสแกนทำที่หน้าเครื่อง /station เท่านั้น
@@ -701,7 +703,7 @@ function Shell({ user, onLogout }) {
           {tab === "release" && <ReleasePage user={user} goTo={go} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage goTo={go} />}
-          {tab === "verify" && <AssemblyVerifyPage initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
+          {tab === "verify" && <AssemblyVerifyPage key={"vf" + verifyNonce} initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
