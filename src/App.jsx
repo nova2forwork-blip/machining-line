@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
-  findUnitByQr, getUnitHistory, getScanLogsBetween, getAllUnitsFull, getReleasesFull,
+  findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -4254,6 +4254,83 @@ const RANGE_MODES = [
   { value: "custom", label: "กำหนดเอง (จาก–ถึง)" },
 ];
 
+// ── วิวรายงาน "ประกอบ / แพ็ก" — ลูกที่ประกอบเข้าเบอร์แม่ (เบอร์ + ความยาว + จำนวน) จาก assembly_links ──
+//   แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่: package = แพ็ก · อื่น ๆ (sub/แผง) = ประกอบ
+function AssemblyReportView({ from, to, isPack, projectFilter, partFilter }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true; setLoading(true);
+    getAssemblyLogsBetween(from, to)
+      .then((d) => { if (alive) { setLogs(Array.isArray(d) ? d : []); setLoading(false); } })
+      .catch(() => { if (alive) { setLogs([]); setLoading(false); } });
+    return () => { alive = false; };
+  }, [from, to]);
+
+  const kindTh = (k) => (k === "subassembly" ? "sub" : k === "panel" ? "แผง" : k === "package" ? "แพ็ก" : "part");
+  const filtered = logs.filter((l) => {
+    const kind = l.parent_kind || "part";
+    if (isPack ? kind !== "package" : kind === "package") return false;   // แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่
+    if (projectFilter && l.parent_project !== projectFilter) return false;
+    if (partFilter && l.parent_no !== partFilter && l.child_no !== partFilter) return false;
+    return true;
+  });
+
+  const parentSet = new Set(filtered.map((l) => l.parent_unit_id));
+  const totalChildren = filtered.length;
+  const totalLen = filtered.reduce((s, l) => s + (Number(l.length_mm) || 0), 0);
+
+  // จับกลุ่ม (เบอร์แม่ยูนิต × เบอร์ลูก × ยาว) → นับจำนวนชิ้น
+  const grp = {};
+  filtered.forEach((l) => {
+    const key = l.parent_unit_id + "|" + l.child_no + "|" + (l.length_mm ?? "");
+    if (!grp[key]) grp[key] = { parent_no: l.parent_no, parent_qr: l.parent_qr, child_no: l.child_no, child_kind: l.child_kind, length_mm: l.length_mm, qty: 0 };
+    grp[key].qty += 1;
+  });
+  const rows = Object.values(grp).sort((a, b) =>
+    String(a.parent_no).localeCompare(String(b.parent_no), undefined, { numeric: true })
+    || String(a.child_no).localeCompare(String(b.child_no), undefined, { numeric: true }));
+  const fmtL = (n) => (n == null || isNaN(Number(n)) ? "—" : Number(n).toLocaleString());
+
+  return (
+    <div>
+      <div className="stat-row">
+        <StatCard label={isPack ? "จำนวนเบอร์ที่แพ็ก" : "จำนวนเบอร์แม่ที่ประกอบ"} value={parentSet.size.toLocaleString()} icon="box" />
+        <StatCard label="จำนวนลูกที่ใส่รวม (ชิ้น)" value={totalChildren.toLocaleString()} icon="scan" />
+        <StatCard label="ความยาวรวม (มม.)" value={fmtL(totalLen)} icon="bolt" />
+      </div>
+      <Card title={isPack ? "รายการแพ็ก — เบอร์ลูก/แผงที่ใส่เข้าแต่ละเบอร์" : "รายการประกอบ — เบอร์ลูกที่ใส่เข้าแต่ละเบอร์แม่"}>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
+          {isPack ? "แต่ละแพ็กมีลูก/แผงอะไรบ้าง ยาวเท่าไร กี่ชิ้น" : "แต่ละเบอร์แม่ประกอบเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม"}
+        </div>
+        {loading ? <div style={{ color: "var(--muted)", padding: 12 }}>กำลังโหลด…</div>
+          : rows.length === 0 ? <div style={{ color: "var(--muted)", padding: 12 }}>ไม่มีข้อมูลในช่วงนี้</div>
+          : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table" style={{ minWidth: 620 }}>
+                <thead><tr>
+                  <th>เบอร์แม่</th><th>เบอร์ลูก</th><th>ชนิด</th>
+                  <th style={{ textAlign: "right" }}>ยาว (มม.)</th><th style={{ textAlign: "right" }}>จำนวน (ชิ้น)</th>
+                </tr></thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td><b>{r.parent_no}</b><div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div></td>
+                      <td>{r.child_no}</td>
+                      <td>{kindTh(r.child_kind)}</td>
+                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtL(r.length_mm)}</td>
+                      <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{r.qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+      </Card>
+    </div>
+  );
+}
+
 function ReportPage() {
   // ── Flexible date filter: quick preset / specific month / custom from–to ──
   const [rangeMode, setRangeMode] = useState("preset");
@@ -4270,6 +4347,8 @@ function ReportPage() {
   const [relProj, setRelProj] = useState({});                // release_id → project_id (แม่นยำ ไม่ติดปัญหา part_no ซ้ำข้ามโปรเจค)
 
   const [logs, setLogs] = useState([]);
+  const [deptFilter, setDeptFilter] = useState("machine");   // "machine"/"assembly"/"packing" — แต่ละแผนกดูคนละแบบ
+  const [operations, setOperations] = useState([]);   // ไว้แม็ป operation → แผนก (op_type)
 
   // ── เลือกตารางก่อน export + สถานะระหว่างสร้างไฟล์ ──
   const [exportOpen, setExportOpen] = useState(false);
@@ -4278,6 +4357,7 @@ function ReportPage() {
   const [pick, setPick] = useState({ op: true, machine: true, cycle: true, part: true, daily: true });
 
   useEffect(() => { listRows("part_master", { order: "part_no" }).then(setParts); }, []);
+  useEffect(() => { listRows("operations").then(setOperations).catch(() => setOperations([])); }, []);
 
   // โหลด releases ครั้งเดียว → map release→โปรเจค (สำหรับกรอง log) + รายชื่อโปรเจค (สำหรับ dropdown)
   // ใช้ release_id เพราะ 1 release ผูกโปรเจคเดียวชัดเจน — เลี่ยงปัญหา part_no ซ้ำข้ามโปรเจค (K)
@@ -4311,12 +4391,25 @@ function ReportPage() {
     const rid = l.release_id || l.part_unit?.release_id || null;
     return rid ? relProj[rid] : undefined;
   };
+  // แม็ป operation → แผนก (จาก op_type: assembly/packing · อื่น ๆ = เครื่องจักร)
+  const deptOfOpType = (ty) => (ty === "assembly" ? "assembly" : ty === "packing" ? "packing" : "machine");
+  const opTypeById = {}, opTypeByName = {};
+  operations.forEach((o) => { if (o.id != null) opTypeById[o.id] = o.op_type; if (o.name) opTypeByName[o.name] = o.op_type; });
+  const deptOfLog = (l) => deptOfOpType(
+    l.operation?.op_type ?? opTypeById[l.operation?.id] ?? opTypeById[l.operation_id] ?? opTypeByName[l.operation?.name]
+  );
   const filteredLogs = logs.filter((l) => {
     if (projectFilter && logProjectId(l) !== projectFilter) return false;
     if (partFilter && l.part_unit?.part_master?.part_no !== partFilter) return false;
+    if (deptFilter && deptOfLog(l) !== deptFilter) return false;
     return true;
   });
 
+  // ช่วงเวลาปัจจุบัน (ใช้ส่งให้วิวประกอบ/แพ็ก) — คำนวณเดียวกับ effect โหลด logs
+  const curRange =
+    rangeMode === "month" ? monthRangeFor(monthValue) :
+    rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
+    rangeFor(preset);
   // Part ที่โชว์ในตัวกรอง — เลือกโปรเจคแล้วโชว์เฉพาะ Part ของโปรเจคนั้น
   const visibleParts = projectFilter ? parts.filter((p) => p.project_id === projectFilter) : parts;
   // ตัวเลือกโปรเจค — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (มิเรอร์การ์ดล้างข้อมูลสแกน)
@@ -4447,10 +4540,12 @@ function ReportPage() {
           <div className="page-sub">สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="accent" onClick={() => { setExportErr(""); setExportOpen(true); }} disabled={filteredLogs.length === 0}
-            title="เลือกตารางแล้วดาวน์โหลดเป็นไฟล์ Excel">
-            <Icon name="grid" size={15} /> ดาวน์โหลด Excel
-          </Btn>
+          {deptFilter === "machine" && (
+            <Btn variant="accent" onClick={() => { setExportErr(""); setExportOpen(true); }} disabled={filteredLogs.length === 0}
+              title="เลือกตารางแล้วดาวน์โหลดเป็นไฟล์ Excel">
+              <Icon name="grid" size={15} /> ดาวน์โหลด Excel
+            </Btn>
+          )}
         </div>
       </div>
 
@@ -4535,6 +4630,23 @@ function ReportPage() {
         </div>
       </Card>
 
+      {/* แยกดูตามแผนก — เครื่องจักร / ประกอบ / แพ็ก · กรองทั้งรายงาน (KPI · กราฟ · ตาราง · Excel) */}
+      <div className="card" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", marginBottom: 14 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>แผนก:</span>
+        <div className="chip-row">
+          {[{ value: "machine", label: "เครื่องจักร" }, { value: "assembly", label: "ประกอบ" }, { value: "packing", label: "แพ็ก" }].map((d) => (
+            <span key={d.value} className={`chip ${deptFilter === d.value ? "active" : ""}`} onClick={() => setDeptFilter(d.value)}>{d.label}</span>
+          ))}
+        </div>
+        <span style={{ fontSize: 11.5, color: "var(--muted)", marginInlineStart: "auto" }}>
+          {deptFilter === "machine" ? "จำนวนชิ้น + น้ำหนัก ที่ผ่านเครื่องจักร"
+            : deptFilter === "assembly" ? "เบอร์ลูกที่ประกอบ + ความยาว + จำนวน"
+            : "เบอร์ลูก/แผงที่แพ็ก + ความยาว + จำนวน"}
+        </span>
+      </div>
+
+      {deptFilter === "machine" ? (
+      <>
       <div className="stat-row">
         <StatCard label="จำนวนที่บันทึก · นับต่อขั้นตอน" value={totalPieces(filteredLogs).toLocaleString()} icon="scan" />
         <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
@@ -4667,6 +4779,10 @@ function ReportPage() {
         Finished Part — ชิ้นงานที่เสร็จสมบูรณ์
       </div>
       <FinishedPartSection />
+      </>
+      ) : (
+        <AssemblyReportView from={curRange.from} to={curRange.to} isPack={deptFilter === "packing"} projectFilter={projectFilter} partFilter={partFilter} />
+      )}
     </div>
   );
 }
