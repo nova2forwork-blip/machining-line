@@ -4630,19 +4630,35 @@ function ReportPage() {
         </div>
       </Card>
 
-      {/* แยกดูตามแผนก — เครื่องจักร / ประกอบ / แพ็ก · กรองทั้งรายงาน (KPI · กราฟ · ตาราง · Excel) */}
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", marginBottom: 14 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>แผนก:</span>
-        <div className="chip-row">
-          {[{ value: "machine", label: "เครื่องจักร" }, { value: "assembly", label: "ประกอบ" }, { value: "packing", label: "แพ็ก" }].map((d) => (
-            <span key={d.value} className={`chip ${deptFilter === d.value ? "active" : ""}`} onClick={() => setDeptFilter(d.value)}>{d.label}</span>
-          ))}
-        </div>
-        <span style={{ fontSize: 11.5, color: "var(--muted)", marginInlineStart: "auto" }}>
-          {deptFilter === "machine" ? "จำนวนชิ้น + น้ำหนัก ที่ผ่านเครื่องจักร"
-            : deptFilter === "assembly" ? "เบอร์ลูกที่ประกอบ + ความยาว + จำนวน"
-            : "เบอร์ลูก/แผงที่แพ็ก + ความยาว + จำนวน"}
-        </span>
+      {/* แยกดูตามแผนก — การ์ดแท็บ เครื่องจักร / ประกอบ / แพ็ก (กดสลับ · กรองทั้งรายงาน) */}
+      <div style={{ display: "flex", gap: 10, margin: "16px 0", flexWrap: "wrap" }}>
+        {[
+          { value: "machine",  label: "เครื่องจักร", sub: "จำนวนชิ้น · น้ำหนัก · เวลาเดินเครื่อง", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
+          { value: "assembly", label: "ประกอบ",      sub: "เบอร์ลูก · ความยาว · จำนวน",           color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "check" },
+          { value: "packing",  label: "แพ็ก",        sub: "ลูก / แผง · ความยาว · จำนวน",          color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
+        ].map((d) => {
+          const active = deptFilter === d.value;
+          return (
+            <button key={d.value} type="button" onClick={() => setDeptFilter(d.value)}
+              style={{
+                flex: "1 1 200px", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+                borderRadius: 14, cursor: "pointer", textAlign: "left", font: "inherit", appearance: "none",
+                border: active ? `2px solid ${d.color}` : "1px solid var(--border, #e5e7eb)",
+                background: active ? d.soft : "var(--card, #fff)",
+                boxShadow: active ? "0 4px 16px rgba(0,0,0,.06)" : "none",
+                transition: "border-color .15s, background .15s, box-shadow .15s",
+              }}>
+              <div style={{ width: 42, height: 42, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                background: active ? d.color : "var(--bg-soft, #f1f5f9)", color: active ? "#fff" : "var(--muted, #64748b)", transition: "background .15s, color .15s" }}>
+                <Icon name={d.icon} size={21} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15.5, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {deptFilter === "machine" ? (
