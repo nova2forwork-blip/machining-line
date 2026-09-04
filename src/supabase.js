@@ -1144,6 +1144,13 @@ export async function getScanLogsBetween(fromIso, toIso) {
   return data || [];
 }
 
+// รายงานประกอบ/แพ็ก — ลูกที่ประกอบเข้าเบอร์แม่ทั้งช่วง (เบอร์แม่/ลูก + ความยาว + น้ำหนัก + ชนิด)
+export async function getAssemblyLogsBetween(fromIso, toIso) {
+  const { data, error } = await supabase.rpc("report_assembly", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("report_assembly error", error); return []; }
+  return data || [];
+}
+
 // ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
 // ดึงบันทึกงานของ "เครื่องของ token นี้" เฉพาะวันนี้ + ยอดรวมประจำวัน (จาก DB)
 // คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
