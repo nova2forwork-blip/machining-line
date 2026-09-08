@@ -1747,6 +1747,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [projectId, setProjectId] = useState(projects[0]?.id || "");
+  const [packType, setPackType] = useState("panel");   // ชนิดการแพ็กของบั้งชุดนี้: panel (แพ็กแผง) / site (แพ็กไซต์ไอเทม) → pkg_meta.pack_type
   const [bunks, setBunks] = useState([]);      // [{ meta, units }]
   const [openIdx, setOpenIdx] = useState(-1);  // การ์ดที่กางดูยูนิต
   const [busy, setBusy] = useState(false);
@@ -1851,7 +1852,8 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
       components.push({ child_pm_id: pm.id, qty });
     }
     if (components.length) await setBom(parentPm.id, components);
-    await setPkgManifest(parentPm.id, bunk.units, bunk.meta || {});
+    // ★ ติดป้ายชนิดการแพ็ก (pack_type) ลง pkg_meta → สเตชันแพ็กแผง/แพ็กไซต์ไอเทมกรองบั้งของตัวเอง
+    await setPkgManifest(parentPm.id, bunk.units, { ...(bunk.meta || {}), pack_type: packType });
     return { createdUnits };
   }
 
@@ -1902,6 +1904,10 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
         <Field label="โปรเจค *">
           <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
             options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+        </Field>
+        <Field label="ชนิดการแพ็ก *">
+          <Select value={packType} onChange={(e) => setPackType(e.target.value)}
+            options={[{ value: "panel", label: "แพ็กแผง (panel)" }, { value: "site", label: "แพ็กไซต์ไอเทม (site item)" }]} />
         </Field>
         <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
           onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
@@ -2010,9 +2016,9 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
   useEffect(() => {
     (async () => {
       try {
-        const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
+        const [asm, panel, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("panel"), listAssemblyParents("packing")]);
         const seen = new Set(); const merged = [];
-        [...asm, ...pack].forEach((p) => { if (!seen.has(p.id)) { seen.add(p.id); merged.push(p); } });
+        [...asm, ...panel, ...pack].forEach((p) => { if (!seen.has(p.id)) { seen.add(p.id); merged.push(p); } });
         setParents(merged);
       } catch (e) { /* ยังพิมพ์ QR เองได้ */ }
     })();
@@ -2053,20 +2059,25 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
       }
       const bom = st.bom || [];
       const installed = st.installed || [];
+      const madeQty = Math.max(1, Math.floor(Number(st.made_qty) || 1));   // จำนวนที่ทำของเบอร์แม่ → แผน = BOM × จำนวนนี้
       const unitMap = await getUnitsByIds(installed.map((x) => x.child_unit_id));
       const byPm = {};
       installed.forEach((x) => {
         (byPm[x.child_pm_id] = byPm[x.child_pm_id] || []).push({
           unit_id: x.child_unit_id,
+          qty: Math.max(1, Math.floor(Number(x.qty) || 1)),   // จำนวนที่ใส่จริง (นับจำนวนรวม)
           qr: unitMap[x.child_unit_id]?.qr_code || "—",
           part_no: unitMap[x.child_unit_id]?.part_no || "",
         });
       });
+      const sumQty = (arr) => arr.reduce((s, u) => s + (Number(u.qty) || 1), 0);
       const rows = bom.map((b) => {
         const sc = byPm[b.child_pm_id] || [];
-        // เกิน (over) = สแกนมากกว่าแผน · ครบ = เท่ากับแผนเป๊ะ · ขาด = partial · ยังไม่สแกน = missing
-        const status = sc.length > b.qty ? "over" : sc.length === b.qty ? "complete" : sc.length > 0 ? "partial" : "missing";
-        return { part_no: b.part_no, part_name: b.part_name, planned: b.qty, scanned: sc.length, units: sc, status };
+        const used = sumQty(sc);                       // ใช้ไปจริง (รวมจำนวน)
+        const need = (Number(b.qty) || 0) * madeQty;   // แผน = ต่อชุด × จำนวนที่ทำ
+        // เกิน (over) = ใช้มากกว่าแผน · ครบ = เท่ากับแผนเป๊ะ · ขาด = partial · ยังไม่สแกน = missing
+        const status = used > need ? "over" : used === need ? "complete" : used > 0 ? "partial" : "missing";
+        return { part_no: b.part_no, part_name: b.part_name, planned: need, scanned: used, units: sc, status };
       });
       const bomSet = new Set(bom.map((b) => b.child_pm_id));
       const extra = [];
@@ -2077,8 +2088,9 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         parentNo: meta?.part_no || st.parent?.part_no || qr,
         parentName: meta?.part_name || "",
         finished: st.parent?.status === "finished",
+        madeQty,
         rows, extra, complete, hasOver, ok: complete && extra.length === 0 && !hasOver,
-        plannedTotal: bom.reduce((s, b) => s + b.qty, 0), scannedTotal: installed.length,
+        plannedTotal: bom.reduce((s, b) => s + (Number(b.qty) || 0) * madeQty, 0), scannedTotal: sumQty(installed),
       });
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
     setBusy(false);
@@ -2154,7 +2166,8 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
                 : { background: "rgba(217,164,65,.14)", color: "#b45309", border: "1px solid rgba(217,164,65,.4)" }),
           }}>
             <span style={{ fontSize: 16 }}>{result.ok ? "✓ ทำถูกและครบตามแผน" : result.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด/เกิน)" : result.hasOver ? "⚠ มีชิ้นเกินจำนวนที่แผนกำหนด" : "◐ ยังไม่ครบตามแผน"}</span>
-            <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {result.scannedTotal}/{result.plannedTotal} ชิ้น</span>
+            {result.madeQty > 1 ? <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontWeight: 700, opacity: .9 }}>ทำเบอร์แม่ {result.madeQty} ตัว · แผน = ต่อชุด×{result.madeQty}</span> : null}
+            <span style={{ marginLeft: result.madeQty > 1 ? 0 : "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {result.scannedTotal}/{result.plannedTotal} ชิ้น</span>
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -2174,7 +2187,7 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
                       <td style={{ textAlign: "center", fontFamily: "var(--font-mono)" }}>{r.planned}</td>
                       <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{r.scanned}</td>
                       <td><span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>{r.status === "complete" ? "✓ ครบ" : r.status === "over" ? `เกิน +${r.scanned - r.planned}` : r.status === "partial" ? `ขาด ${r.planned - r.scanned}` : "✗ ยังไม่สแกน"}</span></td>
-                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{r.units.length ? r.units.map((u) => u.qr).join(", ") : "—"}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{r.units.length ? r.units.map((u) => (Number(u.qty) > 1 ? `${u.qr} ×${u.qty}` : u.qr)).join(", ") : "—"}</td>
                     </tr>
                   );
                 })}
@@ -2189,7 +2202,7 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
               <div style={{ overflowX: "auto" }}>
                 <table className="data-table" style={{ minWidth: 360 }}>
                   <thead><tr><th>เบอร์ชิ้น</th><th>QR</th></tr></thead>
-                  <tbody>{result.extra.map((u, i) => <tr key={i}><td style={{ fontFamily: "var(--font-mono)" }}>{u.part_no || "?"}</td><td style={{ fontFamily: "var(--font-mono)" }}>{u.qr}</td></tr>)}</tbody>
+                  <tbody>{result.extra.map((u, i) => <tr key={i}><td style={{ fontFamily: "var(--font-mono)" }}>{u.part_no || "?"}</td><td style={{ fontFamily: "var(--font-mono)" }}>{u.qr}{Number(u.qty) > 1 ? ` ×${u.qty}` : ""}</td></tr>)}</tbody>
                 </table>
               </div>
             </div>
@@ -2744,6 +2757,40 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   );
 }
 
+// ── แท็บแผนก (ใช้ร่วม 3 หน้า: รายงาน · ปล่อยงาน · พิมพ์ QR) — แยก แผง / ซับ ออกจากกัน ──
+const DEPT_TABS = [
+  { value: "machine", label: "เครื่องจักร", sub: "งานตัด / เจาะ", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
+  { value: "panel",   label: "แผง",         sub: "panel",         color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "grid" },
+  { value: "sub",     label: "ซับ",         sub: "subassembly",    color: "#7c3aed", soft: "rgba(124,58,237,.10)", icon: "check" },
+  { value: "packing", label: "แพ็ก",        sub: "package",        color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
+];
+// ชนิด part → แผนก: package=แพ็ก · panel=แผง · subassembly=ซับ · อื่น ๆ=เครื่องจักร
+const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : k === "subassembly" ? "sub" : "machine");
+function DeptTabs({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
+      {DEPT_TABS.map((d) => {
+        const active = value === d.value;
+        return (
+          <button key={d.value} type="button" onClick={() => onChange(d.value)}
+            style={{ flex: "1 1 160px", display: "flex", alignItems: "center", gap: 12, padding: "13px 15px", borderRadius: 14, cursor: "pointer", textAlign: "left", font: "inherit", appearance: "none",
+              border: active ? `2px solid ${d.color}` : "1px solid var(--border, #e5e7eb)",
+              background: active ? d.soft : "var(--card, #fff)",
+              boxShadow: active ? "0 4px 16px rgba(0,0,0,.06)" : "none", transition: "border-color .15s, background .15s, box-shadow .15s" }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: active ? d.color : "var(--bg-soft, #f1f5f9)", color: active ? "#fff" : "var(--muted, #64748b)" }}>
+              <Icon name={d.icon} size={20} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
+              <div style={{ fontSize: 11, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ReleasePage({ user, goTo }) {
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
@@ -2781,9 +2828,7 @@ function ReleasePage({ user, goTo }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // แยกแผนกจากชนิดของ Part ที่ปล่อย: package = แพ็ก · sub/แผง = ประกอบ · อื่น ๆ = เครื่องจักร
-  const deptOfKind = (k) => (k === "package" ? "packing" : (k === "subassembly" || k === "panel") ? "assembly" : "machine");
-  // กรองที่ระดับ release ก่อน แล้วค่อยจัดกลุ่ม เพื่อให้ค้นหาครอบคลุมทั้งประวัติ
+  // กรองที่ระดับ release ก่อน แล้วค่อยจัดกลุ่ม เพื่อให้ค้นหาครอบคลุมทั้งประวัติ (deptOfKind = ตัวกลาง)
   const filteredReleases = recent.filter((r) => {
     if (deptFilter && deptOfKind(r.part_master?.kind) !== deptFilter) return false;
     if (projectFilter && r.part_master?.projects?.code !== projectFilter) return false;
@@ -2851,31 +2896,7 @@ function ReleasePage({ user, goTo }) {
         )}
       </Card>
 
-      {/* แยกดูตามแผนก — เครื่องจักร / ประกอบ / แพ็ก (เหมือนหน้ารายงาน) */}
-      <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
-        {[
-          { value: "machine",  label: "เครื่องจักร", sub: "งานตัด / เจาะ (part)", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
-          { value: "assembly", label: "ประกอบ",      sub: "ซับ / แผง",            color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "check" },
-          { value: "packing",  label: "แพ็ก",        sub: "แพ็ก (package)",        color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
-        ].map((d) => {
-          const active = deptFilter === d.value;
-          return (
-            <button key={d.value} type="button" onClick={() => setDeptFilter(d.value)}
-              style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", font: "inherit", appearance: "none",
-                border: active ? `2px solid ${d.color}` : "1px solid var(--border, #e5e7eb)",
-                background: active ? d.soft : "var(--card, #fff)",
-                boxShadow: active ? "0 4px 16px rgba(0,0,0,.06)" : "none", transition: "border-color .15s, background .15s, box-shadow .15s" }}>
-              <div style={{ width: 42, height: 42, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: active ? d.color : "var(--bg-soft, #f1f5f9)", color: active ? "#fff" : "var(--muted, #64748b)", transition: "background .15s, color .15s" }}>
-                <Icon name={d.icon} size={21} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15.5, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
-                <div style={{ fontSize: 11.5, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <DeptTabs value={deptFilter} onChange={setDeptFilter} />
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <SortControl sort={sort} options={[
@@ -3759,6 +3780,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [projectFilter, setProjectFilter] = useState("");
   const [releaseOrder, setReleaseOrder] = useState("");
   const [search, setSearch] = useState("");
+  const [deptFilter, setDeptFilter] = useState("machine"); // แยกแผนก (เหมือนหน้า Release/รายงาน): machine/assembly/packing
   const gridRef = useRef(null);   // กรอบเลื่อนตาราง QR (ใช้ปุ่ม "ขึ้นบนสุด")
   const [committedKey, setCommittedKey] = useState(""); // ★ โหลด QR เฉพาะหลังกด "ค้นหา" (กันโหลดหมื่นใบทันที)
 
@@ -3791,7 +3813,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       .filter(Boolean).join(" ").toLowerCase();
   };
   const matchSearch = (r) => !q || relHay(r).includes(q);
-  const relsInProject = releases.filter((r) => (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
+  const relsInProject = releases.filter((r) =>
+    (!deptFilter || deptOfKind(partOf(r)?.kind) === deptFilter)
+    && (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
   const releaseOrders = Array.from(new Set(relsInProject.map((r) => r.release_order).filter(Boolean))).sort();
   const filteredReleases = relsInProject.filter((r) => !releaseOrder || r.release_order === releaseOrder);
   const hasFilter = !!(projectFilter || releaseOrder || q || releaseId);
@@ -3935,6 +3959,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           <div className="page-sub">ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 2×2 ซม.</div>
         </div>
       </div>
+
+      <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseId(""); }} />
 
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
         {/* ช่องค้นหาอิสระ (กรองตัวเลือกในดรอปดาวน์) */}
@@ -4335,7 +4361,9 @@ const RANGE_MODES = [
 
 // ── วิวรายงาน "ประกอบ / แพ็ก" — ลูกที่ประกอบเข้าเบอร์แม่ (เบอร์ + ความยาว + จำนวน) จาก assembly_links ──
 //   แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่: package = แพ็ก · อื่น ๆ (sub/แผง) = ประกอบ
-function AssemblyReportView({ from, to, isPack, projectFilter, partFilter, goTo }) {
+function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, goTo }) {
+  const isPack = parentKind === "package";
+  const kindWord = parentKind === "package" ? "แพ็ก" : parentKind === "panel" ? "แผง" : "ซับ";
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -4348,23 +4376,22 @@ function AssemblyReportView({ from, to, isPack, projectFilter, partFilter, goTo 
 
   const kindTh = (k) => (k === "subassembly" ? "sub" : k === "panel" ? "แผง" : k === "package" ? "แพ็ก" : "part");
   const filtered = logs.filter((l) => {
-    const kind = l.parent_kind || "part";
-    if (isPack ? kind !== "package" : kind === "package") return false;   // แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่
+    if ((l.parent_kind || "part") !== parentKind) return false;   // เฉพาะเบอร์แม่ชนิดนี้ (แผง / ซับ / แพ็ก)
     if (projectFilter && l.parent_project !== projectFilter) return false;
     if (partFilter && l.parent_no !== partFilter && l.child_no !== partFilter) return false;
     return true;
   });
 
   const parentSet = new Set(filtered.map((l) => l.parent_unit_id));
-  const totalChildren = filtered.length;
+  const totalChildren = filtered.reduce((s, l) => s + (Number(l.qty) || 1), 0);   // รวม "จำนวนที่ใส่จริง" (นับจำนวนรวม) ไม่ใช่นับลิงก์
   const totalLen = filtered.reduce((s, l) => s + (Number(l.length_mm) || 0), 0);
 
-  // จับกลุ่ม (เบอร์แม่ยูนิต × เบอร์ลูก × ยาว) → นับจำนวนชิ้น
+  // จับกลุ่ม (เบอร์แม่ยูนิต × เบอร์ลูก × ยาว) → รวมจำนวนที่ใช้จริง (assembly_links.qty)
   const grp = {};
   filtered.forEach((l) => {
     const key = l.parent_unit_id + "|" + l.child_no + "|" + (l.length_mm ?? "");
     if (!grp[key]) grp[key] = { parent_no: l.parent_no, parent_qr: l.parent_qr, child_no: l.child_no, child_kind: l.child_kind, length_mm: l.length_mm, qty: 0 };
-    grp[key].qty += 1;
+    grp[key].qty += (Number(l.qty) || 1);
   });
   const rows = Object.values(grp).sort((a, b) =>
     String(a.parent_no).localeCompare(String(b.parent_no), undefined, { numeric: true })
@@ -4374,13 +4401,13 @@ function AssemblyReportView({ from, to, isPack, projectFilter, partFilter, goTo 
   return (
     <div>
       <div className="stat-row">
-        <StatCard label={isPack ? "จำนวนเบอร์ที่แพ็ก" : "จำนวนเบอร์แม่ที่ประกอบ"} value={parentSet.size.toLocaleString()} icon="box" />
+        <StatCard label={`จำนวนเบอร์แม่ (${kindWord})`} value={parentSet.size.toLocaleString()} icon="box" />
         <StatCard label="จำนวนลูกที่ใส่รวม (ชิ้น)" value={totalChildren.toLocaleString()} icon="scan" />
         <StatCard label="ความยาวรวม (มม.)" value={fmtL(totalLen)} icon="bolt" />
       </div>
-      <Card title={isPack ? "รายการแพ็ก — เบอร์ลูก/แผงที่ใส่เข้าแต่ละเบอร์" : "รายการประกอบ — เบอร์ลูกที่ใส่เข้าแต่ละเบอร์แม่"}>
+      <Card title={`รายการ${kindWord} — เบอร์ลูกที่ใส่เข้าแต่ละเบอร์แม่`}>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
-          {isPack ? "แต่ละแพ็กมีลูก/แผงอะไรบ้าง ยาวเท่าไร กี่ชิ้น" : "แต่ละเบอร์แม่ประกอบเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม"}
+          {isPack ? "แต่ละแพ็กมีลูก/แผงอะไรบ้าง ยาวเท่าไร กี่ชิ้น" : "แต่ละเบอร์แม่มีเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม"}
         </div>
         {loading ? <div style={{ color: "var(--muted)", padding: 12 }}>กำลังโหลด…</div>
           : rows.length === 0 ? <div style={{ color: "var(--muted)", padding: 12 }}>ไม่มีข้อมูลในช่วงนี้</div>
@@ -4479,7 +4506,7 @@ function ReportPage({ goTo }) {
     return rid ? relProj[rid] : undefined;
   };
   // แม็ป operation → แผนก (จาก op_type: assembly/packing · อื่น ๆ = เครื่องจักร)
-  const deptOfOpType = (ty) => (ty === "assembly" ? "assembly" : ty === "packing" ? "packing" : "machine");
+  const deptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : (ty === "packing" || ty === "pack_panel" || ty === "pack_site") ? "packing" : "machine");
   const opTypeById = {}, opTypeByName = {};
   operations.forEach((o) => { if (o.id != null) opTypeById[o.id] = o.op_type; if (o.name) opTypeByName[o.name] = o.op_type; });
   const deptOfLog = (l) => deptOfOpType(
@@ -4723,36 +4750,8 @@ function ReportPage({ goTo }) {
         </div>
       </Card>
 
-      {/* แยกดูตามแผนก — การ์ดแท็บ เครื่องจักร / ประกอบ / แพ็ก (กดสลับ · กรองทั้งรายงาน) */}
-      <div style={{ display: "flex", gap: 10, margin: "16px 0", flexWrap: "wrap" }}>
-        {[
-          { value: "machine",  label: "เครื่องจักร", sub: "จำนวนชิ้น · น้ำหนัก · เวลาเดินเครื่อง", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
-          { value: "assembly", label: "ประกอบ",      sub: "เบอร์ลูก · ความยาว · จำนวน",           color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "check" },
-          { value: "packing",  label: "แพ็ก",        sub: "ลูก / แผง · ความยาว · จำนวน",          color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
-        ].map((d) => {
-          const active = deptFilter === d.value;
-          return (
-            <button key={d.value} type="button" onClick={() => setDeptFilter(d.value)}
-              style={{
-                flex: "1 1 200px", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
-                borderRadius: 14, cursor: "pointer", textAlign: "left", font: "inherit", appearance: "none",
-                border: active ? `2px solid ${d.color}` : "1px solid var(--border, #e5e7eb)",
-                background: active ? d.soft : "var(--card, #fff)",
-                boxShadow: active ? "0 4px 16px rgba(0,0,0,.06)" : "none",
-                transition: "border-color .15s, background .15s, box-shadow .15s",
-              }}>
-              <div style={{ width: 42, height: 42, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                background: active ? d.color : "var(--bg-soft, #f1f5f9)", color: active ? "#fff" : "var(--muted, #64748b)", transition: "background .15s, color .15s" }}>
-                <Icon name={d.icon} size={21} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15.5, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
-                <div style={{ fontSize: 11.5, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {/* แยกดูตามแผนก — เครื่องจักร / แผง / ซับ / แพ็ก (กดสลับ · กรองทั้งรายงาน) */}
+      <DeptTabs value={deptFilter} onChange={setDeptFilter} />
 
       {deptFilter === "machine" ? (
       <>
@@ -4890,7 +4889,7 @@ function ReportPage({ goTo }) {
       <FinishedPartSection />
       </>
       ) : (
-        <AssemblyReportView from={curRange.from} to={curRange.to} isPack={deptFilter === "packing"} projectFilter={projectFilter} partFilter={partFilter} goTo={goTo} />
+        <AssemblyReportView from={curRange.from} to={curRange.to} parentKind={deptFilter === "packing" ? "package" : deptFilter === "panel" ? "panel" : "subassembly"} projectFilter={projectFilter} partFilter={partFilter} goTo={goTo} />
       )}
     </div>
   );
@@ -6556,8 +6555,11 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
 // ─── ขั้นตอนการทำงาน + ประเภทงาน (machining / assembly / packing) ───────────────
 const OP_TYPES = [
   { value: "machining", label: "งานเครื่อง (machining)" },
-  { value: "assembly", label: "ประกอบ (assembly)" },
-  { value: "packing", label: "แพ็ก (packing)" },
+  { value: "assembly", label: "ประกอบ · ซับ (subassembly)" },
+  { value: "panel", label: "แผง (panel)" },
+  { value: "pack_panel", label: "แพ็กแผง (pack panel)" },
+  { value: "pack_site", label: "แพ็กไซต์ไอเทม (pack site item)" },
+  { value: "packing", label: "แพ็ก · รวมทุกบั้ง (packing)" },
 ];
 function OperationsCrud() {
   const [rows, setRows] = useState([]);
