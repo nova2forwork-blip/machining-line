@@ -1,2682 +1,1292 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
-import "./styles.css";
-import "./station.css";
+import { createClient } from "@supabase/supabase-js";
 import {
-  stationLogin, getSession, setSession, clearSession,
-} from "./auth.js";
-import {
-  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
-  scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
-  rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
-  countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
-  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
-} from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
-import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { askConfirm, ConfirmHost } from "./confirm.jsx";
-import Icon from "./icons.jsx";
-import { useLang } from "./i18n-dom.js";
-import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
+  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
+  setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
+  setCachedAsmState, getCachedAsmState,
+} from "./offline.js";
 
-// ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง (ใช้ตัวแปล DOM ตัวเดียวกับหน้าสำนักงาน · ซิงค์ผ่าน localStorage)
-function StnLangToggle() {
-  const [lang, setLang] = useLang();
-  return (
-    <button className="stn-lang" onClick={() => setLang(lang === "th" ? "en" : "th")}
-      title="สลับภาษา / Switch language">
-      {lang === "th" ? "EN" : "ไทย"}
-    </button>
+// ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+
+if (!SUPABASE_URL || !SUPABASE_ANON) {
+  console.error(
+    "❌  ยังไม่ได้ตั้งค่า Supabase!\n" +
+    "    สร้างไฟล์ .env.local แล้วใส่:\n" +
+    "    VITE_SUPABASE_URL=...\n" +
+    "    VITE_SUPABASE_ANON_KEY=..."
   );
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────
-const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
-const pad = (n) => String(n).padStart(2, "0");
-function hms(sec) {
-  sec = Math.max(0, Math.floor(sec || 0));
-  return `${pad(Math.floor(sec / 3600))}:${pad(Math.floor((sec % 3600) / 60))}:${pad(sec % 60)}`;
-}
-function todayISOdate() {
-  const d = new Date();
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
-}
-// วันที่แบบสั้น MM.DD — ใช้เติมคอลัมน์ DATE ให้แถวที่เพิ่งสแกน (row จาก record_machine_work ไม่มี day)
-function todayMD() {
-  const d = new Date();
-  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
-}
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// ─── เสียง "ติ๊ด" ตอนสแกน (Web Audio) + สั่น ───────────────────────────────
-let _audioCtx = null;
-function audioCtx() {
+// อ่าน session token (ออกโดย verify_login, เก็บโดย auth.setSession) — แนบไปกับทุก
+// การเขียน เพื่อให้ DB ตรวจ token + role ก่อนอนุญาต (ดู migration-2-rls-lockdown.sql)
+function authToken() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    if (!_audioCtx) _audioCtx = new AC();
-    if (_audioCtx.state === "suspended") _audioCtx.resume();
-    return _audioCtx;
-  } catch { return null; }
-}
-// เรียกจาก user gesture (กด SCAN) เพื่อปลดล็อกเสียงบนมือถือ
-function warmAudio() { audioCtx(); }
-function beep(freq = 950, ms = 110, vol = 0.25) {
-  const ctx = audioCtx();
-  if (!ctx) return;
+    const raw = localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session");
+    // ★ คืนเฉพาะเมื่อ "เจอ token จริง" — ถ้า blob ใน storage ไม่มี token ให้ตกไป cookie/in-memory
+    //   (เดิม return ...||null ทันที → getSession เห็น user จาก cookie แต่ authToken คืน null = เด้งออก)
+    if (raw) { const tk = JSON.parse(raw)?.token; if (tk) return tk; }
+  } catch { /* storage ถูกบล็อก (iPad private/kiosk/Block-All-Cookies) → ไป fallback */ }
+  // ★ cookie (คีย์ "mls_session" — ตรงกับ auth.js) : iPad/Safari ที่บล็อก localStorage/sessionStorage
+  //   ต้องอ่านชั้นนี้ด้วย ไม่งั้น getSession เห็น user (จาก cookie) แต่ authToken หา token ไม่เจอ → ยืนยันตัวตนพัง เด้งออก
   try {
-    const t = ctx.currentTime;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = "square"; o.frequency.value = freq;
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
-    o.connect(g); g.connect(ctx.destination);
-    o.start(t); o.stop(t + ms / 1000 + 0.02);
+    const m = (typeof document !== "undefined" ? (document.cookie || "") : "").match(/(?:^|; )mls_session=([^;]*)/);
+    if (m) { const raw = decodeURIComponent(m[1]); if (raw) return JSON.parse(raw)?.token || null; }
   } catch { /* ignore */ }
-}
-function vibrate(pattern) { try { navigator.vibrate?.(pattern); } catch { /* ignore */ } }
-
-// ─── แผนก (department) ─────────────────────────────────────────────────────
-//   แต่ละหน้าจอ terminal = 1 แผนก · ระบุจาก op_type ของขั้นตอน
-//   machine = งานเครื่องจักร (ตัด/เจาะ/บาก…) · assembly = ประกอบ · packing = แพ็ก
-function opDept(o) {
-  const ty = o?.op_type;
-  if (ty === "assembly") return "assembly";   // ซับ (subassembly)
-  if (ty === "panel") return "panel";         // แผง
-  if (ty === "pack_panel") return "packpanel";   // แพ็กแผง
-  if (ty === "pack_site") return "packsite";     // แพ็กไซต์ไอเทม
-  if (ty === "packing") return "packing";        // แพ็ก (รวม — บัญชีเดิม)
-  return "machine";
-}
-const DEPT_META = {
-  machine:  { th: "หน้าเครื่อง", en: "Machine",  path: "/station",  word: "เครื่อง", wordEn: "machine" },
-  assembly: { th: "หน้าประกอบ (ซับ)", en: "Sub-assembly", path: "/assembly", word: "ประกอบ", wordEn: "sub-assembly" },
-  panel:    { th: "หน้าแผง",   en: "Panel",    path: "/panel",    word: "แผง",   wordEn: "panel" },
-  packing:  { th: "หน้าแพ็ก",   en: "Packing",  path: "/packing",  word: "แพ็ก",   wordEn: "packing" },
-  packpanel:{ th: "หน้าแพ็กแผง", en: "Pack Panel", path: "/packing-panel", word: "แพ็กแผง", wordEn: "pack-panel" },
-  packsite: { th: "หน้าแพ็กไซต์ไอเทม", en: "Pack Site Item", path: "/packing-site", word: "แพ็กไซต์ไอเทม", wordEn: "pack-site" },
-};
-// สเตชันตระกูล "แพ็ก" (โหมดแพ็กเหมือนกัน) — legacy packing = เห็นทุกบั้ง · packpanel/packsite = กรองด้วย pkg_meta.pack_type
-const PACK_DEPTS = ["packing", "packpanel", "packsite"];
-const isPackingDept = (d) => PACK_DEPTS.includes(d);
-const PACK_TYPE_OF = { packpanel: "panel", packsite: "site" };   // packpanel เปิดบั้ง pack_type=panel · packsite = site · packing = ทั้งหมด
-// ธีม/CSS: packpanel/packsite ใช้ธีมแพ็ก (สีน้ำเงิน) ตัวเดียวกับ .dept-packing
-const themeDept = (d) => (isPackingDept(d) ? "packing" : d);
-
-// ── บัญชีนี้ไม่ใช่แผนกของหน้านี้ → บอกเหตุผล + ลิงก์ไปหน้าที่ถูกต้อง ─────────────
-// อนิเมชันโหลดตอนล็อกอิน/เปลี่ยนหน้า (แบบ 3 — จุดเต้น + แถบกวาด) เต็มจอ · ใช้ร่วมกับหน้าสำนักงาน
-function LoginSplash({ text = "กำลังเข้าสู่ระบบ…" }) {
-  return (
-    <div className="mls-splash">
-      <div className="mls-splash-brand"><span className="m"><Icon name="bolt" size={18} /></span> MACHINING LINE</div>
-      <div className="mls-load3"><div className="mls-load3-dots"><i /><i /><i /></div><div className="mls-load3-bar" /></div>
-      <div className="mls-splash-text">{text}</div>
-    </div>
-  );
+  try { return globalThis.__mlsSession?.token || null; } catch { return null; }
 }
 
-function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
-  const here = DEPT_META[dept] || DEPT_META.machine;
-  const targets = (acctDepts || []).filter((d) => DEPT_META[d]).map((d) => DEPT_META[d]);
-  return (
-    <div className="stn-login-wrap">
-      <div className="stn-login stn-deptredir" style={{ position: "relative" }}>
-        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
-        <div className="stn-deptredir-emoji"><Icon name="warn" size={40} /></div>
-        <h1>{t(`บัญชีนี้ไม่ใช่แผนก “${here.word}”`, `This account isn't a ${here.wordEn} station`)}</h1>
-        <p>{targets.length
-          ? t("บัญชีนี้อยู่คนละแผนก — เปิดหน้าที่ถูกต้องด้านล่าง", "This account belongs to another department — open the correct page below")
-          : t("บัญชีนี้ยังไม่ได้ตั้งขั้นตอนของแผนกใด — แจ้งผู้ดูแลให้ตั้งค่าก่อน", "No operation set for this account — ask an admin to configure it")}</p>
-        <div className="stn-deptredir-links">
-          {targets.map((m) => (
-            <a key={m.path} className="stn-deptredir-go" href={m.path}>{t(`ไป${m.th}`, `Go to ${m.en}`)} →</a>
-          ))}
-        </div>
-        <button type="button" className="stn-deptredir-out" onClick={onLogout}>{t("ออกจากระบบ", "Log out")}</button>
-      </div>
-    </div>
-  );
+// ── ตรวจ error ว่าเป็น "session หมดอายุ/ไม่ถูกต้อง" → ยิง event ให้แอปเด้งออกจากระบบ ──
+// (RPC authz_* จะ raise 'unauthorized: invalid session' / 'forbidden: ...' เมื่อ token ใช้ไม่ได้)
+export function isAuthError(error) {
+  // แยก authentication (token เสีย/หมดอายุ → เด้งออก) ออกจาก authorization (forbidden: admin only → แค่ไม่มีสิทธิ์ ไม่ต้องเด้งออก)
+  return /unauthorized|invalid session|not.*authenticated|jwt|account disabled/i.test(error?.message || error?.hint || "");
+}
+function flagAuth(error) {
+  if (isAuthError(error)) { try { window.dispatchEvent(new Event("mls-session-invalid")); } catch (_) { /* ignore */ } }
 }
 
-// ── กำลังตรวจว่าบัญชีเป็นแผนกอะไร (ระหว่างโหลดรายการขั้นตอน) ─────────────────────
-function StnDeptChecking({ dept, t }) {
-  const m = DEPT_META[dept] || DEPT_META.machine;
-  return <LoginSplash text={t(`กำลังเปิด${m.th}…`, `Opening ${m.en}…`)} />;
+// ── Generic table helpers ───────────────────────────────────────────────────
+// อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
+// (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
+
+export async function listRows(table, { order, ascending = true, filters, strict = false } = {}) {
+  // แบ่งหน้าเอง (page 1000) — กันเพดาน 1,000 แถวของ PostgREST ที่ตัดข้อมูลเงียบๆ (H5)
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    let q = supabase.from(table).select("*");
+    if (filters) { for (const [col, val] of Object.entries(filters)) q = q.eq(col, val); }
+    if (order) q = q.order(order, { ascending });
+    q = q.range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) { console.warn("listRows error", table, error); if (strict) throw error; return all; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// STATION LOGIN — same credentials as the main app; intended for the
-// machine's own account (an employee whose machine_id is set).
-// ══════════════════════════════════════════════════════════════════════════
-function StationLogin({ onLogin, notice, dept = "machine" }) {
-  const meta = DEPT_META[dept] || DEPT_META.machine;
-  const [code, setCode] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e) {
-    e.preventDefault();
-    setErr(""); setBusy(true);
-    const res = await stationLogin(code, password);
-    setBusy(false);
-    if (!res || !res.user) {
-      if (res && res.error === "in_use") {
-        const t = res.lastSeen ? new Date(res.lastSeen) : null;
-        const hhmm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
-        setErr(`มีเครื่องอื่นใช้บัญชีนี้อยู่${hhmm ? ` (ใช้งานล่าสุด ${hhmm})` : ""} — เข้าไม่ได้ · ให้ออกจากระบบที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว`);
-        return;
-      }
-      setErr(res && res.error === "offline_first"
-        ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
-        : "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง");
-      return;
-    }
-    setSession(res.user);
-    enterFullscreen();          // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
-    warmCameraPermission();     // ขอสิทธิ์กล้อง "ครั้งเดียว" ตอนนี้เลย → SCAN ครั้งต่อไปไม่ถามซ้ำ
-    onLogin(res.user);
-  }
-
-  return (
-    <div className="stn-login-wrap">
-      <form className={`stn-login dept-${themeDept(dept)}`} onSubmit={submit} style={{ position: "relative" }}>
-        <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
-        <h1>{meta.th} — เข้าสู่ระบบ</h1>
-        <p>{dept === "machine"
-          ? "ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)"
-          : `ล็อกอินด้วยบัญชีของแผนก${meta.word} (บัญชีที่ผูกสถานี${meta.word}ไว้)`}</p>
-        {notice && <div className="stn-notice">{notice}</div>}
-        <div className="stn-field">
-          <label>{dept === "machine" ? "รหัสเครื่อง / พนักงาน" : `รหัสสถานี${meta.word} / พนักงาน`}</label>
-          <input className="stn-input" value={code} autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder={dept === "assembly" ? "เช่น ประกอบ-01" : dept === "panel" ? "เช่น แผง-01" : dept === "packpanel" ? "เช่น แพ็กแผง-01" : dept === "packsite" ? "เช่น แพ็กไซต์-01" : dept === "packing" ? "เช่น แพ็ก-01" : "เช่น CT-001"} />
-        </div>
-        <div className="stn-field">
-          <label>รหัสผ่าน</label>
-          <input className="stn-input" type="password" value={password}
-            onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
-        </div>
-        {err && <div className="stn-err">{err}</div>}
-        <button className="stn-btn" disabled={busy}>{busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}</button>
-        <div className="stn-login-foot">
-          จอนี้สำหรับติดหน้า{meta.word} (แนวนอน)
-        </div>
-        <div className="stn-login-link">
-          <a href="/">→ ไปหน้าปกติ (สำนักงาน)</a>
-        </div>
-      </form>
-    </div>
-  );
+export async function insertRow(table, row) {
+  const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
+  if (error) { console.warn("insertRow error", table, error); flagAuth(error); throw error; }
+  return data;
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MACHINE TERMINAL
-// ══════════════════════════════════════════════════════════════════════════
-const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "part", READY: "ready", SAVE: "save" };
-// เก็บ "งานที่กำลังทำ" (ยังไม่กด OK) ไว้ใน localStorage → กดอัปเดต/รีโหลด/แอปเด้ง แล้วกู้กลับมาได้ ไม่หาย
-const DRAFT_KEY = "mls-station-draft";
-const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
-const ASM_WIP_KEY = "mls-asm-wip";          // WIP ประกอบ/แพ็ก: เบอร์แม่ + ลูกที่สแกนแต่ "ยังไม่กดยืนยัน" → refresh/อัปเดตแล้วไม่หาย
-
-function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" }) {
-  const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
-  const t = (th, en) => (lang === "en" ? en : th);
-  const machine = user.machine; // { id, code, name }
-  // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
-  // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
-  const [op, setOp] = useState(user.operation || null);
-  const [machineOps, setMachineOps] = useState([]);   // ขั้นตอน "ของแผนกนี้" ที่บัญชีทำได้ (กรองตาม dept แล้ว)
-  const [allOps, setAllOps] = useState([]);           // ★ ทุกขั้นตอนของบัญชี (ยังไม่กรอง) — ใช้บอกว่าบัญชีนี้เป็นแผนกอะไร
-  const [opsLoaded, setOpsLoaded] = useState(false);  // โหลดรายการขั้นตอนเสร็จหรือยัง (กันเด้ง redirect ก่อนรู้ข้อมูล)
-  const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
-  const [rows, setRows] = useState([]);
-  const [newRowId, setNewRowId] = useState(null);
-  const [loadErr, setLoadErr] = useState("");
-
-  const [step, setStep] = useState(STEP.IDLE);
-  const [materialLen, setMaterialLen] = useState("");
-  const [elapsed, setElapsed] = useState(0);
-  const timerRef = useRef(null);
-  const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
-
-  const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
-  // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
-  const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
-  const [asmParentQty, setAsmParentQty] = useState(1);  // "จำนวนที่จะทำ" ของเบอร์แม่ (ซับ) — เข้ายอดผลิต + ใช้เทียบ BOM×จำนวน (ปิดงานอัตโนมัติ)
-  const [asmQtyLocked, setAsmQtyLocked] = useState(false);  // ซับ: ยืนยัน "จำนวนที่จะทำ" แล้วค่อยเริ่มสแกนลูก (กันปิดงานอัตโนมัติก่อนตั้งจำนวน)
-  const [asmChildren, setAsmChildren] = useState([]);   // [{ unit_id, qr, child_pm_id, part_no, qty }]
-  const [asmPending, setAsmPending] = useState(null);   // ลูกที่เพิ่งสแกน รอกด "ใส่เข้าเบอร์แม่" (แผงยืนยันต่อชิ้น — โหมดประกอบ)
-  const [asmDone, setAsmDone] = useState(null);         // แจ้งเตือน "ประกอบ/แพ็กเสร็จ" เด้งกลางจอหลังยืนยันสำเร็จ { partNo, count, isPack, queued }
-  const asmClientRef = useRef(null);
-  const [packPhotos, setPackPhotos] = useState([]);     // รูปตอนแพ็ก (ยังไม่อัป) [{ blob, url }]
-  const [photoOpen, setPhotoOpen] = useState(false);    // เปิดกล้องถ่ายรูปแพ็ก
-  const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
-  const [dupCount, setDupCount] = useState(0);   // ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วกี่ครั้ง (เตือน rework)
-  const [qty, setQty] = useState(0);
-  const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
-  const [busy, setBusy] = useState(false);
-  const savingRef = useRef(false);   // กันกด OK ซ้ำระหว่างบันทึก (re-entrancy)
-  const clientIdRef = useRef(null);  // ★ client_id คงเดิมตลอด "การบันทึกครั้งเดียว" (รวมตอน retry) กันบันทึกซ้ำ
-  const [toast, setToast] = useState(null);   // { text, tone }
-  const toastRef = useRef(null);
-  const [pending, setPending] = useState(scanQueueCount());
-  const [rejected, setRejected] = useState(rejectedQueueCount());
-  const [storageFull, setStorageFull] = useState(false);   // ที่เก็บเต็ม — โชว์แถบค้างจนกว่าจะบันทึกได้
-  const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine !== false);
-  const [showRejected, setShowRejected] = useState(false); // เปิดแผงจัดการคิวซิงค์ไม่สำเร็จ
-
-  // ── load today's records for this machine ──────────────────────────────
-  const reload = useCallback(async () => {
-    const res = await getMachineDay();
-    // ถูกเตะออก (บัญชีถูกใช้ล็อกอินที่เครื่องอื่น) — เฉพาะตอนออนไลน์ที่เซิร์ฟเวอร์ตอบ unauthorized
-    if (res && res.ok === false && res.reason === "unauthorized"
-        && !(typeof navigator !== "undefined" && navigator.onLine === false)) {
-      // ★ H2: ดันงานค้างขึ้นก่อนเตะออก — กันงานออฟไลน์ค้างซิงค์ไม่ได้อีก
-      await flushScanQueue();
-      if (scanQueueCount() === 0) { onKicked && onKicked(); }
-      else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
-      return;
-    }
-    if (res && res.ok !== false) {
-      setDaily(res.daily || { quantity: 0, weight: 0, process_seconds: 0 });
-      setRows(res.records || []);
-      setLoadErr("");
-      // หมายเหตุ: ไม่ตั้ง op จาก machine_day ที่นี่ — เพราะ reload ทำงานหลังบันทึกทุกครั้ง
-      //   ถ้าตั้งจะไปทับ "ขั้นตอนที่คนงานเลือกเอง" · การตั้ง default ทำที่ effect โหลด machineOps
-    } else {
-      setLoadErr(res?.message || "โหลดข้อมูลไม่สำเร็จ");
-    }
-  }, [onKicked]);
-  useEffect(() => { reload(); }, [reload]);
-
-  // โหลดขั้นตอนที่บัญชีทำได้ → กรอง "เฉพาะแผนกของหน้านี้" (machine / assembly / packing) + ตั้ง default
-  useEffect(() => {
-    getMachineOps().then((raw) => {
-      const list = raw || [];
-      setAllOps(list);
-      setOpsLoaded(true);
-      const ops = list.filter((o) => opDept(o) === dept);                  // เก็บเฉพาะขั้นตอนของแผนกนี้
-      setMachineOps(ops);
-      setOp((cur) => {
-        if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังทำได้ → คงเดิม
-        if (ops.length === 1) return ops[0];                               // ทำได้ขั้นตอนเดียว → เลือกให้เลย
-        if (ops.length === 0) return dept === "machine" ? (user.operation || cur) : null; // machine: ใช้ขั้นตอนประจำบัญชี
-        // ★ ทำได้หลายขั้นตอน → บังคับให้แตะเลือกเอง (ไม่ default จากบัญชี กันบันทึกผิดขั้นตอนเงียบๆ)
-        return null;
-      });
-    }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dept]);
-  // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
-  useEffect(() => {
-    const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
-    return () => clearInterval(t);
-  }, [reload]);
-
-  // heartbeat: บอกว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน)
-  // ถ้าถูก superseded (มีเครื่องใหม่เข้าแทนตอนเราเงียบไป) → "ซิงค์งานค้างให้หมดก่อน" แล้วค่อยเด้งออก
-  // (token ที่ superseded ยังซิงค์ได้ → ข้อมูลไม่หาย)
-  useEffect(() => {
-    let stopped = false;
-    async function beat() {
-      if (stopped || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
-      const r = await sessionHeartbeat();
-      if (stopped) return;
-      if (r && (r.expired || r.exists === false)) {              // token หมดอายุ/หาย → ล็อกอินใหม่ (ซิงค์ต่อหลัง login)
-        onExpired && onExpired();
-        return;
-      }
-      if (r && r.superseded) {
-        await flushScanQueue();                                  // ดันงานค้างขึ้นก่อน
-        if (scanQueueCount() === 0) { onKicked && onKicked(); }  // ไม่มีค้างแล้ว → ออกได้ปลอดภัย
-        else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
-      }
-    }
-    beat();
-    const t = setInterval(beat, 60000);
-    return () => { stopped = true; clearInterval(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // flushScanQueue เจอ token หมดอายุระหว่างซิงค์ → ยิง event นี้ → เด้งล็อกอินใหม่ (งานคงในคิว รอดข้ามล็อกอิน)
-  useEffect(() => {
-    const onExp = () => { onExpired && onExpired(); };
-    window.addEventListener("mls-session-expired", onExp);
-    return () => window.removeEventListener("mls-session-expired", onExp);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    flushScanQueue().then(() => setPending(scanQueueCount()));
-    if (rejectedQueueCount() > 0) reportDeadLetter();   // มีงานค้างเดิมค้างอยู่ → แจ้ง office ตอนเปิดเครื่อง
-    const off = onScanQueue((n) => setPending(n));
-    const offR = onRejectedQueue((n) => setRejected(n));
-    return () => { off(); offR(); };
-  }, []);
-
-  // สถานะออนไลน์/ออฟไลน์ (reactive) — ใช้โชว์แถบสถานะเน็ตด้านบน
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
-  }, []);
-
-  // แจ้งเตือนถ้าที่เก็บข้อมูลเต็ม (เขียนคิวไม่ได้) — งานอาจไม่ถูกบันทึก (B4)
-  // โชว์เป็นแถบค้าง (ไม่ใช่ toast วูบเดียว) เพราะเป็นเหตุการณ์ข้อมูลหาย ต้องเห็นตลอด
-  useEffect(() => {
-    const onFull = () => { setStorageFull(true); errorBeep(); };
-    window.addEventListener("mls-storage-full", onFull);
-    return () => window.removeEventListener("mls-storage-full", onFull);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ขอสิทธิ์กล้องครั้งเดียวตอนแตะจอครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ ไม่ได้ผ่านหน้าล็อกอิน)
-  useEffect(() => {
-    const once = () => { warmCameraPermission(); window.removeEventListener("pointerdown", once); };
-    window.addEventListener("pointerdown", once, { once: true });
-    return () => window.removeEventListener("pointerdown", once);
-  }, []);
-
-  // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
-  // ทำเงียบๆ เบื้องหลัง + รีเฟรชทุกครั้งที่เน็ตกลับมา
-  useEffect(() => {
-    const isAsmDept = dept === "assembly" || dept === "panel" || isPackingDept(dept);
-    const isOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
-    // ★ อุ่น chunk ตัวถอด QR (jsQR) ตอนออนไลน์ → service worker แคชไว้ → สแกนกล้อง "ออฟไลน์" ได้
-    //   (เดิม import("jsqr") ตอนเปิดกล้องครั้งแรก ถ้าครั้งแรกดันเป็นตอนออฟไลน์ = chunk ไม่ถูกแคช สแกนกล้องไม่ทำงาน)
-    const warmScanner = () => { if (isOnline()) import("jsqr").catch(() => {}); };
-    warmScanner();
-    prefetchUnitsForOffline().catch(() => {});
-    if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});   // แคชสถานะเบอร์แม่ที่กำลังทำ → เปิด offline ได้
-    const onOnline = () => {
-      warmScanner();
-      prefetchUnitsForOffline().catch(() => {});
-      if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});
-    };
-    window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
-  }, []);
-
-  function flash(text, tone = "ok") {
-    setToast({ text, tone });
-    clearTimeout(toastRef.current);
-    // ข้อความเตือน (warn) อยู่นานกว่า — กันคนงานละสายตาแล้วพลาดข้อความสำคัญ (เช่น "ไม่พบ QR")
-    toastRef.current = setTimeout(() => setToast(null), tone === "ok" ? 1900 : 4200);
-  }
-  useEffect(() => () => clearTimeout(toastRef.current), []);
-
-  // ── timer ───────────────────────────────────────────────────────────────
-  // ยึด "เวลาเริ่มจริง (startTsRef)" เป็นหลัก → เวลาไม่ดริฟต์ + กู้ต่อได้เป๊ะตอนโหลดแอปใหม่
-  function startTimer() {
-    clearInterval(timerRef.current);
-    if (startTsRef.current == null) startTsRef.current = Date.now() - (Number(elapsed) || 0) * 1000;
-    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTsRef.current) / 1000)));
-    tick();
-    timerRef.current = setInterval(tick, 1000);
-  }
-  function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; startTsRef.current = null; }
-  useEffect(() => () => stopTimer(), []);
-  // ปิดกล้องถาวรตอนออกจากหน้าเครื่อง (ออกจากระบบ/ถูกเตะ) — ระหว่างใช้งานกล้องเปิดค้างไว้ตัวเดียว
-  useEffect(() => () => releaseSharedCamera(), []);
-
-  // ── กัน "งานหายตอนกดอัปเดต/รีโหลด" ──────────────────────────────────────
-  // เก็บงานที่กำลังทำ (พาร์ทที่สแกน/จำนวน/สถานะ/เวลาเดินเครื่อง) ลง localStorage แบบสด
-  // แล้วกู้กลับตอนโหลดแอปใหม่ → กดอัปเดตกลางงานก็ไม่หาย (เวลาเดินเครื่องนับต่อจากเวลาเริ่มจริง)
-  const draftLoadedRef = useRef(false);
-  useEffect(() => {
-    if (dept !== "machine") return;        // ★ ประกอบ/แพ็กไม่ใช้ draft (สถานะประกอบไม่ได้ถูกเก็บใน draft) — กันเด้ง "กู้งาน" หลอก + จับเวลาผี
-    if (!draftLoadedRef.current) return;   // ยังไม่ผ่านขั้นกู้ draft — อย่าเพิ่งเขียนทับ
-    try {
-      // "กำลังทำงาน" = กด START แล้ว (timer เดิน / สแกน / เลือกจำนวน) — step ไม่ใช่ IDLE
-      if (step === STEP.IDLE) { localStorage.removeItem(DRAFT_KEY); return; }   // จบ/ยกเลิก/บันทึกแล้ว → ล้าง draft
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        v: 1, step, materialLen, qty, status,
-        unit, op, progress, dupCount,
-        clientId: clientIdRef.current,
-        startTs: startTsRef.current,        // เวลาเริ่มจริง → คำนวณเวลาเดินเครื่องต่อได้
-        savedAt: Date.now(),
-      }));
-    } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
-  }, [step, materialLen, qty, status, unit, op, progress, dupCount]);
-
-  // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
-  useEffect(() => {
-    if (dept !== "machine") { draftLoadedRef.current = true; return; }   // ★ ประกอบ/แพ็ก: ไม่กู้ draft (กันงานเครื่องหลอกมาทับหน้าประกอบ)
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
-        const tooOld = d && d.savedAt && (Date.now() - d.savedAt > DRAFT_MAX_AGE_MS);
-        if (d && d.v === 1 && d.step && d.step !== STEP.IDLE && !tooOld) {
-          setMaterialLen(d.materialLen ?? "");
-          setUnit(d.unit ?? null);
-          setQty(Number(d.qty) || 0);
-          setStatus(d.status ?? null);
-          setProgress(d.progress ?? null);
-          setDupCount(Number(d.dupCount) || 0);
-          if (d.op) setOp(d.op);
-          clientIdRef.current = d.clientId ?? null;
-          if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
-          setStep(d.step);
-          startTimer();   // เดินเวลาต่อทันที
-          flash(t("กู้งานที่ค้างอยู่กลับมาแล้ว — ตรวจแล้วกด OK ได้เลย", "Restored your in-progress job — review and press OK"), "ok");
-        } else if (tooOld) {
-          localStorage.removeItem(DRAFT_KEY);   // เก่าเกิน → ทิ้ง
-        }
-      }
-    } catch { /* ignore */ }
-    draftLoadedRef.current = true;   // เปิดให้ effect เขียน draft ทำงานได้หลังจากนี้
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function resetAll(keepLen = false) {
-    stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
-    if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
-    setStatus(null); setStep(STEP.IDLE);
-    clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
-  }
-
-  // ── START / STOP (RECORD) ───────────────────────────────────────────────
-  // ต้องกรอกความยาววัสดุก่อน ถึงจะกด Start ได้
-  const matReady = materialLen !== "" && Number(materialLen) > 0;
-  const prevStepRef = useRef(STEP.REC);
-  function onRecord() {
-    if (step === STEP.IDLE) {
-      if (!matReady) { flash("กรอกความยาววัสดุ (Material Length) ก่อน", "warn"); return; }
-      startTimer();
-      setStep(STEP.REC);
-    } else if (step !== STEP.CANCEL) {
-      // pressing RECORD again while active → ask to cancel (จำ step เดิมไว้กลับ)
-      prevStepRef.current = step;
-      setStep(STEP.CANCEL);
-    }
-  }
-  function confirmCancel(yes) {
-    if (yes) resetAll();
-    else setStep(prevStepRef.current || STEP.REC);
-  }
-
-  // ── SCAN ──────────────────────────────────────────────────────────────
-  // เสียงเตือน "ครั้งเดียว" ตอนสแกน/กดผิด (ไม่ค้าง ไม่วนซ้ำ)
-  function errorBeep() { beep(320, 240, 0.32); vibrate([90, 60, 90]); }
-  function okBeep() { beep(1180, 80, 0.20); vibrate(45); }         // เสียงสั้นสูง = บันทึกสำเร็จ (ต่างจาก error ชัดเจน)
-  function tickBeep() { beep(880, 45, 0.14); }                     // เสียงเบาๆ = สแกนเจอชิ้นงาน
-
-  async function onScan() {
-    if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
-    // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง กลับไปหน้าจับเวลา (toggle)
-    if (step === STEP.SCAN) { setStep(STEP.REC); return; }
-    // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
-    if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
-    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) — เรียกก่อน await กันเสียงเงียบหลังการ์ดยืนยัน
-    // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
-    if (step === STEP.PART && unit && (status || qty > 1)) {
-      if (!(await askConfirm({
-        message: t("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?",
-                   "This scanned piece isn't saved yet — scanning again will discard it. Continue?"),
-        tone: "warn",
-        confirmText: t("สแกนใหม่", "Scan again"),
-        cancelText: t("ยกเลิก", "Cancel"),
-      }))) return;
-    }
-    // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
-    // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
-    // ★ ล้าง client_id ด้วย — สแกนชิ้นใหม่ = การบันทึกครั้งใหม่ ถ้าไม่ล้างจะ reuse ตัวเดิม
-    //   (เคส: บันทึกชิ้น A พลาดแบบไม่ใช่เน็ต แต่ DB commit แล้ว → กด SCAN ชิ้น B → B โดน dedup หาย)
-    clientIdRef.current = null;
-    setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null);
-    setStep(STEP.SCAN);
-  }
-  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
-  // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
-  function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
-  // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
-  // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
-  //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
-  //   ★ H1: ต้องรู้ "ขั้นตอน (operation)" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้ โชว์เป็นไม่ทราบ
-  // คืน true=แสดงชิ้นเข้าหน้าเลือกจำนวน · false=ถูกบล็อก (เช่นโปรเจคปิดแล้ว)
-  async function showScannedUnit(u) {
-    // ★ กันไว้ตั้งแต่ต้น: โปรเจคปิดแล้ว → เตือนทันที ไม่ให้เข้าหน้าทำงาน (ไม่ต้องเสียเวลาแล้วโดนเด้งตอนกด OK)
-    if (u?.part_master?.projects?.status === "closed") {
-      errorBeep();
-      flash(t("โปรเจคนี้ปิดแล้ว (ทำเสร็จ) — บันทึกงานเพิ่มไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน",
-              "This project is closed — can't add work · ask admin to reopen for rework"), "warn");
-      return false;
-    }
-    tickBeep();   // เสียงเบายืนยันว่าเจอชิ้นงาน
-    const opId = op?.id || user.operation?.id || null;
-    const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
-    const dup = opId ? await countUnitOpRecords(u.id, opId) : 0;   // เตือน rework (0 เมื่อออฟไลน์)
-    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-    setDupCount(dup);
-    setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
-    setUnit(u);
-    if (qty === 0) setQty(1);
-    setStep(STEP.PART);
-    return true;
-  }
-  // สแกน QR (จากกล้อง) — ถ้าอ่านได้เป็นเบอร์พาร์ท ลอง fallback หา 1 ตัว (กล้องเดี่ยวไม่มี UI ให้เลือก)
-  // คืน true=พบ, false=ไม่พบ
-  const curOpId = () => op?.id || user.operation?.id || null;
-  async function onDecoded(qr) {
-    if (!qr) return false;
-    setBusy(true);
-    const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจค/ใบเจาะจงเสมอ
-    if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจคปิด → คืน false ให้สแกนต่อได้
-    // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจคเดียวใช้เลย · หลายโปรเจค → อย่าเดา ให้พิมพ์เลือก
-    const opts = await findManualPartOptions(qr, curOpId());
-    setBusy(false);
-    if (opts.length === 1) { return await showScannedUnit(opts[0].unit); }
-    if (opts.length >= 2) {
-      errorBeep();
-      flash(t("เบอร์นี้อยู่หลายโปรเจค — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจค",
-              "This number is in several projects — type it below and pick the project"), "warn");
-      return false;
-    }
-    errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false;
-  }
-  // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจค → ให้เลือก "โปรเจค" (ไม่ต้องเลือก release)
-  // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจค · { ok:false } เมื่อไม่พบ
-  async function onManualEntry(text) {
-    const s = String(text || "").trim();
-    if (!s) return { ok: false };
-    setBusy(true);
-    // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
-    const u = await findUnitByQr(s);
-    if (u) { setBusy(false); return { ok: await showScannedUnit(u) }; }
-    // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจค (findManualPartOptions ตัดโปรเจคปิดออกให้แล้ว)
-    const opts = await findManualPartOptions(s, curOpId());
-    setBusy(false);
-    if (!opts.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
-    if (opts.length === 1) { return { ok: await showScannedUnit(opts[0].unit) }; }
-    return { ok: false, choose: opts };   // หลายโปรเจค → ให้เลือก
-  }
-  // คนงานเลือกโปรเจคแล้ว → ใช้ชิ้นตัวแทนของโปรเจคนั้น
-  async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
-
-  // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
-  async function confirmPart() {
-    if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
-    if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
-    if (!Number.isInteger(qty)) { flash("จำนวนต้องเป็นจำนวนเต็ม", "warn"); return; }
-    if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
-    // จำนวนมากผิดปกติในครั้งเดียว — ให้ยืนยันกันพิมพ์เกิน (เช่น 100 กลายเป็น 1000)
-    if (qty > 2000 && !(await askConfirm({
-      message: t(`จำนวน ${qty.toLocaleString()} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?`,
-                 `${qty.toLocaleString()} pieces in a single record is unusually large — confirm?`),
-      tone: "warn",
-      confirmText: t("ยืนยัน", "Confirm"),
-      cancelText: t("ยกเลิก", "Cancel"),
-    }))) return;
-    // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
-    //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
-    doSave();
-  }
-
-  // ── บันทึก (เรียกจากปุ่ม OK) ─────────────────────────────────────────────
-  async function doSave() {
-    if (savingRef.current) return;      // กันกด OK รัวๆ → บันทึกซ้ำ (re-entrancy)
-    savingRef.current = true;
-    setBusy(true);
-    // สร้าง client_id ครั้งเดียวต่อการบันทึกชิ้นนี้ · ถ้ากด OK ซ้ำ (retry หลังพลาด) ใช้ตัวเดิม
-    // → ฝั่ง DB dedup ด้วย client_id ได้ กันบันทึกซ้ำแม้ error ที่ไม่ใช่เน็ต (เช่น insert สำเร็จแต่ตอบกลับพลาด)
-    // ★ ต้องเป็น "UUID จริง" เสมอ (คอลัมน์ client_id เป็น uuid) — newClientId() รับประกันได้แม้เครื่อง
-    //   ไม่มี crypto.randomUUID (เปิดผ่าน http / webview เก่า) · เดิมใช้ fallback ที่ไม่ใช่ UUID → insert พัง
-    if (!clientIdRef.current) clientIdRef.current = newClientId();
-    try {
-      // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
-      const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
-      const res = await recordMachineWork({
-        qr: unit.qr_code,
-        quantity: qty,
-        materialLengthMm: materialLen === "" ? null : Number(materialLen),
-        processSeconds: elapsed,
-        status,
-        releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
-        operationId: op?.id || null,  // ★ ขั้นตอนที่เลือกบนจอ
-        clientId: clientIdRef.current, // ★ คงเดิมตอน retry
-        weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
-      });
-      if (!res || res.ok === false) {
-        errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
-        const msg = res?.reason === "project_closed"
-          ? t("โปรเจคนี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
-          : (res?.message || "บันทึกไม่สำเร็จ");
-        flash(msg, "warn");
-        setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
-        return;
-      }
-      setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
-      if (res.queued) {
-        okBeep();
-        flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
-        resetAll(true);        // เก็บความยาววัสดุไว้ (มักเท่าเดิมทั้งชุด)
-        reload();              // ★ อัปเดตยอด "วันนี้" + ตารางจากคิวออฟไลน์ (offlineMachineDay รวมงานค้าง) — กันคนงานเห็นยอดนิ่งแล้วสแกนซ้ำ
-        return;
-      }
-      // update table + daily from server response
-      if (res.daily) setDaily(res.daily);
-      if (res.row) {
-        setRows((rs) => [...rs, res.row]);
-        setNewRowId(res.row.id || `${Date.now()}`);
-      } else {
-        reload();
-      }
-      okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
-      flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
-      resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
-    } finally {
-      setBusy(false);
-      savingRef.current = false;
-    }
-  }
-
-  // ล็อกตารางไว้ที่ 6 แถว (สูง = หัวตาราง + 6 แถว) เกินกว่านั้นเลื่อนดูของเก่าได้
-  // แถวใช้ฟอนต์ vh (ปรับตามจอ) จึงวัดความสูงจริงด้วย JS แล้วตั้ง maxHeight ให้ตรง 6 แถวเป๊ะ
-  const tableRef = useRef(null);
-  const ROWS_VISIBLE = 6;
-  const lockTableHeight = useCallback(() => {
-    const el = tableRef.current; if (!el) return;
-    const table = el.querySelector("table.stn-rec"); if (!table) return;
-    const thead = table.querySelector("thead");
-    const bodyRows = table.querySelectorAll("tbody tr");
-    if (bodyRows.length > ROWS_VISIBLE) {
-      const headH = thead ? thead.offsetHeight : 0;
-      let rowsH = 0;
-      for (let i = 0; i < ROWS_VISIBLE; i++) rowsH += bodyRows[i].offsetHeight || 0;
-      el.style.maxHeight = (headH + rowsH + 2) + "px";   // +2 กันเส้นขอบล่างโดนตัด
-    } else {
-      el.style.maxHeight = "";                            // ≤ 6 แถว → ไม่ต้องล็อก
-    }
-  }, []);
-  useEffect(() => {
-    lockTableHeight();
-    if (tableRef.current) tableRef.current.scrollTop = tableRef.current.scrollHeight;   // เลื่อนไปแถวล่าสุด
-  }, [rows, lockTableHeight]);
-  // จอหมุน/เปลี่ยนขนาด → ฟอนต์ vh เปลี่ยน ต้องคำนวณความสูงใหม่
-  useEffect(() => {
-    const on = () => lockTableHeight();
-    window.addEventListener("resize", on);
-    window.addEventListener("orientationchange", on);
-    return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
-  }, [lockTableHeight]);
-
-  // ── โหมดของหน้านี้ "ล็อกตามแผนก" (dept) แล้ว — assembly/packing = โหมดประกอบ/แพ็ก · machine = งานเครื่อง ──
-  const isAsm = dept === "assembly" || dept === "panel" || isPackingDept(dept);
-  // นับ "สะสม" = ที่ติดตั้งไปแล้ว (สเตชันก่อน) + ที่สแกนรอบนี้ · ครบเมื่อทุกบรรทัด ≥ qty
-  const asmHave = (pmId) =>
-    (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length +
-    asmChildren.filter((c) => c.child_pm_id === pmId).length;
-  const asmComplete = !!asmParent && asmParent.bom.every((b) => asmHave(b.child_pm_id) >= b.qty);
-
-  // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
-  useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
-
-  // ── กัน "ลูกที่สแกนยังไม่ยืนยัน หายตอน refresh / กดอัปเดต" (โหมดประกอบ/แพ็ก) ──
-  //   เก็บ WIP (เบอร์แม่ + ลูกที่สแกนรอบนี้) ลง localStorage แบบสด แล้วกู้กลับตอนเปิดแอปใหม่
-  const asmWipKey = ASM_WIP_KEY + ":" + (machine?.id || "x");
-  const asmWipLoadedRef = useRef(false);
-  // กู้ครั้งเดียวตอนเปิด — วางไว้ "หลัง" effect ล้างสถานะข้างบน + รอ opsLoaded (op นิ่งแล้ว) → การกู้ชนะ ไม่โดน effect ล้าง op ทับ
-  useEffect(() => {
-    if (asmWipLoadedRef.current) return;                                 // กู้ครั้งเดียวพอ
-    if (dept === "machine") { asmWipLoadedRef.current = true; return; }   // เครื่องใช้ draft แยก (ไม่เกี่ยว)
-    if (!opsLoaded) return;                                               // รอ ops เซ็ตตัว (op auto-select เสร็จ) ก่อน — กัน effect ล้าง op มาลบ WIP ที่เพิ่งกู้
-    try {
-      const raw = localStorage.getItem(asmWipKey);
-      if (raw) {
-        const w = JSON.parse(raw);
-        const tooOld = w && w.savedAt && (Date.now() - w.savedAt > DRAFT_MAX_AGE_MS);
-        if (w && w.v === 1 && w.parent && !tooOld) {
-          setAsmParent(w.parent);
-          const kids = Array.isArray(w.children) ? w.children : [];
-          setAsmChildren(kids);
-          flash(kids.length
-            ? t("กู้รายการที่สแกนค้างไว้ (" + kids.length + ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย", "Restored " + kids.length + " scanned item(s) — review & confirm")
-            : t("กู้เบอร์แม่ที่ค้างไว้กลับมาแล้ว", "Restored the parent you were working on"), "ok");
-        } else if (tooOld) {
-          localStorage.removeItem(asmWipKey);
-        }
-      }
-    } catch { /* localStorage ปิด/เสีย — ข้าม (ไม่ทำแอปพัง) */ }
-    asmWipLoadedRef.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opsLoaded]);
-  // เขียน WIP แบบสดทุกครั้งที่เบอร์แม่/ลูกเปลี่ยน (หลังผ่านขั้นกู้แล้วเท่านั้น กันเขียนทับตอนโหลด)
-  useEffect(() => {
-    if (dept === "machine" || !asmWipLoadedRef.current) return;
-    try {
-      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, savedAt: Date.now() }));
-      else localStorage.removeItem(asmWipKey);   // ไม่มีเบอร์แม่ (Back / ยืนยันแล้ว) → ล้าง WIP
-    } catch { /* เต็ม/ปิด — ข้าม */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asmParent, asmChildren]);
-
-  // แจ้งเตือน "ประกอบเสร็จ" เด้งกลางจอ → หายเองใน 2.6 วิ (หรือแตะ/กดตกลง)
-  useEffect(() => {
-    if (!asmDone) return;
-    const id = setTimeout(() => setAsmDone(null), 2600);
-    return () => clearTimeout(id);
-  }, [asmDone]);
-
-  function asmReset() { setAsmParent(null); setAsmParentQty(1); setAsmQtyLocked(false); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
-  function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
-  // ลบลูกที่ "บันทึกแล้ว" (installed) ออกจากเบอร์แม่ — ไว้แก้งานที่เสร็จ · ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
-  async function asmRemoveInstalled(childUnitId, partNo) {
-    if (!asmParent || !childUnitId) return;
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      errorBeep(); flash(t("ลบชิ้นที่บันทึกแล้วต้องออนไลน์ก่อน", "removing a saved child needs to be online"), "warn"); return;
-    }
-    if (!window.confirm(t(`เอา ${partNo || "ลูกนี้"} ออกจากเบอร์แม่? (ลบชิ้นที่บันทึกไปแล้ว)`, `Remove ${partNo || "this child"} from the parent?`))) return;
-    setBusy(true);
-    try {
-      const res = await removeAssemblyChild(asmParent.unit.id, childUnitId);
-      if (res && res.ok) {
-        setAsmParent((p) => (p ? { ...p, installed: (p.installed || []).filter((x) => x.child_unit_id !== childUnitId) } : p));
-        tickBeep(); flash(t("เอาลูกออกแล้ว", "child removed"), "ok");
-      } else { errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn"); }
-    } catch (e) {
-      errorBeep(); flash(t("ลบไม่สำเร็จ: ", "remove failed: ") + (e?.message || e?.details || String(e)), "warn");
-    } finally { setBusy(false); }
-  }
-  // แผงยืนยันต่อชิ้น (โหมดประกอบ): กด "ใส่เข้าเบอร์แม่" → เข้ารายการรอปิดงาน · "ยกเลิก" → ทิ้งชิ้นที่เพิ่งสแกน
-  function asmAddPending(qty) {
-    if (!asmPending) return;
-    const q = Math.max(1, Math.floor(Number(qty) || 1));   // จำนวนที่กรอกในแผงยืนยัน (ค่าเริ่มต้น 1)
-    setAsmChildren((prev) => {
-      const i = prev.findIndex((c) => c.unit_id === asmPending.unit_id);
-      if (i >= 0) {   // เบอร์เดิมที่สแกนซ้ำ → บวกจำนวนเพิ่มในแถวเดิม (นับจำนวนรวม)
-        const next = prev.slice();
-        next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + q };
-        return next;
-      }
-      return [...prev, { ...asmPending, qty: q }];
-    });
-    setAsmPending(null);
-  }
-  function asmCancelPending() { setAsmPending(null); }
-  function asmOpenCam() {
-    if (machineOps.length > 1 && !op) { flash(t("เลือกขั้นตอนก่อนสแกน", "pick an operation first"), "warn"); return; }   // ★ ต้องเลือกขั้นตอนก่อน
-    warmAudio(); setStep(STEP.SCAN);
-  }
-  function photoCapture(blob, url) { setPackPhotos((prev) => [...prev, { blob, url }]); }
-  function photoRemove(i) { setPackPhotos((prev) => prev.filter((_, idx) => idx !== i)); }
-
-  const asmReason = (r) => {
-    const m = {
-      incomplete: t("ยังไม่ครบตาม BOM", "not complete per BOM"),
-      not_in_bom: t("มีชิ้นไม่อยู่ใน BOM", "a part is not in this BOM"),
-      child_used: t("มีชิ้นถูกใช้ในเบอร์อื่นแล้ว", "a part is already used elsewhere"),
-      already_installed: t("มีชิ้นติดตั้งในเบอร์นี้ไปแล้ว", "a part is already installed here"),
-      child_incomplete: t("มีชิ้นที่ยังประกอบไม่เสร็จ — ทำให้เสร็จก่อน", "a sub-part isn't finished yet"),
-      over_bom: t("ใส่เกินจำนวนที่ BOM กำหนด", "exceeds the BOM quantity"),
-      duplicate_child: t("มีชิ้นซ้ำ", "duplicate part"),
-      child_not_found: t("มีชิ้นไม่พบในระบบ", "a part QR not found"),
-      no_bom: t("เบอร์นี้ยังไม่ได้กำหนด BOM", "no BOM set for this number"),
-      parent_not_found: t("ไม่พบเบอร์แม่", "parent not found"),
-      no_machine: t("บัญชีไม่ได้ผูกเครื่อง", "account has no machine"),
-      unauthorized: t("เซสชันหมดอายุ — ล็อกอินใหม่", "session expired"),
-    };
-    return m[r] || t("บันทึกประกอบไม่สำเร็จ", "assembly failed");
-  };
-
-  // สแกน/พิมพ์ QR โหมดประกอบ: ยังไม่มีเบอร์แม่ → โหลดสถานะสะสม (BOM + ที่ติดไปแล้ว) · มีแล้ว → เพิ่มเป็นลูกรอบนี้
-  async function asmScan(code) {
-    const s = String(code || "").trim();
-    if (!s) return false;
-    if (machineOps.length > 1 && !op) { errorBeep(); flash(t("เลือกขั้นตอนก่อนสแกน", "pick an operation first"), "warn"); return false; }   // ★ กันบันทึกผิดขั้นตอน (op=null) เหมือนหน้าเครื่อง
-    setBusy(true);
-    let u = null;
-    try { u = await findUnitByQr(s); } catch { u = null; }
-    setBusy(false);
-    if (!u) { errorBeep(); flash(t("ไม่พบ QR นี้ในระบบ", "QR not found"), "warn"); return false; }
-
-    if (!asmParent) {
-      if (u.part_master?.projects?.status === "closed") {
-        errorBeep(); flash(t("โปรเจคนี้ปิดแล้ว — ประกอบเพิ่มไม่ได้", "project closed"), "warn"); return false;
-      }
-      // เบอร์แม่ต้องเป็นชนิดที่ "ตรงกับสเตชัน": แผง→panel · ซับ→subassembly · แพ็ก→package (แยกสเตชันชัดเจน)
-      {
-        const pk = u.part_master?.kind || "part";
-        const wantKind = dept === "panel" ? "panel" : isPackingDept(dept) ? "package" : "subassembly";
-        if (pk !== wantKind) {
-          const wantName = wantKind === "panel" ? t("แผง", "panel") : wantKind === "package" ? t("แพ็ก", "package") : t("ซับ (subassembly)", "subassembly");
-          const pkName = pk === "part" ? t("part ธรรมดา", "plain part") : pk === "panel" ? t("แผง", "panel") : pk === "package" ? t("แพ็ก", "package") : pk === "subassembly" ? t("ซับ", "subassembly") : pk;
-          errorBeep();
-          flash(t(`สเตชันนี้เปิดได้เฉพาะเบอร์ "${wantName}" — เบอร์นี้เป็น ${pkName} เปิดที่นี่ไม่ได้`, `this station only opens "${wantName}" — this is ${pkName}`), "warn");
-          return false;
-        }
-        // แพ็กแผง / แพ็กไซต์ไอเทม: เปิดได้เฉพาะบั้งที่ "ติดป้ายชนิดตรงกัน" (pkg_meta.pack_type) — legacy packing เปิดได้ทุกบั้ง
-        const wantPack = PACK_TYPE_OF[dept];
-        if (wantPack) {
-          const pt = u.part_master?.pkg_meta?.pack_type || null;
-          if (pt !== wantPack) {
-            const wName = wantPack === "panel" ? t("แผง", "panel") : t("ไซต์ไอเทม", "site item");
-            const gotName = pt === "panel" ? t("แผง", "panel") : pt === "site" ? t("ไซต์ไอเทม", "site item") : t("ยังไม่ติดป้ายชนิด (office ตั้งก่อน)", "untagged");
-            errorBeep();
-            flash(t(`สเตชันนี้เปิดได้เฉพาะบั้ง "${wName}" — บั้งนี้เป็น ${gotName}`, `this station only opens "${wName}" bunks — this is ${gotName}`), "warn");
-            return false;
-          }
-        }
-      }
-      setBusy(true);
-      let st = null;
-      try { st = await getAssemblyState(u.qr_code); } catch { st = null; }
-      setBusy(false);
-      if (!st) { errorBeep(); flash(t("โหลดสถานะไม่ได้ — เน็ตมีปัญหา ลองใหม่", "couldn't load state — network problem"), "warn"); return false; }
-      if (!st.ok) {
-        errorBeep();
-        flash(st.reason === "no_bom"
-          ? t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master")
-          : st.reason === "offline_no_cache"
-            ? t("เน็ตหลุด + เบอร์นี้ยังไม่เคยเปิดตอนออนไลน์ — ต่อเน็ตเปิด 1 ครั้งก่อน", "offline + never loaded online — connect once first")
-            : asmReason(st.reason), "warn");
-        return false;
-      }
-      if (st.offline) flash(t("โหมดออฟไลน์ — บันทึกเข้าคิว จะซิงค์เมื่อเน็ตกลับ", "offline — will queue & sync"), "info");
-      if (st.parent?.status === "finished") {
-        tickBeep(); flash(t("เบอร์นี้เสร็จแล้ว — เปิดโหมดแก้ไข (เพิ่ม/ลบลูกได้ ยอดผลิตไม่นับซ้ำ)", "already done — edit mode (add/remove children, no double count)"), "info");
-      } else {
-        tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
-      }
-      // เติมความยาว + kind ให้ลูกแต่ละตัว (ไว้วาดผัง + ป้ายจุดติดตั้ง) — ถ้าโหลดไม่ได้ก็ยังใช้ต่อได้
-      let bom = st.bom || [];
-      try {
-        const meta = await getPartMeta(bom.map((b) => b.child_pm_id));
-        bom = bom.map((b) => ({
-          ...b,
-          length_mm: b.length_mm ?? meta[b.child_pm_id]?.default_length_mm ?? null,
-          kind: b.kind || meta[b.child_pm_id]?.kind || "part",
-        }));
-      } catch { /* ไม่เป็นไร ใช้ bom เดิม */ }
-      setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [], parentStatus: st.parent?.status || null });
-      setAsmParentQty(1); setAsmQtyLocked(false); setAsmChildren([]); asmClientRef.current = null;
-      return true;
-    }
-
-    // เป็น "ลูก" (ที่จะติดตั้งรอบนี้)
-    if (u.id === asmParent.unit.id) { flash(t("นี่คือเบอร์แม่เอง", "this is the parent"), "warn"); return false; }
-    // แพ็ก (นับต่อดวง): ห้ามสแกนดวงเดิมซ้ำ · ประกอบ/ซับ (นับจำนวนรวม): สแกนเบอร์เดิมซ้ำได้ → บวกจำนวนเพิ่มในแถวเดิม (asmAddPending รวมยอดให้)
-    if (asmParent.parentKind === "package" && asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้วรอบนี้", "already scanned this round"), "warn"); return false; }
-    if ((asmParent.installed || []).some((x) => x.child_unit_id === u.id)) {
-      flash(t("ชิ้นนี้ติดตั้งไปแล้ว (สเตชันก่อนหน้า)", "already installed (earlier station)"), "warn"); return false;
-    }
-    // ── กฎ "ชนิดลูก" ตามชนิดเบอร์แม่ (อัตโนมัติ) — sub → รับ part/ซับตัวอื่น (ไม่รับแผง) · แผง → รับ sub/part (กันสแกนผิดชั้น) ──
-    //   แพ็ก(package): ไม่คุมด้วยกฎนี้ — ใช้ manifest/บั้ง (โหมดเข้ม) คุมเอง รับได้ทั้ง part/sub/แผงตามบั้ง · เบอร์แม่ชนิดอื่นไม่จำกัด
-    {
-      const allowByParent = { subassembly: ["part", "subassembly"], panel: ["subassembly", "part"] };
-      const allowed = allowByParent[asmParent.parentKind];
-      const cKind = u.part_master?.kind || "part";
-      if (allowed && !allowed.includes(cKind)) {
-        const kName = (k) => k === "subassembly" ? "sub" : k === "panel" ? t("แผง", "panel") : k === "package" ? t("แพ็ก", "package") : t("part (ชิ้นเครื่อง)", "part");
-        errorBeep();
-        flash(t(`เบอร์แม่นี้ต้องใส่ ${allowed.map(kName).join(" หรือ ")} — เบอร์นี้เป็น ${kName(cKind)} ใส่ไม่ได้`,
-                `this parent takes ${allowed.map(kName).join(" / ")} — this is ${kName(cKind)}`), "warn");
-        return false;
-      }
-    }
-    // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้ (ทั้ง 2 โหมด)
-    if (u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
-      errorBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${u.part_master?.part_no || u.qr_code} isn't finished yet`), "warn"); return false;
-    }
-    const strict = asmParent.parentKind === "package";   // แพ็ก = เข้ม BOM/manifest · ประกอบ = อิสระ
-    if (strict) {
-      const inBom = asmParent.bom.find((b) => b.child_pm_id === u.part_master_id);
-      if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ในรายการบั้ง", "not in this bunk list"), "warn"); return false; }
-      const have = asmHave(u.part_master_id);
-      if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบแล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
-      tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
-      setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
-      return true;
-    }
-    // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
-    const cno = u.part_master?.part_no || u.qr_code;
-    const clen = u.length_mm ?? u.part_master?.default_length_mm ?? null;   // ความยาว: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
-    const cwt = u.weight ?? u.part_master?.unit_weight ?? null;             // น้ำหนัก: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
-    tickBeep();
-    // เด้งแผงยืนยันต่อชิ้น (เหมือนหน้าเครื่อง) — ยังไม่เข้ารายการจนกว่าจะกด "ใส่เข้าเบอร์แม่"
-    //   สแกนเบอร์เดิมซ้ำ → ส่ง existingQty ให้แผงยืนยันโชว์ "มีอยู่แล้ว N" (asmAddPending จะบวกจำนวนเพิ่มให้)
-    const existing = asmChildren.find((c) => c.unit_id === u.id);
-    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1, existingQty: existing ? (Number(existing.qty) || 0) : 0 });
-    return true;
-  }
-  const asmDecoded = async (qr) => {
-    const hadParent = !!asmParent;
-    const free = !asmParent || asmParent.parentKind !== "package";   // ประกอบ = อิสระ · แพ็ก = เข้ม
-    const ok = await asmScan(qr);
-    // เบอร์แม่ (ยังไม่มี parent) → ปิดกล้อง เด้งเข้าหน้าเบอร์นั้น · ลูกโหมดประกอบ → ปิดกล้อง เด้งแผงยืนยันต่อชิ้น
-    //   ลูกโหมดแพ็ก → เปิดกล้องต่อ สแกนรัวได้เหมือนเดิม
-    if (ok && (!hadParent || free)) closeScan();
-    return false;
-  };
-  const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
-
-  // บันทึก "รอบนี้" (สะสมได้ — ไม่ต้องครบก็เซฟ) · ครบ BOM สะสม → ปิดงานอัตโนมัติ · ไม่ครบ → รีเฟรชยอด แล้วสแกนต่อ/ส่งสเตชันถัดไป
-  async function asmConfirm() {
-    if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
-    const isPack = isPackingDept(dept);
-    const free = asmParent.parentKind !== "package";   // ประกอบอิสระ = ปิดเมื่อกดยืนยัน (แพ็ก = ครบตาม BOM)
-    // ซับ: แจ้ง "เสร็จ" เป็น "จำนวนที่จะทำ" (นับหลายชิ้น) · อื่น ๆ = จำนวนลูกที่สแกนรอบนี้
-    const doneCount = dept === "assembly" ? Math.max(1, Math.floor(Number(asmParentQty) || 1)) : asmChildren.length;
-    savingRef.current = true; setBusy(true);
-    if (!asmClientRef.current) asmClientRef.current = newClientId();
-    try {
-      // แพ็ก: อัปรูปทำ "หลัง" บันทึกสำเร็จ (ในสาขา res.ok) — เดิมอัปก่อน record ถ้า record ตกไปเข้าคิว (network-err) รูปจะค้าง Storage ไม่ถูกผูก
-      const res = await recordAssembly({
-        parentQr: asmParent.unit.qr_code,
-        // ส่งลูกพร้อม "จำนวน" (นับจำนวนรวม — สแกน 1 ที + จำนวน) · เบอร์แม่ส่ง "จำนวนที่จะทำ" → เข้ายอดผลิต
-        childQrs: asmChildren.map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
-        parentQty: Math.max(1, Math.floor(Number(asmParentQty) || 1)),
-        operationId: op?.id || null,
-        clientId: asmClientRef.current,
-      });
-      if (res && res.queued) {
-        // ── offline: เก็บเข้าคิว → อัปเดต "ที่ติดแล้ว" ในเครื่อง (กันสแกนซ้ำ/นับต่อ) + แคชสถานะใหม่ → ซิงค์เองเมื่อเน็ตกลับ ──
-        tickBeep();
-        const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1 }));
-        const newInstalled = [...(asmParent.installed || []), ...addNow];
-        const bom = asmParent.bom || [];
-        // ประกอบอิสระ (ไม่ใช่แพ็ก): กดยืนยัน = ปิดงานเลย · แพ็ก: ครบตาม BOM เป๊ะ
-        const complete = free ? true : (bom.length > 0 && bom.every((b) => newInstalled.filter((x) => x.child_pm_id === b.child_pm_id).length >= b.qty));
-        try {
-          setCachedAsmState(asmParent.unit.qr_code, {
-            ok: true, bom, installed: newInstalled,
-            parent: { part_no: asmParent.unit.part_master?.part_no, status: complete ? "finished" : "in_progress" },
-          });
-        } catch { /* ignore */ }
-        const photoNote = (isPack && packPhotos.length > 0) ? t(" · รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)", " · photos not saved offline") : "";
-        if (complete) {
-          flash((isPack ? t("✓ แพ็กครบ — เก็บเข้าคิว รอซิงค์", "✓ Packed — queued for sync") : t("✓ ประกอบครบ — เก็บเข้าคิว รอซิงค์", "✓ Assembled — queued for sync")) + photoNote, "ok");
-          setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: doneCount, isPack, isSub: dept === "assembly", queued: true });
-          setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
-        } else {
-          flash(t(`✓ เก็บเข้าคิว ${asmChildren.length} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ`, `✓ Queued ${asmChildren.length} — will sync`) + photoNote, "ok");
-          setAsmParent((p) => (p ? { ...p, installed: newInstalled } : p));
-          setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
-        }
-        reload();
-      } else if (res && res.ok) {
-        // อัปรูปแพ็กหลังบันทึกสำเร็จ (ออนไลน์แน่แล้ว) · อัป/ผูกไม่สำเร็จ = ไม่ล้มงาน (รูปไม่บังคับ · record บันทึกไปแล้ว)
-        if (isPack && packPhotos.length > 0) {
-          try {
-            const photoPaths = [];
-            for (const p of packPhotos) photoPaths.push(await uploadPackingPhoto(p.blob, asmParent.unit.qr_code));
-            if (photoPaths.length) await recordPackingPhotos(asmParent.unit.qr_code, photoPaths);
-          } catch { flash(t("บันทึกแพ็กแล้ว แต่แนบรูปไม่สำเร็จ (รูปไม่บังคับ)", "packed OK · photo attach failed (optional)"), "warn"); }
-        }
-        tickBeep();
-        if (res.complete) {
-          flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t("✓ ประกอบครบแล้ว — ปิดงาน", "✓ Assembled & complete"), "ok");
-          setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: doneCount, isPack, isSub: dept === "assembly", queued: false });
-          setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
-        } else {
-          const added = res.added ?? asmChildren.length;
-          flash(t(`✓ บันทึกแล้ว ${added} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
-          // อัปเดต "ที่ติดแล้ว" แบบ optimistic ก่อน แล้ว reconcile กับเซิร์ฟเวอร์ · เก็บ length_mm/kind ที่เติมตอนสแกนไว้ (get_assembly_state ไม่คืนมา → กันคอลัมน์ขนาด/ยาวหาย)
-          const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1 }));
-          let st = null;
-          try { st = await getAssemblyState(asmParent.unit.qr_code); } catch { st = null; }
-          setAsmParent((p) => {
-            if (!p) return p;
-            if (st && st.ok) {
-              const meta = {};
-              (p.bom || []).forEach((b) => { if (b.child_pm_id != null) meta[b.child_pm_id] = { length_mm: b.length_mm, kind: b.kind }; });
-              const bom = (st.bom || p.bom).map((b) => ({
-                ...b,
-                length_mm: b.length_mm ?? meta[b.child_pm_id]?.length_mm ?? null,
-                kind: b.kind || meta[b.child_pm_id]?.kind || "part",
-              }));
-              return { ...p, bom, installed: st.installed || [] };
-            }
-            // รีเฟรชพลาด → ใช้ยอด optimistic (ชิ้นที่เพิ่งเซฟไม่หายจากจอ · เซิร์ฟเวอร์ยังเป็นตัวจริงตอน reload/สแกนรอบหน้า)
-            return { ...p, installed: [...(p.installed || []), ...addNow] };
-          });
-          setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
-        }
-        reload();
-      } else if (res && res.reason === "storage_full") {
-        errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
-      } else {
-        errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn");
-      }
-    } catch (e) {
-      errorBeep();
-      // โชว์ error จริงจาก server (ไว้ไล่ปัญหา) — message/details/hint/code
-      const emsg = e?.message || e?.details || e?.hint || e?.code || String(e);
-      flash(t("บันทึกไม่สำเร็จ: ", "save failed: ") + emsg, "warn");
-    } finally { setBusy(false); savingRef.current = false; }
-  }
-
-  // ── auto-complete (เฉพาะสเตชัน "ซับ"): เทียบ BOM×"จำนวนที่จะทำ" หลังบ้าน — ไม่โชว์รายการ BOM ให้คนงาน ──
-  //    สแกนลูกครบตาม BOM (× จำนวนที่จะทำ) → นับถอยหลัง 3 วิ แล้วปิดงานเอง · แก้/ลบชิ้นระหว่างนับ = เริ่มนับใหม่/ยกเลิก
-  const asmConfirmRef = useRef(asmConfirm);
-  asmConfirmRef.current = asmConfirm;   // ให้ตัวจับเวลาเรียก asmConfirm เวอร์ชันล่าสุดเสมอ (กัน closure ค้าง)
-  // ยอดลูกที่ได้ต่อ part (นับจำนวนรวม): ที่ติดไปแล้ว (installed) + ที่สแกนรอบนี้ (× จำนวนที่กรอก)
-  const asmGotByPm = useMemo(() => {
-    const m = {};
-    (asmParent?.installed || []).forEach((x) => { if (x.child_pm_id != null) m[x.child_pm_id] = (m[x.child_pm_id] || 0) + Math.max(1, Math.floor(Number(x.qty) || 1)); });
-    (asmChildren || []).forEach((c) => { if (c.child_pm_id != null) m[c.child_pm_id] = (m[c.child_pm_id] || 0) + Math.max(1, Math.floor(Number(c.qty) || 1)); });
-    return m;
-  }, [asmParent, asmChildren]);
-  // ครบ BOM×จำนวนหรือยัง — เฉพาะซับ + ต้องมี BOM + ครบทุกพาร์ท (ไม่มี BOM = ปิดเองไม่ได้ → กดยืนยันเอง)
-  const asmBomMet = useMemo(() => {
-    if (dept !== "assembly") return false;
-    const bom = asmParent?.bom || [];
-    const pq = Math.max(1, Math.floor(Number(asmParentQty) || 1));
-    if (bom.length === 0) return false;
-    return bom.every((b) => (asmGotByPm[b.child_pm_id] || 0) >= Math.max(1, Math.floor(Number(b.qty) || 1)) * pq);
-  }, [dept, asmParent, asmGotByPm, asmParentQty]);
-  const [asmAutoIn, setAsmAutoIn] = useState(0);   // นับถอยหลังก่อนปิดงานอัตโนมัติ (0 = ไม่ได้นับ)
-  useEffect(() => {
-    // ปิดงานอัตโนมัติเฉพาะซับ + ยืนยันจำนวนแล้ว (locked) + ครบ BOM×จำนวน + มีลูกสแกนรอบนี้
-    if (dept !== "assembly" || !asmQtyLocked || !asmBomMet || busy || asmChildren.length === 0) { setAsmAutoIn(0); return; }
-    setAsmAutoIn(3);
-    const iv = setInterval(() => {
-      setAsmAutoIn((n) => { if (n <= 1) { clearInterval(iv); asmConfirmRef.current(); return 0; } return n - 1; });
-    }, 1000);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dept, asmQtyLocked, asmBomMet, busy, asmChildren]);
-
-  // ── ยามแผนก (department gate): หน้านี้รับเฉพาะบัญชีของแผนกตัวเอง ──────────────
-  const acctDepts = opsLoaded
-    ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
-    : [];
-  if (!opsLoaded) return <StnDeptChecking dept={dept} t={t} />;   // รอรู้ "แผนกที่บัญชีทำได้" ก่อน (กันจอกระพริบ/เด้งผิด)
-  if (!acctDepts.includes(dept)) {
-    // บัญชีนี้ไม่ใช่แผนกนี้ → เด้งเข้า "แผนกแรก" ของบัญชีอัตโนมัติ (กันลูป: first ต่างจาก dept แน่ เพราะ !includes(dept))
-    const first = acctDepts.find((d) => DEPT_META[d]);
-    if (first && typeof window !== "undefined") { window.location.replace(DEPT_META[first].path); return <StnDeptChecking dept={first} t={t} />; }
-    return <StnDeptRedirect dept={dept} acctDepts={acctDepts} onLogout={onLogout} t={t} />;   // ไม่มีแผนกให้ไป → fallback
-  }
-
-  const recording = step !== STEP.IDLE;
-  const scanArmed = qty > 0 && !!unit;
-
-  // WorkArea ตัวเดียว ใช้ได้ทั้งหน้า machine (โหมดเครื่อง) และ assembly/packing (โหมดประกอบ/แพ็ก)
-  const workAreaEl = (
-    <WorkArea
-      step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
-      status={status} setStatus={setStatus} busy={busy}
-      onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
-      confirmCancel={confirmCancel} confirmPart={confirmPart}
-      closeScan={closeScan} rescan={rescan} dupCount={dupCount}
-      isAsm={isAsm} asmType={dept} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
-      asmParentQty={asmParentQty} setAsmParentQty={setAsmParentQty} asmAutoIn={asmAutoIn}
-      asmQtyLocked={asmQtyLocked} setAsmQtyLocked={setAsmQtyLocked}
-      asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
-      asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} asmReset={asmReset} asmOpenCam={asmOpenCam}
-      asmPending={asmPending} asmAddPending={asmAddPending} asmCancelPending={asmCancelPending}
-      packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
-      photoCapture={photoCapture} photoRemove={photoRemove}
-    />
-  );
-
-  // ── หน้า assembly / packing = เลย์เอาต์เฉพาะแผนก (ไม่มีตารางเครื่อง/นาฬิกา/ความยาววัสดุ) ──
-  if (isAsm) {
-    const meta = DEPT_META[dept];
-    return (
-      <div className={`stn-shell stn-asm-shell dept-${themeDept(dept)}`}>
-        {(!online || pending > 0) && (
-          <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
-            {!online ? (
-              <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}{pending > 0 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending}` : ` · ${t("บันทึกจะเข้าคิว ซิงค์เมื่อเน็ตกลับ", "saves will queue & sync")}`}</span>
-            ) : (
-              <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending}</span>
-            )}
-          </div>
-        )}
-        {storageFull && (
-          <div className="stn-rejected" onClick={() => setStorageFull(false)} style={{ background: "#b91c1c" }}>
-            <Icon name="warn" size={15} className="stn-ico" />{t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! แจ้งผู้ดูแล (แตะเพื่อซ่อน)", "Storage full — notify admin (tap to hide)")}
-          </div>
-        )}
-        {rejected > 0 && (
-          <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}>
-            <Icon name="warn" size={15} className="stn-ico" />{t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} — {t("แตะเพื่อจัดการ", "tap to manage")}
-          </button>
-        )}
-        {showRejected && (
-          <RejectedPanel t={t} onClose={() => setShowRejected(false)}
-            onRetry={() => { retryRejected(); setShowRejected(false); flash(t("กำลังลองซิงค์ใหม่…", "Retrying sync…"), "ok"); }}
-            onClear={() => { clearRejected(); setShowRejected(false); flash(t("ล้างคิวที่ซิงค์ไม่สำเร็จแล้ว", "Cleared failed-sync queue"), "ok"); }} />
-        )}
-
-        <div className="stn-asm-topbar">
-          <div className="stn-asm-ident">
-            <span className={`stn-asm-badge dept-${themeDept(dept)}`}>{lang === "en" ? meta.en : meta.th}</span>
-            <span className="stn-asm-machine">{machine ? machine.code : "—"}</span>
-            {machine?.name ? <span className="stn-asm-mname">{machine.name}</span> : null}
-          </div>
-          <div className="stn-asm-today" title={t("ยอดที่บันทึกวันนี้", "Recorded today")}>
-            <span className="n">{fmt(daily.quantity)}</span>
-            <span className="u">{t("วันนี้", "today")}</span>
-          </div>
-          <div className="stn-asm-tools">
-            <StnLangToggle />
-            {!isStandalone() && (
-              <button className="stn-logout stn-fs" onClick={toggleFullscreen} title={t("เต็มจอ", "Fullscreen")}><Icon name="expand" size={15} className="stn-ico" />{t("เต็มจอ", "Full")}</button>
-            )}
-            <button className="stn-logout" onClick={onLogout} title={t("ออกจากระบบ", "Log out")}><Icon name="logout" size={15} className="stn-ico" />{t("ออก", "Exit")}</button>
-          </div>
-        </div>
-
-        {machineOps.length > 1 && (
-          <div className="stn-oppick">
-            <span className="stn-oppick-lbl">{t("ขั้นตอน", "Operation")}:</span>
-            {machineOps.map((o) => (
-              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} onClick={() => setOp(o)}>{o.name}</button>
-            ))}
-            {!op && <span className="stn-oppick-hint">← {t("แตะเลือกก่อน", "pick first")}</span>}
-          </div>
-        )}
-
-        <div className="stn-asm-main">
-          {workAreaEl}
-          {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="stn-shell">
-      {/* แถบสถานะเน็ต — โชว์เมื่อ "ออฟไลน์" หรือมีงาน "ค้างซิงค์" (ออนไลน์กำลังดันขึ้น) */}
-      {(!online || pending > 0) && (
-        <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
-          {!online ? (
-            <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}
-              {pending > 0
-                ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending} ${t("ชิ้น", "pcs")}`
-                : ` · ${t("ทำงานต่อได้ตามปกติ", "you can keep working")}`}
-            </span>
-          ) : (
-            <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}</span>
-          )}
-        </div>
-      )}
-      {storageFull && (
-        <div className="stn-rejected" onClick={() => setStorageFull(false)}
-          style={{ background: "#b91c1c" }}
-          title={t("ที่เก็บข้อมูลในเครื่องเต็ม", "Device storage full")}>
-          <Icon name="warn" size={15} className="stn-ico" />{t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! ปิดแอปอื่น/ล้างข้อมูลเบราว์เซอร์ แล้วลองใหม่ · แจ้งผู้ดูแล (แตะเพื่อซ่อน)",
-                "Storage full — work may not be saved! Close other apps / clear browser data, then retry · notify admin (tap to hide)")}
-        </div>
-      )}
-      {rejected > 0 && (
-        <button type="button" className="stn-rejected" onClick={() => setShowRejected(true)}
-          title={t("แตะเพื่อจัดการคิวที่ซิงค์ไม่สำเร็จ", "Tap to manage failed-sync queue")}>
-          <Icon name="warn" size={15} className="stn-ico" />{t("ซิงค์ไม่สำเร็จ", "Failed to sync")} {rejected} {t("ชิ้น", "pcs")} — {t("แตะเพื่อจัดการ", "tap to manage")}
-        </button>
-      )}
-      {showRejected && (
-        <RejectedPanel t={t} onClose={() => setShowRejected(false)}
-          onRetry={() => { retryRejected(); setShowRejected(false); flash(t("กำลังลองซิงค์ใหม่…", "Retrying sync…"), "ok"); }}
-          onClear={() => { clearRejected(); setShowRejected(false); flash(t("ล้างคิวที่ซิงค์ไม่สำเร็จแล้ว", "Cleared failed-sync queue"), "ok"); }} />
-      )}
-
-      {/* ── ปุ่มเลือกขั้นตอน — โชว์เฉพาะเครื่องที่ทำได้หลายขั้นตอน ─────────────── */}
-      {machineOps.length > 1 && (
-        <div className="stn-oppick">
-          <span className="stn-oppick-lbl">ขั้นตอน:</span>
-          {machineOps.map((o) => (
-            <button key={o.id}
-              className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`}
-              onClick={() => setOp(o)}>
-              {o.name}
-            </button>
-          ))}
-          {!op && <span className="stn-oppick-hint">← แตะเลือกก่อนสแกน</span>}
-        </div>
-      )}
-      {machineOps.length === 1 && (
-        <div className="stn-oppick one"><span className="stn-oppick-lbl">ขั้นตอน:</span>
-          <span className="stn-oppick-btn sel" style={{ pointerEvents: "none" }}>{machineOps[0].name}</span>
-        </div>
-      )}
-
-      <div className="stn-screen">
-        {/* top-left: machine code */}
-        <div className="stn-cell stn-code" style={{ position: "relative" }}>
-          {/* ปุ่มออกจากระบบมุมบนซ้าย — โผล่เฉพาะมือถือจอเล็ก (แท็บเล็ตใช้ปุ่มใหญ่ด้านล่าง) */}
-          <button className="stn-logout stn-toplogout" onClick={onLogout} title="ออกจากระบบ" aria-label="ออกจากระบบ"><Icon name="logout" size={15} className="stn-ico" />ออก</button>
-          <StnLangToggle />
-          {/* ซ่อนปุ่มเต็มจอเมื่อเปิดแบบติดตั้ง (PWA standalone — รวม iPad/iOS) */}
-          {!isStandalone() && (
-            <button className="stn-logout stn-fs" onClick={toggleFullscreen} title="เต็มจอ" aria-label="เต็มจอ"><Icon name="expand" size={15} className="stn-ico" />เต็มจอ</button>
-          )}
-          {machine ? machine.code : "— ไม่มีเครื่อง —"}
-        </div>
-
-        {/* top-right: records table */}
-        <div className="stn-table" ref={tableRef}>
-          <table className="stn-rec">
-            <thead>
-              <tr>
-                <th>{t("วันที่", "DATE")}</th>
-                <th className="stn-hide-sm">MDF&nbsp;NO.</th><th className="stn-hide-sm">REL&nbsp;NO.</th><th>PART&nbsp;NO.</th><th className="stn-hide-sm">REV.</th>
-                <th>QTY.</th><th>REQ.</th><th>PROCESS /<br />REQUIRED</th><th>BALANCE</th>
-                <th className="stn-hide-sm">LENGTH<br />[mm]</th><th className="stn-hide-sm">WEIGHT<br />[kg]</th><th>MATERIALS<br />LENGTH</th>
-                <th className="stn-hide-sm">INVENTORY<br />CODE</th><th className="stn-hide-sm">PROCESS<br />TIME</th><th>STATUS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={15}>{t("ยังไม่มีบันทึกสัปดาห์นี้ — เริ่มงานแรกได้เลย", "No records this week — start your first job")}</td></tr>
-              )}
-              {rows.map((r, i) => {
-                const fin = String(r.status).toLowerCase() === "finished";
-                const isNew = (r.id && r.id === newRowId);
-                return (
-                  <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
-                    title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
-                    <td className="stn-mono">{r.day || todayMD()}</td>
-                    <td className="stn-hide-sm">{r.mdf_no || "-"}</td>
-                    <td className="stn-hide-sm">{r.rel_no || "-"}</td>
-                    <td className="l">{r.part_no || "-"}</td>
-                    <td className="stn-hide-sm">{r.rev || "-"}</td>
-                    <td>{fmt(r.qty)}</td>
-                    <td>{r.req != null ? fmt(r.req) : "-"}</td>
-                    <td>{r.process_cum != null && r.req != null
-                      ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
-                    {/* BALANCE = ยอดสะสมที่ทำแล้ว (PROCESS) − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
-                    <td className={r.process_cum != null && r.req != null && (r.process_cum - r.req) >= 0 ? "stn-st-fin" : ""}>
-                      {r.process_cum != null && r.req != null
-                        ? ((r.process_cum - r.req) > 0 ? `+${fmt(r.process_cum - r.req)}` : fmt(r.process_cum - r.req))
-                        : "-"}</td>
-                    <td className="stn-hide-sm">{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
-                    <td className="stn-hide-sm">{r.weight != null ? fmt(r.weight) : "-"}</td>
-                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง (Number() กันค่าเป็น string) */}
-                    <td style={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
-                        ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
-                      title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
-                        ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
-                      {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
-                    <td className="l stn-hide-sm">{r.inventory_code || "-"}</td>
-                    <td className="stn-hide-sm">{hms(r.process_seconds)}</td>
-                    <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
-                      {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* bottom-left: daily report */}
-        <div className="stn-daily">
-          <div className="stn-daily-head">
-            <h2>{t("รายงานประจำวัน", "DAILY REPORT")}</h2>
-            <div className="stn-date">{todayISOdate()}</div>
-          </div>
-          <div className="stn-kpis">
-            <div className="stn-kpi"><div className="lbl">{t("จำนวนวันนี้", "Daily Quantity")}</div>
-              <div className="val">{fmt(daily.quantity)} {t("ชิ้น", "pcs")}</div></div>
-            <div className="stn-kpi"><div className="lbl">{t("น้ำหนักวันนี้", "Daily Weight")}</div>
-              <div className="val">{fmt(daily.weight)} {t("กก.", "kg")}</div></div>
-            <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
-              <div className="val mono">{hms(daily.process_seconds)}</div></div>
-          </div>
-          {loadErr && <div className="stn-err">{loadErr}</div>}
-        </div>
-
-        {/* bottom-right: work area + control */}
-        <div className="stn-work-wrap">
-          <div className="stn-work-area">
-            {workAreaEl}
-            {toast && <div className={`stn-toast ${toast.tone}`}>{toast.text}</div>}
-            {/* แจ้งเตือน "ประกอบ/แพ็กเสร็จ" เด้งกลางจอ (auto-hide 2.6 วิ · แตะ/กดตกลง เพื่อปิดเลย) */}
-            {asmDone ? (
-              <div onClick={() => setAsmDone(null)}
-                style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(4,20,12,.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-                <div onClick={(e) => e.stopPropagation()}
-                  style={{ width: "min(92vw, 420px)", background: "linear-gradient(180deg,#12241a,#0e1b14)", border: "1px solid #2f7d55", borderRadius: 20, padding: "30px 26px 22px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
-                  <div style={{ width: 78, height: 78, margin: "0 auto 14px", borderRadius: "50%", background: "#1f9d5a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 46, color: "#fff", boxShadow: "0 0 0 6px rgba(31,157,90,.22)" }}>✓</div>
-                  <div style={{ fontSize: 21, fontWeight: 800, color: "#eafff5" }}>{asmDone.isPack ? t("แพ็กเสร็จแล้ว", "Packing done") : t("ประกอบเสร็จแล้ว", "Assembly done")}</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#8ff0c0", margin: "10px 0 4px", wordBreak: "break-all" }}>{asmDone.partNo}</div>
-                  <div style={{ fontSize: 13.5, color: "#bfe6d3" }}>{asmDone.isSub ? t("ทำเสร็จ", "Made") : t("ใส่ลูกเข้าไป", "Assembled")} {asmDone.count} {t("ชิ้น", "pcs")} · {t("ปิดงานแล้ว", "closed")}{asmDone.queued ? t(" · รอซิงค์", " · queued") : ""}</div>
-                  <button onClick={() => setAsmDone(null)} className="stn-pill ok" style={{ marginTop: 18, width: "100%" }}>{t("ตกลง", "OK")}</button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="stn-control">
-            <div className="stn-ctl-main">
-              <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
-              <div className={`stn-mat${recording ? " live" : ""}`}
-                style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
-                <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· กรอกก่อน", "· fill first") : ""}</div>
-                <input
-                  inputMode="numeric" disabled={recording}
-                  value={materialLen} placeholder="0"
-                  onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
-                />
-              </div>
-              {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
-              <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
-                disabled={busy}>
-                <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
-              </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy}>
-                <div className="row1">
-                  <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
-                </div>
-                <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close") : <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>}</div>
-              </button>
-            </div>
-            <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
-              <span>{t("ออกจากระบบ", "Log out")}</span>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9" /></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+export async function insertRows(table, rows) {
+  const { data, error } = await supabase.rpc("authz_insert_many", { p_token: authToken(), p_tbl: table, p_payload: rows });
+  if (error) { console.warn("insertRows error", table, error); flagAuth(error); throw error; }
+  return data || [];
 }
 
-// ── Ambient animation: คนแบกอลูมิเนียมเดินไปวางบนเครื่องตัด (ซ้าย→ขวา) ────────
-function StationAnim() {
-  return (
-    <svg className="stn-scene" viewBox="0 0 460 200" role="img"
-      aria-label="พนักงานยกอลูมิเนียมไปวางบนเครื่องตัด">
-      <defs>
-        <linearGradient id="stnAlu" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#f2f5f8" />
-          <stop offset="0.45" stopColor="#cdd3da" />
-          <stop offset="1" stopColor="#a6adb6" />
-        </linearGradient>
-        <linearGradient id="stnSteel" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#eef1f4" />
-          <stop offset="0.5" stopColor="#c2c8d0" />
-          <stop offset="1" stopColor="#9aa0a8" />
-        </linearGradient>
-      </defs>
-
-      {/* ground */}
-      <line x1="0" y1="176" x2="460" y2="176" stroke="#e2e6ea" strokeWidth="2" />
-
-      {/* ── เครื่องตัด (ขวา) ─────────────────────────── */}
-      <g>
-        <rect x="304" y="159" width="8" height="18" rx="1" fill="#1c2126" />
-        <rect x="410" y="159" width="8" height="18" rx="1" fill="#1c2126" />
-        <rect x="296" y="150" width="130" height="9" rx="3" fill="#2a3138" />
-        <circle cx="308" cy="150" r="4.5" fill="#6b727a" />
-        <circle cx="330" cy="150" r="4.5" fill="#6b727a" />
-        <circle cx="396" cy="150" r="4.5" fill="#6b727a" />
-        <circle cx="416" cy="150" r="4.5" fill="#6b727a" />
-        <rect x="350" y="98" width="54" height="38" rx="7" fill="#2a3138" />
-        <line x1="358" y1="107" x2="396" y2="107" stroke="#565d64" strokeWidth="2" />
-        <line x1="358" y1="113" x2="396" y2="113" stroke="#565d64" strokeWidth="2" />
-        <line x1="358" y1="119" x2="396" y2="119" stroke="#565d64" strokeWidth="2" />
-        <rect x="372" y="130" width="8" height="16" fill="#2a3138" />
-        <path d="M353 150 A23 23 0 0 1 399 150 L392 150 A16 16 0 0 0 360 150 Z" fill="#f5920b" />
-        <g className="stn-saw">
-          <circle cx="376" cy="150" r="20" fill="url(#stnSteel)" stroke="#1c2126" strokeWidth="2" />
-          <circle cx="376" cy="150" r="20" fill="none" stroke="#1c2126" strokeWidth="3" strokeDasharray="3 5.5" />
-          <line x1="376" y1="134" x2="376" y2="166" stroke="#aeb4bb" strokeWidth="2" />
-          <line x1="360" y1="150" x2="392" y2="150" stroke="#aeb4bb" strokeWidth="2" />
-          <line x1="365" y1="139" x2="387" y2="161" stroke="#aeb4bb" strokeWidth="1.5" />
-          <line x1="387" y1="139" x2="365" y2="161" stroke="#aeb4bb" strokeWidth="1.5" />
-          <circle cx="376" cy="150" r="5" fill="#e11d1d" />
-        </g>
-      </g>
-
-      {/* ── อลูมิเนียม (เดินมากับคน แล้ววางบนเครื่อง) ── */}
-      <g className="stn-carry">
-        <rect x="86" y="105" width="150" height="12" rx="6" fill="url(#stnAlu)" stroke="#9aa0a8" strokeWidth="1" />
-        <rect x="86" y="105" width="7" height="12" rx="3" fill="#9098a1" />
-        <rect x="229" y="105" width="7" height="12" rx="3" fill="#9098a1" />
-        <rect x="94" y="107.5" width="132" height="2.4" rx="1.2" fill="#ffffff" opacity="0.75" />
-        <g className="stn-shine"><rect x="96" y="106" width="12" height="10" rx="2" fill="#ffffff" opacity="0.9" transform="skewX(-18)" /></g>
-      </g>
-
-      {/* ── ประกายไฟตอนตัด (บนสุด) ── */}
-      <g className="stn-spark">
-        <path d="M366 150 l3.5 -9 3.5 9 9 3.5 -9 3.5 -3.5 9 -3.5 -9 -9 -3.5 z" fill="#ffb02e" />
-        <line x1="366" y1="150" x2="352" y2="162" stroke="#ff8a1e" strokeWidth="2" strokeLinecap="round" />
-        <line x1="366" y1="150" x2="356" y2="166" stroke="#ffb02e" strokeWidth="2" strokeLinecap="round" />
-        <line x1="366" y1="150" x2="348" y2="156" stroke="#ff8a1e" strokeWidth="1.6" strokeLinecap="round" />
-        <circle cx="350" cy="164" r="1.6" fill="#ffd27a" />
-        <circle cx="345" cy="158" r="1.4" fill="#ffd27a" />
-      </g>
-
-      {/* ── พนักงาน (เดินซ้าย→ขวา, ตัวเด้ง, ก้มวางของ) ── */}
-      <g className="stn-walker"><g className="stn-bob">
-        <ellipse cx="62" cy="178" rx="24" ry="4" fill="rgba(0,0,0,.12)" />
-        <g className="stn-leg1">
-          <rect x="55" y="138" width="8" height="28" rx="4" fill="#1c2126" />
-          <rect x="55" y="163" width="15" height="6" rx="3" fill="#14181c" />
-        </g>
-        <g className="stn-leg2">
-          <rect x="55" y="138" width="8" height="28" rx="4" fill="#2a3138" />
-          <rect x="55" y="163" width="15" height="6" rx="3" fill="#20262b" />
-        </g>
-        <rect x="51" y="103" width="19" height="40" rx="8" fill="#232a31" />
-        <rect x="51" y="120" width="19" height="4" fill="#eef2f5" opacity="0.85" />
-        <rect x="58" y="103" width="4" height="40" fill="#eef2f5" opacity="0.5" />
-        <g className="stn-arm">
-          <rect x="58" y="110" width="47" height="8" rx="4" fill="#2a3138" />
-          <circle cx="104" cy="114" r="5" fill="#e8b98f" />
-        </g>
-        <rect x="56" y="99" width="8" height="6" fill="#e8b98f" />
-        <circle cx="60" cy="92" r="10" fill="#e8b98f" />
-        <path d="M50 90 Q60 76 70 90 Z" fill="#f5920b" />
-        <rect x="47" y="88" width="27" height="4" rx="2" fill="#f5920b" />
-        <path d="M60 78 L60 90" stroke="#d97a00" strokeWidth="1.5" />
-      </g></g>
-    </svg>
-  );
+export async function updateRow(table, id, patch) {
+  const { data, error } = await supabase.rpc("authz_update", { p_token: authToken(), p_tbl: table, p_id: id, p_payload: patch });
+  if (error) { console.warn("updateRow error", table, error); flagAuth(error); throw error; }
+  return data;
 }
 
-// ── the changing middle panel ─────────────────────────────────────────────
-function AsmManualInput({ onSubmit, placeholder, t }) {
-  const [v, setV] = useState("");
-  return (
-    <form className="stn-asm-manual" onSubmit={(e) => { e.preventDefault(); const s = v.trim(); if (!s) return; onSubmit(s); setV(""); }}>
-      <input value={v} onChange={(e) => setV(e.target.value)} placeholder={placeholder} inputMode="text" autoCapitalize="characters" />
-      <button type="submit">{t("เพิ่ม", "Add")}</button>
-    </form>
-  );
+// Bulk update: apply the same patch to every row matching the given filters.
+// Used e.g. to propagate a release's edited weight/length down to all its part_units.
+export async function updateRows(table, filters, patch) {
+  const { data, error } = await supabase.rpc("authz_update_where", { p_token: authToken(), p_tbl: table, p_filters: filters, p_payload: patch });
+  if (error) { console.warn("updateRows error", table, error); flagAuth(error); throw error; }
+  return data || 0; // จำนวนแถวที่อัปเดต
 }
 
-// ── ประกอบ: จำแนกบทบาทชิ้นจากชื่อ (ใช้วาดผัง + ป้ายจุดติดตั้ง) ────────────────
-function asmRole(name) {
-  const d = String(name || "").toUpperCase();
-  if (/SCREW|BOLT|RIVET|\bNUT\b|WASHER/.test(d)) return "fastener";
-  if (/MULLION/.test(d) && !/STIFF/.test(d)) return "mullion";
-  if (/TRANSOM|\bSILL\b|\bRAIL\b|\bHEAD\b/.test(d)) return "transom";
-  if (/GLASS/.test(d) && !/SUPPORT|BEAD|SPACER|GASKET|SETTING|CLIP/.test(d)) return "glass";
-  if (/BACKPAN|GALVAN/.test(d)) return "infill";
-  return "accessory";
+export async function deleteRow(table, id) {
+  const { error } = await supabase.rpc("authz_delete", { p_token: authToken(), p_tbl: table, p_id: id });
+  if (error) { console.warn("deleteRow error", table, error); flagAuth(error); throw error; }
 }
 
-// แผงยืนยันต่อชิ้น (โหมดประกอบ/แพ็กอิสระ) — สแกนลูก → กรอกจำนวน → กดใส่เข้าเบอร์แม่
-function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
-  const [q, setQ] = useState("1");
-  const nq = Math.max(1, Math.floor(Number(q) || 0));
-  const has = Math.max(0, Math.floor(Number(pending.existingQty) || 0));   // มีอยู่แล้วในแถวเดิม (กรณีสแกนเบอร์เดิมซ้ำ)
-  const stepBtn = { width: 46, height: 46, borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 26, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
-        <div style={{ textAlign: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
-          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{pending.part_no}</div>
-          {pending.part_name ? <div style={{ fontSize: 13.5, color: "#cfe7dc" }}>{pending.part_name}</div> : null}
-          <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>
-            {pending.len != null && !isNaN(Number(pending.len)) ? <>{t("ยาว", "Len")} {Number(pending.len).toLocaleString()} {t("มม.", "mm")}{pending.wt != null ? " · " : ""}</> : null}
-            {pending.wt != null && !isNaN(Number(pending.wt)) ? <>{t("น้ำหนัก", "Wt")} {Number(pending.wt).toLocaleString()} {t("กก.", "kg")}</> : null}
-          </div>
-          <div style={{ fontSize: 11.5, color: "#7fa694", fontFamily: "monospace", marginTop: 6, wordBreak: "break-all" }}>{pending.qr}</div>
-        </div>
-        {/* สแกนเบอร์เดิมซ้ำ — บอกว่ามีอยู่แล้วเท่าไร แล้วให้กรอก "จำนวนที่จะเพิ่ม" */}
-        {has > 0 ? (
-          <div style={{ textAlign: "center", fontSize: 13, color: "#e6c67a", fontWeight: 700, margin: "0 0 12px", padding: "8px 10px", background: "#241f10", border: "1px solid #5c4a1f", borderRadius: 10 }}>
-            {t(`เบอร์นี้มีอยู่แล้ว ${has} ชิ้น — กรอกจำนวนที่จะเพิ่ม`, `already ${has} pcs — enter amount to add`)}
-          </div>
-        ) : null}
-        {/* กรอกจำนวน (มีปุ่ม +/− ให้กดง่ายบนแท็บเล็ต) */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, margin: "4px 0 16px" }}>
-          <span style={{ fontSize: 14, color: "#cfe7dc", fontWeight: 600 }}>{t("จำนวน", "Qty")}</span>
-          <button type="button" onClick={() => setQ(String(Math.max(1, nq - 1)))} disabled={busy} style={stepBtn}>−</button>
-          <input type="number" inputMode="numeric" min={1} value={q} disabled={busy}
-            onFocus={(e) => e.target.select()}
-            onChange={(e) => setQ(e.target.value.replace(/[^0-9]/g, ""))}
-            style={{ width: 96, padding: "10px", fontSize: 26, fontWeight: 800, textAlign: "center", borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
-          <button type="button" onClick={() => setQ(String(nq + 1))} disabled={busy} style={stepBtn}>+</button>
-        </div>
-        <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={onCancel} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
-          <button className="stn-pill ok" onClick={() => onAdd(nq)} disabled={busy}>{has > 0 ? t(`✓ เพิ่ม (รวม ${has + nq})`, `✓ Add (total ${has + nq})`) : t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
-        </div>
-      </div>
-    </div>
-  );
+// Delete many rows by id in one call (e.g. removing part_units when shrinking a release's qty).
+export async function deleteRows(table, ids) {
+  if (!ids || ids.length === 0) return;
+  const { error } = await supabase.rpc("authz_delete_many", { p_token: authToken(), p_tbl: table, p_ids: ids });
+  if (error) { console.warn("deleteRows error", table, error); flagAuth(error); throw error; }
 }
 
-// ── สเตชัน "ประกอบ ซับ (subassembly)" — BOM + กรอกจำนวน (นับจำนวนรวม ไม่ผูก QR รายชิ้น) [ปัจจุบันไม่ใช้] ──
-//    สแกนเบอร์แม่ → ใส่จำนวนที่จะทำ → กรอกจำนวนลูกตาม BOM (ต้องได้ครบ BOM×จำนวน) → ครบ = เสร็จอัตโนมัติ
-//    ลูกเป็น "แผง" ไม่ได้ (ซับมีลูกเป็น part/ซับเท่านั้น) → กรอง kind='panel' ออก
-function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
-  const bom = (asmParent.bom || []).filter((b) => b.kind !== "panel");
-  const [qty, setQty] = useState("1");
-  const [got, setGot] = useState({});
-  const firedRef = useRef(false);
-  const [autoIn, setAutoIn] = useState(0);
-  const nQty = Math.max(0, Math.floor(Number(qty) || 0));
-  const need = (b) => (Number(b.qty) || 0) * nQty;
-  const gotOf = (b) => Math.max(0, Math.floor(Number(got[b.child_pm_id]) || 0));
-  const allDone = bom.length > 0 && nQty > 0 && bom.every((b) => gotOf(b) >= need(b));
-  const fire = () => { if (!firedRef.current) { firedRef.current = true; onConfirm(nQty); } };
-
-  // ครบ BOM → เสร็จอัตโนมัติ (หน่วง 3 วิ กันกรอกพลาด · แก้ตัวเลขจะยกเลิกนับถอยหลัง)
-  useEffect(() => {
-    if (!allDone || busy) { setAutoIn(0); if (!allDone) firedRef.current = false; return; }
-    if (firedRef.current) return;
-    setAutoIn(3);
-    const iv = setInterval(() => setAutoIn((n) => { if (n <= 1) { clearInterval(iv); fire(); return 0; } return n - 1; }), 1000);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allDone, busy, nQty]);
-
-  const partNo = asmParent.unit?.part_master?.part_no || asmParent.unit?.qr_code;
-  const partName = asmParent.unit?.part_master?.part_name || "";
-  const inStyle = { width: 92, padding: "9px 10px", fontSize: 18, fontWeight: 700, textAlign: "center", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" };
-
-  return (
-    <div className="stn-part-panel" style={{ maxWidth: 760, margin: "0 auto", width: "100%" }}>
-      {/* หัว: เบอร์แม่ + จำนวนที่จะทำ */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "10px 4px 16px", borderBottom: "1px solid #23402f" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("เบอร์แม่ (ซับ)", "Subassembly")}</div>
-          <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", wordBreak: "break-all" }}>{partNo}</div>
-          {partName ? <div style={{ fontSize: 13, color: "#cfe7dc" }}>{partName}</div> : null}
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 12.5, color: "#9fd8bf", marginBottom: 5 }}>{t("จำนวนที่จะทำ", "Qty to make")}</div>
-          <input type="number" inputMode="numeric" min={1} value={qty} disabled={busy}
-            onChange={(e) => { firedRef.current = false; setQty(e.target.value.replace(/[^0-9]/g, "")); }}
-            style={{ ...inStyle, width: 120, fontSize: 22 }} />
-        </div>
-      </div>
-
-      {/* BOM: กรอกจำนวนลูกแต่ละพาร์ท */}
-      {bom.length === 0 ? (
-        <div style={{ color: "#e6b877", fontSize: 14, padding: 22, textAlign: "center", lineHeight: 1.7 }}>
-          {t("เบอร์นี้ยังไม่ได้ตั้ง BOM (รายการลูก) — กำหนดที่ office ก่อน แล้วปล่อยงานใหม่", "no BOM set — define children in the office first")}
-        </div>
-      ) : (
-        <table className="asw-tab" style={{ marginTop: 12 }}>
-          <thead><tr>
-            <th className="c-n">#</th>
-            <th className="c-pn">{t("เบอร์ลูก", "Child")}</th>
-            <th className="c-len">{t("ต้องใช้", "Need")}</th>
-            <th className="c-qty">{t("กรอกจำนวน", "Got")}</th>
-            <th className="c-prog">{t("สถานะ", "")}</th>
-          </tr></thead>
-          <tbody>
-            {bom.map((b, i) => {
-              const nd = need(b); const g = gotOf(b); const ok = nQty > 0 && g >= nd;
-              return (
-                <tr key={b.child_pm_id || i} className={"asw-r" + (ok ? " done" : " partial")}>
-                  <td className="c-n"><span className="nb">{i + 1}</span></td>
-                  <td className="c-pn">{b.part_no}{b.part_name ? <div style={{ fontSize: 11, color: "#7fa694" }}>{b.part_name}</div> : null}</td>
-                  <td className="c-len">{nd}<span className="u"> {t("ชิ้น", "pcs")}</span></td>
-                  <td className="c-qty">
-                    <input type="number" inputMode="numeric" min={0} disabled={busy}
-                      value={got[b.child_pm_id] ?? ""} placeholder="0"
-                      onChange={(e) => { firedRef.current = false; setGot((s) => ({ ...s, [b.child_pm_id]: e.target.value.replace(/[^0-9]/g, "") })); }}
-                      style={inStyle} />
-                  </td>
-                  <td className="c-prog" style={{ textAlign: "center", fontWeight: 800, color: ok ? "#43d693" : "#e0a44a" }}>{ok ? "✓" : `${g}/${nd}`}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {/* สรุป + ปุ่ม */}
-      <div className="stn-row-btns" style={{ marginTop: 16 }}>
-        <button className="stn-pill no" onClick={onReset} disabled={busy}>{t("← เปลี่ยนเบอร์แม่", "← Change")}</button>
-        <button className="stn-pill ok" onClick={fire} disabled={busy || !allDone}>
-          {allDone ? t(`✓ ครบ — บันทึกเสร็จ${autoIn ? ` (${autoIn})` : ""}`, `✓ Complete — save${autoIn ? ` (${autoIn})` : ""}`)
-            : t("กรอกให้ครบ BOM ก่อน", "fill the BOM first")}
-        </button>
-      </div>
-    </div>
-  );
+// ออกจากระบบ — ยกเลิก token ฝั่ง DB (เรียกก่อน clearSession)
+export async function logoutSession() {
+  const t = authToken();
+  if (t) { try { await supabase.rpc("logout", { p_token: t }); } catch (_) { /* ignore */ } }
 }
 
-// ── หน้าประกอบ/แพ็ก (สเตชัน) = ตารางรายการชิ้นงาน (เช็กลิสต์) + สแกนติ๊กความคืบหน้า ───────────────
-//    คอลัมน์: # · เบอร์ชิ้น/ยูนิต · รายละเอียด · ขนาด/ยาว(ประกอบ)|น้ำหนัก(แพ็ก) · จำนวน · ประกอบแล้ว/แพ็กแล้ว (X/Y)
-//    ✓ = ครบ · ◐ = บางส่วน · ○ = ยังไม่ทำ (นับสะสม: ที่ติดไปแล้ว + ที่สแกนรอบนี้) · สแกนลูก = ติ๊กเพิ่มอัตโนมัติ
-//    ใช้คอมโพเนนต์เดียวทั้งประกอบ (ธีมเขียว) และแพ็ก (isPack → ธีมน้ำเงินจาก .dept-packing + ปุ่มถ่ายรูป)
-function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, busy, t, childWord, confirmVerb, isPack = false, parentQty = 1, setParentQty, autoIn = 0, qtyLocked = false, setQtyLocked, openPhoto, packPhotos = [], photoRemove }) {
-  const isSub = asmType === "assembly";   // สเตชัน "ซับ" — มีช่อง "จำนวนที่จะทำ" + ปิดงานอัตโนมัติเมื่อครบ BOM (ซ่อน BOM)
-  const pq = Math.max(1, Math.floor(Number(parentQty) || 1));
-  const subAuto = isSub && (asmParent.bom || []).length > 0;   // ซับที่มี BOM (มาจากตอนสั่งผลิต) → ปิดงานอัตโนมัติ ไม่มีปุ่มแตะปิด
+// เปิด/ปิดการใช้งานพนักงาน (admin เท่านั้น) — ผ่าน RPC
+export async function setEmployeeActive(id, active) {
+  const { error } = await supabase.rpc("set_employee_active", { p_token: authToken(), p_id: id, p_active: active });
+  if (error) { console.warn("set_employee_active error", error); flagAuth(error); throw error; }
+}
 
-  // ── ซับ ขั้นที่ 1: ใส่ "จำนวนที่จะทำ" แล้วกด "เริ่มสแกนลูก" ก่อน (กันปิดงานก่อนตั้งจำนวน) ──
-  if (isSub && !qtyLocked) {
-    const subNo = asmParent.unit?.part_master?.part_no || asmParent.unit?.qr_code;
-    const subName = asmParent.unit?.part_master?.part_name || "";
-    const stepBtn = { width: 56, height: 56, borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 30, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
-    const subBack = () => { if (asmChildren.length > 0 && !window.confirm(t("ทิ้งลูกที่สแกนไว้ แล้วย้อนกลับ?", "Discard scanned children and go back?"))) return; asmReset && asmReset(); };
-    return (
-      <div className="asw">
-        <div className="asw-head">
-          <button className="asw-change" onClick={subBack} title={t("ย้อนกลับ / เปลี่ยนเบอร์", "Back / change")}>← {t("ย้อนกลับ", "Back")}</button>
-          <div className="asw-hgrow">
-            <div className="asw-hlabel">{t("เบอร์แม่ (ซับ)", "SUBASSEMBLY")}</div>
-            <div className="asw-hno">{subNo}{subName ? <span className="asw-hname">{subName}</span> : null}</div>
-          </div>
-          <button className="asw-change" onClick={subBack}>{t("เปลี่ยนเบอร์", "Change")}</button>
-        </div>
-        <div style={{ maxWidth: 520, margin: "8px auto 0", width: "100%", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "26px 20px 22px", textAlign: "center" }}>
-          <div style={{ fontSize: 15, color: "#9fd8bf", fontWeight: 700, marginBottom: 4 }}>{t("จะทำเบอร์นี้กี่ชิ้น?", "How many to make?")}</div>
-          <div style={{ fontSize: 12.5, color: "#7fa694", marginBottom: 18 }}>{t("ใส่จำนวนก่อน แล้วค่อยสแกนลูก", "set the quantity, then scan children")}</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
-            <button type="button" aria-label="minus" onClick={() => setParentQty && setParentQty(Math.max(1, pq - 1))} disabled={busy} style={stepBtn}>−</button>
-            <input type="number" inputMode="numeric" min={1} value={pq} disabled={busy}
-              onFocus={(e) => e.target.select()}
-              onChange={(e) => setParentQty && setParentQty(Math.max(1, Math.floor(Number(String(e.target.value).replace(/[^0-9]/g, "")) || 1)))}
-              style={{ width: 130, padding: "12px", fontSize: 40, fontWeight: 800, textAlign: "center", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
-            <button type="button" aria-label="plus" onClick={() => setParentQty && setParentQty(pq + 1)} disabled={busy} style={stepBtn}>+</button>
-          </div>
-          <button type="button" onClick={() => setQtyLocked && setQtyLocked(true)} disabled={busy}
-            style={{ marginTop: 22, width: "100%", padding: "15px", borderRadius: 12, border: "none", background: "#2f9e64", color: "#fff", fontSize: 18, fontWeight: 800, cursor: "pointer" }}>
-            {t(`เริ่มสแกนลูก (จะทำ ${pq} ชิ้น)`, `Start scanning (make ${pq})`)}
-          </button>
-        </div>
-      </div>
-    );
-  }
-  const pm = asmParent.unit.part_master || {};
-  const meta = pm.pkg_meta || {};
-  // เบอร์ที่กำลังทำ — แพ็ก: เลขบั้ง (bunk_no) ถ้ามี · ประกอบ: เบอร์พาร์ทแม่
-  const parentNo = isPack ? (meta.bunk_no || pm.part_no || asmParent.unit.qr_code) : (pm.part_no || asmParent.unit.qr_code);
-  const parentName = isPack
-    ? [meta.project, meta.elevation, meta.level ? (String(meta.level).match(/level/i) ? meta.level : `LEVEL ${meta.level}`) : ""].filter(Boolean).join(" · ")
-    : (pm.part_name || "");
-  const pkind = asmParent.parentKind;
-  const kindTh = isPack ? "" : (pkind === "panel" ? "แผง" : pkind === "subassembly" ? "ซับประกอบ" : "");
-  const fmtNum = (n, d) => Number(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d });
+// รายชื่อ session ที่กำลังล็อกอินอยู่ (admin เท่านั้น) — ใครออนไลน์/ผูกเครื่องไหน
+//   คืน array ของ { sid, is_self, code, name, role, is_machine, machine_code,
+//                   machine_name, last_seen, created_at, expires_at, online }
+//   sid = รหัสอ้างอิง session (md5 ของ token — ไม่ใช่ token จริง) ใช้ส่งให้ forceLogoutSession
+export async function listActiveSessions() {
+  const { data, error } = await supabase.rpc("authz_list_sessions", { p_token: authToken() });
+  if (error) { console.warn("authz_list_sessions error", error); flagAuth(error); throw error; }
+  return data || [];
+}
 
-  // น้ำหนักต่อยูนิต (หน้าแพ็ก) — จับจากฟอร์มบั้ง (pkg_manifest.unit_no = เบอร์พาร์ท)
-  const wtByNo = {};
-  if (isPack) (Array.isArray(pm.pkg_manifest) ? pm.pkg_manifest : []).forEach((u) => {
-    const k = String(u.unit_no || "").toUpperCase();
-    if (k && u.weight != null && u.weight !== "" && !isNaN(Number(u.weight))) wtByNo[k] = Number(u.weight);
+// บังคับ 1 session ออกจากระบบ (admin เท่านั้น) — set superseded → เครื่องนั้นซิงค์งานค้างแล้วเด้งออก
+//   คืน { ok:true, kicked:1 } เมื่อสำเร็จ · { ok:false, reason:'self' } เมื่อพยายามเตะเครื่องตัวเอง
+export async function forceLogoutSession(sid) {
+  const { data, error } = await supabase.rpc("authz_force_logout", { p_token: authToken(), p_sid: sid });
+  if (error) { console.warn("authz_force_logout error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
+// แก้หัวเอกสาร Release ทั้งใบ (admin เท่านั้น) — เลขที่ Release Order / วันที่ / Modify(mdf_no)
+//   releaseIds = id ของทุก Part ในใบ · releaseDate = ISO string (หรือ null = ไม่เปลี่ยน)
+//   mdfNo = ค่า Modify (ส่ง null = ไม่แตะ) · คืน { ok, releases, parts }
+export async function updateReleaseHeader({ releaseIds, releaseOrder, releaseDate, mdfNo }) {
+  const { data, error } = await supabase.rpc("authz_update_release_header", {
+    p_token: authToken(),
+    p_release_ids: releaseIds,
+    p_release_order: releaseOrder ?? null,
+    p_release_date: releaseDate ?? null,
+    p_mdf_no: mdfNo ?? null,
   });
-
-  // นับสะสม: ที่ติดไปแล้ว (installed จากรอบก่อน/สเตชันก่อน) + ที่สแกนรอบนี้ → ต่อ child_pm_id
-  const prevFor = (pmId) => (asmParent.installed || []).filter((x) => x.child_pm_id === pmId).length;
-  const sessFor = (pmId) => asmChildren.filter((c) => c.child_pm_id === pmId).length;
-
-  const rows = (asmParent.bom || []).map((b, i) => {
-    const qty = b.qty || 1;
-    const have = Math.min(prevFor(b.child_pm_id) + sessFor(b.child_pm_id), qty);
-    const measure = isPack
-      ? (wtByNo[String(b.part_no || "").toUpperCase()] ?? null)
-      : (b.length_mm != null && !isNaN(Number(b.length_mm)) ? Number(b.length_mm) : null);
-    return { key: b.child_pm_id ?? ("r" + i), part_no: b.part_no, name: b.part_name || "", qty, have, measure };
-  });
-  const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
-  const doneUnits = rows.reduce((s, r) => s + r.have, 0);
-
-  // ── โหมดประกอบอิสระ (เบอร์แม่ที่ไม่ใช่ package): โชว์ "ลูกที่สแกนเข้าไปแล้ว" แทนเช็กลิสต์ BOM
-  //    (เช็กลิสต์อยู่หลังบ้าน) · แยกด้วย kind ให้ตรงกับ RPC — แพ็ก (package) = เช็กลิสต์เหมือนเดิม ──
-  const free = pkind !== "package";
-  // ตารางประกอบ: ที่ติดตั้งแล้ว (จากสเตชันก่อน/เซิร์ฟเวอร์) + ที่สแกนเข้ารายการรอบนี้ (ลบออกได้)
-  const installedRows = (asmParent.installed || []).map((x, i) => ({
-    key: "i" + (x.child_unit_id || i), unit_id: x.child_unit_id, part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, wt: null, qty: x.qty ?? 1,
-  }));
-  const thisRoundRows = asmChildren.map((c) => ({
-    key: "n" + c.unit_id, unit_id: c.unit_id, part_no: c.part_no || "—", qr: c.qr || "—", now: true, len: c.len ?? null, wt: c.wt ?? null, qty: c.qty ?? 1,
-  }));
-  const freeRows = [...installedRows, ...thisRoundRows];
-  const scannedCount = freeRows.length;
-
-  // ยกเลิก/ย้อนกลับ — เคลียร์เบอร์แม่ กลับไปหน้าสแกน · กันเผลอทิ้งที่สแกนค้างไว้รอบนี้
-  const asmBack = () => {
-    if (asmChildren.length > 0 && !window.confirm(
-      t(`ทิ้ง${childWord}ที่สแกนไว้รอบนี้ ${asmChildren.length} ชิ้น แล้วย้อนกลับ?`,
-        `Discard ${asmChildren.length} scanned ${childWord}(s) this round and go back?`))) return;
-    asmReset();
-  };
-
-  const measHead = isPack ? t("น้ำหนัก", "Weight") : t("ขนาด/ยาว", "Size/Len");
-  const measUnit = isPack ? "Lbs" : "mm";
-  const measDigits = isPack ? 1 : 0;
-
-  return (
-    <div className="asw">
-      <div className="asw-head">
-        <button className="asw-change" onClick={asmBack} title={t("ย้อนกลับ / ยกเลิก", "Back / cancel")}>← {t("ย้อนกลับ", "Back")}</button>
-        <div className="asw-hgrow">
-          <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
-          <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
-        </div>
-        <div className="asw-scount"><b>{free ? scannedCount : `${doneUnits}/${totalUnits}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
-        <button className="asw-change" onClick={asmBack}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
-      </div>
-
-      {/* ── ซับ (ยืนยันจำนวนแล้ว): โชว์ "จำนวนที่จะทำ" อ่านอย่างเดียว + ปุ่มแก้ (กลับไปตั้งใหม่) ── */}
-      {isSub ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", margin: "2px 0 6px", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 12 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{t("จำนวนที่จะทำ", "Qty to make")}</span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: "#8ff0c0", fontFamily: "'IBM Plex Mono', monospace" }}>{pq}</span>
-          <span style={{ fontSize: 13, color: "#9fd8bf" }}>{t("ชิ้น", "pcs")}</span>
-          <button type="button" onClick={() => setQtyLocked && setQtyLocked(false)} disabled={busy}
-            style={{ marginLeft: 6, padding: "9px 13px", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#cfe7dc", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{t("แก้จำนวน", "Edit")}</button>
-        </div>
-      ) : null}
-
-      <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : free ? t("ลูกที่สแกนเข้าไปแล้ว", "Children scanned in") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {free ? scannedCount : rows.length} {t("รายการ", "items")}</span></div>
-      <div className="asw-sheet">
-        {free ? (
-        <table className="asw-tab">
-          <thead><tr>
-            <th className="c-n">#</th>
-            <th className="c-pn">{t("เบอร์ชิ้น", "Part No")}</th>
-            <th>QR</th>
-            <th className="c-len">{t("ยาว (มม.)", "Len (mm)")}</th>
-            <th className="c-len">{t("น้ำหนัก (กก.)", "Wt (kg)")}</th>
-            <th className="c-qty">{t("จำนวน", "Qty")}</th>
-            <th className="c-prog"></th>
-          </tr></thead>
-          <tbody>
-            {freeRows.map((r, i) => (
-              <tr key={r.key} className={"asw-r" + (r.now ? " partial" : " done")}>
-                <td className="c-n"><span className="nb">{i + 1}</span></td>
-                <td className="c-pn">{r.part_no}</td>
-                <td className="c-desc" style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{r.qr}</td>
-                <td className="c-len">{r.len != null && !isNaN(Number(r.len)) ? <>{fmtNum(r.len, 0)}<span className="u"> mm</span></> : "—"}</td>
-                <td className="c-len">{r.wt != null && !isNaN(Number(r.wt)) ? <>{fmtNum(r.wt, 2)}<span className="u"> kg</span></> : "—"}</td>
-                <td className="c-qty">{r.qty ?? 1}</td>
-                <td className="c-prog" style={{ textAlign: "center" }}>
-                  {r.now
-                    ? <span onClick={() => asmRemoveChild(r.unit_id)} title={t("เอาออก", "remove")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700 }}>✕</span>
-                    : (r.unit_id && asmRemoveInstalled
-                        ? <span onClick={() => asmRemoveInstalled(r.unit_id, r.part_no)} title={t("เอาออก (ลบชิ้นที่บันทึกแล้ว)", "remove (saved)")} style={{ cursor: "pointer", color: "var(--danger-hi, #e6533c)", fontWeight: 700, opacity: .8 }}>✕</span>
-                        : null)}
-                </td>
-              </tr>
-            ))}
-            {freeRows.length === 0 ? (
-              <tr><td colSpan={7} className="asw-tabempty">{t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-        ) : (
-        <table className="asw-tab">
-          <thead><tr>
-            <th className="c-n">#</th>
-            <th className="c-pn">{isPack ? t("ยูนิต", "Unit No") : t("เบอร์ชิ้น", "Part No")}</th>
-            <th>{t("รายละเอียด", "Description")}</th>
-            <th className="c-len">{measHead}</th>
-            <th className="c-qty">{t("จำนวน", "Qty")}</th>
-            <th className="c-prog">{isPack ? t("แพ็กแล้ว", "Packed") : t("ประกอบแล้ว", "Assembled")}</th>
-          </tr></thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const done = r.have >= r.qty;
-              const partial = r.have > 0 && r.have < r.qty;
-              return (
-                <tr key={r.key} className={"asw-r" + (done ? " done" : partial ? " partial" : "")}>
-                  <td className="c-n"><span className="nb">{i + 1}</span></td>
-                  <td className="c-pn">{r.part_no}</td>
-                  <td className="c-desc">{r.name || "—"}</td>
-                  <td className="c-len">{r.measure != null ? <>{fmtNum(r.measure, measDigits)}<span className="u"> {measUnit}</span></> : "—"}</td>
-                  <td className="c-qty">{r.qty}</td>
-                  <td className="c-prog"><span className="chk">{done ? "✓" : partial ? "◐" : "○"}</span>{r.have}/{r.qty}</td>
-                </tr>
-              );
-            })}
-            {rows.length === 0 ? (
-              <tr><td colSpan={6} className="asw-tabempty">{isPack ? t("บั้งนี้ยังไม่ได้ตั้งรายการ — import ฟอร์มบั้ง หรือกำหนด BOM ที่หน้า Part Master", "no units yet — import the bunk form or set the BOM") : t("เบอร์นี้ยังไม่ได้กำหนด BOM — ตั้งที่หน้า Part Master ก่อน", "no BOM set — set it in Part Master")}</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-        )}
-      </div>
-
-      <div className="asw-actions">
-        {/* ชิป "รอคอนเฟิร์ม" นอกตาราง — เหลือเฉพาะแพ็ก (ประกอบ: ที่กดใส่แล้วอยู่ในตารางเลย) */}
-        {!free && asmChildren.length > 0 && (
-          <div className="asw-scanned">
-            {asmChildren.map((c) => (
-              <span key={c.unit_id} className="asw-chip" onClick={() => asmRemoveChild(c.unit_id)} title={t("แตะเพื่อเอาออก", "tap to remove")}>{c.part_no} · {c.qr} ✕</span>
-            ))}
-          </div>
-        )}
-        <div className="asw-scanhead">
-          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{isPack ? t(`สแกน${childWord}`, `Scan ${childWord}`) : t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
-          <AsmManualInput onSubmit={asmScan} placeholder={t(`หรือพิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
-        </div>
-        {isPack ? (
-          <div className="asw-photos">
-            <button className="asw-photobtn" onClick={openPhoto}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่ายรูปแพ็ก", "Pack photos")}{packPhotos.length ? ` (${packPhotos.length})` : ""} <span className="opt">{t("· ไม่บังคับ", "· optional")}</span></button>
-            {packPhotos.length > 0 && (
-              <div className="asw-thumbs">
-                {packPhotos.map((p, i) => (
-                  <div key={i} className="asw-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}><img src={p.url} alt="" /><span className="x">✕</span></div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : null}
-        {subAuto ? (
-          /* ── ซับ (มี BOM จากตอนสั่งผลิต): ครบตามจำนวน → ปิดงานเองอัตโนมัติ · ไม่มีปุ่มแตะปิด ── */
-          <div style={{ marginTop: 2 }}>
-            {busy ? (
-              <div style={{ textAlign: "center", padding: "14px 12px", borderRadius: 12, background: "#123524", border: "1px solid #2f7d54", color: "#8ff0bd", fontWeight: 800, fontSize: 15 }}>{t("กำลังบันทึก…", "saving…")}</div>
-            ) : autoIn > 0 ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 12px", borderRadius: 12, background: "#123524", border: "1px solid #2f7d54", color: "#8ff0bd", fontWeight: 800, fontSize: 16 }}>
-                <span>✓ {t("ครบตามจำนวนแล้ว", "All complete")}</span>
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>· {t("ปิดงานอัตโนมัติใน", "auto-finishing in")} {autoIn}…</span>
-              </div>
-            ) : (
-              <div style={{ textAlign: "center", padding: "14px 12px", borderRadius: 12, background: "#17231d", border: "1px dashed #2f5f49", color: "#9fd8bf", fontSize: 14, lineHeight: 1.6 }}>
-                {t("สแกนลูกให้ครบตามจำนวนที่จะทำ — ระบบจะปิดงานให้เองอัตโนมัติ", "scan all children up to the target — it finishes automatically")}
-              </div>
-            )}
-          </div>
-        ) : (
-          <button className={"asw-confirm" + (asmChildren.length > 0 ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
-            {busy ? "..." : asmChildren.length === 0
-              ? (isPack ? t(`สแกน${childWord}ที่ใส่รอบนี้ก่อน`, `scan the ${childWord}s first`) : t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`))
-              : (free
-                ? t(`✓ ยืนยัน + ปิดงาน (${asmChildren.length})`, `✓ Confirm & finish (${asmChildren.length})`)
-                : asmComplete
-                  ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
-                  : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
-          </button>
-        )}
-      </div>
-    </div>
-  );
+  if (error) { console.warn("authz_update_release_header error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
 }
 
-// ── ถ่ายรูปตอนแพ็ก (ภาพนิ่งจากกล้องที่ใช้ร่วมกัน) ────────────────────────────
-function PackPhotoCapture({ onCapture, onClose, count, t }) {
-  const videoRef = useRef(null);
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const stream = await getSharedCameraStream();
-        if (cancelled || !stream) return;
-        const v = videoRef.current;
-        if (v) { v.srcObject = stream; v.playsInline = true; v.muted = true; try { await v.play(); } catch { /* ignore */ } if (!cancelled) setReady(true); }
-      } catch { /* ignore */ }
-    })();
-    return () => {
-      cancelled = true;
-      const v = videoRef.current;
-      if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
-      if (camPermissionPersists()) releaseSharedCamera();
-    };
-  }, []);
-  function snap() {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth) return;
-    const scale = Math.min(1, 1280 / v.videoWidth);
-    const c = document.createElement("canvas");
-    c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
-    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
-    const url = c.toDataURL("image/jpeg", 0.8);
-    c.toBlob((blob) => { if (blob) onCapture(blob, url); }, "image/jpeg", 0.8);
-  }
-  return (
-    <div className="stn-photocap">
-      <div className="stn-photocap-view">
-        <video ref={videoRef} playsInline muted />
-        {!ready && <div className="stn-photocap-loading">{t("กำลังเปิดกล้อง…", "opening camera…")}</div>}
-      </div>
-      <div className="stn-photocap-bar">
-        <button className="stn-photocap-close" onClick={onClose}>{t("เสร็จ", "Done")}{count > 0 ? ` (${count})` : ""}</button>
-        <button className="stn-photocap-snap" onClick={snap} disabled={!ready}><Icon name="camera" size={16} className="stn-ico" />{t("ถ่าย", "Capture")}</button>
-      </div>
-    </div>
-  );
-}
-
-// หน้าเลือกเบอร์แม่ (ก่อนเริ่มประกอบ) — สแกน + ค้นหา + ฟิลเตอร์ + รายการเบอร์แม่ที่ค้างอยู่ (แตะเลือก)
-function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
-  const [rows, setRows] = useState(null);   // null = กำลังโหลด
-  const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all");
-  const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
-
-  useEffect(() => {
-    let alive = true; setRows(null);
-    listAssemblyParents(dept).then((r) => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
-    return () => { alive = false; };
-  }, [dept]);
-
-  const doing = (s) => /progress/i.test(s || "");
-  const all = rows || [];
-  const filtered = all.filter((r) => {
-    if (q.trim()) { const s = q.trim().toLowerCase(); if (!`${r.part_no} ${r.part_name} ${r.project_code}`.toLowerCase().includes(s)) return false; }
-    if (filter === "panel") return r.kind === "panel";
-    if (filter === "package") return r.kind === "package";
-    if (filter === "sub") return r.kind === "subassembly";
-    if (filter === "doing") return doing(r.status);
-    if (filter === "todo") return !doing(r.status);
-    return true;
-  });
-  const kindLabel = (k) => k === "subassembly" ? t("ซับ", "SUB") : k === "package" ? t("บั้ง", "PKG") : t("แผง", "PANEL");
-  const kindCls = (k) => k === "subassembly" ? "sub" : "panel";
-  const submit = (e) => { e.preventDefault(); const s = q.trim(); if (s) onPick(s); };
-  const chips = isPack
-    ? [["all", t("ทั้งหมด", "All")], ["package", t("บั้ง", "Pkg")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]]
-    : [["all", t("ทั้งหมด", "All")], ["panel", t("แผง", "Panel")], ["sub", t("ซับ", "Sub")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]];
-
-  return (
-    <div className="asw-pick">
-      <div className="asw-pick-h">{t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {all.length} {t("รายการที่ค้างอยู่", "pending")}</span></div>
-      <div className="asw-pick-srow">
-        <form className="asw-pick-search" onSubmit={submit}>
-          <Icon name="search" size={18} className="stn-ico" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t(`ค้นหา / พิมพ์${parentWord}`, `Search / type ${parentWord}`)} inputMode="text" autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
-        </form>
-        <button type="button" className="asw-pick-scan" onClick={onScan}><Icon name="camera" size={18} className="stn-ico" />{t("สแกน", "Scan")}</button>
-      </div>
-      <div className="asw-pick-chips">
-        {chips.map(([k, label]) => (
-          <button key={k} type="button" className={"asw-pick-chip" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{label}</button>
-        ))}
-      </div>
-      <div className="asw-pick-list">
-        {rows === null ? (
-          <div className="asw-pick-msg"><div className="stn-asm-spin" />{t("กำลังโหลดรายการ…", "Loading…")}</div>
-        ) : filtered.length === 0 ? (
-          <div className="asw-pick-msg">{all.length === 0 ? t(`ไม่มี${parentWord}ที่ค้างอยู่ — สแกน QR เพื่อเริ่ม`, "nothing pending — scan to start") : t("ไม่พบตามที่ค้นหา", "no match")}</div>
-        ) : filtered.map((r) => (
-          <button type="button" key={r.qr_code || r.id} className="asw-pick-row" onClick={() => onPick(r.qr_code || r.part_no)}>
-            <span className={"asw-pick-kind " + kindCls(r.kind)}>{kindLabel(r.kind)}</span>
-            <span className="asw-pick-mid">
-              <span className="asw-pick-pno">{r.part_no}</span>
-              <span className="asw-pick-name">{r.part_name}{r.project_code ? <> · <span className="proj">{r.project_code}</span></> : null}</span>
-            </span>
-            <span className={"asw-pick-pill " + (doing(r.status) ? "doing" : "todo")}>{doing(r.status) ? t("กำลังทำ", "in progress") : t("ยังไม่เริ่ม", "not started")}</span>
-            <span className="asw-pick-go">›</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
-  isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
-  asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
-  asmPending = null, asmAddPending, asmCancelPending,
-  packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
-  const [lang] = useLang();
-  const t = (th, en) => (lang === "en" ? en : th);
-
-  // ── โหมดประกอบ/แพ็ก (แยกป้ายตามประเภท) ──────────────────────────────────────
-  if (isAsm) {
-    if (step === STEP.SCAN) {
-      return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} />;
-    }
-    const isPack = isPackingDept(asmType);
-    const modeTitle = isPack ? t("โหมดแพ็ก", "Packing mode") : t("โหมดประกอบ", "Assembly mode");
-    const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
-    const childWord = isPack ? t("ของที่ใส่", "item") : t("ลูก", "child");
-    const confirmVerb = isPack ? t("ยืนยันแพ็ก", "Confirm pack") : t("ยืนยันประกอบ", "Confirm assembly");
-    if (isPack && photoOpen) {
-      return <PackPhotoCapture onCapture={photoCapture} onClose={closePhoto} count={packPhotos.length} t={t} />;
-    }
-    // ประกอบ + แพ็ก ใช้หน้า "สแกนอย่างเดียว" เดียวกัน (AsmWorksheet) — คนงานสแกนเหมือนหน้าตัด
-    //   ไม่โชว์ list/manifest ที่หน้างาน · ดูรายการ/เทียบครบไปที่หลังบ้าน (office → "ตรวจงานประกอบ")
-    return (
-      <div className={"stn-asm" + (asmParent ? " stn-asm-ws" : " stn-asm-pick")}>
-        {!asmParent ? (
-          <AsmParentPicker dept={asmType} isPack={isPack} onScan={asmOpenCam} onPick={asmScan} t={t} />
-        ) : (
-          <AsmWorksheet
-            asmParent={asmParent} asmChildren={asmChildren} asmType={asmType}
-            asmComplete={asmComplete} asmReset={asmReset} asmOpenCam={asmOpenCam} asmScan={asmScan}
-            asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} busy={busy} t={t}
-            isPack={isPack} childWord={childWord} confirmVerb={confirmVerb}
-            parentQty={asmParentQty} setParentQty={setAsmParentQty} autoIn={asmAutoIn}
-            qtyLocked={asmQtyLocked} setQtyLocked={setAsmQtyLocked}
-            openPhoto={openPhoto} packPhotos={packPhotos} photoRemove={photoRemove}
-          />
-        )}
-
-        {/* แผงยืนยันต่อชิ้น (โหมดประกอบ) — popup กลางจอ · กรอกจำนวน แล้วกด "ใส่เข้าเบอร์แม่" */}
-        {asmPending ? (
-          <PendConfirm pending={asmPending} onAdd={asmAddPending} onCancel={asmCancelPending} busy={busy} t={t} />
-        ) : null}
-      </div>
-    );
-  }
-
-  if (step === STEP.IDLE) {
-    return (
-      <div className="stn-hint">
-        <div style={{ marginBottom: 8 }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
-        </div>
-        {t(<>พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา</>,
-           <>Ready — enter <b>MATERIAL LENGTH</b><br />then press <b>START</b> to begin timing</>)}
-      </div>
-    );
-  }
-  if (step === STEP.REC) {
-    return (
-      <div>
-        <StationAnim />
-        <div className="stn-hint">
-          <div className="big">{t("● กำลังบันทึกเวลา", "● Recording time")}</div>
-          {t(<>กด <b>SCAN</b> เพื่อสแกนชิ้นงาน</>, <>Press <b>SCAN</b> to scan a piece</>)}
-        </div>
-      </div>
-    );
-  }
-  if (step === STEP.CANCEL) {
-    return (
-      <div className="stn-confirm">
-        <h3>{t("ยกเลิกการบันทึก?", "Cancel recording?")}</h3>
-        <p>{t(`เวลาที่จับไว้ (${hms(elapsed)}) จะถูกล้างและเริ่มใหม่`,
-              `The elapsed time (${hms(elapsed)}) will be cleared and restarted`)}</p>
-        <div className="stn-row-btns">
-          <button className="stn-pill yes" onClick={() => confirmCancel(true)}>{t("ใช่", "YES")}</button>
-          <button className="stn-pill no" onClick={() => confirmCancel(false)}>{t("ไม่", "NO")}</button>
-        </div>
-      </div>
-    );
-  }
-  if (step === STEP.SCAN) {
-    return <CameraScan onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit} busy={busy} onClose={closeScan} />;
-  }
-  if (step === STEP.PART) {
-    const p = unit?.part_master || {};
-    const proj = p.projects || {};
-    const rel = unit?.release || {};
-    // running number ของป้ายตัวใหม่: เริ่มจาก (ทำไปแล้ว + 1) OF จำนวนทั้งใบ
-    // นับ "แยกตามขั้นตอนของเครื่องนี้" (เจาะ/ตัด/บาก แยกกัน) — ดู getReleaseProgress
-    const total = progress?.total ?? rel.qty ?? null;
-    const noOp = !!progress?.noOp;                 // ไม่รู้ขั้นตอนของเครื่อง → ไม่โชว์เลขวิ่งที่อาจหลอก
-    const done = progress?.done ?? 0;
-    const startNo = done + 1;
-    const endNo = done + Math.max(1, qty || 1);
-    // เลขลำดับป้ายสะสม (ไม่ใช่ progress) — ใส่ "#" + คำว่า "ลำดับ" กำกับ กันเข้าใจผิดว่าเป็นยอดทำ/ยอดสั่ง
-    const ofText = noOp
-      ? (total != null ? `— of ${fmt(total)}` : "—")
-      : (total != null
-          ? `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""} of ${fmt(total)}`
-          : `#${fmt(startNo)}${endNo > startNo ? `–${fmt(endNo)}` : ""}`);
-    // ★ เกินจำนวนสั่งเท่าไร (ถ้าบันทึกครั้งนี้) — ยังไม่เกิน = 0 (ไม่เตือน) · เกิน = โชว์จำนวนที่เกิน
-    //   บันทึกต่อได้ปกติเสมอ (ตัดเผื่อสแปร์/เพิ่ม) — แค่เตือนแบบไม่บล็อก ไม่หยุดเวลา
-    const projected = done + (Number(qty) || 0);
-    const overBy = (!noOp && total != null && projected > total) ? (projected - total) : 0;
-    return (
-      <div className="stn-part-panel">
-        {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
-        <div className="stn-part-label">
-          <div className="stn-lbl-qr" />
-          <div className="stn-lbl-body">
-            <div className="stn-lbl-col left">
-              <div className="stn-lbl-num">{proj.code || "-"}</div>
-              <div className="stn-lbl-name">{proj.name || "-"}</div>
-              <div className="stn-lbl-part">{p.part_no || "-"}</div>
-              {p.material ? <div className="stn-lbl-mat">{p.material}</div> : null}
-            </div>
-            <div className="stn-lbl-vline" />
-            <div className="stn-lbl-col right">
-              <div className="stn-lbl-kv">
-                <span className="k">MDF NO.</span><span className="v">{p.mdf_no || "-"}</span>
-                <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
-                {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
-              </div>
-              <div className="stn-lbl-of">
-                <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ลำดับ", "No.")} </span>
-                {progress?.offline ? `~${ofText}` : ofText}
-              </div>
-              {/* เตือนเฉพาะ "เกินจำนวนสั่ง" + บอกจำนวนที่เกิน (ยังไม่เกิน = ไม่เตือน) · แบบไม่บล็อก ไม่หยุดเวลา */}
-              {overBy > 0 ? <div className="stn-lbl-dup">{t(`⚠ เกินจำนวนสั่ง +${fmt(overBy)} ชิ้น`, `⚠ Over the order +${fmt(overBy)} pcs`)}</div> : null}
-              {progress?.offline ? <div className="stn-lbl-approx">{t("ประมาณการ · ออฟไลน์", "estimate · offline")}</div> : null}
-            </div>
-          </div>
-        </div>
-        <div className="stn-qty-lbl">{t("จำนวน", "QUANTITY")}</div>
-        <div className="stn-qty-stepper">
-          <button onClick={() => setQty(Math.max(0, qty - 1))}>−</button>
-          <input inputMode="numeric" value={qty}
-            onChange={(e) => setQty(Math.min(100000, Math.max(0, parseInt(e.target.value || "0", 10) || 0)))} />
-          <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
-        </div>
-        <div className="stn-row-btns stn-status-row">
-          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>{t("กำลังทำ", "In Process")}</button>
-          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>{t("เสร็จแล้ว", "Finished")}</button>
-        </div>
-        <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={rescan} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
-          <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
-        </div>
-      </div>
-    );
-  }
-  return null;
-}
-
-// ── Camera QR scanner (rear camera + jsQR) with manual fallback ────────────
-function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const overlayRef = useRef(null);   // แคนวาสวาดกรอบขาวทับ QR ที่เจอ
-  const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const doneRef = useRef(false);
-  const [manual, setManual] = useState("");
-  const [err, setErr] = useState("");
-  const [pickList, setPickList] = useState(null);   // [options] ให้เลือก "โปรเจค" เมื่อเบอร์พาร์ทอยู่หลายโปรเจค
-  const [pickFilter, setPickFilter] = useState("");   // ค้นหาโปรเจคในตัวเลือก (กรณีมีหลายสิบโปรเจค)
-  const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
-  const [lang] = useLang();
-  const t = (th, en) => (lang === "en" ? en : th);
-  const trackRef = useRef(null);
-  const [zoom, setZoom] = useState(null);      // { min, max, step, value } หรือ null ถ้ากล้องไม่รองรับซูม
-  const pinchRef = useRef(null);               // จับระยะ 2 นิ้ว (pinch zoom)
-  const [focusRing, setFocusRing] = useState(null);  // { x, y } จุดที่แตะโฟกัส (px ในกรอบกล้อง)
-  const extraRef = useRef([]);                 // กล้องหลัง "ตัวอื่น" ที่เปิด decode ขนานกัน { stream, stop, video }
-  const [camCount, setCamCount] = useState(1); // จำนวนกล้องหลังที่ใช้อ่านพร้อมกันจริง
-  function applyZoom(v) {
-    const val = Number(v);
-    setZoom((z) => (z ? { ...z, value: val } : z));
-    try { trackRef.current?.applyConstraints({ advanced: [{ zoom: val }] }); } catch { /* กล้องไม่รองรับ */ }
-  }
-  const _touchDist = (ts) => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
-  function camTouchStart(e) {
-    if (e.touches.length === 2 && zoom) pinchRef.current = { d0: _touchDist(e.touches), z0: zoom.value };
-  }
-  function camTouchMove(e) {
-    if (e.touches.length === 2 && zoom && pinchRef.current) {
-      e.preventDefault();
-      const ratio = _touchDist(e.touches) / pinchRef.current.d0;
-      let v = pinchRef.current.z0 + (ratio - 1) * (zoom.max - zoom.min);   // กางนิ้ว = ซูมเข้า
-      v = Math.max(zoom.min, Math.min(zoom.max, v));
-      applyZoom(v);
-    }
-  }
-  function camTouchEnd() { pinchRef.current = null; }
-  // แตะ = "สั่งโฟกัสใหม่ (re-autofocus)" — จิ้มโฟกัส "ที่จุด" เว็บไม่รองรับจริง (pointsOfInterest แทบ
-  //   ไม่มีเบราว์เซอร์ไหนเปิด) จึงทำได้แค่กระตุ้นให้กล้องโฟกัสรอบใหม่ · เครื่องที่ไม่เปิด focusMode (iOS)
-  //   สั่งไม่ได้ → เงียบไว้ (พึ่งโฟกัสอัตโนมัติต่อเนื่องแทน)
-  async function tapFocus(e) {
-    if (e.target?.closest?.("button, input, .stn-cam-zoom")) return;   // แตะปุ่ม/แถบซูม ไม่นับ
-    const track = trackRef.current; if (!track) return;
-    const caps = track.getCapabilities?.() || {};
-    const modes = Array.isArray(caps.focusMode) ? caps.focusMode : [];
-    const hasPoint = !!caps.pointsOfInterest && modes.includes("single-shot");   // โฟกัสที่จุด (หายากมาก)
-    const hasSingle = modes.includes("single-shot");                              // สั่งโฟกัสรอบใหม่ได้
-    if (!hasPoint && !hasSingle) return;   // สั่งโฟกัสไม่ได้เลย (iOS/เครื่องที่ไม่เปิด API) → เงียบ ไม่หลอกตา
-    const box = e.currentTarget.getBoundingClientRect();
-    const px = (e.clientX ?? e.changedTouches?.[0]?.clientX) - box.left;
-    const py = (e.clientY ?? e.changedTouches?.[0]?.clientY) - box.top;
-    setFocusRing({ x: px, y: py });
-    setTimeout(() => setFocusRing(null), 900);
-    try {
-      if (hasPoint) {
-        const nx = Math.min(1, Math.max(0, px / box.width));
-        const ny = Math.min(1, Math.max(0, py / box.height));
-        await track.applyConstraints({ advanced: [{ focusMode: "single-shot", pointsOfInterest: [{ x: nx, y: ny }] }] });
-      } else {
-        // กระตุ้นโฟกัสรอบใหม่ (single-shot) แล้วกลับเป็นต่อเนื่อง (ถ้ามี) ให้ AF ทำงานต่อ
-        await track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
-        if (modes.includes("continuous")) {
-          setTimeout(() => { track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }, 900);
-        }
-      }
-    } catch { /* สั่งไม่สำเร็จ — เงียบไว้ */ }
-  }
-
-  useEffect(() => {
-    if (!camOn) return;                          // ยังไม่กดเปิดกล้อง → ไม่แตะกล้องเลย
-    doneRef.current = false;
-    let cancelled = false;
-
-    async function open() {
-      // ★ ใช้สตรีมกล้องที่ใช้ร่วมกัน — เปิด/ขอสิทธิ์ครั้งเดียว จากนั้นทุกครั้งที่กด SCAN ใช้ตัวเดิม
-      const stream = await getSharedCameraStream();
-      if (cancelled) return;                       // ปิดหน้าไปก่อน — อย่าแตะกล้อง (สตรีมคงอยู่ให้ครั้งหน้า)
-      if (!stream) { setErr(t("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้", "Can't open camera — type the QR code below instead")); setCamOn(false); return; }
-      streamRef.current = stream;
-      // ★ ตรวจว่ากล้องรองรับซูม (hardware zoom) ไหม — ถ้ารองรับให้โชว์แถบซูม
-      const track = stream.getVideoTracks?.()[0] || null;
-      trackRef.current = track;
-      try {
-        const caps = track?.getCapabilities?.();
-        if (caps && caps.zoom && Number(caps.zoom.max) > Number(caps.zoom.min)) {
-          const cur = track.getSettings?.().zoom ?? caps.zoom.min;
-          setZoom({ min: Number(caps.zoom.min), max: Number(caps.zoom.max), step: Number(caps.zoom.step) || 0.1, value: Number(cur) });
-        } else { setZoom(null); }
-        // ★ เปิดโฟกัสอัตโนมัติต่อเนื่อง (ถ้ารองรับ) — ให้กล้องปรับโฟกัสเองตลอด (สำคัญเมื่อจิ้มโฟกัสไม่ได้)
-        if (caps && Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) {
-          try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch { /* ignore */ }
-        }
-      } catch { setZoom(null); }
-      const v = videoRef.current;
-      if (!v) return;                              // ไม่ stop สตรีม — เก็บไว้ใช้ครั้งหน้า
-      v.srcObject = stream;
-      try { await v.play(); } catch { /* ignore */ }
-      loop();
-    }
-    // วาดกรอบขาวรอบ QR ที่เจอ (ตามพิกัดมุมจาก jsQR) — พิกัดตรงกับภาพกล้องเพราะ
-    // overlay ใช้ object-fit: cover เหมือน <video> (ดู .stn-cam-overlay ใน CSS)
-    function drawBox(loc, w, h) {
-      const oc = overlayRef.current; if (!oc) return;
-      if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
-      const g = oc.getContext("2d");
-      g.clearRect(0, 0, w, h);
-      if (!loc) return;
-      const p = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner];
-      g.lineJoin = "round"; g.lineCap = "round";
-      g.lineWidth = Math.max(5, Math.round(w * 0.009));
-      g.strokeStyle = "#fff";
-      g.shadowColor = "rgba(0,0,0,.55)"; g.shadowBlur = 8;
-      g.beginPath();
-      g.moveTo(p[0].x, p[0].y);
-      for (let i = 1; i < 4; i++) g.lineTo(p[i].x, p[i].y);
-      g.closePath(); g.stroke();
-    }
-    function clearBox() { const oc = overlayRef.current; if (oc) { const g = oc.getContext("2d"); g && g.clearRect(0, 0, oc.width, oc.height); } }
-
-    // เมื่อ decode เจอ QR (ตัวไหนก็ได้ที่อ่านชัดก่อน) → ประมวลผล · ถ้าไม่พบในระบบ กลับมาสแกนต่อเอง
-    function handleFound(data) {
-      doneRef.current = true;                          // หยุดทุกตัวชั่วคราว (กัน decode ซ้ำ)
-      onDecoded(data).then((ok) => { if (!ok) { clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); } });
-    }
-    // ★ tick แบบ "reschedule เสมอ" — พอ doneRef กลับเป็น false (เคสไม่พบ) จะสแกนต่ออัตโนมัติ ไม่ค้าง
-    function makeTick(video, canvas, { drawsBox }) {
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      let last = 0, raf = 0, live = true;
-      const tick = () => {
-        if (cancelled || !live) return;
-        const now = Date.now();
-        if (!doneRef.current && video.readyState === video.HAVE_ENOUGH_DATA && now - last > 110) {
-          last = now;
-          const w = video.videoWidth, h = video.videoHeight;
-          if (w && h) {
-            canvas.width = w; canvas.height = h;
-            ctx.drawImage(video, 0, 0, w, h);
-            const code = jsQRmod(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
-            if (code && code.data && code.location) {
-              if (drawsBox) drawBox(code.location, w, h);
-              handleFound(code.data.trim());
-            } else if (drawsBox) { clearBox(); }
-          }
-        }
-        raf = requestAnimationFrame(tick);
-      };
-      tick();
-      return () => { live = false; cancelAnimationFrame(raf); };
-    }
-    let jsQRmod = null;
-    async function loop() {
-      const mod = await import("jsqr");
-      jsQRmod = mod.default || mod;
-      const v = videoRef.current, cv = canvasRef.current;
-      if (!v || !cv) return;
-      const stopPrimary = makeTick(v, cv, { drawsBox: true });
-      rafRef.current = stopPrimary;                    // เก็บตัวหยุดของกล้องหลัก
-      startExtras();                                   // เปิดกล้องหลังตัวอื่น decode ขนานกัน
-    }
-    // กล้องหลัก "ยังทำงาน/ไม่ดำ" อยู่ไหม (ใช้เช็กว่าอุปกรณ์เปิดหลายกล้องพร้อมกันได้จริง)
-    const primaryAlive = () => { const p = trackRef.current; return !!p && p.readyState === "live" && !p.muted; };
-    // ── เปิดกล้องหลัง "ทุกตัว" ที่อุปกรณ์เปิดพร้อมกันได้ แล้ว decode ขนานกัน (ตัวไหนชัดก่อนชนะ) ──
-    async function startExtras() {
-      // ★ iOS/iPadOS เปิดกล้องได้ทีละตัว — เปิดตัวอื่นจะไปแย่งกล้องหลัก → จอดำ · ข้าม ใช้กล้องเดียว
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "")
-        || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
-      if (isIOS) { setCamCount(1); return; }
-      try {
-        const primaryId = trackRef.current?.getSettings?.().deviceId || null;
-        const rears = await listRearCameras();
-        if (cancelled) return;
-        let count = 1;                                 // นับกล้องหลัก
-        for (const c of rears.filter((x) => x.deviceId && x.deviceId !== primaryId)) {
-          if (cancelled || !primaryAlive()) break;     // กล้องหลักตายแล้ว → หยุด (อุปกรณ์ไม่รองรับพร้อมกัน)
-          let s = null;
-          try {
-            s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: c.deviceId } } });
-          } catch { break; }                           // เปิดไม่ได้ = ไม่รองรับพร้อมกัน → หยุด
-          // ★ ถ้าเปิดตัวใหม่แล้วกล้องหลัก "ตาย/ดำ" → ทิ้งตัวใหม่ + หยุด (กันจอหลักดำ)
-          if (cancelled || !primaryAlive()) { try { s.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ } break; }
-          const vid = document.createElement("video");
-          vid.playsInline = true; vid.muted = true; vid.srcObject = s;
-          try { await vid.play(); } catch { /* ignore */ }
-          if (cancelled || !primaryAlive()) { try { s.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ } break; }
-          const stop = makeTick(vid, document.createElement("canvas"), { drawsBox: false });
-          extraRef.current.push({ stream: s, stop, video: vid });
-          count++;
-        }
-        if (!cancelled) setCamCount(count);
-      } catch { /* ignore */ }
-    }
-    open();
-    return () => {
-      cancelled = true;
-      if (typeof rafRef.current === "function") { try { rafRef.current(); } catch { /* ignore */ } }  // หยุด loop กล้องหลัก
-      rafRef.current = null;
-      // หยุด decode + ปิดกล้องหลัง "ตัวอื่น" (extra) เสมอ — ไม่ใช่สตรีมถาวร
-      extraRef.current.forEach((x) => {
-        try { x.stop && x.stop(); } catch { /* ignore */ }
-        try { x.stream.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
-        try { x.video.srcObject = null; } catch { /* ignore */ }
-      });
-      extraRef.current = [];
-      const v = videoRef.current;
-      if (v) { try { v.pause(); } catch { /* ignore */ } v.srcObject = null; }
-      streamRef.current = null;
-      // ★ ปิดสตรีมจริง (ดับไฟกล้อง) "เฉพาะเมื่อเบราว์เซอร์จำสิทธิ์ได้" → กดสแกนชิ้นถัดไปไม่ถามซ้ำ
-      //   (Android/เดสก์ท็อป หรือ ติดตั้งเป็นแอป/PWA)
-      // ถ้าเป็นแท็บ Safari บน iOS ที่จำสิทธิ์ข้าม stop() ไม่ได้ → คงสตรีมไว้ กันเด้งขอสิทธิ์ซ้ำทุกชิ้น
-      //   (สตรีมจะถูกปิดจริงตอนออกจากระบบ ที่ cleanup ระดับ root)
-      if (camPermissionPersists()) releaseSharedCamera();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camOn]);
-
-  function submitManual(e) {
-    e.preventDefault();
-    if (!manual.trim()) return;
-    setPickList(null); setPickFilter("");
-    // เบอร์พาร์ทอยู่หลายโปรเจค → คืน choose ให้เลือกโปรเจค · โปรเจคเดียว → ระบุเลย
-    onManualEntry(manual.trim()).then((r) => {
-      if (r && r.ok) { doneRef.current = true; }
-      else if (r && r.choose) { setPickList(r.choose); setPickFilter(""); }
-    });
-  }
-  function closePick() { setPickList(null); setPickFilter(""); }
-  function pickOption(opt) {
-    closePick();
-    doneRef.current = true;
-    onPickUnit(opt.unit);
-  }
-
-  return (
-    <div>
-      <div className="stn-cam"
-        onTouchStart={camTouchStart} onTouchMove={camTouchMove} onTouchEnd={camTouchEnd} onClick={tapFocus}>
-        {camOn ? (
-          <>
-            <video ref={videoRef} playsInline muted />
-            <canvas ref={canvasRef} style={{ display: "none" }} />
-            <canvas ref={overlayRef} className="stn-cam-overlay" />
-            {focusRing && <div className="stn-cam-focus" style={{ left: focusRing.x, top: focusRing.y }} />}
-            <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
-            {camCount > 1 && <div className="stn-cam-multi">📷×{camCount}</div>}
-            {zoom && (
-              <div className="stn-cam-zoom">
-                <button type="button" onClick={() => applyZoom(Math.max(zoom.min, zoom.value - zoom.step * 3))} aria-label="zoom out">−</button>
-                <input type="range" min={zoom.min} max={zoom.max} step={zoom.step} value={zoom.value}
-                  onChange={(e) => applyZoom(e.target.value)} aria-label="zoom" />
-                <button type="button" onClick={() => applyZoom(Math.min(zoom.max, zoom.value + zoom.step * 3))} aria-label="zoom in">+</button>
-              </div>
-            )}
-          </>
-        ) : (
-          // กล้องยังไม่เปิด — กดเปิดเอง (ขอสิทธิ์ไปแล้ว จึงไม่ถามซ้ำ)
-          <button type="button" className="stn-cam-open" onClick={() => { setErr(""); setCamOn(true); }}>
-            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
-            <span>{t("แตะเพื่อเปิดกล้อง", "Tap to open camera")}</span>
-          </button>
-        )}
-      </div>
-      {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
-      <form className="stn-cam-manual" onSubmit={submitManual}>
-        <input className="stn-input stn-mono" value={manual} placeholder={t("หรือพิมพ์ QR / เบอร์พาร์ท", "or type QR / part no.")}
-          onChange={(e) => setManual(e.target.value)} />
-        <button className="stn-pill" type="submit" disabled={busy}>{t("ตกลง", "OK")}</button>
-      </form>
-      <div className="stn-cam-cancel-row">
-        <button type="button" className="stn-pill stn-cam-cancel" onClick={onClose}>{t("✕ ปิด / ยกเลิก", "✕ Close / Cancel")}</button>
-      </div>
-
-      {/* เบอร์พาร์ทอยู่หลายโปรเจค → เลือก "โปรเจค" อย่างเดียว (ไม่ต้องเลือก release)
-          ★ โปรเจคที่ "ยังไม่ได้ทำขั้นตอนนี้" ขึ้นก่อน · ที่ทำแล้วอยู่ล่าง (ไว้แก้งานเสีย)
-          ★ โชว์ ความยาว ให้เทียบกับชิ้นจริง (เบอร์ซ้ำแต่คนละความยาว) */}
-      {pickList && pickList.length > 0 && (() => {
-        const q = pickFilter.trim().toLowerCase();
-        const filtered = q
-          ? pickList.filter((o) => `${o.code} ${o.name} ${o.partName}`.toLowerCase().includes(q))
-          : pickList;
-        return (
-          <div className="stn-pick-backdrop" onClick={closePick}>
-            <div className="stn-pick" onClick={(e) => e.stopPropagation()}>
-              <div className="stn-pick-head">
-                <b>{pickList[0]?.unit?.part_master?.part_no || ""}</b>
-                <span>{t("อยู่", "in")} {pickList.length} {t("โปรเจค — เลือกให้ตรงชิ้นจริง (ดูความยาว)", "projects — pick the one matching the piece (check length)")}</span>
-              </div>
-              {/* มีหลายโปรเจค → ช่องค้นหา (พิมพ์โค้ด/ชื่อโปรเจคให้แคบลง) */}
-              {pickList.length > 6 && (
-                <input className="stn-input stn-pick-search" value={pickFilter} autoFocus
-                  placeholder={t("ค้นหาโปรเจค (โค้ด/ชื่อ)…", "Search project (code/name)…")}
-                  onChange={(e) => setPickFilter(e.target.value)} />
-              )}
-              <div className="stn-pick-list">
-                {filtered.length === 0 && <div className="stn-pick-empty">{t("ไม่พบโปรเจคที่ค้นหา", "No matching project")}</div>}
-                {filtered.map((o, i) => {
-                  const projText = [o.code, o.name].filter(Boolean).join(" · ") || t("ไม่ระบุโปรเจค", "No project");
-                  const done = o.doneCount > 0;
-                  return (
-                    <button type="button" key={o.pmId || i} className={`stn-pick-item${done ? " done" : ""}`} onClick={() => pickOption(o)}>
-                      <b>{projText}</b>
-                      <span className="stn-pick-len">{t("ยาว", "Length")} {o.length != null ? `${fmt(o.length)} mm` : "-"}
-                        {o.partName ? ` · ${o.partName}` : ""}</span>
-                      <span className={done ? "stn-pick-done" : "stn-pick-fresh"}>
-                        {done
-                          ? `✓ ${t("ทำขั้นตอนนี้แล้ว", "operation already done")} (${o.doneCount}) · ${t("เลือกเพื่อแก้งาน", "pick to rework")}`
-                          : `● ${t("ยังไม่ได้ทำขั้นตอนนี้", "not done yet")}`}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <button type="button" className="stn-pill stn-cam-cancel" onClick={closePick}>{t("ยกเลิก", "Cancel")}</button>
-            </div>
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
-
-// ── แผงจัดการคิว "ซิงค์ไม่สำเร็จ" (rejected) — ดูรายการ + ลองใหม่ทั้งหมด / ล้างทิ้ง ──
-function RejectedPanel({ t, onClose, onRetry, onClear }) {
-  const items = listRejected();
-  const [confirmClear, setConfirmClear] = useState(false);
-  const reasonText = (r) => {
-    if (r === "not_found" || r === "unit_not_found") return t("ไม่พบ QR/ล็อตในระบบ (อาจถูกลบ)", "QR/lot not found (may be deleted)");
-    if (r === "retry_exhausted") return t("ลองซิงค์หลายครั้งไม่สำเร็จ", "Failed after several retries");
-    if (r === "forbidden" || r === "unauthorized") return t("สิทธิ์/เซสชันมีปัญหา", "Permission/session issue");
-    return r || t("ไม่ทราบสาเหตุ", "unknown");
-  };
-  const whatText = (it) => {
-    const mw = it.machineWork;
-    if (mw) return `${mw.p_qr || "-"}${mw.p_quantity ? ` × ${mw.p_quantity}` : ""}`;
-    // ★ งานประกอบ/แพ็ก (it.assembly) — เดิมตกไป it.qr = "-" (ไม่รู้ว่าเบอร์ไหนพัง) → โชว์เบอร์แม่ + จำนวนลูก
-    if (it.assembly) { const a = it.assembly; const n = (a.p_child_qrs || []).length; return `${a.p_parent_qr || "-"} · ${n} ${t("ชิ้น", "pcs")}`; }
-    return it.qr || "-";
-  };
-  const whenText = (it) => {
-    const ts = it.rejectedAt || it.ts;
-    if (!ts) return "";
-    try { const d = new Date(ts); return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-    catch { return ""; }
-  };
-  return (
-    <div className="stn-rej-backdrop" onClick={onClose}>
-      <div className="stn-rej-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="stn-rej-head">
-          <b><Icon name="warn" size={15} className="stn-ico" />{t("คิวซิงค์ไม่สำเร็จ", "Failed-sync queue")} ({items.length})</b>
-          <button type="button" className="stn-rej-x" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
-        </div>
-        <div className="stn-rej-note">
-          {t("งานเหล่านี้ทำจริงแต่ซิงค์ขึ้นระบบไม่ได้ (มัก QR/ล็อตถูกลบหรือแก้ฝั่งออฟฟิศ) — ให้ออฟฟิศกู้/แก้ข้อมูลก่อน แล้วกดลองใหม่",
-             "These jobs were done but couldn't sync (usually the QR/lot was deleted or changed in the office app). Ask the office to restore/fix the data, then retry.")}
-        </div>
-        <div className="stn-rej-list">
-          {items.length === 0 && <div className="stn-rej-empty">{t("ไม่มีรายการ", "No items")}</div>}
-          {items.map((it, i) => (
-            <div className="stn-rej-item" key={it.qid || i}>
-              <div className="stn-rej-what stn-mono">{whatText(it)}</div>
-              <div className="stn-rej-reason">{reasonText(it.reason)}</div>
-              <div className="stn-rej-when stn-mono">{whenText(it)}</div>
-            </div>
-          ))}
-        </div>
-        <div className="stn-rej-actions">
-          {!confirmClear ? (
-            <>
-              <button type="button" className="stn-pill yes" onClick={onRetry} disabled={!items.length}>
-                <Icon name="refresh" size={15} className="stn-ico" />{t("ลองซิงค์ใหม่ทั้งหมด", "Retry all")}
-              </button>
-              <button type="button" className="stn-pill no" onClick={() => setConfirmClear(true)} disabled={!items.length}>
-                <Icon name="trash" size={15} className="stn-ico" />{t("ล้างทิ้ง", "Discard")}
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="stn-rej-confirm">{t("ล้างทิ้งถาวร? งานเหล่านี้จะหายและไม่ถูกบันทึก", "Discard permanently? These jobs will be lost.")}</span>
-              <button type="button" className="stn-pill no" onClick={onClear}>{t("ยืนยันล้าง", "Confirm discard")}</button>
-              <button type="button" className="stn-pill" onClick={() => setConfirmClear(false)}>{t("ยกเลิก", "Cancel")}</button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// ROOT (station)
-// ══════════════════════════════════════════════════════════════════════════
-// แถบแจ้ง "มีอัปเดต" สำหรับหน้าเครื่อง — คนงานกดเองเมื่อพร้อม (งานค้าง/ออฟไลน์ไม่หาย เพราะเก็บใน localStorage)
-function StationUpdateBanner() {
-  const ready = useUpdateReady();
-  const [lang] = useLang();
-  const t = (th, en) => (lang === "en" ? en : th);
-  const [busy, setBusy] = useState(false);
-  const [offline, setOffline] = useState(false);
-  if (!ready) return null;
-  return (
-    <div className="stn-update">
-      <span>● {t("มีเวอร์ชันใหม่", "New version")}{offline ? t(" · ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่", " · offline — reconnect then retry") : t(" — กดอัปเดตเมื่อพร้อม (งานที่ทำอยู่ไม่หาย)", " — tap update when ready (your work is safe)")}</span>
-      <button onClick={() => { setBusy(true); if (!applyUpdate()) { setBusy(false); setOffline(true); } }} disabled={busy}>
-        {busy ? t("กำลังอัปเดต…", "Updating…") : t("อัปเดต", "Update")}
-      </button>
-    </div>
-  );
-}
-
-// ── กันจอขาวหน้าสเตชัน — จับ error ตอนเรนเดอร์ → โชว์การ์ด (ธีมมืด) + ปุ่มโหลดใหม่/ออกจากระบบ ──
-//   ถ้าเป็น error จาก chunk ค้าง (deploy ใหม่ทับของเก่า) กู้เอง 1 ครั้ง (เหมือน auto-heal ใน main.jsx)
-function stnHardReload() {
-  const reload = () => { try { location.reload(); } catch { /* ignore */ } };
-  // ★ ออฟไลน์: ห้ามล้างแคช/ถอน service worker (จะทำให้เปิดแอปไม่ได้เลยจนกว่าจะออนไลน์)
-  //   — โหลดใหม่จาก app shell ที่แคชไว้เฉยๆ · การล้างแคชช่วยได้เฉพาะตอนออนไลน์ (ดึงเวอร์ชันใหม่ได้)
-  if (typeof navigator !== "undefined" && navigator.onLine === false) { reload(); return; }
+// ── Audit log: บันทึก "ใครทำอะไร (สำคัญ/ลบได้) เมื่อไหร่" ─────────────────────
+// เรียก "หลังการกระทำสำเร็จ" แบบ best-effort — ถ้า log พลาดจะไม่ทำให้การกระทำหลักล้ม
+export async function auditRecord(action, entity = null, entityId = null, detail = null) {
   try {
-    const cc = (window.caches && caches.keys) ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {}) : Promise.resolve();
-    const sw = (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {}) : Promise.resolve();
-    Promise.all([cc, sw]).finally(reload);
-  } catch { reload(); }
+    await supabase.rpc("authz_audit_record", {
+      p_token: authToken(), p_action: action, p_entity: entity,
+      p_entity_id: entityId == null ? null : String(entityId), p_detail: detail,
+    });
+  } catch (e) { console.warn("auditRecord failed:", action, e?.message || e); }
 }
-class StationErrorBoundary extends Component {
-  constructor(p) { super(p); this.state = { err: null, stack: "" }; }
-  static getDerivedStateFromError(err) { return { err }; }
-  componentDidCatch(err, info) {
-    console.error("Station crashed:", err, info?.componentStack);
-    this.setState({ stack: info?.componentStack || "" });
-    const msg = String(err?.message || err || "");
-    if (/#130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported/i.test(msg)) {
-      let healed = false;
-      try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
-      // ★ ออฟไลน์: ไม่ auto-heal (โหลดใหม่ตอนออฟไลน์ไม่ช่วย + เสี่ยงวน) → โชว์การ์ด crash ให้เลือกเอง
-      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(); }
+
+// อ่านประวัติการแก้ไข (admin เท่านั้น) — ล่าสุดก่อน · before = timestamptz สำหรับโหลดหน้าถัดไป
+export async function listAuditLog({ limit = 200, before = null } = {}) {
+  const { data, error } = await supabase.rpc("authz_list_audit", { p_token: authToken(), p_limit: limit, p_before: before });
+  if (error) { console.warn("authz_list_audit error", error); flagAuth(error); throw error; }
+  return data || [];
+}
+
+// เปลี่ยนรหัสผ่านของตัวเอง (ผู้ใช้คนไหนก็ได้ที่ล็อกอินอยู่) — ต้องกรอกรหัสเดิมถูก
+//   คืน { ok:true } · { ok:false, reason:'wrong_old'|'too_short' }
+export async function changeMyPassword(oldPw, newPw) {
+  const { data, error } = await supabase.rpc("change_my_password", { p_token: authToken(), p_old: oldPw, p_new: newPw });
+  if (error) { console.warn("change_my_password error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
+// ลบเครื่องจักร (admin เท่านั้น) — ผ่าน RPC
+//   คืน { ok:true, unbound, deleted_records } เมื่อสำเร็จ
+//   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
+//   force=true = ยืนยันลบทั้งประวัติงานของเครื่องนี้ (ตัวเลขในรายงานจะหาย)
+export async function deleteMachine(id, force = false) {
+  const { data, error } = await supabase.rpc("authz_delete_machine", { p_token: authToken(), p_id: id, p_force: !!force });
+  if (error) { console.warn("authz_delete_machine error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
+// ลบพนักงาน (admin เท่านั้น) — ผ่าน RPC
+//   คืน { ok:true, detached } เมื่อลบสำเร็จ
+//   คืน { ok:false, reason:'has_records', count } เมื่อมีประวัติงาน (ยังไม่ยืนยัน)
+//   คืน { ok:false, reason:'self' } เมื่อพยายามลบบัญชีตัวเอง
+//   force=true = ยืนยันลบทั้งที่มีประวัติ (ประวัติงานยังอยู่ แต่ตัดชื่อผู้ทำออก)
+export async function deleteEmployee(id, force = false) {
+  const { data, error } = await supabase.rpc("authz_delete_employee", { p_token: authToken(), p_id: id, p_force: !!force });
+  if (error) { console.warn("authz_delete_employee error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+
+// Delete a release entirely, along with every part_unit it created and any
+// scan_logs recorded against those units (FK constraints require deleting
+// children before parents). Caller is responsible for warning the user first
+// if any of those units have already been scanned — this does not check.
+export async function deleteReleaseCascade(releaseId) {
+  // cascade (scan_logs → part_units → releases) ทำใน RPC เดียว = atomic + ตรวจสิทธิ์
+  const { error } = await supabase.rpc("authz_delete_release", { p_token: authToken(), p_release_id: releaseId });
+  if (error) { console.warn("deleteReleaseCascade error", error); flagAuth(error); throw error; }
+}
+
+// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
+export async function deleteCap(machineId, operationId) {
+  const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
+  if (error) { console.warn("deleteCap error", error); flagAuth(error); throw error; }
+}
+// ตั้ง "ขั้นตอนที่ทำได้" (ความสามารถ) ของเครื่อง/สถานี = แทนที่ทั้งชุด (admin) — ผ่าน RPC เฉพาะ
+// เลี่ยง authz_insert_many (generic) ที่ไม่รองรับตาราง machine_operations → เพิ่ม cap แรกไม่ได้ (forbidden)
+export async function setMachineOps(machineId, operationIds) {
+  const ids = Array.from(new Set((operationIds || []).filter(Boolean)));
+  const { data, error } = await supabase.rpc("authz_set_machine_ops", { p_token: authToken(), p_machine_id: machineId, p_operation_ids: ids });
+  if (error) { console.warn("authz_set_machine_ops error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
+// ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
+export async function clearScansRelease(releaseId, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_release", { p_token: authToken(), p_release_id: releaseId, p_preview: preview });
+  if (error) { console.warn("clearScansRelease error", error); flagAuth(error); throw error; }
+  return data;
+}
+export async function clearScansUnit(partUnitId, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_unit", { p_token: authToken(), p_part_unit_id: partUnitId, p_preview: preview });
+  if (error) { console.warn("clearScansUnit error", error); flagAuth(error); throw error; }
+  return data;
+}
+// ล้างสแกน "ทั้งชุด Release" — ทุก Part ใน (project + release_order) เดียวกัน
+export async function clearScansReleaseGroup(projectId, releaseOrder, { preview = false } = {}) {
+  const { data, error } = await supabase.rpc("authz_clear_scans_release_group", { p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder ?? null, p_preview: preview });
+  if (error) { console.warn("clearScansReleaseGroup error", error); flagAuth(error); throw error; }
+  return data;
+}
+
+const UNIT_SELECT = "*, part_master(*, projects(code, name, status)), release:releases(*)";
+
+// หา part_unit จาก QR code ที่สแกนได้ (ใช้บ่อยในหน้าสแกน)
+// ออนไลน์ = ถามฐานข้อมูล + เก็บลงแคชไว้ใช้ออฟไลน์ · ออฟไลน์/เน็ตมีปัญหา = อ่านจากแคช
+export async function findUnitByQr(qrCode) {
+  const qr = String(qrCode || "").trim();
+  if (!qr) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return await getCachedUnit(qr);                       // ออฟไลน์ → แคชอย่างเดียว
+  }
+  const { data, error } = await supabase
+    .from("part_units").select(UNIT_SELECT).eq("qr_code", qr).maybeSingle();
+  if (error) {
+    console.warn("findUnitByQr error", error);
+    return (await getCachedUnit(qr)) || null;             // เน็ตสะดุด → ลองแคช
+  }
+  if (data) cacheUnit(data);                              // เก็บไว้ใช้ตอนเน็ตหลุด
+  return data;
+}
+
+// หาชิ้นงานจาก "เบอร์พาร์ท" (แทนการสแกน QR — เผื่อ QR เสีย/พิมพ์เอง)
+// ★ สำคัญ: พาร์ทเดียวอาจมีหลาย release → ถ้าเลือก release มั่ว "เลขรัน (PROCESS/BALANCE)"
+//   จะแยกคนละชุดกับตอนสแกน QR (ที่ได้ release เจาะจงจากตัว QR) → ยอดไม่ตรงกัน
+//   แก้: เลือก "release ที่กำลังทำอยู่" = release ที่มี machine_record ล่าสุดของพาร์ทนี้
+//   → พิมพ์เบอร์พาร์ทแล้วไปนับต่อกับชุดเดียวกับที่สแกน (เลขรันตรงกัน)
+// ทำเป็นขั้น ๆ (เลี่ยง embedded-filter ของ PostgREST ที่ไม่เสถียร):
+export async function findUnitByPartNo(partNo) {
+  const p = String(partNo || "").trim();
+  if (!p) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return null;  // ต้องมีเน็ต
+  // 1) หาพาร์ทที่ part_no ตรง (ไม่สนตัวพิมพ์เล็ก-ใหญ่/ช่องว่างหัวท้าย)
+  const { data: pms, error: e1 } = await supabase
+    .from("part_master").select("id").ilike("part_no", p);
+  if (e1) { console.warn("findUnitByPartNo (part_master) error", e1); return null; }
+  const ids = (pms || []).map((x) => x.id).filter(Boolean);
+  if (!ids.length) return null;                            // ไม่มีพาร์ทเบอร์นี้ในระบบ
+
+  // 2) หา "release ที่กำลังทำอยู่" = release ที่เพิ่งมี machine_record ล่าสุดของพาร์ทนี้
+  //    (จับให้ตรงกับชุดที่สแกน QR อยู่ → เลขรันไม่แตกเป็นคนละชุด)
+  let activeReleaseId = null;
+  const { data: recent } = await supabase
+    .from("machine_records").select("release_id")
+    .in("part_master_id", ids)
+    .not("release_id", "is", null)
+    .order("recorded_at", { ascending: false })
+    .limit(1);
+  if (recent && recent[0]) activeReleaseId = recent[0].release_id;
+
+  // 3) เอา unit สักตัวของ release ที่กำลังทำ (ยังไม่เคยทำ → activeReleaseId=null ค่อย fallback)
+  let u = null;
+  if (activeReleaseId) {
+    const { data } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .eq("release_id", activeReleaseId).in("part_master_id", ids)
+      .order("unit_no", { ascending: true }).limit(1);
+    u = (data && data[0]) || null;
+  }
+  // fallback: ยังไม่เคยทำพาร์ทนี้ (ไม่มี record) → เอา unit แรกที่ผูก release แล้ว
+  if (!u) {
+    const { data, error } = await supabase
+      .from("part_units").select(UNIT_SELECT)
+      .in("part_master_id", ids)
+      .order("release_id", { ascending: true, nullsFirst: false })
+      .order("unit_no", { ascending: true }).limit(1);
+    if (error) { console.warn("findUnitByPartNo error", error); return null; }
+    u = (data && data[0]) || null;
+  }
+  if (u) cacheUnit(u);
+  return u;
+}
+
+// พิมพ์เบอร์พาร์ท → คืน "ตัวเลือกระดับโปรเจค" (part_no ไม่ซ้ำในโปรเจคเดียว = 1 โปรเจค 1 part_master)
+// ★ ผู้ใช้เลือกแค่ "โปรเจค" พอ (ไม่ต้องเลือก release) — ระบบ resolve unit ให้เอง
+//   • done = ขั้นตอนนี้ (operation) "เคยทำ" ของโปรเจคนี้ไปกี่ครั้ง → เรียงโปรเจคที่ยังไม่เคยทำขึ้นก่อน
+//     (โปรเจคที่ทำแล้วยังเลือกได้ ไว้แก้งานเสีย)
+//   • unit ตัวแทน = ชิ้นของ "release ที่ยังทำอยู่" (record ล่าสุดของขั้นตอนนี้) ไม่งั้นชิ้นแรกของโปรเจค
+// คืน [{ pmId, code, name, partName, length, doneCount, unit }] เรียงยังไม่เคยทำก่อน · [] ถ้าไม่พบ/ออฟไลน์
+export async function findManualPartOptions(partNo, operationId = null) {
+  const p = String(partNo || "").trim();
+  if (!p) return [];
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return [];  // ต้องมีเน็ต
+  // 1) part_master (1 ต่อ 1 โปรเจค) ที่ part_no ตรง
+  const { data: pms, error: e1 } = await supabase
+    .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name, status)")
+    .ilike("part_no", p);
+  if (e1) { console.warn("findManualPartOptions (part_master) error", e1); return []; }
+  // ตัดโปรเจคที่ "ปิดแล้ว" ออก — บันทึกไม่ได้อยู่แล้ว ไม่ต้องให้เลือก (ถ้าต้องแก้งาน ให้แอดมินเปิดโปรเจคก่อน)
+  const masters = (pms || []).filter((m) => m.projects?.status !== "closed");
+  if (!masters.length) return [];
+  const ids = masters.map((m) => m.id);
+  // 2) ชิ้นงานของทุก part_master (ไว้ resolve + เอาความยาวเฉพาะชิ้น)
+  const { data: units } = await supabase.from("part_units").select(UNIT_SELECT)
+    .in("part_master_id", ids).order("unit_no", { ascending: true });
+  const allUnits = units || [];
+  // 3) บันทึกของ "ขั้นตอนนี้" (ไว้หา doneCount + release ที่ยังทำอยู่ ต่อโปรเจค)
+  let recs = [];
+  if (operationId) {
+    const { data: r } = await supabase.from("machine_records")
+      .select("part_master_id, release_id, recorded_at")
+      .in("part_master_id", ids).eq("operation_id", operationId)
+      .order("recorded_at", { ascending: false });
+    recs = r || [];
+  }
+  const out = [];
+  for (const m of masters) {
+    const mUnits = allUnits.filter((u) => u.part_master_id === m.id);
+    if (!mUnits.length) continue;                          // ไม่มีชิ้น = บันทึกไม่ได้ → ข้าม
+    const mRecs = recs.filter((r) => r.part_master_id === m.id);   // เรียงใหม่→เก่าอยู่แล้ว
+    let unit = null;
+    if (mRecs.length && mRecs[0].release_id) unit = mUnits.find((u) => u.release_id === mRecs[0].release_id) || null;
+    if (!unit) unit = mUnits[0];                           // ยังไม่เคยทำ → ชิ้นแรกของโปรเจค
+    out.push({
+      pmId: m.id, code: m.projects?.code || "", name: m.projects?.name || "",
+      partName: m.part_name || "", length: unit.length_mm ?? m.default_length_mm,
+      doneCount: mRecs.length, lastTs: mRecs[0]?.recorded_at || null, unit,
+    });
+  }
+  // ยังไม่เคยทำขั้นตอนนี้ (0) ขึ้นก่อน · ในกลุ่มเดียวกันเรียง "งานล่าสุด" ขึ้นก่อน (โปรเจคที่กำลังทำลอยขึ้น)
+  out.sort((a, b) => {
+    const af = a.doneCount === 0 ? 0 : 1, bf = b.doneCount === 0 ? 0 : 1;
+    if (af !== bf) return af - bf;
+    return String(b.lastTs || "").localeCompare(String(a.lastTs || ""));
+  });
+  return out;
+}
+
+// โหลดชิ้นงานล่วงหน้ามาเก็บในเครื่อง (เรียกตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
+// จำกัดจำนวนไว้กันหน่วง — ดึงล็อตล่าสุดก่อน (โอกาสถูกสแกนสูงสุด)
+let _prefetchingUnits = false;
+export async function prefetchUnitsForOffline(limit = 4000) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  if (_prefetchingUnits) return 0;                 // ★ กันรันซ้อน (mount + online event + เน็ตกระพริบ) = โหลดซ้ำหลายพันแถวโดยเปล่าประโยชน์
+  _prefetchingUnits = true;
+  try {
+    const pageSize = 1000; let from = 0; let total = 0;
+    for (; from < limit;) {
+      const { data, error } = await supabase
+        .from("part_units").select(UNIT_SELECT)
+        .order("created_at", { ascending: false })
+        .range(from, Math.min(from + pageSize, limit) - 1);
+      if (error) { console.warn("prefetchUnits error", error); break; }
+      if (!data || !data.length) break;
+      await cacheUnitsBulk(data);
+      total += data.length;
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return total;
+  } finally { _prefetchingUnits = false; }
+}
+
+// จำนวนที่บันทึกไปแล้วของล็อต/รีลีสนี้ (รวมทุกครั้งที่หน้าเครื่องกด SAVE)
+// ใช้ทำ running number บนป้ายหน้าเครื่อง เช่น "101 OF 500"
+//   ออนไลน์ = ยอดจริงจาก DB + งานที่ยังค้างคิว (ยังไม่ซิงค์) แล้ว snapshot ไว้
+//   ออฟไลน์ = snapshot ล่าสุด + งานที่ค้างคิว
+export async function getReleaseProgress(releaseId, operationId = null) {
+  if (!releaseId) return 0;
+  // นับ "แยกตามขั้นตอน (operation) ของเครื่องนี้" — เครื่องตัด/เจาะ/บาก มีตัวนับของตัวเอง
+  // ยึดตามเครื่องจักรเป็นหลัก: เจาะไปกี่ชิ้น OF จำนวนสั่ง โดยไม่รวมยอดของขั้นตอนอื่น
+  const key = releaseId + (operationId ? "|" + operationId : "");
+  // ★ นับงานค้างคิว "เฉพาะขั้นตอนนี้" (กันเครื่องหลายขั้นตอนนับข้ามกันตอนออฟไลน์)
+  const queued = queuedQtyForRelease(releaseId, operationId);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return (await getCachedProgress(key)) + queued;
+  }
+  // ★ page 1000 กัน PostgREST ตัดที่ 1000 แถวเงียบ ๆ → running number undercount บน release ใหญ่ (>1000 records/operation)
+  let done = 0; const pageSize = 1000; let from = 0;
+  for (;;) {
+    let q = supabase.from("machine_records").select("quantity").eq("release_id", releaseId);
+    if (operationId) q = q.eq("operation_id", operationId);   // เฉพาะขั้นตอนของเครื่องนี้
+    q = q.range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) {
+      console.warn("getReleaseProgress error", error);
+      return (await getCachedProgress(key)) + queued;
+    }
+    done += (data || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  setCachedProgress(key, done);                           // snapshot ไว้ใช้ออฟไลน์ (แยกตาม operation)
+  return done + queued;
+}
+
+// ประวัติการสแกนทั้งหมดของชิ้นเดียว
+export async function getUnitHistory(partUnitId) {
+  const { data, error } = await supabase
+    .from("scan_logs")
+    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name,code)")
+    .eq("part_unit_id", partUnitId)
+    .order("scanned_at", { ascending: true });
+  if (error) {
+    console.warn("getUnitHistory error", error);
+    return [];
+  }
+  return data || [];
+}
+
+// นับว่าชิ้นนี้ (part_unit) เคยถูกบันทึก "ขั้นตอนนี้" ไปแล้วกี่ครั้ง — ใช้เตือน rework ตอนสแกน
+// คืน 0 เมื่อไม่มี/ออฟไลน์/ผิดพลาด (ไม่บล็อกการทำงาน — แค่ข้อมูลเสริมสำหรับเตือน)
+export async function countUnitOpRecords(partUnitId, operationId) {
+  if (!partUnitId || !operationId) return 0;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  const { count, error } = await supabase
+    .from("machine_records")
+    .select("id", { count: "exact", head: true })
+    .eq("part_unit_id", partUnitId)
+    .eq("operation_id", operationId);
+  if (error) { console.warn("countUnitOpRecords error", error); return 0; }
+  return count || 0;
+}
+
+// part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
+export async function getAllUnitsFull(statusFilter) {
+  // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    let q = supabase
+      .from("part_units")
+      .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (statusFilter) q = q.eq("status", statusFilter);
+    const { data, error } = await q;
+    if (error) { console.warn("getAllUnitsFull error", error); break; }
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+// ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
+// (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
+// Caller ต้องแจ้งเตือนผู้ใช้ก่อนเสมอ — ฟังก์ชันนี้ไม่เช็คว่ามีการสแกนไปแล้วหรือยัง
+export async function deleteProjectCascade(projectId) {
+  // cascade (scan_logs → part_units → releases → part_master → projects) ใน RPC เดียว
+  const { error } = await supabase.rpc("authz_delete_project", { p_token: authToken(), p_project_id: projectId });
+  if (error) { console.warn("deleteProjectCascade error", error); flagAuth(error); throw error; }
+}
+
+// ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
+export async function getProjectImpact(projectId) {
+  const { data: pm } = await supabase.from("part_master").select("id").eq("project_id", projectId);
+  const partIds = (pm || []).map((p) => p.id);
+  if (partIds.length === 0) return { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  const { data: rel } = await supabase.from("releases").select("id").in("part_master_id", partIds);
+  const releaseIds = (rel || []).map((r) => r.id);
+  if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
+
+  // ★ นับ units/scanned ด้วย count query (head:true) — ไม่ดึงแถว ไม่ติดเพดาน 1000
+  //   เดิม select แถวมานับ → โปรเจคที่มี >1000 ชิ้น นับต่ำ → ด่านยืนยันลบโปรเจค (พิมพ์รหัส) อาจหลุดเป็นแค่กดยืนยันเฉยๆ
+  const { count: unitCount } = await supabase.from("part_units")
+    .select("id", { count: "exact", head: true }).in("release_id", releaseIds);
+  const { count: scannedCount } = await supabase.from("part_units")
+    .select("id", { count: "exact", head: true }).in("release_id", releaseIds).neq("status", "released");
+  return {
+    partCount: partIds.length,
+    releaseCount: releaseIds.length,
+    unitCount: unitCount || 0,
+    scannedCount: scannedCount || 0,
+  };
+}
+export async function getReleasesFull() {
+  // ★ page 1000 กัน PostgREST ตัดที่ 1000 แถวเงียบ ๆ — ที่ 10 ปี releases เกิน 1000 แล้ว
+  //   (ถ้าไม่ page ตัวเลือก "ล้างข้อมูลสแกน" จะขาดโปรเจค/Release เก่าไป)
+  const pageSize = 1000; let from = 0; let all = [];
+  for (;;) {
+    const { data, error } = await supabase
+      .from("releases")
+      .select("*, part_master(part_no, part_name, kind, routing, project_id, projects(code, name, status)), employee:employees(name, code)")
+      .order("release_date", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) { console.warn("getReleasesFull error", error); break; }
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+// สถิติ part_units (total / finished / in_progress) จัดกลุ่มตาม release_id
+// ใช้ในหน้า Release Detail แสดงความคืบหน้าต่อ Part
+export async function getUnitStatsByReleaseIds(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  // นับที่ฝั่ง DB (group by) — ไม่ติดเพดาน 1,000 แถวเหมือนการดึงมานับใน browser
+  const { data, error } = await supabase.rpc("release_unit_stats", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_unit_stats error", error); return {}; }
+  const stats = {};
+  for (const r of data || []) {
+    stats[r.release_id] = {
+      total: Number(r.total) || 0,
+      finished: Number(r.finished) || 0,
+      inProgress: Number(r.in_progress) || 0,
+    };
+  }
+  return stats;
+}
+
+// ความคืบหน้า "แยกตามขั้นตอน" ต่อ Release (จากงานหน้าเครื่อง machine_records)
+// คืน { <release_id>: [ {op, seq, done, finished}, ... ] } — ดู release_op_progress RPC
+export async function getReleaseOpProgress(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  const { data, error } = await supabase.rpc("release_op_progress", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_op_progress error", error); return {}; }
+  return data || {};
+}
+
+// ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
+// คืน { <project_id>: { finished, weight } }
+export async function getProjectStationProgress() {
+  const { data, error } = await supabase.rpc("project_station_progress");
+  if (error) { console.warn("project_station_progress error", error); return {}; }
+  return data || {};
+}
+
+// ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
+// จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
+export async function getEmployees() {
+  const { data, error } = await supabase
+    .from("employees")
+    .select("id, code, name, role, active, department_id, machine_id, operation_id, created_at")
+    .order("code", { ascending: true });
+  if (error) { console.warn("getEmployees error", error); return []; }
+  return data || [];
+}
+
+// ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
+
+// บันทึกการสแกน 1 ครั้งแบบ atomic — เครื่อง/ขั้นตอน/พนักงาน ดึงจาก session token ฝั่ง DB
+// (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
+export async function recordScan({ unitId }) {
+  const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
+  if (error) { console.warn("record_scan error", error); flagAuth(error); return { ok: false, reason: "error", message: error.message }; }
+  return data || { ok: false, reason: "error" };
+}
+
+// ── Offline scan queue (localStorage) — โหมดหน้าเครื่องกันสแกนหายเมื่อเน็ตสะดุด ────
+const SCAN_Q_KEY = "mls-scan-queue";
+const scanQListeners = new Set();
+function qRead() { try { return JSON.parse(localStorage.getItem(SCAN_Q_KEY)) || []; } catch { return []; } }
+// เขียนคิวลง localStorage แบบ "ไม่โยน error" — ถ้าที่เก็บเต็ม (quota/โหมดส่วนตัว) จะ
+// warn + แจ้ง event แทนที่จะทำให้ flush ค้าง (ดู B4 ในรายงานคุณภาพ) · คืน true=สำเร็จ
+function qWrite(a) {
+  try {
+    localStorage.setItem(SCAN_Q_KEY, JSON.stringify(a));
+    scanQListeners.forEach((f) => { try { f(a.length); } catch (_) {} });
+    return true;
+  } catch (e) {
+    console.warn("qWrite failed (storage full?)", e);
+    try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ }
+    return false;
+  }
+}
+export function scanQueueCount() { return qRead().length; }
+export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
+// รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
+// ★ แยกตาม "ขั้นตอน (operation)" ด้วย — กันเครื่องหลายขั้นตอนที่สลับงานบน release เดียวกัน
+//   ตอนออฟไลน์ แล้วยอดคืบหน้าของแต่ละขั้นตอนนับข้ามกันจนเกินจริง
+function queuedQtyForRelease(releaseId, operationId = null) {
+  if (!releaseId) return 0;
+  return qRead().reduce((s, it) => {
+    if (it.release_id !== releaseId) return s;
+    // ถ้าระบุขั้นตอน → นับเฉพาะงานค้างของขั้นตอนนั้น (machineWork ที่ p_operation_id ตรง)
+    if (operationId && it.machineWork && it.machineWork.p_operation_id !== operationId) return s;
+    return s + (Number(it.machineWork?.p_quantity) || 0);
+  }, 0);
+}
+function isNetworkErr(error) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  // เน็ตสะดุด + server ล่มชั่วคราว (5xx / รับโหลดไม่ไหว) = retriable ทั้งหมด
+  //   (logical reject ที่ "ห้าม retry" มาทาง data.ok=false ไม่ได้ throw → error ที่ throw = infra/เน็ตเสมอ)
+  const msg = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`;
+  return /failed to fetch|network ?error|load failed|timed? ?out|fetch|connection|econn|socket|unavailable|temporar|overload|too many request|rate limit|bad gateway|gateway time|internal server|server error/i.test(msg);
+}
+// ★ V7: ตรวจว่า error = "ยังไม่มี RPC record_scan_by_qr_idem" (ยังไม่ได้รัน migration) → fallback ใช้ตัวเดิม
+//   กัน deploy ผิดลำดับ (วางไฟล์ก่อนรัน SQL) แล้วสแกนออฟฟิศพัง
+function isMissingFnErr(error) {
+  return /PGRST202|could not find|does not exist|schema cache|record_scan_by_qr_idem/i.test((error && (error.message || error.hint || error.code)) || "");
+}
+
+// ── คิว "ซิงค์ไม่สำเร็จถาวร" — งานที่ทำออฟไลน์แล้วพอจะซิงค์ กลับเจอว่า QR/ล็อตถูกลบ
+//    หรือถูกแก้ฝั่งออฟฟิศ (not_found ฯลฯ) → ไม่ทิ้งเงียบ เก็บไว้ให้แจ้ง/ลองใหม่ได้
+const REJECT_Q_KEY = "mls-scan-rejected";
+const rejectListeners = new Set();
+function rjRead() { try { return JSON.parse(localStorage.getItem(REJECT_Q_KEY)) || []; } catch { return []; } }
+function rjWrite(a) { localStorage.setItem(REJECT_Q_KEY, JSON.stringify(a)); rejectListeners.forEach((f) => { try { f(a.length); } catch (_) {} }); }
+function pushRejected(item, reason) {
+  const a = rjRead();
+  if (item.qid && a.some((r) => r.qid === item.qid)) return;   // กันซ้ำในคิว rejected (bug: overlapping flush)
+  a.push({ ...item, reason, rejectedAt: Date.now() }); rjWrite(a);
+}
+export function rejectedQueueCount() { return rjRead().length; }
+export function onRejectedQueue(cb) { rejectListeners.add(cb); return () => rejectListeners.delete(cb); }
+export function listRejected() { return rjRead(); }
+// เอากลับเข้าคิวลองซิงค์ใหม่ (เช่นหลังออฟฟิศกู้ล็อตคืน)
+export function retryRejected() {
+  const rj = rjRead(); if (!rj.length) return;
+  const q = qRead();
+  // ★ ตัด attempts ออกด้วย — ไม่งั้น item ที่เคยพลาด 11 ครั้งจะชน MAX_ATTEMPTS ทันทีที่ retry (ลองใหม่ไม่ได้จริง)
+  for (const it of rj) { const { reason, rejectedAt, attempts, ...orig } = it; q.push(orig); }
+  // ★ กันข้อมูลหายตอนที่เก็บเต็ม: ถ้าเขียนคิวหลักไม่สำเร็จ ห้ามล้างคิว rejected ทิ้ง (เดิมล้างทันที = งานที่ทำจริงหาย)
+  if (!qWrite(q)) { try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ } return; }
+  rjWrite([]); flushScanQueue();
+}
+export function clearRejected() { rjWrite([]); }
+
+// ── รายงานคิว rejected ขึ้น server (dead-letter) ให้ office เห็นราย "เครื่อง" (#14) ──
+// best-effort — server กันซ้ำด้วย qid · เรียกหลัง flush เมื่อมี reject ใหม่ + ตอนเปิดหน้าเครื่อง
+export async function reportDeadLetter(items) {
+  const list = (items || rjRead()).filter((it) => it && it.qid);
+  if (!list.length) return;
+  const payload = list.map((it) => {
+    const mw = it.machineWork, asm = it.assembly;
+    // ★ V5: งานประกอบ/แพ็ก (asm) เดิมส่ง qr=null detail=null → office ไม่รู้ว่าเบอร์ไหนพัง
+    //   คงค่า kind เดิม {machine_work|qr} (กันชน CHECK constraint) · ใส่เบอร์แม่ที่ช่อง qr + รายละเอียดลง detail (jsonb)
+    return {
+      qid: it.qid,
+      kind: mw ? "machine_work" : "qr",
+      qr: mw ? null : (it.qr || asm?.p_parent_qr || null),
+      detail: mw
+        ? { release_id: mw.p_release_id, operation_id: mw.p_operation_id, quantity: mw.p_quantity }
+        : asm
+          ? { type: "assembly", parent_qr: asm.p_parent_qr, child_qrs: asm.p_child_qrs, child_count: (asm.p_child_qrs || []).length, operation_id: asm.p_operation_id }
+          : null,
+      reason: it.reason || null,
+      client_ts: String(it.rejectedAt || it.ts || Date.now()),
+    };
+  });
+  try { await supabase.rpc("report_dead_letter", { p_token: authToken(), p_items: payload }); }
+  catch (e) { console.warn("reportDeadLetter failed:", e?.message || e); }
+}
+// อ่าน dead-letter (admin) · ทำเครื่องหมายจัดการแล้ว (admin)
+export async function listDeadLetter(includeResolved = false) {
+  const { data, error } = await supabase.rpc("authz_list_dead_letter", { p_token: authToken(), p_include_resolved: includeResolved });
+  if (error) { console.warn("authz_list_dead_letter error", error); flagAuth(error); throw error; }
+  return data || [];
+}
+export async function resolveDeadLetter(id) {
+  const { error } = await supabase.rpc("authz_resolve_dead_letter", { p_token: authToken(), p_id: id });
+  if (error) { console.warn("authz_resolve_dead_letter error", error); flagAuth(error); throw error; }
+}
+
+// ── BOM (ประกอบ/แพ็ก) — กำหนด/อ่าน รายการลูกของเบอร์แม่ ─────────────────────
+// components = [{ child_pm_id, qty }] · แทนที่ทั้งชุด · ลูกต้องอยู่โปรเจคเดียวกัน (DB บังคับ)
+export async function setBom(parentPmId, components) {
+  const { data, error } = await supabase.rpc("authz_set_bom", { p_token: authToken(), p_parent_pm_id: parentPmId, p_components: components });
+  if (error) { console.warn("authz_set_bom error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "unknown" };
+}
+export async function getBom(parentPmId) {
+  const { data, error } = await supabase.rpc("get_bom", { p_parent_pm_id: parentPmId });
+  if (error) { console.warn("get_bom error", error); return []; }
+  return data || [];
+}
+
+// ── operation: สร้าง / ตั้งประเภทงาน (op_type) — ผ่าน RPC เฉพาะ (แอดมิน) เลี่ยง authz allow-list ──
+export async function createOperation({ name, seq, opType }) {
+  const { data, error } = await supabase.rpc("create_operation", {
+    p_token: authToken(), p_name: name, p_seq: seq ?? null, p_op_type: opType || "machining",
+  });
+  if (error) { console.warn("create_operation error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+export async function setOperationType(operationId, opType) {
+  const { data, error } = await supabase.rpc("set_operation_type", {
+    p_token: authToken(), p_operation_id: operationId, p_op_type: opType,
+  });
+  if (error) { console.warn("set_operation_type error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
+// เก็บ "บันทึกประกอบ/แพ็ก" เข้าคิว offline (localStorage เดียวกับงานตัด) → ซิงค์เองเมื่อเน็ตกลับ
+// qid = client_id (uuid) → กันซ้ำทั้งฝั่ง flush และฝั่ง DB (record_assembly idempotent ด้วย p_client_id)
+function queueAssembly(p) {
+  const a = qRead();
+  a.push({ assembly: {
+    p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
+    p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
+    p_parent_qty: p.parentQty ?? 1,   // จำนวนที่จะทำ (ซับ) → machine_record.quantity ฝั่ง server
+  }, qid: p.clientId, ts: Date.now() });
+  if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+  return { ok: true, queued: true };
+}
+
+// บันทึกการประกอบจากหน้าเครื่อง — คืนผลตรวจครบตาม BOM · เน็ตหลุด/สะดุด = เก็บเข้าคิวซิงค์ทีหลัง
+export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt, parentQty }, { allowQueue = true } = {}) {
+  // childQrs รับได้ทั้ง ["qr",...] (เดิม) และ [{qr,qty},...] (ใหม่ — นับจำนวนรวม) · parentQty = จำนวนที่จะทำของเบอร์แม่
+  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(), parentQty: Math.max(1, Math.floor(Number(parentQty) || 1)) };
+  if (allowQueue && typeof navigator !== "undefined" && navigator.onLine === false) return queueAssembly(p);
+  const { data, error } = await supabase.rpc("record_assembly", {
+    p_token: authToken(), p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
+    p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt, p_parent_qty: p.parentQty,
+  });
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) return queueAssembly(p);   // เน็ตสะดุด → เข้าคิว (ไม่ทิ้งงาน)
+    console.warn("record_assembly error", error); flagAuth(error); throw error;
+  }
+  return data || { ok: false, reason: "error" };
+}
+
+// บันทึกงานประกอบ "ซับ" แบบนับจำนวนรวม (สแกนแม่ + จำนวนที่ทำ · ลูกเช็ก BOM ที่สเตชัน) — ปิดงานเบอร์แม่
+export async function recordSubassembly({ parentQr, qty, operationId, clientId, recordedAt }) {
+  const { data, error } = await supabase.rpc("record_subassembly", {
+    p_token: authToken(), p_parent_qr: parentQr, p_qty: qty,
+    p_operation_id: operationId ?? null, p_client_id: clientId ?? newClientId(),
+    p_recorded_at: recordedAt ?? new Date().toISOString(),
+  });
+  if (error) { console.warn("record_subassembly error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
+// เอาลูกที่ติดตั้งแล้วออกจากเบอร์แม่ (ไว้ "แก้" งานที่เสร็จแล้ว) — ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
+export async function removeAssemblyChild(parentUnitId, childUnitId) {
+  const { data, error } = await supabase.rpc("remove_assembly_child", {
+    p_token: authToken(), p_parent_unit_id: parentUnitId, p_child_unit_id: childUnitId,
+  });
+  if (error) { console.warn("remove_assembly_child error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
+// โหลดสถานะประกอบ "สะสม" ของเบอร์แม่ (BOM + ที่ติดตั้งไปแล้วข้ามสเตชัน) — ใช้ตอนสแกนเบอร์แม่
+// รองรับ offline: ออนไลน์ = โหลดจาก DB + แคชไว้ · ออฟไลน์/เน็ตสะดุด = อ่านจากแคช (เปิดเบอร์ที่เคยโหลดได้)
+export async function getAssemblyState(parentQr) {
+  const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  if (offline) {
+    const c = await getCachedAsmState(parentQr);
+    return c ? { ...c, offline: true } : { ok: false, reason: "offline_no_cache" };
+  }
+  const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: parentQr });
+  if (error) {
+    flagAuth(error);
+    if (isNetworkErr(error)) {                                   // เน็ตสะดุด → ลองแคช
+      const c = await getCachedAsmState(parentQr);
+      if (c) return { ...c, offline: true };
+    }
+    console.warn("get_assembly_state error", error); throw error;
+  }
+  const st = data || { ok: false, reason: "error" };
+  if (st && st.ok) { try { await setCachedAsmState(parentQr, st); } catch { /* ignore */ } }   // แคชไว้ใช้ offline
+  return st;
+}
+
+// prefetch สถานะเบอร์แม่ที่กำลังทำ (assembly+packing) ลงแคช — เรียกตอนเข้าหน้า/เน็ตกลับ
+// best-effort + bounded (กันยิง RPC เยอะ) → เปิดเบอร์ที่ยังไม่เคยสแกนตอน offline ได้
+let _prefetchingAsm = false;
+export async function prefetchAssemblyForOffline(limit = 120) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+  if (_prefetchingAsm) return 0;                   // ★ กันรันซ้อน (mount + online event + เน็ตกระพริบ) = ยิง RPC ซ้ำเป็นชุด
+  _prefetchingAsm = true;
+  try {
+    let parents = [];
+    try {
+      const [asm, panel, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("panel"), listAssemblyParents("packing")]);
+      const seen = new Set();
+      [...asm, ...panel, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
+    } catch { return 0; }
+    parents = parents.slice(0, limit);
+    // ★ ขนานแบบจำกัด concurrency (เดิม sequential ทีละตัว = ช้ามาก ~120 round-trip/เครื่อง + burst ตอนหลายเครื่อง reconnect พร้อมกัน)
+    let n = 0, idx = 0;
+    const CONC = 4;
+    const worker = async () => {
+      while (idx < parents.length) {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return;   // เน็ตหลุดกลางคัน → หยุด
+        const qr = parents[idx++];
+        try {
+          const { data, error } = await supabase.rpc("get_assembly_state", { p_parent_qr: qr });
+          if (!error && data && data.ok) { await setCachedAsmState(qr, data); n++; }
+        } catch { /* ข้ามตัวที่พลาด */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONC, parents.length) }, worker));
+    return n;
+  } finally { _prefetchingAsm = false; }
+}
+
+// ข้อมูลชิ้นส่วน (ความยาว + kind) ของลูกใน BOM — ใช้เติมให้หน้าประกอบวาดผัง + ป้ายจุดติดตั้ง
+// อ่านตรง (anon SELECT part_master อนุญาต) ไม่ต้องแก้ RPC/ฐานข้อมูล
+export async function getPartMeta(ids) {
+  const list = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!list.length) return {};
+  const { data, error } = await supabase
+    .from("part_master")
+    .select("id, part_no, part_name, default_length_mm, kind")
+    .in("id", list);
+  if (error) { console.warn("getPartMeta error", error); return {}; }
+  const m = {};
+  (data || []).forEach((r) => { m[r.id] = r; });
+  return m;
+}
+
+// รายละเอียดยูนิต (QR + เบอร์ชิ้น) จาก part_unit id หลายตัว — ใช้หน้า "ตรวจงานประกอบ" หลังบ้าน
+// โชว์ว่าที่สแกนเข้าเบอร์แม่คือ QR/ชิ้นไหนบ้าง · อ่านตรง (anon SELECT part_units อนุญาต)
+export async function getUnitsByIds(ids) {
+  const list = Array.from(new Set((ids || []).filter(Boolean)));
+  if (!list.length) return {};
+  const { data, error } = await supabase
+    .from("part_units")
+    .select("id, qr_code, part_master(part_no, part_name)")
+    .in("id", list);
+  if (error) { console.warn("getUnitsByIds error", error); return {}; }
+  const m = {};
+  (data || []).forEach((u) => { m[u.id] = { qr_code: u.qr_code, part_no: u.part_master?.part_no || "", part_name: u.part_master?.part_name || "" }; });
+  return m;
+}
+
+// รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
+// assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
+export async function listAssemblyParents(dept) {
+  // แยกชนิดตามสเตชัน: แพ็ก/แพ็กแผง/แพ็กไซต์→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
+  const packDepts = ["packing", "packpanel", "packsite"];
+  const kinds = packDepts.includes(dept) ? ["package"]
+    : dept === "panel" ? ["panel"]
+    : dept === "assembly" ? ["subassembly"]
+    : ["panel", "subassembly"];
+  const wantPack = dept === "packpanel" ? "panel" : dept === "packsite" ? "site" : null;   // แพ็กแผง/ไซต์ = เฉพาะบั้งที่ติดป้ายตรงกัน (legacy packing = ทุกบั้ง)
+  const { data, error } = await supabase
+    .from("part_units")
+    .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, pkg_meta, projects(code, name, status))")
+    .in("part_master.kind", kinds)
+    .neq("status", "finished")
+    .limit(600);
+  if (error) { console.warn("listAssemblyParents error", error); return []; }
+  const rows = (data || []).map((u) => ({
+    id: u.id,
+    qr_code: u.qr_code,
+    status: u.status,
+    part_no: u.part_master?.part_no || u.qr_code,
+    part_name: u.part_master?.part_name || "",
+    kind: u.part_master?.kind || "part",
+    pack_type: u.part_master?.pkg_meta?.pack_type || null,
+    project_code: u.part_master?.projects?.code || "",
+    project_status: u.part_master?.projects?.status || "",
+  })).filter((r) => r.project_status !== "closed")
+    .filter((r) => !wantPack || r.pack_type === wantPack);
+  // กำลังทำ (in_progress) ขึ้นก่อน แล้วเรียงตามเบอร์
+  const doing = (s) => /progress/i.test(s || "");
+  rows.sort((a, b) => (doing(b.status) - doing(a.status)) || String(a.part_no).localeCompare(String(b.part_no)));
+  return rows;
+}
+
+// บันทึก "ฟอร์มบั้ง (packing manifest)" ลง part_master ของ package (office ขึ้นไป)
+// ผ่าน RPC เฉพาะ authz_set_manifest (เลี่ยง allow-list ของ authz_update ที่ไม่รู้จักคอลัมน์ใหม่)
+export async function setPkgManifest(pmId, manifest, meta) {
+  const { data, error } = await supabase.rpc("authz_set_manifest", {
+    p_token: authToken(), p_pm_id: pmId, p_manifest: manifest ?? null, p_meta: meta ?? null,
+  });
+  if (error) { console.warn("authz_set_manifest error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
+// ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
+// อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
+export async function uploadPackingPhoto(blob, keyHint = "pack") {
+  const path = `${keyHint}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { data, error } = await supabase.storage.from("packing-photos").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (error) { console.warn("uploadPackingPhoto error", error); throw error; }
+  return data?.path || path;
+}
+export function packingPhotoUrl(path) {
+  try { return supabase.storage.from("packing-photos").getPublicUrl(path).data.publicUrl; }
+  catch { return null; }
+}
+// ผูก path รูปกับเบอร์แพ็ก (เรียกหลังอัปโหลดรูปสำเร็จ)
+export async function recordPackingPhotos(parentQr, paths) {
+  const list = (paths || []).filter(Boolean);
+  if (!list.length) return { ok: true, saved: 0 };
+  const { data, error } = await supabase.rpc("record_packing_photos", { p_token: authToken(), p_parent_qr: parentQr, p_paths: list });
+  if (error) { console.warn("record_packing_photos error", error); flagAuth(error); throw error; }
+  return data || { ok: false };
+}
+
+// สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
+export async function recordScanByQr(qr, { allowQueue = true } = {}) {
+  const clientId = newClientId();   // ★ V7: 1 client_id ต่อการสแกน → ใช้ทั้งตอนยิงตรง + ตอนเข้าคิว (idem กันบันทึกซ้ำ)
+  let { data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: qr, p_client_id: clientId });
+  if (error && isMissingFnErr(error)) {   // ยังไม่ได้รัน migration idem → ใช้ตัวเดิม (สแกนได้ แต่ยังไม่กันซ้ำ)
+    ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr }));
+  }
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) {
+      const a = qRead(); a.push({ qr, qid: clientId, ts: Date.now() });   // ★ qid = clientId เดิม → flush ส่ง client_id เดิม → idem กันซ้ำข้าม direct↔queue
+      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+      return { ok: true, queued: true };
+    }
+    console.warn("record_scan_by_qr error", error);
+    flagAuth(error);   // token หมดอายุ → เด้ง login (network-err ไปเข้าคิวข้างบนแล้ว)
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+
+// พยายามส่งคิวที่ค้างขึ้น server (เรียกตอนเน็ตกลับ/เป็นระยะ)
+// ⚠️ ปลอดภัยต่อการเรียกซ้อน: มี guard กันรันพร้อมกัน + เอาออกจากคิวตาม "qid" (ไม่ทับของ
+//    ที่ถูก enqueue ระหว่างซิงค์) — กันงานออฟไลน์หายจากการเขียนทับคิว
+let _flushing = false;
+export async function flushScanQueue() {
+  if (_flushing) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  // ให้ทุก item มี qid (migrate ของเก่าที่ยังไม่มี) เพื่อเอาออกแบบเจาะจงตอนจบ
+  let a = qRead();
+  if (a.length === 0) return;
+  let migrated = false;
+  a = a.map((it) => (it.qid ? it : (migrated = true, { ...it, qid: newClientId() })));
+  if (migrated) qWrite(a);
+
+  _flushing = true;
+  const done = new Set();          // qid ที่จัดการเสร็จแล้ว (สำเร็จ/ถูก reject) → เอาออกจากคิว
+  const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (นับเฉพาะ error รอบนี้)
+  const rejects = [];
+  let authExpired = false;         // เจอ token หมดอายุระหว่างซิงค์ → แจ้งให้ล็อกอินใหม่ (งานคงอยู่ในคิว)
+  const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
+  try {
+    for (const item of a) {
+      let data, error;
+      if (item.assembly) {
+        ({ data, error } = await supabase.rpc("record_assembly", { ...item.assembly, p_token: authToken() }));
+      } else if (item.machineWork) {
+        ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: authToken() }));
+      } else {
+        // ★ V7: ผ่านตัวห่อ idem (p_client_id = qid เดิมของ item) → commit-แล้ว-response-หาย ลองซ้ำไม่บันทึกซ้ำ
+        ({ data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: item.qr, p_client_id: item.qid }));
+        if (error && isMissingFnErr(error)) ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: item.qr }));
+      }
+      if (error) {
+        if (isAuthError(error)) { authExpired = true; continue; }  // token หมดอายุ/ไม่ถูกต้อง → คงไว้รอ login ใหม่ (ไม่นับ attempt/ไม่ reject)
+        // แยก "เน็ต/DB สะดุด" (retry เรื่อยๆ) ออกจาก "พลาดถาวร" (payload พัง = วนไม่จบ) — H3 / R1
+        if (typeof navigator !== "undefined" && navigator.onLine === false) continue; // ออฟไลน์ = ไม่ถือเป็นครั้ง
+        // ★ R1: server ไม่ถึง/ไทม์เอาต์ (เน็ตเครื่องยังขึ้น) = network err → retry ไม่จำกัด ไม่นับเพดาน
+        //   กัน Supabase ล่มยาว (>3 นาที) ดัน record ที่สมบูรณ์ดีเข้า dead-letter · เหลือเฉพาะ error ที่ไม่ใช่เน็ต
+        //   (เช่น RPC 500 จาก payload พัง = poison จริง) ที่จะ exhaust → rejected
+        if (isNetworkErr(error)) continue;
+        const at = (Number(item.attempts) || 0) + 1;
+        if (at >= MAX_ATTEMPTS) { rejects.push({ item, reason: "retry_exhausted" }); done.add(item.qid); }
+        else bumped.set(item.qid, at);                            // ยังไม่ถึงเพดาน → คงไว้ retry (บันทึกจำนวนครั้ง)
+        continue;
+      }
+      if (data && data.ok === false) {
+        if (data.reason === "unauthorized") { authExpired = true; continue; }   // token หมดอายุ → คงไว้รอ login ใหม่ + แจ้งเตือน
+        rejects.push({ item, reason: data.reason });              // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
+        done.add(item.qid);
+        continue;
+      }
+      done.add(item.qid);                                         // ok / deduped = สำเร็จ
+    }
+  } finally {
+    // ★ ปลดล็อกก่อนเสมอ — กันค้างถาวรถ้าเขียน localStorage พลาด (B4)
+    _flushing = false;
+    try {
+      // read-modify-write: อ่านคิวปัจจุบัน (อาจมีของใหม่ที่เพิ่งเข้ามา) แล้วเอาออกเฉพาะ qid ที่จัดการเสร็จ
+      // + อัปเดตจำนวนครั้งที่ลองพลาด (attempts) ของ item ที่ยังคงอยู่
+      const cur = qRead();
+      qWrite(cur.filter((it) => !done.has(it.qid))
+                .map((it) => (bumped.has(it.qid) ? { ...it, attempts: bumped.get(it.qid) } : it)));
+      for (const r of rejects) pushRejected(r.item, r.reason);    // pushRejected กันซ้ำด้วย qid แล้ว
+    } catch (e) { console.warn("flush finalize failed", e); }
+    // มี reject ใหม่ → รายงานคิว rejected ขึ้น server ให้ office เห็น (best-effort, กันซ้ำด้วย qid)
+    if (rejects.length) { try { reportDeadLetter(); } catch (_) { /* ignore */ } }
+    // token หมดอายุระหว่างซิงค์ → แจ้งแอปให้เด้งล็อกอินใหม่ (งานยังอยู่ในคิว รอดข้ามการล็อกอิน)
+    if (authExpired && typeof window !== "undefined") {
+      try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
     }
   }
-  render() {
-    if (!this.state.err) return this.props.children;
-    return (
-      <div className="stn-crash">
-        <div className="stn-crash-card">
-          <div className="stn-crash-title">หน้าจอมีปัญหาชั่วคราว</div>
-          <div className="stn-crash-sub">งานที่บันทึกไปแล้วไม่หาย · กด “โหลดใหม่” เพื่อใช้งานต่อ — ถ้ายังไม่หาย แคปข้อความด้านล่างส่งแอดมิน</div>
-          <pre className="stn-crash-pre">{String(this.state.err?.message || this.state.err)}{this.state.stack ? "\n\n" + this.state.stack.split("\n").slice(0, 6).join("\n") : ""}</pre>
-          <div className="stn-crash-btns">
-            <button className="stn-crash-reload" onClick={stnHardReload}>โหลดใหม่ (ล้างแคช)</button>
-            {this.props.onLogout ? <button className="stn-crash-logout" onClick={() => { try { this.props.onLogout(); } catch { stnHardReload(); } }}>ออกจากระบบ</button> : null}
-          </div>
-        </div>
-      </div>
-    );
-  }
 }
 
-export default function StationApp({ dept = "machine" } = {}) {
-  const meta = DEPT_META[dept] || DEPT_META.machine;
-  const [user, setUser] = useState(getSession());
-  const [notice, setNotice] = useState("");
-  async function logout() {
-    // เตือนถ้ายังมีงานค้างซิงค์ (ไม่หาย — เก็บใน localStorage รอดข้ามล็อกอิน จะซิงค์เองรอบหน้า)
-    const pending = scanQueueCount() + rejectedQueueCount();
-    const msg = pending > 0
-      ? `ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อล็อกอินอีกครั้ง (ข้อมูลไม่หาย)\n\nออกจากระบบและปิดแอป?`
-      : "ออกจากระบบและปิดแอป?";
-    if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
-    try { await logoutSession(); } catch { /* ignore */ }
-    clearSession();
-    try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch { /* ignore */ }
-    setUser(null);
-    try { window.close(); } catch { /* ignore */ }   // พยายามปิดแอป/แท็บ (ได้ผลบน PWA/บางเบราว์เซอร์)
-  }
-  // ถูกเตะออกเพราะบัญชีถูกใช้ล็อกอินที่เครื่องอื่น (1 บัญชี = 1 เครื่อง) — เด้งกลับหน้าล็อกอิน
-  function onKicked() {
-    clearSession();
-    setUser(null);
-    setNotice("บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่");
-  }
-  // token หมดอายุ (นาน ๆ ครั้ง — บัญชีเครื่องอายุ 30 วัน) — เด้งกลับหน้าล็อกอิน
-  //   งานค้างอยู่ในคิว (localStorage) รอดข้ามล็อกอิน → ล็อกอินใหม่แล้วซิงค์ต่อเอง ไม่หาย
-  function onExpired() {
-    clearSession();
-    setUser(null);
-    setNotice("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่ (งานที่ค้างจะซิงค์อัตโนมัติหลังล็อกอิน)");
-  }
-  useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
-  // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
-  useEffect(() => armFullscreenOnFirstTap(), []);
-  // ล็อกอินรวมหน้าเดียว: ยังไม่ล็อกอิน + ออนไลน์ → ส่งไปหน้าเข้าสู่ระบบรวม (/) · ออฟไลน์ = ใช้หน้าล็อกอินสถานีเดิม (มี cache)
-  const stnOnline = typeof navigator === "undefined" || navigator.onLine !== false;
-  useEffect(() => {
-    if (!user && stnOnline) { try { window.location.replace("/"); } catch { /* ignore */ } }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { flushScanQueue(); });
+  setInterval(() => { if (qRead().length) flushScanQueue(); }, 15000);
+}
 
-  let content;
-  if (!user) {
-    content = stnOnline
-      ? <LoginSplash text="กำลังไปหน้าเข้าสู่ระบบ…" />
-      : <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
-  } else if (!user.machine) {
-    content = (
-      <div className="stn-login-wrap">
-        <div className="stn-login">
-          <h1>บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี</h1>
-          <p>{meta.th}ต้องใช้บัญชีที่กำหนด "เครื่อง/สถานีประจำ" ไว้ที่ Setup → พนักงาน<br />
-            แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน</p>
-          <button className="stn-btn" onClick={logout}>ออกจากระบบ</button>
-          <div className="stn-login-foot">
-            {/* บัญชี operator จะถูกหน้าออฟฟิศเด้งกลับมา /station เสมอ → ต้องออกจากระบบก่อน
-                ไม่งั้นกด "ไปหน้าสำนักงาน" จะวนลูป · บัญชี admin/supervisor ไปได้เลย */}
-            <span className="stn-link-normal" style={{ cursor: "pointer" }}
-              onClick={() => { if (user.role === "operator") clearSession(); window.location.href = "/"; }}>
-              ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →
-            </span>
-          </div>
-        </div>
-      </div>
-    );
-  } else {
-    content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} dept={dept} />;
+// สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
+// rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
+// คืน { releasesCreated, partsCreated, unitsCreated }
+export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows }) {
+  const { data, error } = await supabase.rpc("create_release_batch", {
+    p_token: authToken(),
+    p_project_id: projectId,
+    p_release_order: releaseOrder || null,
+    p_release_date: releaseDate || null,
+    p_released_by: releasedBy || null,
+    p_make_qr: !!makeQr,
+    p_rows: rows,
+  });
+  if (error) {
+    console.warn("create_release_batch error", error);
+    throw error;
   }
-  return <><StationUpdateBanner /><StationErrorBoundary onLogout={logout}>{content}</StationErrorBoundary><ConfirmHost /></>;
+  return data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
+}
+
+// เช็คว่ามี Release ที่ (โปรเจค + เลขที่ Release Order) นี้อยู่แล้วไหม — กันสร้าง/นำเข้าซ้ำตอน retry หลังเน็ตวูบ
+// (create_release_batch ไม่ idempotent) · เลข Order ว่าง = ระบุไม่ได้ ข้ามการเช็ค (fail-open) · เช็คไม่ได้ = ไม่บล็อก
+export async function releaseOrderExists(projectId, releaseOrder) {
+  const ro = String(releaseOrder || "").trim();
+  if (!projectId || !ro) return false;
+  const { data, error } = await supabase
+    .from("releases")
+    .select("id, part_master!inner(project_id)")
+    .eq("part_master.project_id", projectId)
+    .eq("release_order", ro)
+    .limit(1);
+  if (error) { console.warn("releaseOrderExists error", error); return false; }
+  return (data || []).length > 0;
+}
+
+// สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
+// ส่ง id=null เพื่อสร้างใหม่, password="" เพื่อไม่เปลี่ยนรหัสตอนแก้ไข
+export async function upsertEmployee(emp) {
+  const { data, error } = await supabase.rpc("upsert_employee", {
+    p_token: authToken(),
+    p_id: emp.id || null,
+    p_code: emp.code,
+    p_name: emp.name,
+    p_password: emp.password || "",
+    p_role: emp.role || "operator",
+    p_department_id: emp.department_id || null,
+    p_machine_id: emp.machine_id || null,
+    p_operation_id: emp.operation_id || null,
+    p_active: emp.active ?? true,
+  });
+  if (error) {
+    console.warn("upsert_employee error", error);
+    flagAuth(error);
+    throw error;
+  }
+  return data; // uuid
+}
+
+// คำนวณสถานะชิ้นงานย้อนหลังของ Part หนึ่ง (หลังตั้ง/แก้ Routing) — คืน { updated, finished }
+export async function recalcPartStatus(partMasterId) {
+  const { data, error } = await supabase.rpc("recalc_part_status", { p_token: authToken(), p_part_master_id: partMasterId });
+  if (error) { console.warn("recalc_part_status error", error); throw error; }
+  return data || { updated: 0, finished: 0 };
+}
+
+// ── สำรองข้อมูล (Backup / Export) ────────────────────────────────────────
+// ดึงข้อมูล "ทุกตารางหลัก" ออกมาเป็นก้อน JSON เดียว เพื่อดาวน์โหลดเก็บเอง
+// (สำรองอีกชั้นนอกเหนือจากแบ็คอัพอัตโนมัติของ Supabase) — อ่านอย่างเดียว ไม่แก้ข้อมูล
+// หมายเหตุ: ไม่รวม employees — คอลัมน์ password_hash ถูกซ่อนจาก anon (security-hardening)
+//   ทำให้ select * ล้มเหลว/ได้ 0 แถว และนำเข้ากลับก็ชน NOT NULL · จัดการพนักงานที่ Setup
+export const BACKUP_TABLES = [
+  "projects", "part_master", "releases", "part_units",
+  "scan_logs", "machine_records", "operations", "machines",
+  "machine_operations", "departments",
+];
+
+export async function exportAllData(onProgress) {
+  const tables = {};
+  const counts = {};
+  for (let i = 0; i < BACKUP_TABLES.length; i++) {
+    const t = BACKUP_TABLES[i];
+    if (onProgress) onProgress({ table: t, index: i, total: BACKUP_TABLES.length });
+    const rows = await listRows(t, { strict: true });   // ★ backup ต้องครบ — error กลางคันให้ล้ม ไม่ใช่คืนบางส่วนเงียบ (ป้องกัน backup ขาด)
+    tables[t] = rows;
+    counts[t] = rows.length;
+  }
+  return {
+    _meta: {
+      app: "machining-line-system",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      counts,
+      totalRows: Object.values(counts).reduce((a, b) => a + b, 0),
+    },
+    tables,
+  };
+}
+
+// ── จุดกู้คืนในแอป (Restore Points) — ผ่าน RPC (ตรวจ admin ฝั่ง DB) ─────────
+export async function ensureDailyBackup() {
+  const { data, error } = await supabase.rpc("ensure_daily_backup", { p_token: authToken() });
+  if (error) { console.warn("ensure_daily_backup", error); return null; }
+  return data;
+}
+export async function listBackups() {
+  const { data, error } = await supabase.rpc("list_backups", { p_token: authToken() });
+  if (error) { console.warn("list_backups", error); throw error; }
+  return data || [];
+}
+export async function snapshotAllProjects(kind = "manual") {
+  const { data, error } = await supabase.rpc("snapshot_all_projects", { p_token: authToken(), p_kind: kind });
+  if (error) { console.warn("snapshot_all_projects", error); throw error; }
+  return data;
+}
+export async function snapshotProject(projectId, kind = "manual") {
+  const { data, error } = await supabase.rpc("snapshot_project", { p_token: authToken(), p_project_id: projectId, p_kind: kind });
+  if (error) { console.warn("snapshot_project", error); throw error; }
+  return data;
+}
+export async function restoreBackup(backupId, mode = "merge") {
+  const { data, error } = await supabase.rpc("restore_backup", { p_token: authToken(), p_backup_id: backupId, p_mode: mode });
+  if (error) { console.warn("restore_backup", error); throw error; }
+  return data;
+}
+// นำเข้าไฟล์สำรอง (JSON ที่ดาวน์โหลดไว้) กลับเข้าระบบ — เติมเฉพาะที่หายไป (merge)
+export async function importBackup(tables, mode = "merge") {
+  const { data, error } = await supabase.rpc("import_backup", { p_token: authToken(), p_data: tables, p_mode: mode });
+  if (error) { console.warn("import_backup", error); throw error; }
+  return data;
+}
+
+// รวมยอดฝั่ง DB — แทนการโหลด part_units ทุกแถวมาคำนวณใน browser
+export async function getProjectSummary() {
+  const { data, error } = await supabase.rpc("project_summary");
+  if (error) { console.warn("project_summary error", error); return []; }
+  return data || [];
+}
+export async function getPartSummary() {
+  const { data, error } = await supabase.rpc("part_summary");
+  if (error) { console.warn("part_summary error", error); return []; }
+  return data || [];
+}
+
+// scan log ทั้งหมดในช่วงเวลา สำหรับรายงาน — รวม scan_logs (สำนักงาน) +
+// machine_records (หน้าเครื่อง) ผ่าน RPC report_logs (ดู migration-station-report-merge.sql)
+// คืน array รูปทรงเดียวกับ scan_logs เดิม (machine/operation/employee/part_unit ซ้อน) → metrics.js ใช้ต่อได้เลย
+export async function getScanLogsBetween(fromIso, toIso) {
+  const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("report_logs error", error); return []; }
+  return data || [];
+}
+
+// รายงานประกอบ/แพ็ก — ลูกที่ประกอบเข้าเบอร์แม่ทั้งช่วง (เบอร์แม่/ลูก + ความยาว + น้ำหนัก + ชนิด)
+export async function getAssemblyLogsBetween(fromIso, toIso) {
+  const { data, error } = await supabase.rpc("report_assembly", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("report_assembly error", error); return []; }
+  return data || [];
+}
+
+// ── หน้าเครื่อง (Machine Station) ────────────────────────────────────────
+// ดึงบันทึกงานของ "เครื่องของ token นี้" เฉพาะวันนี้ + ยอดรวมประจำวัน (จาก DB)
+// คืน { ok, daily:{quantity,weight,process_seconds}, records:[...] }
+// (เครื่อง/พนักงานดึงจาก session token ฝั่ง DB — client ปลอมไม่ได้)
+export async function getMachineDay() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return offlineMachineDay();                           // ออฟไลน์ → snapshot + งานค้างคิว
+  }
+  const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
+  if (error) {
+    console.warn("machine_day error", error);
+    return offlineMachineDay();                           // เน็ตสะดุด → ใช้ snapshot แทนจอเปล่า
+  }
+  if (data && data.ok !== false) setDaySnapshot(data);    // เก็บ snapshot ล่าสุดไว้ใช้ออฟไลน์
+  return data || { ok: false };
+}
+
+// รายการขั้นตอนที่เครื่องนี้ทำได้ (สำหรับปุ่มเลือกขั้นตอนบนหน้าเครื่อง)
+// เก็บ cache ไว้ใช้ตอนออฟไลน์ด้วย (localStorage)
+const MOPS_KEY = "mls-machine-ops";
+export async function getMachineOps() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
+  }
+  const { data, error } = await supabase.rpc("machine_ops", { p_token: authToken() });
+  if (error) {
+    console.warn("machine_ops error", error);
+    try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
+  }
+  const list = data || [];
+  // เติม op_type + is_assembly (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์นี้) — อ่านตรงจากตาราง operations
+  try {
+    const ids = list.map((o) => o.id).filter(Boolean);
+    if (ids.length && !(list[0] && "op_type" in list[0])) {
+      const { data: ops } = await supabase.from("operations").select("id, is_assembly, op_type").in("id", ids);
+      const m = new Map((ops || []).map((o) => [o.id, o]));
+      for (const o of list) {
+        const e = m.get(o.id);
+        o.op_type = (e && e.op_type) || "machining";
+        o.is_assembly = e ? !!e.is_assembly : (o.op_type !== "machining");
+      }
+    }
+  } catch { /* ignore — ถ้าเติมไม่ได้ ถือว่าเป็น machining ปกติ */ }
+  try { localStorage.setItem(MOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+  return list;
+}
+
+// สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
+async function offlineMachineDay() {
+  const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
+  const q = qRead().filter((it) => it.machineWork);
+  if (!q.length) return { ...snap, offline: true };
+  const daily = { ...(snap.daily || { quantity: 0, weight: 0, process_seconds: 0 }) };
+  const records = Array.isArray(snap.records) ? [...snap.records] : [];
+  let item = records.length;
+  for (const it of q) {
+    const mw = it.machineWork;
+    daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
+    daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
+    daily.weight = (Number(daily.weight) || 0) + (Number(it.weight) || 0);   // ★ บวกน้ำหนักงานค้างด้วย
+    records.push({
+      id: "q-" + (it.ts || item), item: ++item,
+      qty: Number(mw.p_quantity) || 0, status: mw.p_status,
+      process_seconds: Number(mw.p_process_seconds) || 0,
+      weight: Number(it.weight) || 0,
+      materials_length: mw.p_material_length, pending: true,   // ธง = ยังไม่ซิงค์
+    });
+  }
+  return { ok: true, daily, records, offline: true };
+}
+
+// heartbeat: บอกเซิร์ฟเวอร์ว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน) +
+// เช็คว่าถูก superseded (โดนเข้าแทน) หรือยัง · fail-safe: error = ถือว่ายังปกติ
+export async function sessionHeartbeat() {
+  const t = authToken(); if (!t) return { ok: false };
+  try {
+    const { data, error } = await supabase.rpc("session_heartbeat", { p_token: t });
+    if (error) return { ok: false };
+    return data || { ok: false };
+  } catch { return { ok: false }; }
+}
+
+// บันทึกงาน 1 ครั้งจากหน้าเครื่อง (atomic) — ถ้าเน็ตหลุด เก็บเข้าคิว localStorage ไว้ซิงค์ทีหลัง
+// • p_client_id = UUID ต่อการบันทึก (สร้างครั้งเดียว) → กันข้อมูลซ้ำตอนซิงค์ (idempotency)
+// • p_recorded_at = เวลาจริงบนเครื่องตอนกดบันทึก → ซิงค์ทีหลัง 5 วันก็ยังได้วัน/เวลาที่ทำจริง
+// คืน { ok, reason?, message?, row?, daily? } หรือ { ok:true, queued:true }
+export async function recordMachineWork(
+  { qr, quantity, materialLengthMm, processSeconds, status, releaseId, clientId, recordedAt, operationId, weight },
+  { allowQueue = true } = {}
+) {
+  const payload = {
+    p_token: authToken(),
+    p_qr: String(qr || "").trim(),
+    p_quantity: Number(quantity) || 0,
+    p_material_length: materialLengthMm == null || materialLengthMm === "" ? null : Number(materialLengthMm),
+    p_process_seconds: Number(processSeconds) || 0,
+    p_status: status || "inprocess",
+    p_client_id: clientId || newClientId(),               // idempotency key (คงเดิมทุกครั้งที่ลองซิงค์)
+    p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
+    p_operation_id: operationId || null,                   // ขั้นตอนที่เลือกบนจอ (null = ใช้ของบัญชี)
+  };
+  const { data, error } = await supabase.rpc("record_machine_work", payload);
+  if (error) {
+    if (allowQueue && isNetworkErr(error)) {
+      // เก็บ release_id + weight ไว้นอก payload (RPC ไม่รับ) เพื่อคำนวณ running number/ยอดน้ำหนักออฟไลน์
+      //   (น้ำหนักคิดฝั่งเซิร์ฟเวอร์ = จำนวน × น้ำหนักต่อชิ้น · ออฟไลน์เก็บค่าที่คำนวณไว้ล่วงหน้ามาโชว์)
+      const a = qRead();
+      a.push({ machineWork: payload, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now() });
+      // ★ ถ้าเขียนคิวไม่ได้ (ที่เก็บเต็ม/โหมดส่วนตัว) อย่าบอกว่าสำเร็จ — งานจะหายเงียบ
+      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+      return { ok: true, queued: true };
+    }
+    console.warn("record_machine_work error", error);
+    flagAuth(error);   // ★ token หมด/เพี้ยน → เด้ง login (path นี้เดิมตกหล่น = บันทึกหน้าเครื่องหลุดเงียบตอน token หมด ไม่เด้งออก)
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
 }
