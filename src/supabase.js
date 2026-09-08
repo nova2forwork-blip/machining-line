@@ -852,14 +852,16 @@ export async function getUnitsByIds(ids) {
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
 // assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
 export async function listAssemblyParents(dept) {
-  // แยกชนิดตามสเตชัน: แพ็ก→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
-  const kinds = dept === "packing" ? ["package"]
+  // แยกชนิดตามสเตชัน: แพ็ก/แพ็กแผง/แพ็กไซต์→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
+  const packDepts = ["packing", "packpanel", "packsite"];
+  const kinds = packDepts.includes(dept) ? ["package"]
     : dept === "panel" ? ["panel"]
     : dept === "assembly" ? ["subassembly"]
     : ["panel", "subassembly"];
+  const wantPack = dept === "packpanel" ? "panel" : dept === "packsite" ? "site" : null;   // แพ็กแผง/ไซต์ = เฉพาะบั้งที่ติดป้ายตรงกัน (legacy packing = ทุกบั้ง)
   const { data, error } = await supabase
     .from("part_units")
-    .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, projects(code, name, status))")
+    .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, pkg_meta, projects(code, name, status))")
     .in("part_master.kind", kinds)
     .neq("status", "finished")
     .limit(600);
@@ -871,9 +873,11 @@ export async function listAssemblyParents(dept) {
     part_no: u.part_master?.part_no || u.qr_code,
     part_name: u.part_master?.part_name || "",
     kind: u.part_master?.kind || "part",
+    pack_type: u.part_master?.pkg_meta?.pack_type || null,
     project_code: u.part_master?.projects?.code || "",
     project_status: u.part_master?.projects?.status || "",
-  })).filter((r) => r.project_status !== "closed");
+  })).filter((r) => r.project_status !== "closed")
+    .filter((r) => !wantPack || r.pack_type === wantPack);
   // กำลังทำ (in_progress) ขึ้นก่อน แล้วเรียงตามเบอร์
   const doing = (s) => /progress/i.test(s || "");
   rows.sort((a, b) => (doing(b.status) - doing(a.status)) || String(a.part_no).localeCompare(String(b.part_no)));
