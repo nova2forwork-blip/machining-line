@@ -1504,9 +1504,9 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
   const has = Math.max(0, Math.floor(Number(pending.existingQty) || 0));   // มีอยู่แล้วในแถวเดิม (กรณีสแกนเบอร์เดิมซ้ำ)
   const stepBtn = { width: 46, height: 46, borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 26, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      {/* ล็อกหน้าจอ: แตะพื้นหลังไม่ปิด — ต้องกด "ใส่เข้าเบอร์แม่" หรือ "ยกเลิก" เท่านั้น (กันเผลอแตะแล้วหลุด) */}
+      <div style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
         <div style={{ textAlign: "center", marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
           <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{pending.part_no}</div>
@@ -1532,6 +1532,9 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
             onChange={(e) => setQ(e.target.value.replace(/[^0-9]/g, ""))}
             style={{ width: 96, padding: "10px", fontSize: 26, fontWeight: 800, textAlign: "center", borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
           <button type="button" onClick={() => setQ(String(nq + 1))} disabled={busy} style={stepBtn}>+</button>
+        </div>
+        <div style={{ textAlign: "center", fontSize: 11.5, color: "#7fa694", marginBottom: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+          <Icon name="lock" size={12} className="stn-ico" />{t("แตะปุ่มด้านล่างเท่านั้น", "use the buttons below only")}
         </div>
         <div className="stn-row-btns">
           <button className="stn-pill no" onClick={onCancel} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
@@ -2010,7 +2013,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
   // ── โหมดประกอบ/แพ็ก (แยกป้ายตามประเภท) ──────────────────────────────────────
   if (isAsm) {
     if (step === STEP.SCAN) {
-      return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} />;
+      return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} locked={true} />;
     }
     const isPack = isPackingDept(asmType);
     const modeTitle = isPack ? t("โหมดแพ็ก", "Packing mode") : t("โหมดประกอบ", "Assembly mode");
@@ -2156,7 +2159,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 }
 
 // ── Camera QR scanner (rear camera + jsQR) with manual fallback ────────────
-function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
+function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locked = false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);   // แคนวาสวาดกรอบขาวทับ QR ที่เจอ
@@ -2400,7 +2403,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose }) {
             <canvas ref={canvasRef} style={{ display: "none" }} />
             <canvas ref={overlayRef} className="stn-cam-overlay" />
             {focusRing && <div className="stn-cam-focus" style={{ left: focusRing.x, top: focusRing.y }} />}
-            <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>
+            {!locked && <button type="button" className="stn-cam-close" onClick={onClose} aria-label={t("ปิด", "Close")}>✕</button>}
             {camCount > 1 && <div className="stn-cam-multi">📷×{camCount}</div>}
             {zoom && (
               <div className="stn-cam-zoom">
