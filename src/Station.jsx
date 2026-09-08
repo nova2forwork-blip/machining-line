@@ -1747,6 +1747,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [projectId, setProjectId] = useState(projects[0]?.id || "");
+  const [packType, setPackType] = useState("panel");   // ชนิดการแพ็กของบั้งชุดนี้: panel (แพ็กแผง) / site (แพ็กไซต์ไอเทม) → pkg_meta.pack_type
   const [bunks, setBunks] = useState([]);      // [{ meta, units }]
   const [openIdx, setOpenIdx] = useState(-1);  // การ์ดที่กางดูยูนิต
   const [busy, setBusy] = useState(false);
@@ -1851,7 +1852,8 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
       components.push({ child_pm_id: pm.id, qty });
     }
     if (components.length) await setBom(parentPm.id, components);
-    await setPkgManifest(parentPm.id, bunk.units, bunk.meta || {});
+    // ★ ติดป้ายชนิดการแพ็ก (pack_type) ลง pkg_meta → สเตชันแพ็กแผง/แพ็กไซต์ไอเทมกรองบั้งของตัวเอง
+    await setPkgManifest(parentPm.id, bunk.units, { ...(bunk.meta || {}), pack_type: packType });
     return { createdUnits };
   }
 
@@ -1902,6 +1904,10 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
         <Field label="โปรเจค *">
           <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
             options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+        </Field>
+        <Field label="ชนิดการแพ็ก *">
+          <Select value={packType} onChange={(e) => setPackType(e.target.value)}
+            options={[{ value: "panel", label: "แพ็กแผง (panel)" }, { value: "site", label: "แพ็กไซต์ไอเทม (site item)" }]} />
         </Field>
         <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
           onClick={() => onNeedProject && onNeedProject()}><Icon name="plus" size={16} /></Btn>
@@ -4500,7 +4506,7 @@ function ReportPage({ goTo }) {
     return rid ? relProj[rid] : undefined;
   };
   // แม็ป operation → แผนก (จาก op_type: assembly/packing · อื่น ๆ = เครื่องจักร)
-  const deptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : ty === "packing" ? "packing" : "machine");
+  const deptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : (ty === "packing" || ty === "pack_panel" || ty === "pack_site") ? "packing" : "machine");
   const opTypeById = {}, opTypeByName = {};
   operations.forEach((o) => { if (o.id != null) opTypeById[o.id] = o.op_type; if (o.name) opTypeByName[o.name] = o.op_type; });
   const deptOfLog = (l) => deptOfOpType(
@@ -6551,7 +6557,9 @@ const OP_TYPES = [
   { value: "machining", label: "งานเครื่อง (machining)" },
   { value: "assembly", label: "ประกอบ · ซับ (subassembly)" },
   { value: "panel", label: "แผง (panel)" },
-  { value: "packing", label: "แพ็ก (packing)" },
+  { value: "pack_panel", label: "แพ็กแผง (pack panel)" },
+  { value: "pack_site", label: "แพ็กไซต์ไอเทม (pack site item)" },
+  { value: "packing", label: "แพ็ก · รวมทุกบั้ง (packing)" },
 ];
 function OperationsCrud() {
   const [rows, setRows] = useState([]);
