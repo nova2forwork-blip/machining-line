@@ -734,6 +734,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmParent(w.parent);
           const kids = Array.isArray(w.children) ? w.children : [];
           setAsmChildren(kids);
+          if (w.parentQty != null) setAsmParentQty(Math.max(1, Math.floor(Number(w.parentQty) || 1)));   // กู้ "จำนวนที่จะทำ" + สถานะยืนยันจำนวน (ซับ) — refresh แล้วไม่ต้องตั้งใหม่
+          if (w.qtyLocked) setAsmQtyLocked(true);
           flash(kids.length
             ? t("กู้รายการที่สแกนค้างไว้ (" + kids.length + ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย", "Restored " + kids.length + " scanned item(s) — review & confirm")
             : t("กู้เบอร์แม่ที่ค้างไว้กลับมาแล้ว", "Restored the parent you were working on"), "ok");
@@ -749,11 +751,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   useEffect(() => {
     if (dept === "machine" || !asmWipLoadedRef.current) return;
     try {
-      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, savedAt: Date.now() }));
+      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, parentQty: asmParentQty, qtyLocked: asmQtyLocked, savedAt: Date.now() }));
       else localStorage.removeItem(asmWipKey);   // ไม่มีเบอร์แม่ (Back / ยืนยันแล้ว) → ล้าง WIP
     } catch { /* เต็ม/ปิด — ข้าม */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asmParent, asmChildren]);
+  }, [asmParent, asmChildren, asmParentQty, asmQtyLocked]);
 
   // แจ้งเตือน "ประกอบเสร็จ" เด้งกลางจอ → หายเองใน 2.6 วิ (หรือแตะ/กดตกลง)
   useEffect(() => {
