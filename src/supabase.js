@@ -722,23 +722,36 @@ function queueAssembly(p) {
   a.push({ assembly: {
     p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
     p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
+    p_parent_qty: p.parentQty ?? 1,   // จำนวนที่จะทำ (ซับ) → machine_record.quantity ฝั่ง server
   }, qid: p.clientId, ts: Date.now() });
   if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
   return { ok: true, queued: true };
 }
 
 // บันทึกการประกอบจากหน้าเครื่อง — คืนผลตรวจครบตาม BOM · เน็ตหลุด/สะดุด = เก็บเข้าคิวซิงค์ทีหลัง
-export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt }, { allowQueue = true } = {}) {
-  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString() };
+export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt, parentQty }, { allowQueue = true } = {}) {
+  // childQrs รับได้ทั้ง ["qr",...] (เดิม) และ [{qr,qty},...] (ใหม่ — นับจำนวนรวม) · parentQty = จำนวนที่จะทำของเบอร์แม่
+  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(), parentQty: Math.max(1, Math.floor(Number(parentQty) || 1)) };
   if (allowQueue && typeof navigator !== "undefined" && navigator.onLine === false) return queueAssembly(p);
   const { data, error } = await supabase.rpc("record_assembly", {
     p_token: authToken(), p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
-    p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt,
+    p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt, p_parent_qty: p.parentQty,
   });
   if (error) {
     if (allowQueue && isNetworkErr(error)) return queueAssembly(p);   // เน็ตสะดุด → เข้าคิว (ไม่ทิ้งงาน)
     console.warn("record_assembly error", error); flagAuth(error); throw error;
   }
+  return data || { ok: false, reason: "error" };
+}
+
+// บันทึกงานประกอบ "ซับ" แบบนับจำนวนรวม (สแกนแม่ + จำนวนที่ทำ · ลูกเช็ก BOM ที่สเตชัน) — ปิดงานเบอร์แม่
+export async function recordSubassembly({ parentQr, qty, operationId, clientId, recordedAt }) {
+  const { data, error } = await supabase.rpc("record_subassembly", {
+    p_token: authToken(), p_parent_qr: parentQr, p_qty: qty,
+    p_operation_id: operationId ?? null, p_client_id: clientId ?? newClientId(),
+    p_recorded_at: recordedAt ?? new Date().toISOString(),
+  });
+  if (error) { console.warn("record_subassembly error", error); flagAuth(error); throw error; }
   return data || { ok: false, reason: "error" };
 }
 
@@ -783,9 +796,9 @@ export async function prefetchAssemblyForOffline(limit = 120) {
   try {
     let parents = [];
     try {
-      const [asm, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("packing")]);
+      const [asm, panel, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("panel"), listAssemblyParents("packing")]);
       const seen = new Set();
-      [...asm, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
+      [...asm, ...panel, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
     } catch { return 0; }
     parents = parents.slice(0, limit);
     // ★ ขนานแบบจำกัด concurrency (เดิม sequential ทีละตัว = ช้ามาก ~120 round-trip/เครื่อง + burst ตอนหลายเครื่อง reconnect พร้อมกัน)
@@ -839,7 +852,11 @@ export async function getUnitsByIds(ids) {
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
 // assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
 export async function listAssemblyParents(dept) {
-  const kinds = dept === "packing" ? ["package"] : ["panel", "subassembly"];
+  // แยกชนิดตามสเตชัน: แพ็ก→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
+  const kinds = dept === "packing" ? ["package"]
+    : dept === "panel" ? ["panel"]
+    : dept === "assembly" ? ["subassembly"]
+    : ["panel", "subassembly"];
   const { data, error } = await supabase
     .from("part_units")
     .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, projects(code, name, status))")
