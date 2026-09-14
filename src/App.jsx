@@ -6309,19 +6309,54 @@ async function syncMachineOps(machineId, selectedIds, _caps) {
 }
 
 // ปุ่มแตะเลือกขั้นตอนได้หลายอัน (chip) — ใช้ทั้งฟอร์มเพิ่ม/แก้ไขพนักงาน
+// ─── op_type → "หน้าปลายทาง" (terminal/แผนก) ที่ขั้นตอนนี้ขับ ───────────────────
+// ★ ต้องตรงกับ Station.jsx: opDept() + DEPT_META (แผนก/URL) — ใช้ให้หน้า Setup อธิบายตัวเองว่า
+//   "ขั้นตอนนี้/สถานีนี้จะเข้าหน้าไหน" เพื่อกันตั้งค่าผิด (เช่น 2 สเตชันแพ็กใช้ 'แพ็ก' ตัวเดียวกัน = ไม่แยก)
+const OP_TYPE_DEST = {
+  machining:  { th: "หน้าเครื่อง (ตัด/เจาะ/บาก…)", path: "/station" },
+  assembly:   { th: "หน้าประกอบ · ซับ",            path: "/assembly" },
+  panel:      { th: "หน้าแผง",                     path: "/panel" },
+  pack_panel: { th: "หน้าแพ็กแผง",                 path: "/packing-panel" },
+  pack_site:  { th: "หน้าแพ็กไซต์ไอเทม",           path: "/packing-site" },
+  packing:    { th: "หน้าแพ็ก · รวมทุกบั้ง",       path: "/packing" },
+};
+const opTypeDest = (ty) => OP_TYPE_DEST[ty] || OP_TYPE_DEST.machining;
+// รวม "หน้าปลายทาง" ที่ไม่ซ้ำ จากชุด operation ที่เลือก (ไว้สรุปว่าสเตชันนี้จะเป็นหน้าอะไร)
+function destsOfSelected(operations, selectedSet) {
+  const seen = new Set(); const out = [];
+  (operations || []).forEach((o) => {
+    if (!selectedSet.has(o.id)) return;
+    const d = opTypeDest(o.op_type);
+    if (!seen.has(d.path)) { seen.add(d.path); out.push(d); }
+  });
+  return out;
+}
+
 function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
+  const dests = destsOfSelected(operations, selected);
   return (
     <div>
       <div className="chip-row">
         {operations.map((o) => (
           <span key={o.id} tabIndex={0} onClick={() => onToggle(o.id)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(o.id); } }}
-            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
+            style={o.__synthetic ? { borderStyle: "dashed" } : undefined}
+            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.__synthetic ? "+ " : ""}{o.name}</span>
         ))}
         {operations.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>
         )}
       </div>
+      {dests.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
+          สเตชันนี้จะเข้า: {dests.map((d) => `${d.th} (${d.path})`).join(" · ")}
+        </div>
+      )}
+      {dests.length > 1 && (
+        <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 3 }}>
+          ⚠️ เลือกข้ามหลายแผนก — 1 สเตชันควรทำแผนกเดียว (ไม่งั้นพนักงานจะถูกเด้งไปหน้าแรกที่ตรงเท่านั้น)
+        </div>
+      )}
       {!machineChosen && selected.size > 0 && (
         <div style={{ fontSize: 11.5, color: "var(--warning)", marginTop: 4 }}>เลือกเครื่อง/สถานีก่อน จึงจะบันทึกหลายขั้นตอนได้</div>
       )}
@@ -6408,6 +6443,12 @@ function MachineCrud() {
     const names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
     return names;
   }
+  // หน้าปลายทาง (แผนก/URL) ที่สเตชันนี้จะเข้า — คิดจาก "ประเภทงาน" ของขั้นตอนที่ตั้งไว้ (ไม่ใช่ชื่อสเตชัน)
+  function capDests(machineId) {
+    const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
+    const sel = operations.filter((o) => ids.has(o.id));
+    return destsOfSelected(sel, new Set(sel.map((o) => o.id)));
+  }
 
   return (
     <Card title="เพิ่มเครื่อง/สถานีใหม่ + ตั้งความสามารถ">
@@ -6419,7 +6460,7 @@ function MachineCrud() {
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง
+        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>แพ็กแยก 2 หน้า:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> หรือ <b>แพ็กไซต์ไอเทม</b> (ถ้ายังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
       </div>
       <SortControl sort={sort} options={[
         { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
@@ -6449,6 +6490,11 @@ function MachineCrud() {
                     {names.length > 0
                       ? names.join(" · ")
                       : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
+                    {(() => { const ds = capDests(r.id); return ds.length > 0 ? (
+                      <div style={{ fontSize: 11.5, color: ds.length > 1 ? "var(--warning)" : "var(--muted)", marginTop: 3 }}>
+                        {ds.length > 1 ? "⚠️ " : "→ "}{ds.map((d) => `${d.th} (${d.path})`).join(" · ")}
+                      </div>
+                    ) : null; })()}
                   </td>
                   <td data-label="" style={{ whiteSpace: "nowrap" }}>
                     <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
@@ -6472,11 +6518,23 @@ function MachineCrud() {
 
 // แก้ไขเครื่องจักร — ชื่อ / ประเภท / ขั้นตอนที่ทำได้ (ความสามารถ) + ลบ · ในที่เดียว
 // (ต้องกด "แก้ไข" ก่อนถึงจะลบหรือแก้ความสามารถได้ · รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
+// ปุ่มแผนกที่ควรเลือกได้เสมอ แม้ยังไม่มีขั้นตอนในระบบ — ติ๊กแล้วจะสร้างขั้นตอนให้อัตโนมัติตอนบันทึก
+const SPLIT_CHIP_TYPES = [
+  { op_type: "pack_panel", name: "แพ็กแผง" },
+  { op_type: "pack_site",  name: "แพ็กไซต์ไอเทม" },
+];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
   const [opSel, setOpSel] = useUndoable(() => new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id)));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // โชว์ปุ่มแพ็กแผง/แพ็กไซต์ไอเทม เป็นชิปแยกกันเสมอ — ถ้ายังไม่มีขั้นตอนจริง เติมชิป "ชั่วคราว" (id ขึ้นต้น new:)
+  const haveTypes = new Set((operations || []).map((o) => o.op_type));
+  const synthChips = SPLIT_CHIP_TYPES.filter((s) => !haveTypes.has(s.op_type))
+    .map((s) => ({ id: `new:${s.op_type}`, name: s.name, op_type: s.op_type, __synthetic: true }));
+  const augOps = [...(operations || []), ...synthChips];
+  const hasSynthSelected = [...opSel].some((id) => typeof id === "string" && id.startsWith("new:"));
 
   function toggleOp(id) { setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
 
@@ -6485,7 +6543,26 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
     setBusy(true); setErr("");
     try {
       await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
-      await syncMachineOps(machine.id, [...opSel], caps);   // บันทึกความสามารถไปพร้อมกัน
+      // แปลงชิปชั่วคราว (new:<op_type>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent)
+      const finalIds = [];
+      for (const id of opSel) {
+        if (typeof id === "string" && id.startsWith("new:")) {
+          const opType = id.slice(4);
+          const nm = SPLIT_CHIP_TYPES.find((s) => s.op_type === opType)?.name || opType;
+          let ops = await listRows("operations", { order: "seq" });
+          let hit = ops.find((o) => o.op_type === opType);
+          if (!hit) {
+            const res = await createOperation({ name: nm, opType });
+            if (res && res.ok === false) throw new Error(res.reason || "สร้างขั้นตอนไม่สำเร็จ");
+            ops = await listRows("operations", { order: "seq" });
+            hit = ops.find((o) => o.op_type === opType);
+          }
+          if (hit) finalIds.push(hit.id);
+        } else {
+          finalIds.push(id);
+        }
+      }
+      await setMachineOps(machine.id, [...new Set(finalIds)]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
@@ -6533,8 +6610,13 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
         <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
       </Field>
       <Field label="ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)">
-        <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={true} />
+        <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
       </Field>
+      {hasSynthSelected && (
+        <div style={{ fontSize: 11.5, color: "var(--accent-dk)", marginBottom: 8 }}>
+          ปุ่มที่มีเส้นประ (+) = ยังไม่มีขั้นตอนนี้ในระบบ · กด "บันทึก" แล้วจะสร้างขั้นตอนให้อัตโนมัติ
+        </div>
+      )}
       {opSel.size === 0 && (
         <div style={{ fontSize: 12, color: "var(--warning)", marginBottom: 8 }}>
           ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้สแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ
@@ -6594,8 +6676,14 @@ function OperationsCrud() {
 
   return (
     <Card title="ขั้นตอนการทำงาน (machining / ประกอบ / แพ็ก)">
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
         <b>งานเครื่อง</b> = ตัด/เจาะ/บาก (สแกนต่อชิ้นปกติ) · <b>ประกอบ/แพ็ก</b> = หน้าเครื่องสลับเป็นโหมดประกอบ (สแกนลูกเข้าเบอร์แม่ตาม BOM) — ตั้งประเภทที่นี่แทนการรัน SQL
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", background: "var(--surface-2, #f6f7f9)", border: "1px solid var(--border, #e6e8ec)", borderRadius: 10, padding: "10px 12px", marginBottom: 12, lineHeight: 1.7 }}>
+        <b>สำคัญ: "แผนก/หน้าปลายทาง" มาจาก "ประเภทงาน" ของขั้นตอน ไม่ใช่ชื่อสเตชัน</b> — ดูคอลัมน์ <b>หน้าปลายทาง</b> ด้านล่าง<br />
+        • อยากแยกแพ็กเป็น 2 หน้า ต้องมี <b>2 ขั้นตอนคนละประเภท</b>: <b>แพ็กแผง</b> (→ /packing-panel) และ <b>แพ็กไซต์ไอเทม</b> (→ /packing-site) แล้วตั้งให้สเตชันละอัน · ประเภท <b>แพ็ก · รวมทุกบั้ง</b> (→ /packing) เห็นทุกบั้ง ไม่แยก<br />
+        • ถ้าหลายสเตชันใช้ขั้นตอนประเภทเดียวกัน จะเข้า<b>หน้าเดียวกัน</b> (ไม่แยกกัน)<br />
+        • <b>Glazing/ติดกระจก</b>: เลือก <b>แผง</b> ถ้าเบอร์แม่ที่กระจกไปติดเป็นชนิด "แผง" · เลือก <b>ประกอบ · ซับ</b> ถ้าเป็นชนิด "ซับ" — ทั้งสองแบบ<b>ใส่ part ที่ไม่ใช่กระจกได้อยู่แล้ว</b> (ไม่บล็อก)
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-start" }}>
         <Field label="ชื่อขั้นตอน"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น ตัด / ประกอบ / แพ็ก" /></Field>
@@ -6608,9 +6696,11 @@ function OperationsCrud() {
       </div>
       <div className="table-wrap">
         <table className="data-table">
-          <thead><tr><th>ชื่อขั้นตอน</th><th>ลำดับ</th><th>ประเภทงาน</th><th></th></tr></thead>
+          <thead><tr><th>ชื่อขั้นตอน</th><th>ลำดับ</th><th>ประเภทงาน</th><th>หน้าปลายทาง (แผนก/URL)</th><th></th></tr></thead>
           <tbody>
-            {rows.map((r) => (
+            {rows.map((r) => {
+              const dest = opTypeDest(r.op_type || "machining");
+              return (
               <tr key={r.id}>
                 <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{r.name}</td>
                 <td>{r.seq}</td>
@@ -6619,11 +6709,16 @@ function OperationsCrud() {
                     {OP_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </td>
+                <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>
+                  <span style={{ fontWeight: 600 }}>{dest.th}</span>
+                  <span style={{ color: "var(--muted)", marginLeft: 6 }}>{dest.path}</span>
+                </td>
                 <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
               </tr>
-            ))}
+              );
+            })}
             {rows.length === 0 && (
-              <tr><td colSpan={4}><div className="empty-state" style={{ padding: "20px 0" }}><Icon name="settings" size={28} /><div className="empty-state-title">ยังไม่มีขั้นตอน</div><div className="empty-state-sub">เพิ่มขั้นตอนแรกด้านบน</div></div></td></tr>
+              <tr><td colSpan={5}><div className="empty-state" style={{ padding: "20px 0" }}><Icon name="settings" size={28} /><div className="empty-state-title">ยังไม่มีขั้นตอน</div><div className="empty-state-sub">เพิ่มขั้นตอนแรกด้านบน</div></div></td></tr>
             )}
           </tbody>
         </table>
