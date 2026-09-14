@@ -9,7 +9,7 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
-  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
+  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents, getAllOperations,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -18,13 +18,13 @@ import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
 import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
 
-// ปุ่มสลับภาษา ไทย/EN บนหน้าเครื่อง (ใช้ตัวแปล DOM ตัวเดียวกับหน้าสำนักงาน · ซิงค์ผ่าน localStorage)
+// ปุ่มสลับภาษา บนหน้าเครื่อง — โชว์ "ภาษาปัจจุบัน" (ไทย→ไทย · อังกฤษ→EN) · กดเพื่อสลับ (ซิงค์ผ่าน localStorage)
 function StnLangToggle() {
   const [lang, setLang] = useLang();
   return (
     <button className="stn-lang" onClick={() => setLang(lang === "th" ? "en" : "th")}
       title="สลับภาษา / Switch language">
-      {lang === "th" ? "EN" : "ไทย"}
+      {lang === "th" ? "ไทย" : "EN"}
     </button>
   );
 }
@@ -293,18 +293,29 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // โหลดขั้นตอนที่บัญชีทำได้ → กรอง "เฉพาะแผนกของหน้านี้" (machine / assembly / packing) + ตั้ง default
   useEffect(() => {
-    getMachineOps().then((raw) => {
-      const list = raw || [];
-      setAllOps(list);
+    Promise.all([getMachineOps(), getAllOperations()]).then(([raw, allRaw]) => {
+      const caps = raw || [];
+      setAllOps(caps);                                                     // caps ของเครื่อง → ใช้ตัดสิน "แผนก" ของบัญชี (ไม่เปลี่ยน)
       setOpsLoaded(true);
-      const ops = list.filter((o) => opDept(o) === dept);                  // เก็บเฉพาะขั้นตอนของแผนกนี้
+      let ops;
+      if (dept === "machine") {
+        // ★ หน้าเครื่อง: โชว์ "ขั้นตอนพื้นฐานทั้งหมด" ที่แอดมินตั้งไว้ (op_type machining) ทุกอัน — ไม่จำกัดแค่ caps ของเครื่อง
+        const all = (allRaw && allRaw.length ? allRaw : caps);
+        ops = all.filter((o) => opDept(o) === "machine");
+      } else {
+        ops = caps.filter((o) => opDept(o) === dept);                      // แผนกอื่น (ประกอบ/แพ็ก/แผง) = ตาม caps เดิม
+      }
       setMachineOps(ops);
       setOp((cur) => {
-        if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังทำได้ → คงเดิม
-        if (ops.length === 1) return ops[0];                               // ทำได้ขั้นตอนเดียว → เลือกให้เลย
-        if (ops.length === 0) return dept === "machine" ? (user.operation || cur) : null; // machine: ใช้ขั้นตอนประจำบัญชี
-        // ★ ทำได้หลายขั้นตอน → บังคับให้แตะเลือกเอง (ไม่ default จากบัญชี กันบันทึกผิดขั้นตอนเงียบๆ)
-        return null;
+        if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังมีอยู่ → คงเดิม
+        if (ops.length === 1) return ops[0];                               // มีขั้นตอนเดียว → เลือกให้เลย
+        // หน้าเครื่อง: default = "ขั้นตอนประจำ" ของพนักงาน (ถ้ามีในลิสต์) → ไม่ต้องเลือกทุกครั้ง แต่แตะสลับเป็นอันอื่นได้
+        if (dept === "machine" && user.operation) {
+          const mine = ops.find((o) => o.id === user.operation.id);
+          if (mine) return mine;
+        }
+        if (ops.length === 0) return dept === "machine" ? (user.operation || cur) : null;
+        return null;                                                       // ไม่มีขั้นตอนประจำ + มีหลายอัน → ให้แตะเลือกเอง
       });
     }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
     // eslint-disable-next-line react-hooks/exhaustive-deps
