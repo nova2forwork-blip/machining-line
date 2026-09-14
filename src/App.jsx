@@ -193,7 +193,7 @@ const CHART = {
   text: "#142420", accent: "#10b981", success: "#22c55e",
 };
 
-// ปุ่มสลับภาษา ไทย/EN — ปุ่มเดียวโชว์ภาษาที่จะสลับไป (แบบเดียวกับหน้าเครื่อง)
+// ปุ่มสลับภาษา ไทย/EN — โชว์ "ภาษาปัจจุบัน" (ไทย→ไทย · อังกฤษ→EN) · กดเพื่อสลับ
 function LangToggle() {
   const [lang, setLang] = useLang();
   return (
@@ -203,7 +203,7 @@ function LangToggle() {
         fontSize: 13, fontWeight: 800, lineHeight: 1, letterSpacing: ".03em",
         padding: "5px 12px", borderRadius: 8,
         border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent, #10b981)" }}>
-      {lang === "th" ? "EN" : "ไทย"}
+      {lang === "th" ? "ไทย" : "EN"}
     </button>
   );
 }
@@ -6340,8 +6340,7 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
         {operations.map((o) => (
           <span key={o.id} tabIndex={0} onClick={() => onToggle(o.id)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(o.id); } }}
-            style={o.__synthetic ? { borderStyle: "dashed" } : undefined}
-            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.__synthetic ? "+ " : ""}{o.name}</span>
+            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
         ))}
         {operations.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>
@@ -6460,7 +6459,7 @@ function MachineCrud() {
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>ปุ่มลัด:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> / <b>แพ็กไซต์ไอเทม</b> / <b>MILLING</b> (ปุ่มเส้นประ = ยังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
+        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>ปุ่มลัด:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> / <b>แพ็กไซต์ไอเทม</b> / <b>MILLING</b> (ถ้ายังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
       </div>
       <SortControl sort={sort} options={[
         { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
@@ -6553,7 +6552,8 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
           let ops = await listRows("operations", { order: "seq" });
           let hit = ops.find(spec.match);
           if (!hit) {
-            const res = await createOperation({ name: spec.name, opType: spec.op_type });
+            const nextSeq = ops.reduce((m, o) => Math.max(m, Number(o.seq) || 0), 0) + 1;   // ★ seq เป็น NOT NULL — ต่อท้ายลำดับล่าสุด
+            const res = await createOperation({ name: spec.name, seq: nextSeq, opType: spec.op_type });
             if (res && res.ok === false) throw new Error(res.reason || "สร้างขั้นตอนไม่สำเร็จ");
             ops = await listRows("operations", { order: "seq" });
             hit = ops.find(spec.match);
@@ -6614,8 +6614,8 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
         <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
       </Field>
       {hasSynthSelected && (
-        <div style={{ fontSize: 11.5, color: "var(--accent-dk)", marginBottom: 8 }}>
-          ปุ่มที่มีเส้นประ (+) = ยังไม่มีขั้นตอนนี้ในระบบ · กด "บันทึก" แล้วจะสร้างขั้นตอนให้อัตโนมัติ
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
+          ขั้นตอนที่ติ๊กใหม่ (แพ็กแผง / แพ็กไซต์ไอเทม / MILLING) ถ้ายังไม่มีในระบบ กด "บันทึก" แล้วจะสร้างให้อัตโนมัติ
         </div>
       )}
       {opSel.size === 0 && (
