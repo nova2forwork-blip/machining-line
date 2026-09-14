@@ -6460,7 +6460,7 @@ function MachineCrud() {
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>แพ็กแยก 2 หน้า:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> หรือ <b>แพ็กไซต์ไอเทม</b> (ถ้ายังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
+        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>ปุ่มลัด:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> / <b>แพ็กไซต์ไอเทม</b> / <b>MILLING</b> (ปุ่มเส้นประ = ยังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
       </div>
       <SortControl sort={sort} options={[
         { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
@@ -6518,10 +6518,12 @@ function MachineCrud() {
 
 // แก้ไขเครื่องจักร — ชื่อ / ประเภท / ขั้นตอนที่ทำได้ (ความสามารถ) + ลบ · ในที่เดียว
 // (ต้องกด "แก้ไข" ก่อนถึงจะลบหรือแก้ความสามารถได้ · รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
-// ปุ่มแผนกที่ควรเลือกได้เสมอ แม้ยังไม่มีขั้นตอนในระบบ — ติ๊กแล้วจะสร้างขั้นตอนให้อัตโนมัติตอนบันทึก
-const SPLIT_CHIP_TYPES = [
-  { op_type: "pack_panel", name: "แพ็กแผง" },
-  { op_type: "pack_site",  name: "แพ็กไซต์ไอเทม" },
+// ปุ่มลัด "เพิ่มขั้นตอนที่ยังไม่มี" — ติ๊กแล้วสร้างขั้นตอนให้อัตโนมัติตอนบันทึก
+// match = วิธีเช็กว่ามีขั้นตอนนี้อยู่แล้วไหม · แพ็กแยกด้วย op_type (คนละหน้า) · MILLING เป็นงานเครื่อง (เหมือน ตัด/เจาะ) จึงเช็กด้วยชื่อ
+const QUICK_ADD_CHIPS = [
+  { key: "pack_panel", name: "แพ็กแผง",       op_type: "pack_panel", match: (o) => o.op_type === "pack_panel" },
+  { key: "pack_site",  name: "แพ็กไซต์ไอเทม", op_type: "pack_site",  match: (o) => o.op_type === "pack_site" },
+  { key: "milling",    name: "MILLING",       op_type: "machining",  match: (o) => String(o.name || "").trim().toUpperCase() === "MILLING" },
 ];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
@@ -6529,10 +6531,9 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // โชว์ปุ่มแพ็กแผง/แพ็กไซต์ไอเทม เป็นชิปแยกกันเสมอ — ถ้ายังไม่มีขั้นตอนจริง เติมชิป "ชั่วคราว" (id ขึ้นต้น new:)
-  const haveTypes = new Set((operations || []).map((o) => o.op_type));
-  const synthChips = SPLIT_CHIP_TYPES.filter((s) => !haveTypes.has(s.op_type))
-    .map((s) => ({ id: `new:${s.op_type}`, name: s.name, op_type: s.op_type, __synthetic: true }));
+  // โชว์ปุ่มลัด (แพ็กแผง/แพ็กไซต์ไอเทม/MILLING) เป็นชิปแยกกันเสมอ — ถ้ายังไม่มีขั้นตอนจริง เติมชิป "ชั่วคราว" (id ขึ้นต้น new:)
+  const synthChips = QUICK_ADD_CHIPS.filter((c) => !(operations || []).some(c.match))
+    .map((c) => ({ id: `new:${c.key}`, name: c.name, op_type: c.op_type, __synthetic: true }));
   const augOps = [...(operations || []), ...synthChips];
   const hasSynthSelected = [...opSel].some((id) => typeof id === "string" && id.startsWith("new:"));
 
@@ -6543,19 +6544,19 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
     setBusy(true); setErr("");
     try {
       await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
-      // แปลงชิปชั่วคราว (new:<op_type>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent)
+      // แปลงชิปชั่วคราว (new:<key>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent · เช็ก/หาเจอด้วย match)
       const finalIds = [];
       for (const id of opSel) {
         if (typeof id === "string" && id.startsWith("new:")) {
-          const opType = id.slice(4);
-          const nm = SPLIT_CHIP_TYPES.find((s) => s.op_type === opType)?.name || opType;
+          const spec = QUICK_ADD_CHIPS.find((c) => c.key === id.slice(4));
+          if (!spec) continue;
           let ops = await listRows("operations", { order: "seq" });
-          let hit = ops.find((o) => o.op_type === opType);
+          let hit = ops.find(spec.match);
           if (!hit) {
-            const res = await createOperation({ name: nm, opType });
+            const res = await createOperation({ name: spec.name, opType: spec.op_type });
             if (res && res.ok === false) throw new Error(res.reason || "สร้างขั้นตอนไม่สำเร็จ");
             ops = await listRows("operations", { order: "seq" });
-            hit = ops.find((o) => o.op_type === opType);
+            hit = ops.find(spec.match);
           }
           if (hit) finalIds.push(hit.id);
         } else {
