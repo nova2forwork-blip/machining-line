@@ -1219,6 +1219,27 @@ export async function getMachineOps() {
   return list;
 }
 
+// ── ขั้นตอน "พื้นฐานทั้งหมด" ที่แอดมินตั้งไว้ (ทุก op ในระบบ) — หน้าเครื่องใช้โชว์ให้เลือกครบ ──
+// ไม่จำกัดแค่ caps ของเครื่อง · anon SELECT ตาราง operations ได้ · แคช localStorage ให้ทำงานออฟไลน์
+const ALLOPS_KEY = "mls-all-ops";
+export async function getAllOperations() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
+  }
+  try {
+    const { data, error } = await supabase.from("operations").select("id, name, seq, op_type, is_assembly").order("seq");
+    if (error) {
+      console.warn("getAllOperations error", error);
+      try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
+    }
+    const list = data || [];
+    try { localStorage.setItem(ALLOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+    return list;
+  } catch {
+    try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
+  }
+}
+
 // สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
 async function offlineMachineDay() {
   const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [] };
