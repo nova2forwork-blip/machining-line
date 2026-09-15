@@ -4549,7 +4549,7 @@ function ReportPage({ goTo }) {
   const [parts, setParts] = useState([]);
   const [partFilter, setPartFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");   // "" = ทุกโปรเจค
-  const [releaseSearch, setReleaseSearch] = useState("");    // ค้นหาตามเลข Release Order (substring)
+  const [releaseFilter, setReleaseFilter] = useState("");    // กรองตามเลข Release Order (ดรอปดาวน์)
   const [projects, setProjects] = useState([]);              // รายชื่อโปรเจค (dedupe จาก releases)
   const [relProj, setRelProj] = useState({});                // release_id → project_id (แม่นยำ ไม่ติดปัญหา part_no ซ้ำข้ามโปรเจค)
 
@@ -4605,11 +4605,10 @@ function ReportPage({ goTo }) {
   const deptOfLog = (l) => deptOfOpType(
     l.operation?.op_type ?? opTypeById[l.operation?.id] ?? opTypeById[l.operation_id] ?? opTypeByName[l.operation?.name]
   );
-  const relQ = releaseSearch.trim().toLowerCase();   // ค้นหา Release Order (substring, ไม่สนตัวพิมพ์)
   const filteredLogs = logs.filter((l) => {
     if (projectFilter && logProjectId(l) !== projectFilter) return false;
     if (partFilter && l.part_unit?.part_master?.part_no !== partFilter) return false;
-    if (relQ && !String(l.release_order || "").toLowerCase().includes(relQ)) return false;
+    if (releaseFilter && String(l.release_order || "") !== releaseFilter) return false;   // กรอง Release Order (ตรงตัว)
     if (deptFilter && deptOfLog(l) !== deptFilter) return false;
     return true;
   });
@@ -4621,6 +4620,11 @@ function ReportPage({ goTo }) {
     rangeFor(preset);
   // Part ที่โชว์ในตัวกรอง — เลือกโปรเจคแล้วโชว์เฉพาะ Part ของโปรเจคนั้น
   const visibleParts = projectFilter ? parts.filter((p) => p.project_id === projectFilter) : parts;
+  // รายการ Release Order สำหรับดรอปดาวน์ — เฉพาะที่มีงานสแกนในช่วงเวลานี้ · กรองตามโปรเจคที่เลือก
+  const releaseOrders = Array.from(new Set(
+    logs.filter((l) => !projectFilter || logProjectId(l) === projectFilter)
+        .map((l) => l.release_order).filter(Boolean)
+  )).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   // ตัวเลือกโปรเจค — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (มิเรอร์การ์ดล้างข้อมูลสแกน)
   const projectOptions = [...projects]
     .sort((a, b) => ((a.status === "closed") - (b.status === "closed"))
@@ -4831,25 +4835,26 @@ function ReportPage({ goTo }) {
                 onChange={(e) => {
                   const pid = e.target.value;
                   setProjectFilter(pid);
-                  // ถ้า Part ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรอง Part
+                  // ถ้า Part/Release ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรองนั้น
                   if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
+                  if (pid && releaseFilter && !logs.some((l) => logProjectId(l) === pid && String(l.release_order || "") === releaseFilter)) setReleaseFilter("");
                 }}
                 options={projectOptions} />
             </div>
-            {/* ── กลาง: ค้นหา Release (เลข Release Order · substring) ── */}
+            {/* ── กลาง: เลือก Release (ดรอปดาวน์ · เฉพาะที่มีงานในช่วงเวลานี้) ── */}
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>{lang === "en" ? "Search Release" : "ค้นหา Release"}</div>
-              <Input value={releaseSearch} onChange={(e) => setReleaseSearch(e.target.value)} style={{ width: "100%" }}
-                placeholder={lang === "en" ? "e.g. P-009" : "เช่น P-009"} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Release</div>
+              <Select value={releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} style={{ width: "100%" }}
+                options={releaseOrders.map((ro) => ({ value: ro, label: ro }))} />
             </div>
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Part</div>
               <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ width: "100%" }}
                 options={visibleParts.map((p) => ({ value: p.part_no, label: `${p.part_no} — ${p.part_name}` }))} />
             </div>
-            {(projectFilter || partFilter || releaseSearch) && (
+            {(projectFilter || partFilter || releaseFilter) && (
               <div>
-                <Btn variant="ghost" size="sm" onClick={() => { setProjectFilter(""); setPartFilter(""); setReleaseSearch(""); }}>
+                <Btn variant="ghost" size="sm" onClick={() => { setProjectFilter(""); setPartFilter(""); setReleaseFilter(""); }}>
                   <Icon name="close" size={13} /> {lang === "en" ? "Clear search" : "ล้างการค้นหา"}
                 </Btn>
               </div>
