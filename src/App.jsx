@@ -2647,6 +2647,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <table className="data-table responsive-cards">
             <thead>
               <tr>
+                <th style={{ width: 46, textAlign: "right", whiteSpace: "nowrap" }}>#</th>
                 <SortTh k="part_no" sort={sort}>Part No.</SortTh>
                 <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
                 <SortTh k="qty" sort={sort}>จำนวน</SortTh>
@@ -2670,13 +2671,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 uw: (r) => Number(r.unit_weight) || 0,
                 tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
                 len: (r) => Number(r.length_mm) || 0,
-              }).map((r) => {
+              }).map((r, i) => {
                 const st = unitStats[r.id] || null;
                 const finished = st?.finished ?? 0;
                 const total = st?.total ?? r.qty;
                 const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
                 return (
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
+                    <td data-label="#" style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
                     <td data-label="Part No." style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_master?.part_no || "-"}</td>
                     <td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_master?.part_name || "-"}</td>
                     <td data-label="จำนวน">{fmtNum(r.qty)}</td>
@@ -5236,7 +5238,7 @@ function ProjectsPage({ user, goTo }) {
       )}
       {editing && (
         <ProjectEditModal
-          project={editing.project} impact={editing.impact} admin={isAdmin(getSession())}
+          project={editing.project} impact={editing.impact} admin={isAdmin(getSession())} canDelRelease={canManage(getSession())}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }}
           onDeleted={() => { setEditing(null); reload(); }}
@@ -5299,7 +5301,7 @@ function PartsSummaryPage() {
 // 9) SETUP
 // ══════════════════════════════════════════════════════════════════════════
 // ─── Projects: เพิ่ม/แก้ไข/ลบ พร้อมเช็คผลกระทบก่อนลบ (มี Part/Release/QR อยู่ใต้โปรเจคไหม) ──
-function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin }) {
+function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin, canDelRelease }) {
   const [code, setCode] = useState(project.code);
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
@@ -5321,18 +5323,25 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
     if (!ok) return;
     setDelKey(g.key); setDelProg(0); setErr("");
     const ids = [...g.ids];
-    let done = 0, failed = 0;
+    let done = 0, failed = 0, firstErr = null;
     const CONC = 5;   // ลบทีละ 5 (release คนละล็อต ไม่ชนกัน) — เร็วขึ้นแต่ไม่ถล่ม DB
     for (let i = 0; i < ids.length; i += CONC) {
       const res = await Promise.allSettled(ids.slice(i, i + CONC).map((id) => deleteReleaseCascade(id)));
-      res.forEach((x) => { x.status === "fulfilled" ? (done += 1) : (failed += 1); });
+      res.forEach((x) => { if (x.status === "fulfilled") { done += 1; } else { failed += 1; if (!firstErr) firstErr = x.reason; } });
       setDelProg(done + failed);
+      if (firstErr && done === 0 && failed >= ids.slice(0, i + CONC).length) break;   // พลาดทั้งหมดตั้งแต่ต้น (เช่นสิทธิ์ไม่พอ) → หยุด ไม่ต้องยิงต่อ
     }
     auditRecord("delete_release", "release", project.id, { release_order: g.order, parts: g.parts, deleted: done, failed, project: project.code });
     try { const all = await getReleasesFull(); setRels(all.filter((r) => r.part_master?.project_id === project.id)); } catch { /* ignore */ }
     setDelKey(null);
-    if (failed > 0) { setErr(`ลบไม่ครบ — สำเร็จ ${done} · ไม่สำเร็จ ${failed} · ลองอีกครั้งได้`); mlsToast(`ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn"); }
-    else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${done} รายการ)`, "success");
+    if (failed > 0) {
+      const em = String(firstErr?.message || firstErr || "");
+      const forbidden = /forbidden|unauthor|permission|denied|not allowed|สิทธิ/i.test(em);
+      setErr(forbidden
+        ? `บัญชีนี้ยังไม่มีสิทธิ์ลบ Release ฝั่งเซิร์ฟเวอร์ (RPC จำกัดเฉพาะแอดมิน) — แจ้งผู้ดูแลให้เปิดสิทธิ์ให้ออฟฟิศ`
+        : `ลบไม่ครบ — สำเร็จ ${done} · ไม่สำเร็จ ${failed} · ลองอีกครั้งได้`);
+      mlsToast(forbidden ? "ออฟฟิศยังไม่มีสิทธิ์ลบ Release (ต้องปรับ RPC)" : `ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn");
+    } else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${done} รายการ)`, "success");
   }
 
   async function save() {
@@ -5449,7 +5458,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
             ) : (
               <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
                 <table className="data-table" style={{ fontSize: 12.5 }}>
-                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th>{admin && <th></th>}</tr></thead>
+                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th>{canDelRelease && <th></th>}</tr></thead>
                   <tbody>
                     {orders.map((g, i) => {
                       const deleting = delKey === g.key;
@@ -5459,7 +5468,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
                         <td>{g.order}</td>
                         <td>{g.parts} Part</td>
                         <td>{fmtNum(g.qty)} ชิ้น</td>
-                        {admin && <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                        {canDelRelease && <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                           {deleting
                             ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {delProg}/{g.ids.length}…</span>
                             : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด"
