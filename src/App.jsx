@@ -4655,7 +4655,7 @@ function ReportPage({ goTo }) {
   const sortP = useTableSort();   // ตาราง Release × Part × ขั้นตอน
   const dmByName = (name) => dailyMatrix.machines.find((x) => x.name === name);
   const machineAcc = {
-    name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
+    code: (m) => m.code || "", name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
     time: (m) => m.total.seconds,
     secPer: (m) => (m.total.count > 0 ? m.total.seconds / m.total.count : 0),   // cycle-time วินาที/ชิ้น
     avgKg: (m) => dmByName(m.name)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name)?.avg.count || 0,
@@ -4675,7 +4675,7 @@ function ReportPage({ goTo }) {
     const opRows = chartData.map((o) => ({ "ขั้นตอน": o.name, "จำนวน (ชิ้น)": o.count, "น้ำหนัก (กก.)": round2(o.weight) }));
     const mOps = matrix.opNames;
     const machineRows = matrix.machines.map((m) => {
-      const row = { "เครื่องจักร": m.name };
+      const row = { "รหัสเครื่อง": m.code || "", "เครื่องจักร": m.name };
       mOps.forEach((op) => { row[op] = m.ops[op]?.count || 0; });
       row["รวม (ชิ้น)"] = m.total.count;
       row["น้ำหนัก (กก.)"] = round2(m.total.weight);
@@ -4902,6 +4902,7 @@ function ReportPage({ goTo }) {
             <table className="data-table">
               <thead>
                 <tr>
+                  <SortTh k="code" sort={sortM}>{lang === "en" ? "Machine code" : "รหัสเครื่อง"}</SortTh>
                   <SortTh k="name" sort={sortM}>เครื่องจักร</SortTh>
                   {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortM} key={op}>{opLabel(op, lang)}</SortTh>)}
                   <SortTh k="total" sort={sortM}>รวม (ชิ้น)</SortTh>
@@ -4917,6 +4918,7 @@ function ReportPage({ goTo }) {
                   const dm = dailyMatrix.machines.find((x) => x.name === m.name);
                   return (
                     <tr key={m.name}>
+                      <td style={{ fontFamily: "var(--font-mono)", color: "var(--muted)", whiteSpace: "nowrap" }}>{m.code || "—"}</td>
                       <td style={{ fontWeight: 600 }}>{m.name}</td>
                       {matrix.opNames.map((op) => {
                         const cell = m.ops[op];
