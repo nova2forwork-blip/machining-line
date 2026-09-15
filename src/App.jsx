@@ -3937,7 +3937,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           mdfNo: part.mdf_no ?? "-",
           relNo: rel.release_order || "",
           qtyText: effScope === "lot"
-            ? (total != null ? `รวม ${total} ชิ้น` : "")   // ป้ายรวมล็อต: โชว์จำนวนทั้งล็อต
+            ? (total != null ? `${total} PCS` : "")   // ป้ายรวมล็อต: โชว์จำนวนทั้งล็อต (อังกฤษ ให้ตรงกับ MDF/REL NO.)
             : ((u.unit_no != null && total != null)          // ป้ายรายชิ้น: X OF Y
                 ? `${u.unit_no} OF ${total}`
                 : (u.unit_no != null ? String(u.unit_no) : "")),
