@@ -307,7 +307,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       const caps = raw || [];
       setAllOps(caps);
       setOpsLoaded(true);
-      const ops = caps.filter((o) => opDept(o) === dept);   // ★ แสดงเฉพาะขั้นตอนที่แอดมินตั้งให้ "เครื่องนี้" (caps) เท่านั้น — ไม่ใช่ทุก op ในระบบ
+      const ops = caps.filter((o) => opDept(o) === dept)
+        .sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));   // ★ แสดงเฉพาะ caps ของเครื่องนี้ + เรียงตามลำดับ (seq) ที่ตั้งไว้
       setMachineOps(ops);
       // ★ หน้าเครื่อง: เลือก "ทุกขั้นตอนที่เครื่องทำได้" ไว้ก่อน (CNC ทำหลายขั้นในครั้งเดียว) — คนงานกดออกเหลือเท่าที่ทำจริง · คงการกดออกไว้ (ไม่รีเซ็ตทุกครั้งที่โหลด)
       if (dept === "machine") setOpSel((prev) => (prev && prev.size ? prev : new Set(ops.map((o) => o.id))));
