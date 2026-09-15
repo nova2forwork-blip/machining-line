@@ -2851,8 +2851,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 // ── แท็บแผนก (ใช้ร่วม 3 หน้า: รายงาน · ปล่อยงาน · พิมพ์ QR) — แยก แผง / ซับ ออกจากกัน ──
 const DEPT_TABS = [
   { value: "machine", label: "เครื่องจักร", sub: "งานตัด / เจาะ", color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
-  { value: "panel",   label: "แผง",         sub: "panel",         color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "grid" },
   { value: "sub",     label: "ซับ",         sub: "subassembly",    color: "#7c3aed", soft: "rgba(124,58,237,.10)", icon: "check" },
+  { value: "panel",   label: "แผง",         sub: "panel",         color: "#0e9d63", soft: "rgba(16,185,129,.11)", icon: "grid" },
   { value: "packing", label: "แพ็ก",        sub: "package",        color: "#2563eb", soft: "rgba(37,99,235,.09)",  icon: "box" },
 ];
 // ชนิด part → แผนก: package=แพ็ก · panel=แผง · subassembly=ซับ · อื่น ๆ=เครื่องจักร
