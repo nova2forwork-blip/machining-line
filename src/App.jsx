@@ -2640,7 +2640,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
         <SortControl sort={sort} options={[
-          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์ Part" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อ Part" }, { k: "qty", label: "จำนวน" },
+          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: "จำนวน" },
           { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }] : []), { k: "len", label: "ความยาว/ชิ้น" },
         ]} />
@@ -2649,8 +2649,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             <thead>
               <tr>
                 <th style={{ minWidth: 44, textAlign: "right", whiteSpace: "nowrap" }}>{lang === "en" ? "Item" : "ลำดับ"}</th>
-                <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์ Part"}</SortTh>
-                <SortTh k="part_name" sort={sort}>{lang === "en" ? "Part Name" : "ชื่อ Part"}</SortTh>
+                <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
+                <SortTh k="part_name" sort={sort}>{lang === "en" ? "Part Name" : "ชื่อพาร์ท"}</SortTh>
                 <SortTh k="qty" sort={sort}>จำนวน</SortTh>
                 <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
                 <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
