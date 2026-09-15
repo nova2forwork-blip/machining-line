@@ -2550,9 +2550,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const ops = (opProg?.[r.id] || []).slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
     const last = ops.length ? ops[ops.length - 1] : null;   // ขั้นตอนสุดท้ายของงานหน้าเครื่อง (นิยาม "เสร็จ" เดียวกับการ์ดรวม)
     const stationFin = last ? Number(last.finished) || 0 : 0;
+    const stationDone = last ? Number(last.done) || 0 : 0;   // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
     const officeFin = Number(office?.finished ?? 0) || 0;
     const raw = Math.max(officeFin, stationFin);
-    return { finished: total > 0 ? Math.min(raw, total) : raw, total };
+    const finished = total > 0 ? Math.min(raw, total) : raw;
+    // "กำลังทำ" = เริ่มทำแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
+    const stationInProg = Math.max(0, stationDone - stationFin);
+    const inProgRaw = last ? stationInProg : (Number(office?.inProgress ?? 0) || 0);
+    const inProgress = total > 0 ? Math.min(inProgRaw, Math.max(0, total - finished)) : inProgRaw;
+    return { finished, total, inProgress };
   };
 
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
@@ -2584,6 +2590,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         row[lang === "en" ? "Part Name" : "ชื่อพาร์ท"] = r.part_master?.part_name || "";
         row[lang === "en" ? "Qty" : "จำนวน"] = Number(r.qty) || 0;
         row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = finished;
+        row[lang === "en" ? "In progress" : "กำลังทำ"] = p.inProgress;
         row[lang === "en" ? "Progress (%)" : "ความคืบหน้า (%)"] = pct;
         if (!isAsmGroup) {
           row[lang === "en" ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)"] = r.unit_weight ? w2(r.unit_weight) : "";
@@ -2744,6 +2751,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               {sort.sortRows(releases, sortAccessors).map((r, i) => {
                 const p = rowProg(r);
                 const finished = p.finished;
+                const inProgress = p.inProgress;
                 const total = p.total || r.qty;
                 const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
                 return (
@@ -2756,9 +2764,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                       {statsLoading ? (
                         <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
                       ) : (
-                        <span style={{ fontWeight: 600, color: finished > 0 ? "var(--success)" : "var(--muted)" }}>
-                          {fmtNum(finished)} ชิ้น
-                        </span>
+                        <>
+                          <span style={{ fontWeight: 600, color: finished > 0 ? "var(--success)" : "var(--muted)" }}>
+                            {fmtNum(finished)} ชิ้น
+                          </span>
+                          {inProgress > 0 && (
+                            <div style={{ fontSize: 11, color: "var(--alert, #d97a00)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
+                              title={lang === "en" ? "Started but not marked Finished yet" : "เริ่มทำแล้วแต่ยังไม่ได้กด Finished"}>
+                              +{fmtNum(inProgress)} {lang === "en" ? "in progress" : "กำลังทำ"}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td data-label="ความคืบหน้า" style={{ minWidth: 180 }}>
