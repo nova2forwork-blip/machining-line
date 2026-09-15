@@ -6332,7 +6332,13 @@ function destsOfSelected(operations, selectedSet) {
   return out;
 }
 
+// ── ชื่อขั้นตอน: ไทยเป็นหลัก · โหมด EN แปลอังกฤษ · ชื่ออังกฤษ (เช่น MILLING) แสดงเป็นไทย "กัด" ──
+const OP_EN = { "ตัด":"Cut","เจาะ":"Drill","บาก":"Notch","พับ":"Bend","เชื่อม":"Weld","ประกอบ":"Assemble","กัด":"Milling","เฉือน":"Shearing","ปั๊ม":"Punching","ต๊าป":"Tapping","เซาะร่อง":"Grooving","ผ่า":"Ripping" };
+const OP_NORM = { "MILLING":"กัด","milling":"กัด","Milling":"กัด" };
+function opLabel(name, lang) { const th = OP_NORM[name] || name; return lang === "en" ? (OP_EN[th] || th) : th; }
+
 function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
+  const [lang] = useLang();
   const dests = destsOfSelected(operations, selected);
   return (
     <div>
@@ -6340,7 +6346,7 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
         {operations.map((o) => (
           <span key={o.id} tabIndex={0} onClick={() => onToggle(o.id)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(o.id); } }}
-            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
+            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{opLabel(o.name, lang)}</span>
         ))}
         {operations.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>
@@ -6522,7 +6528,7 @@ function MachineCrud() {
 const QUICK_ADD_CHIPS = [
   { key: "pack_panel", name: "แพ็กแผง",       op_type: "pack_panel", match: (o) => o.op_type === "pack_panel" },
   { key: "pack_site",  name: "แพ็กไซต์ไอเทม", op_type: "pack_site",  match: (o) => o.op_type === "pack_site" },
-  { key: "milling",    name: "MILLING",       op_type: "machining",  match: (o) => String(o.name || "").trim().toUpperCase() === "MILLING" },
+  { key: "milling",    name: "กัด",           op_type: "machining",  match: (o) => { const n = String(o.name || "").trim(); return n === "กัด" || n.toUpperCase() === "MILLING"; } },
 ];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
