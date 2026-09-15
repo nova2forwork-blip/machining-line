@@ -103,6 +103,14 @@ const PACK_TYPE_OF = { packpanel: "panel", packsite: "site" };   // packpanel �
 // ธีม/CSS: packpanel/packsite ใช้ธีมแพ็ก (สีน้ำเงิน) ตัวเดียวกับ .dept-packing
 const themeDept = (d) => (isPackingDept(d) ? "packing" : d);
 
+// ── ชื่อขั้นตอน: ไทยเป็นหลัก · โหมด EN แปลเป็นอังกฤษ · ขั้นตอนที่เผลอตั้งชื่ออังกฤษ (เช่น MILLING) แสดงเป็นไทย "กัด" ──
+const OP_EN = { "ตัด":"Cut","เจาะ":"Drill","บาก":"Notch","พับ":"Bend","เชื่อม":"Weld","ประกอบ":"Assemble","กัด":"Milling","เฉือน":"Shearing","ปั๊ม":"Punching","ต๊าป":"Tapping","เซาะร่อง":"Grooving","ผ่า":"Ripping" };
+const OP_NORM = { "MILLING":"กัด","milling":"กัด","Milling":"กัด" };   // ชื่ออังกฤษ → ไทยมาตรฐาน
+function opLabel(name, lang) {
+  const th = OP_NORM[name] || name;
+  return lang === "en" ? (OP_EN[th] || th) : th;
+}
+
 // ── บัญชีนี้ไม่ใช่แผนกของหน้านี้ → บอกเหตุผล + ลิงก์ไปหน้าที่ถูกต้อง ─────────────
 // อนิเมชันโหลดตอนล็อกอิน/เปลี่ยนหน้า (แบบ 3 — จุดเต้น + แถบกวาด) เต็มจอ · ใช้ร่วมกับหน้าสำนักงาน
 function LoginSplash({ text = "กำลังเข้าสู่ระบบ…" }) {
@@ -309,13 +317,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       setOp((cur) => {
         if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังมีอยู่ → คงเดิม
         if (ops.length === 1) return ops[0];                               // มีขั้นตอนเดียว → เลือกให้เลย
-        // หน้าเครื่อง: default = "ขั้นตอนประจำ" ของพนักงาน (ถ้ามีในลิสต์) → ไม่ต้องเลือกทุกครั้ง แต่แตะสลับเป็นอันอื่นได้
-        if (dept === "machine" && user.operation) {
-          const mine = ops.find((o) => o.id === user.operation.id);
-          if (mine) return mine;
+        if (dept === "machine") {
+          // ★ หน้าเครื่อง: เปิดมาไม่ต้องเลือก — default = ขั้นตอนประจำของพนักงาน (ถ้ามีในลิสต์) ไม่งั้นตัวแรก · แตะสลับเองได้
+          const mine = user.operation && ops.find((o) => o.id === user.operation.id);
+          return mine || ops[0] || user.operation || cur || null;
         }
-        if (ops.length === 0) return dept === "machine" ? (user.operation || cur) : null;
-        return null;                                                       // ไม่มีขั้นตอนประจำ + มีหลายอัน → ให้แตะเลือกเอง
+        return null;                                                       // แผนกอื่น (ประกอบ/แพ็ก) — คงเดิม
       });
     }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1181,7 +1188,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <div className="stn-oppick">
             <span className="stn-oppick-lbl">{t("ขั้นตอน", "Operation")}:</span>
             {machineOps.map((o) => (
-              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} onClick={() => setOp(o)}>{o.name}</button>
+              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} onClick={() => setOp(o)}>{opLabel(o.name, lang)}</button>
             ))}
             {!op && <span className="stn-oppick-hint">← {t("แตะเลือกก่อน", "pick first")}</span>}
           </div>
@@ -1239,7 +1246,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             <button key={o.id}
               className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`}
               onClick={() => setOp(o)}>
-              {o.name}
+              {opLabel(o.name, lang)}
             </button>
           ))}
           {!op && <span className="stn-oppick-hint">← แตะเลือกก่อนสแกน</span>}
@@ -1247,7 +1254,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       )}
       {machineOps.length === 1 && (
         <div className="stn-oppick one"><span className="stn-oppick-lbl">ขั้นตอน:</span>
-          <span className="stn-oppick-btn sel" style={{ pointerEvents: "none" }}>{machineOps[0].name}</span>
+          <span className="stn-oppick-btn sel" style={{ pointerEvents: "none" }}>{opLabel(machineOps[0].name, lang)}</span>
         </div>
       )}
 
