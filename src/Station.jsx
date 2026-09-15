@@ -9,7 +9,7 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
-  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents, getAllOperations,
+  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -235,6 +235,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
   const [op, setOp] = useState(user.operation || null);
+  const [opSel, setOpSel] = useState(() => new Set());  // ★ หน้าเครื่อง: ขั้นตอนที่เลือก "หลายอัน" (CNC ทำหลายขั้นในครั้งเดียว) — บันทึกทุกอันที่เลือก
   const [machineOps, setMachineOps] = useState([]);   // ขั้นตอน "ของแผนกนี้" ที่บัญชีทำได้ (กรองตาม dept แล้ว)
   const [allOps, setAllOps] = useState([]);           // ★ ทุกขั้นตอนของบัญชี (ยังไม่กรอง) — ใช้บอกว่าบัญชีนี้เป็นแผนกอะไร
   const [opsLoaded, setOpsLoaded] = useState(false);  // โหลดรายการขั้นตอนเสร็จหรือยัง (กันเด้ง redirect ก่อนรู้ข้อมูล)
@@ -267,6 +268,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);   // กันกด OK ซ้ำระหว่างบันทึก (re-entrancy)
   const clientIdRef = useRef(null);  // ★ client_id คงเดิมตลอด "การบันทึกครั้งเดียว" (รวมตอน retry) กันบันทึกซ้ำ
+  const clientIdMapRef = useRef(null);  // ★ หน้าเครื่องหลายขั้นตอน: client_id แยกต่อขั้นตอน (คงเดิมตอน retry ทั้งชุด)
   const [toast, setToast] = useState(null);   // { text, tone }
   const toastRef = useRef(null);
   const [pending, setPending] = useState(scanQueueCount());
@@ -301,32 +303,37 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // โหลดขั้นตอนที่บัญชีทำได้ → กรอง "เฉพาะแผนกของหน้านี้" (machine / assembly / packing) + ตั้ง default
   useEffect(() => {
-    Promise.all([getMachineOps(), getAllOperations()]).then(([raw, allRaw]) => {
+    getMachineOps().then((raw) => {
       const caps = raw || [];
-      setAllOps(caps);                                                     // caps ของเครื่อง → ใช้ตัดสิน "แผนก" ของบัญชี (ไม่เปลี่ยน)
+      setAllOps(caps);
       setOpsLoaded(true);
-      let ops;
-      if (dept === "machine") {
-        // ★ หน้าเครื่อง: โชว์ "ขั้นตอนพื้นฐานทั้งหมด" ที่แอดมินตั้งไว้ (op_type machining) ทุกอัน — ไม่จำกัดแค่ caps ของเครื่อง
-        const all = (allRaw && allRaw.length ? allRaw : caps);
-        ops = all.filter((o) => opDept(o) === "machine");
-      } else {
-        ops = caps.filter((o) => opDept(o) === dept);                      // แผนกอื่น (ประกอบ/แพ็ก/แผง) = ตาม caps เดิม
-      }
+      const ops = caps.filter((o) => opDept(o) === dept);   // ★ แสดงเฉพาะขั้นตอนที่แอดมินตั้งให้ "เครื่องนี้" (caps) เท่านั้น — ไม่ใช่ทุก op ในระบบ
       setMachineOps(ops);
+      // ★ หน้าเครื่อง: เลือก "ทุกขั้นตอนที่เครื่องทำได้" ไว้ก่อน (CNC ทำหลายขั้นในครั้งเดียว) — คนงานกดออกเหลือเท่าที่ทำจริง · คงการกดออกไว้ (ไม่รีเซ็ตทุกครั้งที่โหลด)
+      if (dept === "machine") setOpSel((prev) => (prev && prev.size ? prev : new Set(ops.map((o) => o.id))));
       setOp((cur) => {
-        if (cur && ops.some((o) => o.id === cur.id)) return cur;          // เลือกไว้แล้ว + ยังมีอยู่ → คงเดิม
-        if (ops.length === 1) return ops[0];                               // มีขั้นตอนเดียว → เลือกให้เลย
+        if (cur && ops.some((o) => o.id === cur.id)) return cur;
+        if (ops.length === 1) return ops[0];
         if (dept === "machine") {
-          // ★ หน้าเครื่อง: เปิดมาไม่ต้องเลือก — default = ขั้นตอนประจำของพนักงาน (ถ้ามีในลิสต์) ไม่งั้นตัวแรก · แตะสลับเองได้
           const mine = user.operation && ops.find((o) => o.id === user.operation.id);
-          return mine || ops[0] || user.operation || cur || null;
+          return mine || ops[0] || cur || null;
         }
-        return null;                                                       // แผนกอื่น (ประกอบ/แพ็ก) — คงเดิม
+        return null;
       });
     }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept]);
+  // หน้าเครื่อง: ให้ op (ตัวแทน — ใช้โชว์ rework/ความคืบหน้า) ชี้ไป "ขั้นตอนที่ยังเลือกอยู่" เสมอ · ว่าง = ไม่มีเลือก (บล็อกบันทึกเหมือนเดิม)
+  useEffect(() => {
+    if (dept !== "machine") return;
+    if (machineOps.length === 0) return;   // ไม่มี caps → ปล่อย op ตาม fallback (ขั้นตอนประจำของพนักงาน)
+    setOp((cur) => {
+      if (cur && opSel.has(cur.id)) return cur;
+      const firstId = opSel.size ? [...opSel][0] : null;
+      return machineOps.find((x) => x.id === firstId) || null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opSel, machineOps, dept]);
   // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
   useEffect(() => {
     const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
@@ -454,12 +461,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         v: 1, step, materialLen, qty, status,
         unit, op, progress, dupCount,
-        clientId: clientIdRef.current,
+        opSel: [...opSel],                  // ★ ขั้นตอนที่เลือกไว้ (หลายอัน) — กันรีโหลดแล้วกลับไปเลือกทุกอันเอง
         startTs: startTsRef.current,        // เวลาเริ่มจริง → คำนวณเวลาเดินเครื่องต่อได้
         savedAt: Date.now(),
       }));
     } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
-  }, [step, materialLen, qty, status, unit, op, progress, dupCount]);
+  }, [step, materialLen, qty, status, unit, op, progress, dupCount, opSel]);
 
   // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
   useEffect(() => {
@@ -477,6 +484,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setProgress(d.progress ?? null);
           setDupCount(Number(d.dupCount) || 0);
           if (d.op) setOp(d.op);
+          if (Array.isArray(d.opSel)) setOpSel(new Set(d.opSel));   // ★ กู้ "ขั้นตอนที่เลือกไว้" (หลายอัน) ให้ตรงกับตอนก่อนรีโหลด
           clientIdRef.current = d.clientId ?? null;
           if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
           setStep(d.step);
@@ -496,6 +504,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStep(STEP.IDLE);
     clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
+    clientIdMapRef.current = null;       // ★ ล้าง client_id ต่อขั้นตอนด้วย (ชิ้นใหม่ = ชุดใหม่)
   }
 
   // ── START / STOP (RECORD) ───────────────────────────────────────────────
@@ -546,12 +555,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // ★ ล้าง client_id ด้วย — สแกนชิ้นใหม่ = การบันทึกครั้งใหม่ ถ้าไม่ล้างจะ reuse ตัวเดิม
     //   (เคส: บันทึกชิ้น A พลาดแบบไม่ใช่เน็ต แต่ DB commit แล้ว → กด SCAN ชิ้น B → B โดน dedup หาย)
     clientIdRef.current = null;
+    clientIdMapRef.current = null;
     setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null);
     setStep(STEP.SCAN);
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
   // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
-  function rescan() { clientIdRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
+  function rescan() { clientIdRef.current = null; clientIdMapRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
   // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
@@ -638,27 +648,40 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ── บันทึก (เรียกจากปุ่ม OK) ─────────────────────────────────────────────
   async function doSave() {
     if (savingRef.current) return;      // กันกด OK รัวๆ → บันทึกซ้ำ (re-entrancy)
+    // ★ หน้าเครื่อง: บันทึก "ทุกขั้นตอนที่เลือก" (CNC ทำหลายขั้นในครั้งเดียว) · ต้องเลือกอย่างน้อย 1 ขั้นตอน
+    const opIds = (dept === "machine")
+      ? (opSel.size ? [...opSel] : (op?.id ? [op.id] : []))
+      : [op?.id || null];
+    if (opIds.length === 0) { flash(t("เลือกอย่างน้อย 1 ขั้นตอนก่อนบันทึก", "pick at least one operation first"), "warn"); return; }
     savingRef.current = true;
     setBusy(true);
     // สร้าง client_id ครั้งเดียวต่อการบันทึกชิ้นนี้ · ถ้ากด OK ซ้ำ (retry หลังพลาด) ใช้ตัวเดิม
     // → ฝั่ง DB dedup ด้วย client_id ได้ กันบันทึกซ้ำแม้ error ที่ไม่ใช่เน็ต (เช่น insert สำเร็จแต่ตอบกลับพลาด)
     // ★ ต้องเป็น "UUID จริง" เสมอ (คอลัมน์ client_id เป็น uuid) — newClientId() รับประกันได้แม้เครื่อง
     //   ไม่มี crypto.randomUUID (เปิดผ่าน http / webview เก่า) · เดิมใช้ fallback ที่ไม่ใช่ UUID → insert พัง
-    if (!clientIdRef.current) clientIdRef.current = newClientId();
+    if (!clientIdMapRef.current) clientIdMapRef.current = {};   // client_id แยกต่อขั้นตอน (คงเดิมตอน retry)
     try {
       // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
       const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
-      const res = await recordMachineWork({
-        qr: unit.qr_code,
-        quantity: qty,
-        materialLengthMm: materialLen === "" ? null : Number(materialLen),
-        processSeconds: elapsed,
-        status,
-        releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
-        operationId: op?.id || null,  // ★ ขั้นตอนที่เลือกบนจอ
-        clientId: clientIdRef.current, // ★ คงเดิมตอน retry
-        weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
-      });
+      let res = null, anyRow = false;
+      for (const oid of opIds) {   // ★ บันทึกทีละขั้นตอนที่เลือก (1 สแกน = 1 record ต่อขั้นตอน — เหมือนชิ้นผ่านหลายขั้น)
+        const key = String(oid);
+        if (!clientIdMapRef.current[key]) clientIdMapRef.current[key] = newClientId();
+        res = await recordMachineWork({
+          qr: unit.qr_code,
+          quantity: qty,
+          materialLengthMm: materialLen === "" ? null : Number(materialLen),
+          processSeconds: elapsed,
+          status,
+          releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
+          operationId: oid,             // ★ ขั้นตอนที่เลือกบนจอ (ทีละอัน)
+          clientId: clientIdMapRef.current[key], // ★ คงเดิมตอน retry (ต่อขั้นตอน)
+          weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
+        });
+        if (!res || res.ok === false) break;   // ล้มเหลว (เช่นโปรเจคปิด) — เหมือนกันทุกขั้นตอน หยุดเลย
+        if (res.daily) setDaily(res.daily);
+        if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
+      }
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
         const msg = res?.reason === "project_closed"
@@ -676,14 +699,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         reload();              // ★ อัปเดตยอด "วันนี้" + ตารางจากคิวออฟไลน์ (offlineMachineDay รวมงานค้าง) — กันคนงานเห็นยอดนิ่งแล้วสแกนซ้ำ
         return;
       }
-      // update table + daily from server response
-      if (res.daily) setDaily(res.daily);
-      if (res.row) {
-        setRows((rs) => [...rs, res.row]);
-        setNewRowId(res.row.id || `${Date.now()}`);
-      } else {
-        reload();
-      }
+      if (!anyRow) reload();   // เผื่อ server ไม่คืน row — ดึงยอด/ตารางใหม่
       okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
       flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
       resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
@@ -1244,12 +1260,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <span className="stn-oppick-lbl">ขั้นตอน:</span>
           {machineOps.map((o) => (
             <button key={o.id}
-              className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`}
-              onClick={() => setOp(o)}>
+              className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}`}
+              onClick={() => setOpSel((prev) => { const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
               {opLabel(o.name, lang)}
             </button>
           ))}
-          {!op && <span className="stn-oppick-hint">← แตะเลือกก่อนสแกน</span>}
+          {opSel.size === 0 && <span className="stn-oppick-hint">← เลือกอย่างน้อย 1 ขั้นตอน</span>}
         </div>
       )}
       {machineOps.length === 1 && (
