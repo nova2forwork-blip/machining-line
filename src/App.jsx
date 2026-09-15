@@ -2453,6 +2453,7 @@ function PartProgressModal({ release, user, onClose }) {
 
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const canEdit = isAdmin(user);   // เฉพาะ Admin เท่านั้นที่แก้ไข/ลบ Release ได้ (office เพิ่ม/นำเข้า/ดูได้ แต่แก้/ลบไม่ได้)
+  const [lang] = useLang();        // แปลหัวคอลัมน์ที่เพิ่มเอง (ลำดับ/Item) ตามภาษา
   // สำเนา releases แบบ local เพื่อให้แก้ไข/ลบ สะท้อนทันทีในหน้านี้ (ยอดรวมคิดใหม่ตามนี้)
   const [releases, setReleases] = useState(group.releases);
   const [unitStats, setUnitStats] = useState({});
@@ -2639,7 +2640,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
         <SortControl sort={sort} options={[
-          { k: "part_no", label: "Part No." }, { k: "part_name", label: "ชื่อ Part" }, { k: "qty", label: "จำนวน" },
+          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์ Part" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อ Part" }, { k: "qty", label: "จำนวน" },
           { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }] : []), { k: "len", label: "ความยาว/ชิ้น" },
         ]} />
@@ -2647,9 +2648,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <table className="data-table responsive-cards">
             <thead>
               <tr>
-                <th style={{ width: 46, textAlign: "right", whiteSpace: "nowrap" }}>#</th>
-                <SortTh k="part_no" sort={sort}>Part No.</SortTh>
-                <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
+                <th style={{ minWidth: 44, textAlign: "right", whiteSpace: "nowrap" }}>{lang === "en" ? "Item" : "ลำดับ"}</th>
+                <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์ Part"}</SortTh>
+                <SortTh k="part_name" sort={sort}>{lang === "en" ? "Part Name" : "ชื่อ Part"}</SortTh>
                 <SortTh k="qty" sort={sort}>จำนวน</SortTh>
                 <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
                 <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
@@ -2678,7 +2679,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
                 return (
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
-                    <td data-label="#" style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
+                    <td data-label={lang === "en" ? "Item" : "ลำดับ"} style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
                     <td data-label="Part No." style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_master?.part_no || "-"}</td>
                     <td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_master?.part_name || "-"}</td>
                     <td data-label="จำนวน">{fmtNum(r.qty)}</td>
