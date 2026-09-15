@@ -2534,12 +2534,26 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     ? totalFinished * avgW
     : releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
 
+  // ── ความคืบหน้าต่อ Part (แต่ละแถว) = MAX(สแกนออฟฟิศ, งานหน้าเครื่องขั้นตอนสุดท้าย) ──
+  //    ให้ตรงกับการ์ด "เสร็จแล้ว (ภาพรวม)" ด้านบน · เดิมแถวอ่านเฉพาะ unitStats (สแกนออฟฟิศ)
+  //    งานที่บันทึกจากหน้าเครื่อง (machine_records) จึงไม่ขึ้นในตาราง — โชว์ 0 ทั้งที่ยอดรวมเห็นแล้ว
+  const rowProg = (r) => {
+    const office = unitStats[r.id] || null;
+    const total = Number(office?.total ?? r.qty) || 0;
+    const ops = (opProg?.[r.id] || []).slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
+    const last = ops.length ? ops[ops.length - 1] : null;   // ขั้นตอนสุดท้ายของงานหน้าเครื่อง (นิยาม "เสร็จ" เดียวกับการ์ดรวม)
+    const stationFin = last ? Number(last.finished) || 0 : 0;
+    const officeFin = Number(office?.finished ?? 0) || 0;
+    const raw = Math.max(officeFin, stationFin);
+    return { finished: total > 0 ? Math.min(raw, total) : raw, total };
+  };
+
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
   const sortAccessors = {
     part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
     qty: (r) => Number(r.qty) || 0,
-    finished: (r) => unitStats[r.id]?.finished ?? 0,
-    progress: (r) => { const t = unitStats[r.id]?.total ?? r.qty; return t > 0 ? (unitStats[r.id]?.finished ?? 0) / t : 0; },
+    finished: (r) => rowProg(r).finished,
+    progress: (r) => { const p = rowProg(r); return p.total > 0 ? p.finished / p.total : 0; },
     uw: (r) => Number(r.unit_weight) || 0,
     tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
     len: (r) => Number(r.length_mm) || 0,
@@ -2553,9 +2567,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const w2 = (n) => (Number(n) || 0).toFixed(2);   // ★ บังคับ 2 ตำแหน่งทศนิยมเสมอ (เช่น 5.00, 5.20)
     try {
       const rows = sort.sortRows(releases, sortAccessors).map((r, i) => {
-        const st = unitStats[r.id] || null;
-        const finished = st?.finished ?? 0;
-        const total = st?.total ?? r.qty;
+        const p = rowProg(r);
+        const finished = p.finished;
+        const total = p.total || r.qty;
         const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
         const row = {};
         row[lang === "en" ? "Item" : "ลำดับ"] = i + 1;
@@ -2721,9 +2735,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             </thead>
             <tbody>
               {sort.sortRows(releases, sortAccessors).map((r, i) => {
-                const st = unitStats[r.id] || null;
-                const finished = st?.finished ?? 0;
-                const total = st?.total ?? r.qty;
+                const p = rowProg(r);
+                const finished = p.finished;
+                const total = p.total || r.qty;
                 const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
                 return (
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
