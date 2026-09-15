@@ -89,7 +89,8 @@ const OP_EN = {
   "ตัด": "Cut", "เจาะ": "Drill", "บาก": "Notch", "พับ": "Bend", "เชื่อม": "Weld", "ประกอบ": "Assemble",
   "กัด": "Milling", "เฉือน": "Shearing", "ปั๊ม": "Punching", "ต๊าป": "Tapping", "เซาะร่อง": "Grooving", "ผ่า": "Ripping",
 };
-const opLabel = (name, lang) => (lang === "en" ? (OP_EN[name] || name) : name);
+const OP_NORM = { "MILLING": "กัด", "milling": "กัด", "Milling": "กัด" };   // ชื่ออังกฤษที่เผลอตั้ง → ไทยมาตรฐาน
+const opLabel = (name, lang) => { const th = OP_NORM[name] || name; return lang === "en" ? (OP_EN[th] || th) : th; };
 
 // นาฬิกา + ตัวชี้ "อัปเดตสด/ข้อมูลค้าง" — แยกเป็น component ลูกที่ tick เองทุก 1 วิ
 // เพื่อไม่ให้การเดินนาฬิกาไป re-render ทั้ง Dashboard (รวมกราฟ recharts ที่หนัก) ทุกวินาที
