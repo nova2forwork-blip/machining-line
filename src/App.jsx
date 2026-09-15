@@ -4893,10 +4893,12 @@ function ReportPage({ goTo }) {
 
       <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          แต่ละเครื่องทำขั้นตอนอะไรไปเท่าไร (ชิ้น·กก.) + เวลาเดินเครื่อง + เฉลี่ย/วัน ในตารางเดียว · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง
+          {lang === "en"
+            ? <>How much each machine did per operation (pcs·kg) + machine time + avg/day, all in one table · <b>Avg/day</b> is based on days with activity only</>
+            : <>แต่ละเครื่องทำขั้นตอนอะไรไปเท่าไร (ชิ้น·กก.) + เวลาเดินเครื่อง + เฉลี่ย/วัน ในตารางเดียว · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง</>}
         </div>
         {matrix.machines.length === 0 ? (
-          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (
           <div className="table-wrap tall-scroll">
             <table className="data-table">
@@ -4946,16 +4948,20 @@ function ReportPage({ goTo }) {
           </div>
         )}
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
-          ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)
+          {lang === "en"
+            ? <>Numbers are workload (counted per scan), not material quantity · <b>Machine time</b> = time captured between START–SAVE on the terminal (not the machine's actual power-on time)</>
+            : <>ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)</>}
         </div>
       </Card>
 
-      <Card title="Release × Part × ขั้นตอน">
+      <Card title={lang === "en" ? "Release × Part × Operation" : "Release × Part × ขั้นตอน"}>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          แต่ละแถว = Part ในแต่ละ Release · คอลัมน์ขั้นตอน = จำนวนชิ้นที่ผ่านขั้นตอนนั้น · <b>น้ำหนัก</b> แยกคอลัมน์ · <b>เสร็จ</b> = ชิ้นที่กด Finished
+          {lang === "en"
+            ? <>Each row = a Part in each Release · Operation columns = pieces that passed that operation · <b>Weight</b> in its own column · <b>Finished</b> = pieces marked Finished</>
+            : <>แต่ละแถว = Part ในแต่ละ Release · คอลัมน์ขั้นตอน = จำนวนชิ้นที่ผ่านขั้นตอนนั้น · <b>น้ำหนัก</b> แยกคอลัมน์ · <b>เสร็จ</b> = ชิ้นที่กด Finished</>}
         </div>
         {partMatrix.parts.length === 0 ? (
-          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>ยังไม่มีการสแกนในช่วงเวลานี้</div>
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (
           <div className="table-wrap tall-scroll">
             <table className="data-table">
@@ -5078,7 +5084,7 @@ function MachinesSummaryPage() {
                 </tr>
               ))}
               {matrix.machines.length === 0 && (
-                <tr><td colSpan={matrix.opNames.length + 4} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>ยังไม่มีการสแกนในช่วงเวลานี้</td></tr>
+                <tr><td colSpan={matrix.opNames.length + 4} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
               )}
             </tbody>
           </table>
