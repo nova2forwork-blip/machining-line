@@ -2464,6 +2464,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [busyId, setBusyId] = useState(null);     // release ที่กำลังลบ
   const [editHeader, setEditHeader] = useState(false);   // เปิดหน้าต่างแก้หัวเอกสาร (Modify/RO/วันที่)
   const [hdr, setHdr] = useState({ ro: group.releaseOrder, date: group.date });   // ค่าหัวเอกสารที่โชว์ (อัปเดตหลังบันทึก)
+  const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
   const sort = useTableSort();
 
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
@@ -2532,6 +2533,55 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const finishedWeight = stationDrove
     ? totalFinished * avgW
     : releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
+
+  // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
+  const sortAccessors = {
+    part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
+    qty: (r) => Number(r.qty) || 0,
+    finished: (r) => unitStats[r.id]?.finished ?? 0,
+    progress: (r) => { const t = unitStats[r.id]?.total ?? r.qty; return t > 0 ? (unitStats[r.id]?.finished ?? 0) / t : 0; },
+    uw: (r) => Number(r.unit_weight) || 0,
+    tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
+    len: (r) => Number(r.length_mm) || 0,
+  };
+
+  // ── ดาวน์โหลดตาราง "รายละเอียดแต่ละ Part" เป็นไฟล์ Excel (.xlsx) ──
+  // คอลัมน์/ลำดับตรงกับที่เห็นบนจอ · หัวคอลัมน์ตามภาษาที่ใช้อยู่ · ตัวเลขเป็นตัวเลขจริง (รวม/เรียงใน Excel ได้)
+  async function doExportExcel() {
+    if (exporting) return;
+    setExporting(true);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    try {
+      const rows = sort.sortRows(releases, sortAccessors).map((r, i) => {
+        const st = unitStats[r.id] || null;
+        const finished = st?.finished ?? 0;
+        const total = st?.total ?? r.qty;
+        const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
+        const row = {};
+        row[lang === "en" ? "Item" : "ลำดับ"] = i + 1;
+        row[lang === "en" ? "Part No." : "เบอร์พาร์ท"] = r.part_master?.part_no || "";
+        row[lang === "en" ? "Part Name" : "ชื่อพาร์ท"] = r.part_master?.part_name || "";
+        row[lang === "en" ? "Qty" : "จำนวน"] = Number(r.qty) || 0;
+        row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = finished;
+        row[lang === "en" ? "Progress (%)" : "ความคืบหน้า (%)"] = pct;
+        if (!isAsmGroup) {
+          row[lang === "en" ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)"] = r.unit_weight ? r2(r.unit_weight) : "";
+          row[lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)"] = r.unit_weight ? r2((Number(r.qty) || 0) * r.unit_weight) : "";
+        }
+        row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
+        row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
+        return row;
+      });
+      const roTag = String(hdr.ro || releases[0]?.part_master?.part_no || "export").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 60);
+      const { downloadSheets } = await import("./excelExport.js");
+      await downloadSheets(`release-${roTag}.xlsx`, [{ name: lang === "en" ? "Parts" : "รายการ Part", rows }]);
+    } catch (e) {
+      console.warn("export release excel error", e);
+      mlsToast(lang === "en" ? "Export failed, please try again" : "สร้างไฟล์ Excel ไม่สำเร็จ ลองใหม่อีกครั้ง", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div>
@@ -2638,7 +2688,13 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         </Card>
       )}
 
-      <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
+      <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
+        right={
+          <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || releases.length === 0}
+            title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
+            <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : (lang === "en" ? "Export Excel" : "Export Excel")}
+          </Btn>
+        }>
         <SortControl sort={sort} options={[
           { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
           { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
@@ -2664,15 +2720,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </tr>
             </thead>
             <tbody>
-              {sort.sortRows(releases, {
-                part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
-                qty: (r) => Number(r.qty) || 0,
-                finished: (r) => unitStats[r.id]?.finished ?? 0,
-                progress: (r) => { const t = unitStats[r.id]?.total ?? r.qty; return t > 0 ? (unitStats[r.id]?.finished ?? 0) / t : 0; },
-                uw: (r) => Number(r.unit_weight) || 0,
-                tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
-                len: (r) => Number(r.length_mm) || 0,
-              }).map((r, i) => {
+              {sort.sortRows(releases, sortAccessors).map((r, i) => {
                 const st = unitStats[r.id] || null;
                 const finished = st?.finished ?? 0;
                 const total = st?.total ?? r.qty;
