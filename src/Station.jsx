@@ -663,25 +663,22 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     try {
       // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
       const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
-      let res = null, anyRow = false;
-      for (const oid of opIds) {   // ★ บันทึกทีละขั้นตอนที่เลือก (1 สแกน = 1 record ต่อขั้นตอน — เหมือนชิ้นผ่านหลายขั้น)
-        const key = String(oid);
-        if (!clientIdMapRef.current[key]) clientIdMapRef.current[key] = newClientId();
-        res = await recordMachineWork({
-          qr: unit.qr_code,
-          quantity: qty,
-          materialLengthMm: materialLen === "" ? null : Number(materialLen),
-          processSeconds: elapsed,
-          status,
-          releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
-          operationId: oid,             // ★ ขั้นตอนที่เลือกบนจอ (ทีละอัน)
-          clientId: clientIdMapRef.current[key], // ★ คงเดิมตอน retry (ต่อขั้นตอน)
-          weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
-        });
-        if (!res || res.ok === false) break;   // ล้มเหลว (เช่นโปรเจคปิด) — เหมือนกันทุกขั้นตอน หยุดเลย
-        if (res.daily) setDaily(res.daily);
-        if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
-      }
+      // ★ count-once: 1 สแกน = 1 รอบเครื่อง · ขั้นตอน "หลัก" (ตัวแรกที่เลือก) นับจำนวน/เวลา/น้ำหนักจริง
+      //   ขั้นตอนอื่นที่เลือก = บันทึกเป็น "ทำแล้ว" แต่ยอด 0 (ไม่บวกจำนวน/เวลา/น้ำหนักซ้ำตามจำนวนขั้นตอน)
+      const primaryId = opIds[0];
+      const pk = String(primaryId);
+      if (!clientIdMapRef.current[pk]) clientIdMapRef.current[pk] = newClientId();
+      const res = await recordMachineWork({
+        qr: unit.qr_code,
+        quantity: qty,
+        materialLengthMm: materialLen === "" ? null : Number(materialLen),
+        processSeconds: elapsed,
+        status,
+        releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
+        operationId: primaryId,       // ★ ขั้นตอนหลัก — นับยอด/เวลา/น้ำหนักจริง
+        clientId: clientIdMapRef.current[pk], // ★ คงเดิมตอน retry
+        weight: qty * wpp,            // ★ ยอดน้ำหนักงานนี้ (ไว้บวกยอดรวมออฟไลน์)
+      });
       if (!res || res.ok === false) {
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
         const msg = res?.reason === "project_closed"
@@ -690,6 +687,23 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
         return;
+      }
+      let anyRow = false;
+      if (res.daily) setDaily(res.daily);
+      if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
+      // ขั้นตอนอื่นที่เลือก — มาร์กว่า "ทำแล้ว" ยอด 0 (ไม่บวกซ้ำ) · best-effort ไม่บล็อกถ้าพลาด/เซิร์ฟไม่รับ 0
+      for (const oid of opIds.slice(1)) {
+        const k = String(oid);
+        if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId();
+        try {
+          await recordMachineWork({
+            qr: unit.qr_code, quantity: 0,
+            materialLengthMm: materialLen === "" ? null : Number(materialLen),
+            processSeconds: 0, status,
+            releaseId: unit.release_id, operationId: oid,
+            clientId: clientIdMapRef.current[k], weight: 0,
+          });
+        } catch { /* ไม่บล็อก — ขั้นตอนหลักนับแล้ว */ }
       }
       setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
       if (res.queued) {
