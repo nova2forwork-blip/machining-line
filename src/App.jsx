@@ -2640,9 +2640,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
       <Card title="รายละเอียดแต่ละ Part ในล็อตนี้">
         <SortControl sort={sort} options={[
-          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: "จำนวน" },
-          { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" },
-          ...(!isAsmGroup ? [{ k: "uw", label: "น้ำหนัก/ชิ้น" }, { k: "tw", label: "น้ำหนักรวม" }] : []), { k: "len", label: "ความยาว/ชิ้น" },
+          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
+          { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
+          ...(!isAsmGroup ? [{ k: "uw", label: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น" }, { k: "tw", label: lang === "en" ? "Total weight" : "น้ำหนักรวม" }] : []), { k: "len", label: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น" },
         ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
@@ -2651,16 +2651,16 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 <th style={{ minWidth: 44, textAlign: "right", whiteSpace: "nowrap" }}>{lang === "en" ? "Item" : "ลำดับ"}</th>
                 <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
                 <SortTh k="part_name" sort={sort}>{lang === "en" ? "Part Name" : "ชื่อพาร์ท"}</SortTh>
-                <SortTh k="qty" sort={sort}>จำนวน</SortTh>
-                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
-                <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
-                {!isAsmGroup && <SortTh k="uw" sort={sort}>น้ำหนัก/ชิ้น</SortTh>}
-                {!isAsmGroup && <SortTh k="tw" sort={sort}>น้ำหนักรวม</SortTh>}
-                <SortTh k="len" sort={sort}>ความยาว/ชิ้น</SortTh>
-                <th>หมายเหตุ</th>
-                {canEdit && <th>จัดการ</th>}
-                <th>พิมพ์</th>
-                <th>ขั้นตอน</th>
+                <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
+                <SortTh k="finished" sort={sort}>{lang === "en" ? "Finished" : "เสร็จแล้ว"}</SortTh>
+                <SortTh k="progress" sort={sort}>{lang === "en" ? "Progress" : "ความคืบหน้า"}</SortTh>
+                {!isAsmGroup && <SortTh k="uw" sort={sort}>{lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น"}</SortTh>}
+                {!isAsmGroup && <SortTh k="tw" sort={sort}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</SortTh>}
+                <SortTh k="len" sort={sort}>{lang === "en" ? "Length/pc" : "ความยาว/ชิ้น"}</SortTh>
+                <th>{lang === "en" ? "Remark" : "หมายเหตุ"}</th>
+                {canEdit && <th>{lang === "en" ? "Manage" : "จัดการ"}</th>}
+                <th>{lang === "en" ? "Print" : "พิมพ์"}</th>
+                <th>{lang === "en" ? "Steps" : "ขั้นตอน"}</th>
               </tr>
             </thead>
             <tbody>
