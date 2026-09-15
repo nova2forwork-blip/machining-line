@@ -2896,6 +2896,7 @@ function ReleasePage({ user, goTo }) {
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
+  const [allOpProg, setAllOpProg] = useState({});   // ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง) ต่อ release — ใช้รวมกับ office
 
   // ── ค้นหา/กรองประวัติ: วันที่ (จาก–ถึง) · โปรเจค · เลข Release Order ──
   const [fromDate, setFromDate] = useState("");
@@ -2914,7 +2915,9 @@ function ReleasePage({ user, goTo }) {
     // โหลด stats ความคืบหน้าแบบ background (ไม่บล็อก UI)
     if (releases.length > 0) {
       const ids = releases.map((r) => r.id);
-      getUnitStatsByReleaseIds(ids).then(setAllUnitStats);
+      // โหลดทั้งสแกนออฟฟิศ + งานหน้าเครื่อง พร้อมกัน → คิด "เสร็จ" แบบ MAX(ออฟฟิศ, หน้าเครื่อง) ให้ตรงกับหน้ารายละเอียด
+      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+        .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); });
     }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -3016,13 +3019,13 @@ function ReleasePage({ user, goTo }) {
                 weight: (g) => g.totalWeight || 0,
                 progress: (g) => {
                   const t = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
-                  const f = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.finished || 0), 0);
+                  const f = computeGroupProgress(g.releases, allUnitStats, allOpProg, t).finished;
                   return t > 0 ? f / t : 0;
                 },
               }).map((g) => {
-                // รวม stats ของทุก release ในกลุ่มนี้
-                const gFinished = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.finished || 0), 0);
+                // รวม stats ของทุก release ในกลุ่มนี้ — "เสร็จ" = MAX(สแกนออฟฟิศ, งานหน้าเครื่องขั้นตอนสุดท้าย)
                 const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
+                const gFinished = computeGroupProgress(g.releases, allUnitStats, allOpProg, gTotal).finished;
                 const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
                 const statsReady = g.releases.every((r) => r.id in allUnitStats);
                 return (
