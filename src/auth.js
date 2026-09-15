@@ -117,14 +117,24 @@ export async function stationLogin(code, password) {
 }
 
 // ─── Login รวม (หน้าเดียวทั้งออฟฟิศ + คนงาน) ──────────────────────────────────
-// เหมือน stationLogin แต่ "ไม่ probe/บล็อก" → ทุก role ล็อกอินได้จากหน้าเดียว
-// (single-session ยังบังคับด้วย trigger ฝั่ง DB = ล็อกอินใหม่เตะเก่า) · ยังจำรหัสไว้ล็อกอินออฟไลน์
-// คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
+// กันล็อกอินซ้อน (1 บัญชี = 1 เครื่อง): probe ก่อนตรวจรหัส — ถ้ามีเครื่องอื่นถือบัญชีนี้อยู่
+// (heartbeat < 3 นาที) → บล็อก ไม่ให้เข้า · "เครื่องที่เข้าก่อน" ทำงานต่อได้ (เหมือน stationLogin)
+// fail-open ถ้า probe พลาด/ช้า (กันล็อกตายเพราะ RPC/เน็ตสะดุด) · ยังจำรหัสไว้ล็อกอินออฟไลน์
+// คืน { user, offline } เมื่อสำเร็จ · { error:'in_use'|'bad'|'offline_first'|'network' } เมื่อไม่สำเร็จ
 export async function appLogin(code, password) {
   const key = code.trim().toLowerCase();
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   let onlineFailed = false;
   if (!isOffline) {
+    // ★ กันล็อกอินซ้อน: มีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) → บล็อก ไม่ให้เข้า
+    //   เครื่องที่เข้าก่อนไม่หลุด · fail-open ถ้า probe พลาด/ช้า (timeout 6 วิ) กันล็อกตาย
+    try {
+      const probeRpc = supabase.rpc("session_probe", { p_code: code.trim() });
+      const probeTo = new Promise((resolve) => setTimeout(() => resolve({ data: null }), 6000));
+      const { data: probe } = await Promise.race([probeRpc, probeTo]);
+      if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
+    } catch { /* fail-open: ไปตรวจรหัสต่อ ไม่ให้ล็อกตายเพราะ probe พลาด */ }
+
     // ★ timeout กัน "หมุนค้าง" บน iPad/หน้างานที่ wifi กระตุก (online แต่ request ค้างไม่คืนค่า)
     //   Supabase client ไม่มี timeout ในตัว → ถ้าเน็ตค้าง await จะไม่จบ ปุ่มหมุนตลอด · เกิน 9 วิ = ถือว่าเน็ตมีปัญหา แล้วไปลอง cache
     const rpc = supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
