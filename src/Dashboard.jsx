@@ -215,7 +215,7 @@ export default function Dashboard() {
     const matrix = machineOpMatrix(logs);
     const mach = matrix.machines.map((m) => {
       const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
-      return { name: m.name, op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
+      return { name: m.name, code: m.code || "", op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
     });
     return {
       totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
@@ -313,6 +313,7 @@ export default function Dashboard() {
             <div className="dash-machines">
               {machines.map((m) => (
                 <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
+                  {m.code ? <div className="mcode" style={{ fontSize: "1.5vh", fontWeight: 800, letterSpacing: ".05em", opacity: .5, marginBottom: ".4vh", fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>{m.code}</div> : null}
                   <div className="name">{m.name}{m.op ? <span className="op">{opLabel(m.op, lang)}</span> : null}</div>
                   <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
                   <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
