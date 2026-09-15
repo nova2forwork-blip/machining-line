@@ -2550,7 +2550,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   async function doExportExcel() {
     if (exporting) return;
     setExporting(true);
-    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const w2 = (n) => (Number(n) || 0).toFixed(2);   // ★ บังคับ 2 ตำแหน่งทศนิยมเสมอ (เช่น 5.00, 5.20)
     try {
       const rows = sort.sortRows(releases, sortAccessors).map((r, i) => {
         const st = unitStats[r.id] || null;
@@ -2565,8 +2565,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = finished;
         row[lang === "en" ? "Progress (%)" : "ความคืบหน้า (%)"] = pct;
         if (!isAsmGroup) {
-          row[lang === "en" ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)"] = r.unit_weight ? r2(r.unit_weight) : "";
-          row[lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)"] = r.unit_weight ? r2((Number(r.qty) || 0) * r.unit_weight) : "";
+          row[lang === "en" ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)"] = r.unit_weight ? w2(r.unit_weight) : "";
+          row[lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)"] = r.unit_weight ? w2((Number(r.qty) || 0) * r.unit_weight) : "";
         }
         row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
         row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
