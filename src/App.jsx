@@ -460,6 +460,13 @@ function Login({ onLogin }) {
     const res = await appLogin(code, password);   // ล็อกอินรวม (หน้าเดียวทั้งออฟฟิศ+คนงาน) — ออนไลน์เช็ค DB + จำรหัสไว้ล็อกอินออฟไลน์
     setBusy(false);
     if (!res || !res.user) {
+      // ★ กันล็อกอินซ้อน: บัญชีถูกใช้อยู่ที่เครื่องอื่น → แจ้งเตือน + บล็อก (เครื่องแรกไม่หลุด)
+      if (res && res.error === "in_use") {
+        const t = res.lastSeen ? new Date(res.lastSeen) : null;
+        const hhmm = t && !isNaN(t.getTime()) ? t.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : "";
+        setErr(`บัญชีนี้กำลังใช้งานอยู่ที่เครื่องอื่น${hhmm ? ` (ใช้งานล่าสุด ${hhmm} น.)` : ""} — เข้าไม่ได้ · ให้กด “ออกจากระบบ” ที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว (แอดมินสั่งเด้งออกจากเมนู ตั้งค่า → ผู้ใช้ออนไลน์ ได้)`);
+        return;
+      }
       setErr(res && res.error === "offline_first"
         ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
         : res && res.error === "network"
