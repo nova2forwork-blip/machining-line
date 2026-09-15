@@ -5305,9 +5305,35 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [rels, setRels] = useState(null);   // รายการ Release ในโปรเจคนี้
+  const [delKey, setDelKey] = useState(null);   // Release Order ที่กำลังลบ (โชว์ progress)
+  const [delProg, setDelProg] = useState(0);
   useEffect(() => {
     getReleasesFull().then((all) => setRels(all.filter((r) => r.part_master?.project_id === project.id)));
   }, [project.id]);
+
+  // ลบ Release Order ทั้งชุด (ทุก Part ในเลขที่นั้น) — ใช้ deleteReleaseCascade ต่อ release (ลบ QR+ประวัติสแกนด้วย) แบบขนานจำกัด
+  async function deleteOrder(g) {
+    if (delKey) return;
+    const ok = await askConfirm({
+      message: `ลบ Release Order "${g.order}" ทั้งชุด?\n(${g.parts} Part · ${fmtNum(g.qty)} ชิ้น)\n\nจะลบ QR และประวัติสแกนของทุกชิ้นในชุดนี้ไปด้วย · กู้คืนไม่ได้`,
+      tone: "danger", confirmText: "ลบ Release", cancelText: "ยกเลิก",
+    });
+    if (!ok) return;
+    setDelKey(g.key); setDelProg(0); setErr("");
+    const ids = [...g.ids];
+    let done = 0, failed = 0;
+    const CONC = 5;   // ลบทีละ 5 (release คนละล็อต ไม่ชนกัน) — เร็วขึ้นแต่ไม่ถล่ม DB
+    for (let i = 0; i < ids.length; i += CONC) {
+      const res = await Promise.allSettled(ids.slice(i, i + CONC).map((id) => deleteReleaseCascade(id)));
+      res.forEach((x) => { x.status === "fulfilled" ? (done += 1) : (failed += 1); });
+      setDelProg(done + failed);
+    }
+    auditRecord("delete_release", "release", project.id, { release_order: g.order, parts: g.parts, deleted: done, failed, project: project.code });
+    try { const all = await getReleasesFull(); setRels(all.filter((r) => r.part_master?.project_id === project.id)); } catch { /* ignore */ }
+    setDelKey(null);
+    if (failed > 0) { setErr(`ลบไม่ครบ — สำเร็จ ${done} · ไม่สำเร็จ ${failed} · ลองอีกครั้งได้`); mlsToast(`ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn"); }
+    else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${done} รายการ)`, "success");
+  }
 
   async function save() {
     const c = code.trim(), n = name.trim();
@@ -5368,7 +5394,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
   }
 
   return (
-    <Modal title="แก้ไขโปรเจค" sub={`สร้างเมื่อ ${fmtDT(project.created_at)}`} onClose={onClose}>
+    <Modal title="แก้ไขโปรเจค" sub={`สร้างเมื่อ ${fmtDT(project.created_at)}`} onClose={onClose} locked={!!delKey}>
       <div className="grid-2">
         <Field label="รหัสโปรเจค *"><Input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
         <Field label="ชื่อโปรเจค *"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
@@ -5404,8 +5430,8 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
           const map = new Map();
           for (const r of rels) {
             const key = r.release_order || `__${r.id}`;   // ไม่มีเลขที่ → แยกแถวของตัวเอง
-            const g = map.get(key) || { order: r.release_order || "-", date: r.release_date, parts: 0, qty: 0 };
-            g.parts += 1; g.qty += Number(r.qty) || 0;
+            const g = map.get(key) || { order: r.release_order || "-", date: r.release_date, parts: 0, qty: 0, ids: [], key };
+            g.parts += 1; g.qty += Number(r.qty) || 0; g.ids.push(r.id);   // เก็บ release id ไว้ลบทั้งชุด
             if (new Date(r.release_date) > new Date(g.date)) g.date = r.release_date;
             map.set(key, g);
           }
@@ -5423,16 +5449,25 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
             ) : (
               <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
                 <table className="data-table" style={{ fontSize: 12.5 }}>
-                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th></tr></thead>
+                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th>{admin && <th></th>}</tr></thead>
                   <tbody>
-                    {orders.map((g, i) => (
+                    {orders.map((g, i) => {
+                      const deleting = delKey === g.key;
+                      return (
                       <tr key={i}>
                         <td>{fmtD(g.date)}</td>
                         <td>{g.order}</td>
                         <td>{g.parts} Part</td>
                         <td>{fmtNum(g.qty)} ชิ้น</td>
+                        {admin && <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                          {deleting
+                            ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {delProg}/{g.ids.length}…</span>
+                            : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด"
+                                style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span>}
+                        </td>}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -5443,13 +5478,13 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin 
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         {admin ? (
-          <Btn type="button" variant="danger" size="sm" onClick={remove} disabled={busy}>
+          <Btn type="button" variant="danger" size="sm" onClick={remove} disabled={busy || !!delKey}>
             <Icon name="trash" size={13} /> ลบโปรเจคนี้
           </Btn>
         ) : <span />}
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy || !!delKey}>ยกเลิก</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy || !!delKey}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
         </div>
       </div>
     </Modal>
