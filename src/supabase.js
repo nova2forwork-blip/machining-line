@@ -1202,16 +1202,18 @@ export async function getMachineOps() {
     try { return JSON.parse(localStorage.getItem(MOPS_KEY)) || []; } catch { return []; }
   }
   const list = data || [];
-  // เติม op_type + is_assembly (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์นี้) — อ่านตรงจากตาราง operations
+  // เติม op_type + is_assembly + seq (RPC machine_ops เดิมอาจยังไม่คืนคอลัมน์เหล่านี้) — อ่านตรงจากตาราง operations
   try {
     const ids = list.map((o) => o.id).filter(Boolean);
-    if (ids.length && !(list[0] && "op_type" in list[0])) {
-      const { data: ops } = await supabase.from("operations").select("id, is_assembly, op_type").in("id", ids);
+    const needType = !(list[0] && "op_type" in list[0]);
+    const needSeq = !(list[0] && "seq" in list[0]);
+    if (ids.length && (needType || needSeq)) {
+      const { data: ops } = await supabase.from("operations").select("id, seq, is_assembly, op_type").in("id", ids);
       const m = new Map((ops || []).map((o) => [o.id, o]));
       for (const o of list) {
         const e = m.get(o.id);
-        o.op_type = (e && e.op_type) || "machining";
-        o.is_assembly = e ? !!e.is_assembly : (o.op_type !== "machining");
+        if (needSeq && e && e.seq != null) o.seq = e.seq;   // ★ เติม seq ไว้เรียงลำดับขั้นตอนหน้าเครื่อง
+        if (needType) { o.op_type = (e && e.op_type) || "machining"; o.is_assembly = e ? !!e.is_assembly : (o.op_type !== "machining"); }
       }
     }
   } catch { /* ignore — ถ้าเติมไม่ได้ ถือว่าเป็น machining ปกติ */ }
