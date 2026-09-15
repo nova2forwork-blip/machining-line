@@ -407,6 +407,7 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
 // Signature element: the routing rail — a numbered track of the real
 // operation sequence a part unit must travel through.
 function RoutingRail({ routing, doneOps }) {
+  const [lang] = useLang();
   const steps = routing || [];
   const doneSet = new Set(doneOps || []);
   let currentAssigned = false;
@@ -424,7 +425,7 @@ function RoutingRail({ routing, doneOps }) {
             {i > 0 && <div className={`rail-line ${doneSet.has(steps[i - 1]) ? "done" : ""}`} />}
             <div className="rail-node">
               <div className={`rail-dot ${done ? "done" : isCurrent ? "current" : ""}`}>{done ? "✓" : i + 1}</div>
-              <div className={`rail-label ${done ? "done" : isCurrent ? "current" : ""}`}>{op}</div>
+              <div className={`rail-label ${done ? "done" : isCurrent ? "current" : ""}`}>{opLabel(op, lang)}</div>
             </div>
           </div>
         );
@@ -880,6 +881,7 @@ function QuickAddProjectModal({ onClose, onCreated }) {
 // mirrors PartMasterCrud but scoped to one project and reachable inline.
 function QuickAddPartModal({ project, onClose, onCreated }) {
   const [operations, setOperations] = useState([]);
+  const [lang] = useLang();
   const [form, setForm] = useUndoable({ routing: [] });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -940,7 +942,7 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
             const active = (form.routing || []).includes(o.name);
             return (
               <span key={o.id} onClick={() => toggleOp(o.name)} className={`chip ${active ? "active" : ""}`}>
-                {o.name}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
+                {opLabel(o.name, lang)}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
               </span>
             );
           })}
@@ -2300,6 +2302,7 @@ function PartProgressModal({ release, user, onClose }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง)
+  const [lang] = useLang();
   const [finished, setFinished] = useState(0);
   const [inProgress, setInProgress] = useState(0);
   const [totalUnits, setTotalUnits] = useState(release.qty || 0);
@@ -2423,7 +2426,7 @@ function PartProgressModal({ release, user, onClose }) {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 4, gap: 10 }}>
                       <span style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         {inRouting && <span className="stage-seq">{i + 1}</span>}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{op}</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opLabel(op, lang)}</span>
                         {!inRouting && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)" }}>(นอก routing)</span>}
                       </span>
                       <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
@@ -4446,6 +4449,7 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
 }
 
 function ReportPage({ goTo }) {
+  const [lang] = useLang();
   // ── Flexible date filter: quick preset / specific month / custom from–to ──
   const [rangeMode, setRangeMode] = useState("preset");
   const [preset, setPreset] = useState("week");
@@ -4790,7 +4794,7 @@ function ReportPage({ goTo }) {
               <thead>
                 <tr>
                   <SortTh k="name" sort={sortM}>เครื่องจักร</SortTh>
-                  {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortM} key={op}>{op}</SortTh>)}
+                  {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortM} key={op}>{opLabel(op, lang)}</SortTh>)}
                   <SortTh k="total" sort={sortM}>รวม (ชิ้น)</SortTh>
                   <SortTh k="weight" sort={sortM}>น้ำหนัก (กก.)</SortTh>
                   <SortTh k="time" sort={sortM}>เวลาเดินเครื่อง</SortTh>
@@ -4849,7 +4853,7 @@ function ReportPage({ goTo }) {
                   <SortTh k="release" sort={sortP}>Release</SortTh>
                   <SortTh k="part_no" sort={sortP}>Part No.</SortTh>
                   <SortTh k="part_name" sort={sortP}>ชื่อ Part</SortTh>
-                  {partMatrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortP} key={op}>{op}</SortTh>)}
+                  {partMatrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortP} key={op}>{opLabel(op, lang)}</SortTh>)}
                   <SortTh k="total" sort={sortP}>รวม (ชิ้น)</SortTh>
                   <SortTh k="weight" sort={sortP}>น้ำหนัก (กก.)</SortTh>
                   <SortTh k="finished" sort={sortP}>เสร็จ (ชิ้น)</SortTh>
@@ -4899,6 +4903,7 @@ function ReportPage({ goTo }) {
 // 6) MACHINES SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 function MachinesSummaryPage() {
+  const [lang] = useLang();
   const [preset, setPreset] = useState("week");
   const [logs, setLogs] = useState([]);
   useEffect(() => {
@@ -4936,7 +4941,7 @@ function MachinesSummaryPage() {
             <thead>
               <tr>
                 <SortTh k="name" sort={sortW}>เครื่องจักร</SortTh>
-                {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortW} key={op}>{op}</SortTh>)}
+                {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortW} key={op}>{opLabel(op, lang)}</SortTh>)}
                 <SortTh k="total" sort={sortW}>รวมทุกขั้นตอน</SortTh>
                 <SortTh k="weight" sort={sortW}>น้ำหนักรวม (กก.)</SortTh>
                 <SortTh k="time" sort={sortW}>เวลาเดินเครื่อง</SortTh>
@@ -6424,6 +6429,7 @@ function MachineCrud() {
   const [form, setForm] = useUndoable({});
   const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข (ชื่อ/ประเภท/ความสามารถ/ลบ)
   const [err, setErr] = useState("");
+  const [lang] = useLang();
   const sort = useTableSort("code");
 
   const load = useCallback(async () => {
@@ -6445,7 +6451,7 @@ function MachineCrud() {
   }
   function capNames(machineId) {
     const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
-    const names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
+    const names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
     return names;
   }
   // หน้าปลายทาง (แผนก/URL) ที่สเตชันนี้จะเข้า — คิดจาก "ประเภทงาน" ของขั้นตอนที่ตั้งไว้ (ไม่ใช่ชื่อสเตชัน)
@@ -6653,6 +6659,7 @@ const OP_TYPES = [
 function OperationsCrud() {
   const [rows, setRows] = useState([]);
   const [form, setForm] = useUndoable({ op_type: "machining" });
+  const [lang] = useLang();
   const load = useCallback(async () => setRows(await listRows("operations", { order: "seq" })), []);
   useEffect(() => { load(); }, [load]);
 
@@ -6709,7 +6716,7 @@ function OperationsCrud() {
               const dest = opTypeDest(r.op_type || "machining");
               return (
               <tr key={r.id}>
-                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{r.name}</td>
+                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{opLabel(r.name, lang)}</td>
                 <td>{r.seq}</td>
                 <td>
                   <select className="select" value={r.op_type || "machining"} onChange={(e) => changeType(r.id, e.target.value)} style={{ minWidth: 190 }}>
@@ -6914,6 +6921,7 @@ function EmployeeCrud() {
   const [caps, setCaps] = useState([]);
   const [form, setForm] = useUndoable({ role: "operator" });
   const [opSel, setOpSel] = useUndoable(new Set());   // ขั้นตอนประจำ (เลือกได้หลายอัน)
+  const [lang] = useLang();
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);            // กำลังบันทึก — กันกดซ้ำ + โชว์สถานะ
   const [msg, setMsg] = useState(null);               // { ok, text } แสดงผลในฟอร์ม (เห็นชัดกว่า toast มุมจอ)
@@ -7015,8 +7023,8 @@ function EmployeeCrud() {
                 <td>{machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
                 <td>{(() => {
                   const ids = new Set(caps.filter((c) => c.machine_id === r.machine_id).map((c) => c.operation_id));
-                  let names = operations.filter((o) => ids.has(o.id)).map((o) => o.name);
-                  if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [o.name]; }
+                  let names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
+                  if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [opLabel(o.name, lang)]; }
                   return names.length ? names.join(", ") : <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>;
                 })()}</td>
                 <td>
