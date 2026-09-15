@@ -89,7 +89,7 @@ export function machineOpMatrix(logs) {
     opNames.add(op);
 
     if (!byMachine.has(m)) {
-      byMachine.set(m, { name: mName, total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
+      byMachine.set(m, { name: mName, code: l.machine?.code || "", total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
     }
     const entry = byMachine.get(m);
     const pcs = q(l);
