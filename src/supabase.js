@@ -584,6 +584,15 @@ export async function getReleaseMachineProgress(releaseId) {
   return Array.isArray(arr) ? arr : [];
 }
 
+// ความยาว material (หน้าเครื่อง) ที่ใช้จริง ต่อ Release — จาก machine_records.material_length_mm
+// คืน { <release_id>: [ ความยาว, ... ] } (ค่าไม่ซ้ำ) · ดู release_material_lengths RPC
+export async function getReleaseMaterialLengths(releaseIds) {
+  if (!releaseIds || releaseIds.length === 0) return {};
+  const { data, error } = await supabase.rpc("release_material_lengths", { p_release_ids: releaseIds });
+  if (error) { console.warn("release_material_lengths error", error); return {}; }
+  return data || {};
+}
+
 // ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
 // คืน { <project_id>: { finished, weight } }
 export async function getProjectStationProgress() {
