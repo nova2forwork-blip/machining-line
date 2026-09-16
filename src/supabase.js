@@ -551,6 +551,17 @@ export async function getReleaseOpProgress(releaseIds) {
   return data || {};
 }
 
+// ความคืบหน้าของ Release "แยกตามเครื่องจักร" (พาร์ทนี้ทำจากเครื่องไหน ขั้นตอนไหน กี่ชิ้น สถานะอะไร)
+// คืน array: [ { machine_id, code, name, done, finished, caps:[{name,seq,used}] }, ... ] เรียงเครื่องที่ทำมากสุดก่อน
+// ดู release_machine_progress RPC (migration-release-machine-progress.sql)
+export async function getReleaseMachineProgress(releaseId) {
+  if (!releaseId) return [];
+  const { data, error } = await supabase.rpc("release_machine_progress", { p_release_ids: [releaseId] });
+  if (error) { console.warn("release_machine_progress error", error); return []; }
+  const arr = data && (data[releaseId] ?? data[String(releaseId)]);
+  return Array.isArray(arr) ? arr : [];
+}
+
 // ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
 // คืน { <project_id>: { finished, weight } }
 export async function getProjectStationProgress() {
