@@ -2610,6 +2610,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     uw: (r) => Number(r.unit_weight) || 0,
     tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
     len: (r) => Number(r.length_mm) || 0,
+    material: (r) => r.material || "",
   };
 
   // ── ดาวน์โหลดตาราง "รายละเอียดแต่ละ Part" เป็นไฟล์ Excel (.xlsx) ──
@@ -2637,6 +2638,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           row[lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)"] = r.unit_weight ? w2((Number(r.qty) || 0) * r.unit_weight) : "";
         }
         row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
+        row["INV Code"] = r.material || "";
         row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
         return row;
       });
@@ -2767,6 +2769,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
           { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น" }, { k: "tw", label: lang === "en" ? "Total weight" : "น้ำหนักรวม" }] : []), { k: "len", label: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น" },
+          { k: "material", label: "INV Code" },
         ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
@@ -2781,6 +2784,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 {!isAsmGroup && <SortTh k="uw" sort={sort}>{lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น"}</SortTh>}
                 {!isAsmGroup && <SortTh k="tw" sort={sort}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</SortTh>}
                 <SortTh k="len" sort={sort}>{lang === "en" ? "Length/pc" : "ความยาว/ชิ้น"}</SortTh>
+                <SortTh k="material" sort={sort}>{lang === "en" ? "INV Code" : "INV Code"}</SortTh>
                 <th>{lang === "en" ? "Remark" : "หมายเหตุ"}</th>
                 {canEdit && <th>{lang === "en" ? "Manage" : "จัดการ"}</th>}
                 <th>{lang === "en" ? "Print" : "พิมพ์"}</th>
@@ -2827,6 +2831,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     {!isAsmGroup && <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>}
                     {!isAsmGroup && <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>}
                     <td data-label="ความยาว/ชิ้น">{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
+                    <td data-label="INV Code" style={{ whiteSpace: "nowrap" }}>{r.material || "-"}</td>
                     <td data-label="หมายเหตุ">{r.note || "-"}</td>
                     {canEdit && (
                       <td data-label="จัดการ" style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
