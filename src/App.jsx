@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -2505,6 +2505,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [releases, setReleases] = useState(group.releases);
   const [unitStats, setUnitStats] = useState({});
   const [opProg, setOpProg] = useState({});   // ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง) ต่อ release
+  const [matLens, setMatLens] = useState({}); // ความยาว material (หน้าเครื่อง) ต่อ release → { id: [len,...] }
   const [statsLoading, setStatsLoading] = useState(true);
   const [viewPart, setViewPart] = useState(null); // release row ที่กำลังดูความคืบหน้าแยกขั้นตอน
   const [editing, setEditing] = useState(null);   // release ที่กำลังแก้ไข
@@ -2524,10 +2525,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   const loadStats = useCallback((list = releases) => {
     const ids = list.map((r) => r.id);
-    if (ids.length === 0) { setUnitStats({}); setOpProg({}); setStatsLoading(false); return; }
+    if (ids.length === 0) { setUnitStats({}); setOpProg({}); setMatLens({}); setStatsLoading(false); return; }
     setStatsLoading(true);
-    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
-      .then(([s, op]) => { setUnitStats(s); setOpProg(op || {}); setStatsLoading(false); });
+    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids), getReleaseMaterialLengths(ids)])
+      .then(([s, op, ml]) => { setUnitStats(s); setOpProg(op || {}); setMatLens(ml || {}); setStatsLoading(false); });
   }, [releases]);
   useEffect(() => { loadStats(); }, [loadStats]);
 
@@ -2602,6 +2603,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   };
 
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
+  // ความยาว material (หน้าเครื่อง) ต่อ release — รวมค่าที่ใช้จริง (ไม่ซ้ำ) เป็นข้อความ
+  const matLenList = (r) => { const a = matLens[r.id]; return Array.isArray(a) ? a.filter((n) => n != null) : []; };
+  const matLenText = (r) => { const a = matLenList(r); return a.length ? a.map((n) => fmtNum(n)).join(" · ") : "-"; };
+
   const sortAccessors = {
     part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
     qty: (r) => Number(r.qty) || 0,
@@ -2611,6 +2616,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
     len: (r) => Number(r.length_mm) || 0,
     material: (r) => r.material || "",
+    matlen: (r) => { const a = matLenList(r); return a.length ? Math.max(...a.map(Number)) : 0; },
   };
 
   // ── ดาวน์โหลดตาราง "รายละเอียดแต่ละ Part" เป็นไฟล์ Excel (.xlsx) ──
@@ -2639,6 +2645,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         }
         row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
         row["INV Code"] = r.material || "";
+        { const a = matLenList(r); row[lang === "en" ? "Material len (mm)" : "ยาว material (มม.)"] = a.length === 1 ? Number(a[0]) : a.map((n) => fmtNum(n)).join(" · "); }
         row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
         return row;
       });
@@ -2769,7 +2776,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
           { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น" }, { k: "tw", label: lang === "en" ? "Total weight" : "น้ำหนักรวม" }] : []), { k: "len", label: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น" },
-          { k: "material", label: "INV Code" },
+          { k: "material", label: "INV Code" }, { k: "matlen", label: lang === "en" ? "Material len" : "ยาว material" },
         ]} />
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
@@ -2785,6 +2792,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 {!isAsmGroup && <SortTh k="tw" sort={sort}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</SortTh>}
                 <SortTh k="len" sort={sort}>{lang === "en" ? "Length/pc" : "ความยาว/ชิ้น"}</SortTh>
                 <SortTh k="material" sort={sort}>{lang === "en" ? "INV Code" : "INV Code"}</SortTh>
+                <SortTh k="matlen" sort={sort}>{lang === "en" ? "Material len (mm)" : "ยาว material (มม.)"}</SortTh>
                 <th>{lang === "en" ? "Remark" : "หมายเหตุ"}</th>
                 {canEdit && <th>{lang === "en" ? "Manage" : "จัดการ"}</th>}
                 <th>{lang === "en" ? "Print" : "พิมพ์"}</th>
@@ -2832,6 +2840,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     {!isAsmGroup && <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>}
                     <td data-label="ความยาว/ชิ้น">{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
                     <td data-label="INV Code" style={{ whiteSpace: "nowrap" }}>{r.material || "-"}</td>
+                    <td data-label="ยาว material (มม.)" style={{ whiteSpace: "nowrap" }}>
+                      {statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r)}
+                    </td>
                     <td data-label="หมายเหตุ">{r.note || "-"}</td>
                     {canEdit && (
                       <td data-label="จัดการ" style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
