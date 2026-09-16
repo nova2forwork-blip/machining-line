@@ -2312,6 +2312,7 @@ function PartProgressModal({ release, user, onClose }) {
   const [machineProg, setMachineProg] = useState([]);   // [{code,name,done,finished,caps:[{name,seq,used}]}] แยกตามเครื่อง
   const [lang] = useLang();
   const [finished, setFinished] = useState(0);
+  const [over, setOver] = useState(0);   // เสร็จเกินจำนวนสั่ง = สแปร์
   const [inProgress, setInProgress] = useState(0);
   const [totalUnits, setTotalUnits] = useState(release.qty || 0);
 
@@ -2350,12 +2351,14 @@ function PartProgressModal({ release, user, onClose }) {
         const stationDone = last ? Number(last.done) || 0 : 0;           // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
         const officeFin = Number(s.finished ?? 0) || 0;
         const fin = total > 0 ? Math.min(Math.max(officeFin, stationFin), total) : Math.max(officeFin, stationFin);
+        const overFin = total > 0 ? Math.max(0, Math.max(officeFin, stationFin) - total) : 0;   // เกินจำนวนสั่ง = สแปร์
         // "กำลังทำ" = เริ่มแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
         const stationInProg = Math.max(0, stationDone - stationFin);
         const inProgRaw = last ? stationInProg : (Number(s.inProgress ?? 0) || 0);
         const inProg = total > 0 ? Math.min(inProgRaw, Math.max(0, total - fin)) : inProgRaw;
         setTotalUnits(total || release.qty || 0);
         setFinished(fin);
+        setOver(overFin);
         setInProgress(inProg);
         setOpProg(ops);
         setLoading(false);
@@ -2419,7 +2422,13 @@ function PartProgressModal({ release, user, onClose }) {
             </div>
             <div style={cellStyle}>
               <div style={cellLbl}>เสร็จแล้ว</div>
-              <div style={{ ...cellVal, color: finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(finished)} ชิ้น</div>
+              <div style={{ ...cellVal, color: (finished + over) > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(finished + over)} ชิ้น</div>
+              {over > 0 && (
+                <div style={{ fontSize: 11, color: "var(--warning, #d97a00)", fontWeight: 700, marginTop: 2, whiteSpace: "nowrap" }}
+                  title={lang === "en" ? "Over ordered qty (spare)" : "เกินจำนวนสั่ง (สแปร์)"}>
+                  +{fmtNum(over)} {lang === "en" ? "spare" : "เกิน (สแปร์)"}
+                </div>
+              )}
             </div>
             <div style={cellStyle}>
               <div style={cellLbl}>กำลังทำ</div>
@@ -2594,12 +2603,13 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const stationDone = last ? Number(last.done) || 0 : 0;   // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
     const officeFin = Number(office?.finished ?? 0) || 0;
     const raw = Math.max(officeFin, stationFin);
-    const finished = total > 0 ? Math.min(raw, total) : raw;
+    const finished = total > 0 ? Math.min(raw, total) : raw;   // เพดานที่จำนวนสั่ง (ใช้คิด % + กำลังทำ)
+    const over = total > 0 ? Math.max(0, raw - total) : 0;     // เกินจำนวนสั่ง = สแปร์
     // "กำลังทำ" = เริ่มทำแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
     const stationInProg = Math.max(0, stationDone - stationFin);
     const inProgRaw = last ? stationInProg : (Number(office?.inProgress ?? 0) || 0);
     const inProgress = total > 0 ? Math.min(inProgRaw, Math.max(0, total - finished)) : inProgRaw;
-    return { finished, total, inProgress };
+    return { finished, total, inProgress, over, done: raw };   // done = จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
   };
 
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
@@ -2610,8 +2620,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const sortAccessors = {
     part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
     qty: (r) => Number(r.qty) || 0,
-    finished: (r) => rowProg(r).finished,
-    progress: (r) => { const p = rowProg(r); return p.total > 0 ? p.finished / p.total : 0; },
+    finished: (r) => rowProg(r).done,
+    progress: (r) => { const p = rowProg(r); return p.total > 0 ? p.done / p.total : 0; },
     uw: (r) => Number(r.unit_weight) || 0,
     tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
     len: (r) => Number(r.length_mm) || 0,
@@ -2628,15 +2638,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     try {
       const rows = sort.sortRows(releases, sortAccessors).map((r, i) => {
         const p = rowProg(r);
-        const finished = p.finished;
+        const done = p.done ?? p.finished;        // จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
+        const over = p.over || 0;                 // เกินจำนวนสั่ง (สแปร์)
         const total = p.total || r.qty;
-        const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
+        const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
         const row = {};
         row[lang === "en" ? "Item" : "ลำดับ"] = i + 1;
         row[lang === "en" ? "Part No." : "เบอร์พาร์ท"] = r.part_master?.part_no || "";
         row[lang === "en" ? "Part Name" : "ชื่อพาร์ท"] = r.part_master?.part_name || "";
         row[lang === "en" ? "Qty" : "จำนวน"] = Number(r.qty) || 0;
-        row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = finished;
+        row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = done;
+        row[lang === "en" ? "Spare (over)" : "เกิน (สแปร์)"] = over || "";
         row[lang === "en" ? "In progress" : "กำลังทำ"] = p.inProgress;
         row[lang === "en" ? "Progress (%)" : "ความคืบหน้า (%)"] = pct;
         if (!isAsmGroup) {
@@ -2804,8 +2816,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 const p = rowProg(r);
                 const finished = p.finished;
                 const inProgress = p.inProgress;
+                const over = p.over || 0;               // เกินจำนวนสั่ง (สแปร์)
+                const done = p.done ?? finished;         // จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
                 const total = p.total || r.qty;
-                const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                 return (
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
                     <td data-label={lang === "en" ? "Item" : "ลำดับ"} style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
@@ -2817,11 +2831,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                         <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
                       ) : (
                         <>
-                          <span style={{ fontWeight: 600, color: finished > 0 ? "var(--success)" : "var(--muted)" }}>
-                            {fmtNum(finished)} ชิ้น
+                          <span style={{ fontWeight: 600, color: done > 0 ? "var(--success)" : "var(--muted)" }}>
+                            {fmtNum(done)} ชิ้น
                           </span>
+                          {over > 0 && (
+                            <div style={{ fontSize: 11, color: "var(--alert, #d97a00)", fontWeight: 700, marginTop: 2, whiteSpace: "nowrap" }}
+                              title={lang === "en" ? "Over ordered qty (spare)" : "เกินจำนวนสั่ง (สแปร์)"}>
+                              +{fmtNum(over)} {lang === "en" ? "spare" : "เกิน (สแปร์)"}
+                            </div>
+                          )}
                           {inProgress > 0 && (
-                            <div style={{ fontSize: 11, color: "var(--alert, #d97a00)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
+                            <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
                               title={lang === "en" ? "Started but not marked Finished yet" : "เริ่มทำแล้วแต่ยังไม่ได้กด Finished"}>
                               +{fmtNum(inProgress)} {lang === "en" ? "in progress" : "กำลังทำ"}
                             </div>
@@ -2833,7 +2853,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                       {statsLoading ? (
                         <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
                       ) : (
-                        <ProgressBar pct={pct} finished={finished} total={total} />
+                        <ProgressBar pct={pct} finished={done} total={total} />
                       )}
                     </td>
                     {!isAsmGroup && <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>}
