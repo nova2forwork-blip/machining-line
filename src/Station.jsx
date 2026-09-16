@@ -1365,7 +1365,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                       title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
                         ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
                       {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
-                    <td className="l stn-hide-sm">{r.inventory_code || "-"}</td>
+                    <td className="stn-hide-sm" style={{ textAlign: "center" }}>{r.inventory_code || "-"}</td>
                     <td className="stn-hide-sm">{hms(r.process_seconds)}</td>
                     <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
                       {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
