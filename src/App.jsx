@@ -5174,10 +5174,162 @@ function ReportPage({ goTo }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 6) MACHINES SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
+// ── เจาะดู "สแกนทั้งหมดของเครื่องนี้" — ตารางบันทึกงานหน้าเครื่อง (วัน-เวลา · พาร์ท · ขั้นตอน · จำนวน) ──
+//    เปิดจากแถวเครื่องในหน้าสรุปเครื่องจักร · เลือกช่วงเวลาเองได้ (ด่วน/รายเดือน/กำหนดเอง) · ล่าสุดอยู่บนสุด
+function MachineScanDetail({ machine, onBack }) {
+  const [lang] = useLang();
+  const [rangeMode, setRangeMode] = useState("preset");
+  const [preset, setPreset] = useState("year");           // เริ่มต้น 12 เดือน = เห็นเกือบทั้งหมด
+  const [monthValue, setMonthValue] = useState(todayStr().slice(0, 7));
+  const [customFrom, setCustomFrom] = useState(daysAgoStr(30));
+  const [customTo, setCustomTo] = useState(todayStr());
+  const [logs, setLogs] = useState(null);                 // null = กำลังโหลด
+  const sort = useTableSort("time", "desc");               // ค่าเริ่มต้น: วัน-เวลา ล่าสุดอยู่บนสุด
+
+  useEffect(() => {
+    let alive = true;
+    const range =
+      rangeMode === "month" ? monthRangeFor(monthValue) :
+      rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
+      rangeFor(preset);
+    setLogs(null);
+    getScanLogsBetween(range.from, range.to)
+      .then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); })
+      .catch(() => { if (alive) setLogs([]); });
+    return () => { alive = false; };
+  }, [rangeMode, preset, monthValue, customFrom, customTo]);
+
+  const mkey = machine.code || machine.name;              // คีย์เดียวกับ machineOpMatrix (code ก่อน ชื่อสำรอง)
+  const mine = (logs || []).filter((l) => (l.machine?.code || l.machine?.name) === mkey);
+
+  const acc = {
+    time: (l) => l.scanned_at || "",
+    part: (l) => l.part_unit?.part_master?.part_no || "",
+    pname: (l) => l.part_unit?.part_master?.part_name || "",
+    ro: (l) => l.release_order || "",
+    op: (l) => l.operation?.name || "",
+    status: (l) => (String(l.status).toLowerCase() === "finished" ? 1 : 0),
+    qty: (l) => Number(l.quantity) || 0,
+    weight: (l) => logWeight(l),
+    secs: (l) => Number(l.process_seconds) || 0,
+  };
+  const sorted = sort.sortRows(mine, acc);
+
+  // สรุปหัวตาราง (เฉพาะเครื่องนี้ ในช่วงเวลาที่เลือก)
+  const totPcs = mine.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  const totWt = mine.reduce((s, l) => s + logWeight(l), 0);
+  const totSec = mine.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+
+  const statCell = { flex: 1, minWidth: 140, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
+  const statLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const pill = (st) => {
+    const fin = String(st).toLowerCase() === "finished";
+    return (
+      <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+        color: fin ? "var(--success)" : "var(--accent-dk)",
+        background: fin ? "rgba(16,157,99,.12)" : "rgba(37,99,235,.10)",
+        border: `1px solid ${fin ? "var(--success)" : "var(--accent-dk)"}` }}>
+        {fin ? (lang === "en" ? "finished" : "เสร็จ") : (lang === "en" ? "in process" : "กำลังทำ")}
+      </span>
+    );
+  };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" size="sm" onClick={onBack}><Icon name="arrowLeft" size={14} /> {lang === "en" ? "Back to machines" : "กลับหน้าสรุปเครื่องจักร"}</Btn>
+          </div>
+          <div className="page-title" style={{ fontFamily: "var(--font-mono)", letterSpacing: ".02em" }}>{machine.code || "—"}</div>
+          <div className="page-sub">{machine.name}{machine.name ? " · " : ""}{lang === "en" ? "all scans of this machine · pick the dates you want" : "การสแกนทั้งหมดของเครื่องนี้ · เลือกช่วงวันที่ที่ต้องการดูได้"}</div>
+        </div>
+      </div>
+
+      <Card title={lang === "en" ? "Period to view" : "ช่วงเวลาที่ต้องการดู"}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 9 }}>{lang === "en" ? "Period" : "ช่วงเวลา"}</div>
+        <div className="chip-row" style={{ marginBottom: 12 }}>
+          {RANGE_MODES.map((m) => (
+            <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>{m.label}</span>
+          ))}
+        </div>
+        <div>
+          {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
+          {rangeMode === "month" && (
+            <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 220 }} />
+          )}
+          {rangeMode === "custom" && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
+              <span style={{ color: "var(--muted)" }}>–</span>
+              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(mine.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
+          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
+          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</div><div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-dk)" }}>{fmtNum(totWt)} {lang === "en" ? "kg" : "กก."}</div></div>
+          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Run time" : "เวลาเดินเครื่อง"}</div><div style={{ fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{totSec ? fmtHrs(totSec) : "—"}</div></div>
+        </div>
+
+        <SortControl sort={sort} options={[
+          { k: "time", label: lang === "en" ? "Date-time" : "วัน-เวลา" },
+          { k: "part", label: "Part No." },
+          { k: "op", label: lang === "en" ? "Step" : "ขั้นตอน" },
+          { k: "status", label: lang === "en" ? "Status" : "สถานะ" },
+          { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
+          { k: "weight", label: lang === "en" ? "Weight" : "น้ำหนัก" },
+          { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
+        ]} />
+
+        <div className="table-wrap tall-scroll">
+          <table className="data-table responsive-cards">
+            <thead><tr>
+              <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
+              <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
+              <SortTh k="pname" sort={sort}>{lang === "en" ? "Part name" : "ชื่อพาร์ท"}</SortTh>
+              <SortTh k="ro" sort={sort}>Release</SortTh>
+              <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
+              <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
+              <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
+              <SortTh k="weight" sort={sort}>{lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"}</SortTh>
+              <SortTh k="secs" sort={sort}>{lang === "en" ? "Run time" : "เวลาเดินเครื่อง"}</SortTh>
+            </tr></thead>
+            <tbody>
+              {logs === null ? (
+                <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</td></tr>
+              ) : sorted.length === 0 ? (
+                <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
+              ) : sorted.map((l, i) => (
+                <tr key={l.id || `${l.part_unit_id}-${l.scanned_at}-${l.operation?.name}-${i}`}>
+                  <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(l.scanned_at)}</td>
+                  <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{l.part_unit?.part_master?.part_no || "—"}</td>
+                  <td data-label={lang === "en" ? "Part name" : "ชื่อพาร์ท"}>{l.part_unit?.part_master?.part_name || "—"}</td>
+                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{l.release_order || "—"}</td>
+                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"} style={{ whiteSpace: "nowrap" }}>{l.operation?.name ? opLabel(l.operation.name, lang) : "—"}</td>
+                  <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(l.status)}</td>
+                  <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(Number(l.quantity) || 0)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
+                  <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{logWeight(l) ? fmtNum(logWeight(l)) : "—"}</td>
+                  <td data-label={lang === "en" ? "Run time" : "เวลาเดินเครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{Number(l.process_seconds) ? fmtHrs(l.process_seconds) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function MachinesSummaryPage() {
   const [lang] = useLang();
   const [preset, setPreset] = useState("week");
   const [logs, setLogs] = useState([]);
+  const [viewMachine, setViewMachine] = useState(null);   // เจาะดูสแกนทั้งหมดของเครื่องที่เลือก
   useEffect(() => {
     const { from, to } = rangeFor(preset);
     getScanLogsBetween(from, to).then(setLogs);
@@ -5195,6 +5347,8 @@ function MachinesSummaryPage() {
   };
   matrix.opNames.forEach((op) => { machineAcc[`op:${op}`] = (m) => m.ops[op]?.count || 0; });
 
+  if (viewMachine) return <MachineScanDetail machine={viewMachine} onBack={() => setViewMachine(null)} />;
+
   return (
     <div>
       <div className="page-head">
@@ -5204,6 +5358,7 @@ function MachinesSummaryPage() {
       <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           นับตามจำนวนชิ้นที่ทำในแต่ละขั้นตอน — ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ (งานหน้าเครื่องนับตามจำนวนที่กรอก)
+          <br />{lang === "en" ? "Tip: click a machine row to see all its scans (with date · time)." : "เคล็ดลับ: แตะแถวเครื่องเพื่อดูการสแกนทั้งหมดของเครื่องนั้น (พร้อมวัน · เวลา)"}
         </div>
         <div style={{ marginBottom: 16 }}>
           <SimpleBarChart data={rows} color={CHART.success} height={240} />
@@ -5222,7 +5377,9 @@ function MachinesSummaryPage() {
             </thead>
             <tbody>
               {sortW.sortRows(matrix.machines, machineAcc).map((m) => (
-                <tr key={m.name}>
+                <tr key={m.name} className="release-row" style={{ cursor: "pointer" }}
+                  onClick={() => setViewMachine({ code: m.code, name: m.name })}
+                  title={lang === "en" ? "Click to see all scans of this machine" : "แตะเพื่อดูการสแกนทั้งหมดของเครื่องนี้"}>
                   <td style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{m.code || "—"}</td>
                   <td style={{ fontWeight: 600 }}>{m.name}</td>
                   {matrix.opNames.map((op) => {
