@@ -2336,10 +2336,25 @@ function PartProgressModal({ release, user, onClose }) {
         ]);
         if (!alive) return;
         const s = stats[release.id] || { total: release.qty || 0, finished: 0, inProgress: 0 };
-        setTotalUnits(s.total || release.qty || 0);
-        setFinished(s.finished || 0);
-        setInProgress(s.inProgress || 0);
-        setOpProg(Array.isArray(prog[release.id]) ? prog[release.id] : []);
+        const ops = Array.isArray(prog[release.id]) ? prog[release.id] : [];
+        const total = Number(s.total ?? release.qty ?? 0) || 0;
+        // ── นิยาม "เสร็จ / กำลังทำ" เดียวกับการ์ดรวมและตารางแต่ละ Part (rowProg/computeGroupProgress) ──
+        // งานหน้าเครื่อง (terminal) ไม่ได้อัปเดต part_units.status → ยอดสำนักงานอ่านได้ 0
+        // จึงต้องใช้ MAX(ยอดสำนักงาน, ยอดขั้นตอนสุดท้ายหน้าเครื่อง) มิฉะนั้นการ์ดบนสุดโชว์ 0 ไม่ตรงกับตาราง
+        const sorted = ops.slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
+        const last = sorted.length ? sorted[sorted.length - 1] : null;   // ขั้นตอนสุดท้ายของงานหน้าเครื่อง
+        const stationFin = last ? Number(last.finished) || 0 : 0;
+        const stationDone = last ? Number(last.done) || 0 : 0;           // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
+        const officeFin = Number(s.finished ?? 0) || 0;
+        const fin = total > 0 ? Math.min(Math.max(officeFin, stationFin), total) : Math.max(officeFin, stationFin);
+        // "กำลังทำ" = เริ่มแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
+        const stationInProg = Math.max(0, stationDone - stationFin);
+        const inProgRaw = last ? stationInProg : (Number(s.inProgress ?? 0) || 0);
+        const inProg = total > 0 ? Math.min(inProgRaw, Math.max(0, total - fin)) : inProgRaw;
+        setTotalUnits(total || release.qty || 0);
+        setFinished(fin);
+        setInProgress(inProg);
+        setOpProg(ops);
         setLoading(false);
       } catch (e) {
         if (alive) { setErr("โหลดข้อมูลไม่สำเร็จ: " + e.message); setLoading(false); }
