@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -2308,7 +2308,8 @@ function ProgressBar({ pct, finished, total }) {
 function PartProgressModal({ release, user, onClose }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง)
+  const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (ใช้คิดยอดรวมบนสุด)
+  const [machineProg, setMachineProg] = useState([]);   // [{code,name,done,finished,caps:[{name,seq,used}]}] แยกตามเครื่อง
   const [lang] = useLang();
   const [finished, setFinished] = useState(0);
   const [inProgress, setInProgress] = useState(0);
@@ -2330,11 +2331,13 @@ function PartProgressModal({ release, user, onClose }) {
       try {
         // จำนวนชิ้น (รวม/เสร็จ/กำลังทำ) + ความคืบหน้าแยกขั้นตอนจากงานหน้าเครื่องจริง
         // ใช้แหล่งเดียวกับการ์ดรวมในหน้ารายละเอียด Release เพื่อให้ตัวเลขตรงกัน
-        const [stats, prog] = await Promise.all([
+        const [stats, prog, mprog] = await Promise.all([
           getUnitStatsByReleaseIds([release.id]),
           getReleaseOpProgress([release.id]),
+          getReleaseMachineProgress(release.id),
         ]);
         if (!alive) return;
+        setMachineProg(Array.isArray(mprog) ? mprog : []);
         const s = stats[release.id] || { total: release.qty || 0, finished: 0, inProgress: 0 };
         const ops = Array.isArray(prog[release.id]) ? prog[release.id] : [];
         const total = Number(s.total ?? release.qty ?? 0) || 0;
@@ -2363,10 +2366,6 @@ function PartProgressModal({ release, user, onClose }) {
     return () => { alive = false; };
   }, [release]);
 
-  // เรียงขั้นตอนตาม routing ก่อน แล้วต่อด้วยขั้นตอนที่มีงานจริงแต่ไม่อยู่ใน routing
-  const opMap = new Map(opProg.map((o) => [o.op, o]));
-  const extraOps = opProg.filter((o) => !routing.includes(o.op)).map((o) => o.op);
-  const stages = [...routing, ...extraOps];
   const notStarted = Math.max(0, totalUnits - finished - inProgress);
 
   return (
@@ -2423,38 +2422,68 @@ function PartProgressModal({ release, user, onClose }) {
             </div>
           </div>
 
-          {/* ── ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น (งานหน้าเครื่อง) ─────────────────── */}
-          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>ทำแต่ละขั้นตอนไปแล้วกี่ชิ้น</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalUnits)} ชิ้น
+          {/* ── ทำจากเครื่องไหนบ้าง (แยกตามเครื่องจักร) ─────────────────────── */}
+          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>
+            {lang === "en" ? "Work by machine" : "งานแยกตามเครื่องจักร"}
           </div>
-          {stages.length === 0 ? (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+            {lang === "en"
+              ? <>Which machine made this part, doing which step — <b>Done</b> = all statuses · <b>finished</b> = pressed Finished · vs order {fmtNum(totalUnits)} pcs</>
+              : <>พาร์ทนี้ทำจากเครื่องไหน ขั้นตอนไหนบ้าง — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalUnits)} ชิ้น</>}
+          </div>
+          {machineProg.length === 0 ? (
             <div style={{ fontSize: 12.5, color: "var(--muted)", padding: "2px 2px 6px", lineHeight: 1.6 }}>
-              {routing.length === 0
-                ? "Part นี้ยังไม่ได้ตั้ง Routing — ไปตั้งขั้นตอนที่ Setup › Part Master ก่อน"
-                : "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้"}
+              {lang === "en" ? "No machine records yet for this part." : "ยังไม่มีการบันทึกงานหน้าเครื่องสำหรับ Part นี้"}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {stages.map((op, i) => {
-                const e = opMap.get(op) || { done: 0, finished: 0 };
-                const done = Number(e.done) || 0;
-                const fin = Number(e.finished) || 0;
+              {machineProg.map((m) => {
+                const done = Number(m.done) || 0;
+                const fin = Number(m.finished) || 0;
+                const inProg = Math.max(0, done - fin);
                 const pct = totalUnits > 0 ? Math.round((done / totalUnits) * 100) : 0;
                 const over = done > totalUnits;
-                const inRouting = routing.includes(op);
+                const isDone = done > 0 && fin >= done;   // เครื่องนี้ทำครบทุกชิ้นแล้ว = Finished
+                const caps = Array.isArray(m.caps) ? m.caps : [];
                 return (
-                  <div key={op}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 4, gap: 10 }}>
-                      <span style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        {inRouting && <span className="stage-seq">{i + 1}</span>}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opLabel(op, lang)}</span>
-                        {!inRouting && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)" }}>(นอก routing)</span>}
+                  <div key={m.machine_id || m.code} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", background: "var(--surface-2)" }}>
+                    {/* หัว: รหัสเครื่อง + สถานะ */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: caps.length ? 7 : 6 }}>
+                      <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                        <span style={{ fontWeight: 800, fontSize: 15, fontFamily: "var(--font-mono, ui-monospace, monospace)", letterSpacing: ".02em" }}>{m.code || m.name || "—"}</span>
+                        {m.code && m.name ? <span style={{ fontSize: 11.5, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span> : null}
+                      </span>
+                      <span style={{
+                        fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 99, whiteSpace: "nowrap",
+                        color: isDone ? "var(--success)" : "var(--accent-dk)",
+                        background: isDone ? "rgba(16,157,99,.12)" : "rgba(37,99,235,.10)",
+                        border: `1px solid ${isDone ? "var(--success)" : "var(--accent-dk)"}`,
+                      }}>
+                        {isDone ? (lang === "en" ? "Finished" : "เสร็จ") : (lang === "en" ? "In Process" : "กำลังทำ")}
+                      </span>
+                    </div>
+                    {/* ความสามารถเครื่อง (แอดมินตั้ง) — เน้นขั้นตอนที่ทำจริงกับพาร์ทนี้ */}
+                    {caps.length ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
+                        {caps.map((c, ci) => (
+                          <span key={ci} style={{
+                            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99, whiteSpace: "nowrap",
+                            color: c.used ? "#fff" : "var(--muted)",
+                            background: c.used ? "var(--accent-dk)" : "var(--surface)",
+                            border: c.used ? "1px solid var(--accent-dk)" : "1px solid var(--border)",
+                          }}>{opLabel(c.name, lang)}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {/* จำนวน + แถบความคืบหน้า (เหมือนเดิม) */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 4, gap: 10 }}>
+                      <span style={{ color: "var(--muted)" }}>
+                        {lang === "en" ? "Done" : "ทำแล้ว"} {fmtNum(done)} / {fmtNum(totalUnits)} {lang === "en" ? "pcs" : "ชิ้น"}
                       </span>
                       <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
-                        ทำแล้ว {fmtNum(done)} / {fmtNum(totalUnits)} ชิ้น
-                        {fin > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(fin)}</span> : null}
-                        {over ? <span style={{ color: "var(--warning)" }}> · เกิน (สแปร์)</span> : null}
+                        {fin > 0 ? <span style={{ color: "var(--success)" }}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span> : null}
+                        {inProg > 0 ? <span style={{ color: "var(--accent-dk)" }}>{fin > 0 ? " · " : ""}{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inProg)}</span> : null}
+                        {over ? <span style={{ color: "var(--warning)" }}> · {lang === "en" ? "over (spare)" : "เกิน (สแปร์)"}</span> : null}
                       </span>
                     </div>
                     <ProgressBar pct={Math.min(pct, 100)} finished={done} total={totalUnits} />
