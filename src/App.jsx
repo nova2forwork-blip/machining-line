@@ -2448,18 +2448,21 @@ function PartProgressModal({ release, user, onClose }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {machineProg.map((m) => {
                 const caps = Array.isArray(m.caps) ? m.caps : [];
-                const ops = Array.isArray(m.ops) ? m.ops : [];
-                // เครื่องเดียวที่ทำหลายขั้นตอน → แยกเป็นบล็อกรายขั้นตอน · ถ้าไม่มีข้อมูลราย op ใช้ยอดรวมเป็นบล็อกเดียว
-                const blocks = ops.length ? ops : [{ name: null, done: Number(m.done) || 0, finished: Number(m.finished) || 0 }];
+                // ยอดรวมของเครื่อง (ตรงกับการ์ดสรุปด้านบน) — เสร็จ/กำลังทำ/ทำแล้ว
+                const done = Number(m.done) || 0;
+                const fin = Number(m.finished) || 0;
+                const inp = Math.max(0, done - fin);
+                const pct = totalUnits > 0 ? Math.round((done / totalUnits) * 100) : 0;
+                const over = done > totalUnits;
                 return (
                   <div key={m.machine_id || m.code} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", background: "var(--surface-2)" }}>
                     {/* หัว: รหัสเครื่องอย่างเดียว (ไม่แสดงชื่อเครื่อง) */}
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, marginBottom: 8 }}>
                       <span style={{ fontWeight: 800, fontSize: 15, fontFamily: "var(--font-mono, ui-monospace, monospace)", letterSpacing: ".02em", whiteSpace: "nowrap" }}>{m.code || "—"}</span>
                     </div>
-                    {/* ความสามารถเครื่องที่แอดมินตั้ง — แสดงทุกขั้นตอนที่ตั้งไว้ (เท่ากันหมด) */}
-                    {caps.length ? (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+                    {/* บรรทัดเดียว: ชิปความสามารถ (ซ้าย) + สถานะ เสร็จ/กำลังทำ (ขวา) */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 9 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, minWidth: 0 }}>
                         {caps.map((c, ci) => (
                           <span key={ci} style={{
                             fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
@@ -2467,35 +2470,17 @@ function PartProgressModal({ release, user, onClose }) {
                           }}>{opLabel(c.name, lang)}</span>
                         ))}
                       </div>
-                    ) : null}
-                    {/* แยกรายขั้นตอน: แต่ละขั้นตอนมีสถานะ (เสร็จ/กำลังทำ) + แถบของตัวเอง */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {blocks.map((b, bi) => {
-                        const bdone = Number(b.done) || 0;
-                        const bfin = Number(b.finished) || 0;
-                        const binp = Math.max(0, bdone - bfin);
-                        const bpct = totalUnits > 0 ? Math.round((bdone / totalUnits) * 100) : 0;
-                        const bover = bdone > totalUnits;
-                        return (
-                          <div key={bi} style={{ borderTop: bi > 0 ? "1px dashed var(--border)" : "none", paddingTop: bi > 0 ? 10 : 0 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 5 }}>
-                              <span style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                                {b.name ? opLabel(b.name, lang) : (lang === "en" ? "All operations" : "ทุกขั้นตอน")}
-                              </span>
-                              <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                <span style={finStyle(bfin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(bfin)}</span>
-                                <span style={inStyle(binp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(binp)}</span>
-                              </span>
-                            </div>
-                            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-                              {lang === "en" ? "Done" : "ทำแล้ว"} {fmtNum(bdone)} / {fmtNum(totalUnits)} {lang === "en" ? "pcs" : "ชิ้น"}
-                              {bover ? <span style={{ color: "var(--warning)" }}> · {lang === "en" ? "over (spare)" : "เกิน (สแปร์)"}</span> : null}
-                            </div>
-                            <ProgressBar pct={Math.min(bpct, 100)} finished={bdone} total={totalUnits} />
-                          </div>
-                        );
-                      })}
+                      <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span>
+                        <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span>
+                      </span>
                     </div>
+                    {/* ทำแล้วรวม + แถบความคืบหน้า */}
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+                      {lang === "en" ? "Done" : "ทำแล้ว"} {fmtNum(done)} / {fmtNum(totalUnits)} {lang === "en" ? "pcs" : "ชิ้น"}
+                      {over ? <span style={{ color: "var(--warning)" }}> · {lang === "en" ? "over (spare)" : "เกิน (สแปร์)"}</span> : null}
+                    </div>
+                    <ProgressBar pct={Math.min(pct, 100)} finished={done} total={totalUnits} />
                   </div>
                 );
               })}
