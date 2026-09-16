@@ -4380,12 +4380,21 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
   const [note, setNote] = useState(release.note ?? "");
   const [releaseOrder, setReleaseOrder] = useState(release.release_order ?? "");
+  const [material, setMaterial] = useState(release.part_master?.material ?? "");   // INV Code (part_master.material)
+  const [prodStatus, setProdStatus] = useState("inprocess");   // 'inprocess' | 'finished' (สถานะการผลิตที่จะบันทึก)
+  const [origStatus, setOrigStatus] = useState("inprocess");   // สถานะเดิม (ไว้เทียบว่าเปลี่ยนไหม)
   const [units, setUnits] = useState(null); // null = ยังโหลดไม่เสร็จ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }).then(setUnits);
+    listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }).then((u) => {
+      setUnits(u || []);
+      // สถานะปัจจุบัน = "เสร็จแล้ว" ถ้าทุกชิ้นเป็น finished แล้ว มิฉะนั้น "กำลังทำ"
+      const fin = (u || []).filter((x) => x.status === "finished").length;
+      const st = ((u || []).length > 0 && fin >= (u || []).length) ? "finished" : "inprocess";
+      setProdStatus(st); setOrigStatus(st);
+    });
   }, [release.id]);
 
   const scannedCount = units ? units.filter((u) => u.status !== "released").length : 0;
@@ -4442,6 +4451,20 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
         await deleteRows("part_units", toRemove);
       }
 
+      // ── แก้ INV (material) — เก็บที่ part_master (มีผลกับทุก Release ของพาร์ทนี้) ──
+      const matVal = (material || "").trim() || null;
+      if (matVal !== (release.part_master?.material ?? null) && release.part_master_id) {
+        await updateRow("part_master", release.part_master_id, { material: matVal });
+      }
+      // ── เปลี่ยนสถานะการผลิต: ปิดงาน (finished) / เปิดต่อ (คำนวณจากสแกนจริงใหม่) ──
+      if (prodStatus !== origStatus) {
+        if (prodStatus === "finished") {
+          await updateRows("part_units", { release_id: release.id }, { status: "finished" });   // ปิดงาน = นับทุกชิ้นเป็นเสร็จ
+        } else if (release.part_master_id) {
+          await recalcPartStatus(release.part_master_id);   // เปิดต่อ = คำนวณสถานะจากงานที่สแกนจริง
+        }
+      }
+
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + e.message);
@@ -4473,6 +4496,29 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           <Field label="หมายเหตุ">
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
           </Field>
+
+          <div className="grid-2">
+            <Field label="INV Code">
+              <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="เช่น 23AN01600C (ไม่บังคับ)" />
+            </Field>
+            <Field label="สถานะการผลิต">
+              <select value={prodStatus} onChange={(e) => setProdStatus(e.target.value)}
+                style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
+                <option value="inprocess">กำลังทำ (ตามการสแกนจริง)</option>
+                <option value="finished">เสร็จแล้ว — ปิดงาน (นับครบ 100%)</option>
+              </select>
+            </Field>
+          </div>
+          {prodStatus === "finished" && origStatus !== "finished" && (
+            <div style={{ fontSize: 12, color: "var(--alert, #d97a00)", marginBottom: 10, lineHeight: 1.6 }}>
+              ⚠ ปิดงาน — จะนับทุกชิ้น ({units.length}) เป็น “เสร็จแล้ว” แม้ยังสแกนไม่ครบ (ใช้กรณีมีรีไวส์ / ไม่ต้องทำต่อ)
+            </div>
+          )}
+          {prodStatus === "inprocess" && origStatus === "finished" && (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+              เปิดงานต่อ — จะคำนวณสถานะใหม่จากงานที่สแกนจริง
+            </div>
+          )}
 
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
             ตอนนี้มี {units.length} ชิ้น — สแกนไปแล้ว {scannedCount} ชิ้น, ยังไม่สแกน {releasedCount} ชิ้น
