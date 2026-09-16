@@ -5,7 +5,7 @@ import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress,
+  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress, getScanStatusLock,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
@@ -265,6 +265,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [dupCount, setDupCount] = useState(0);   // ชิ้นนี้เคยทำ "ขั้นตอนนี้" ไปแล้วกี่ครั้ง (เตือน rework)
   const [qty, setQty] = useState(0);
   const [status, setStatus] = useState(null); // 'finished' | 'inprocess'
+  // กฎเลือกสถานะต่อ (release+ขั้นตอน+เครื่อง): เคย Finished → ล็อก Finished · เคย In Process → Finished ได้เมื่อครบจำนวน
+  const [statusLock, setStatusLock] = useState({ finishedExists: false, inProcessExists: false });
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);   // กันกด OK ซ้ำระหว่างบันทึก (re-entrancy)
   const clientIdRef = useRef(null);  // ★ client_id คงเดิมตลอด "การบันทึกครั้งเดียว" (รวมตอน retry) กันบันทึกซ้ำ
@@ -503,7 +505,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function resetAll(keepLen = false) {
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
-    setStatus(null); setStep(STEP.IDLE);
+    setStatus(null); setStatusLock({ finishedExists: false, inProcessExists: false }); setStep(STEP.IDLE);
     clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
     clientIdMapRef.current = null;       // ★ ล้าง client_id ต่อขั้นตอนด้วย (ชิ้นใหม่ = ชุดใหม่)
   }
@@ -583,6 +585,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     setDupCount(dup);
     setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
+    // กฎเลือกสถานะ: ดึงสถานะที่เครื่องนี้เคยบันทึกไว้กับ (รีลีส+ขั้นตอน) นี้ (fail-open ถ้าออฟไลน์/พลาด)
+    const lock = opId ? await getScanStatusLock(u.release_id, opId, machine?.id) : { finishedExists: false, inProcessExists: false };
+    setStatusLock(lock);
+    // เลือกสถานะเริ่มต้นให้เมื่อมีทางเดียว: เคย Finished → Finished · เคย In Process → In Process (Finished ปลดล็อกเมื่อครบ)
+    if (lock.finishedExists) setStatus("finished");
+    else if (lock.inProcessExists) setStatus("inprocess");
     setUnit(u);
     if (qty === 0) setQty(1);
     setStep(STEP.PART);
@@ -630,6 +638,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
   async function confirmPart() {
     if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
+    // ── กฎเลือกสถานะต่อเครื่อง (กันไว้อีกชั้น เผื่อ draft เก่า/หลุดปุ่ม disabled) ──
+    if (statusLock.finishedExists && status === "inprocess") {
+      flash(t("เครื่องนี้บันทึกเบอร์นี้เป็น Finished แล้ว — เลือก In Process ไม่ได้", "This machine already marked this part Finished — In Process not allowed"), "warn"); return;
+    }
+    if (statusLock.inProcessExists && !statusLock.finishedExists && status === "finished") {
+      const totQ = unit?.release?.qty ?? null;
+      const projQ = (Number(progress?.done) || 0) + (Number(qty) || 0);
+      if (totQ != null && projQ < totQ) {
+        flash(t(`ยังไม่ครบจำนวน (${projQ}/${totQ}) — เลือก Finished ได้เมื่อครบ`, `Not complete yet (${projQ}/${totQ}) — Finished unlocks when complete`), "warn"); return;
+      }
+    }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
     if (!Number.isInteger(qty)) { flash("จำนวนต้องเป็นจำนวนเต็ม", "warn"); return; }
     if (qty > 100000) { flash("จำนวนมากเกินไป (สูงสุด 100,000/ครั้ง)", "warn"); return; }
@@ -1151,7 +1170,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const workAreaEl = (
     <WorkArea
       step={step} elapsed={elapsed} unit={unit} progress={progress} qty={qty} setQty={setQty}
-      status={status} setStatus={setStatus} busy={busy}
+      status={status} setStatus={setStatus} statusLock={statusLock} busy={busy}
       onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
       confirmCancel={confirmCancel} confirmPart={confirmPart}
       closeScan={closeScan} rescan={rescan} dupCount={dupCount}
@@ -2053,7 +2072,7 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
   );
 }
 
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
   asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
   asmPending = null, asmAddPending, asmCancelPending,
@@ -2159,6 +2178,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     //   บันทึกต่อได้ปกติเสมอ (ตัดเผื่อสแปร์/เพิ่ม) — แค่เตือนแบบไม่บล็อก ไม่หยุดเวลา
     const projected = done + (Number(qty) || 0);
     const overBy = (!noOp && total != null && projected > total) ? (projected - total) : 0;
+    // ── กฎเลือกสถานะ: เคย Finished → ล็อก Finished · เคย In Process → Finished ปลดเมื่อครบจำนวน ──
+    const finExists = !!statusLock?.finishedExists;
+    const inpExists = !!statusLock?.inProcessExists;
+    const reachedQty = (noOp || total == null) ? true : (projected >= total);   // ครบจำนวน (นับ qty ที่กำลังจะบันทึกครั้งนี้)
+    const inpDisabled = finExists;                                // เคย Finished → เลือก In Process ไม่ได้
+    const finDisabled = inpExists && !finExists && !reachedQty;   // เคย In Process + ยังไม่ครบ → เลือก Finished ไม่ได้
     return (
       <div className="stn-part-panel">
         {/* ป้ายกำกับตัวใหม่ (โครงเดียวกับป้ายพิมพ์ 76×12) + running number */}
@@ -2196,9 +2221,26 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
         <div className="stn-row-btns stn-status-row">
-          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} onClick={() => setStatus("inprocess")}>{t("กำลังทำ", "In Process")}</button>
-          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} onClick={() => setStatus("finished")}>{t("เสร็จแล้ว", "Finished")}</button>
+          <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} disabled={inpDisabled}
+            style={inpDisabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+            onClick={() => { if (!inpDisabled) setStatus("inprocess"); }}>{t("กำลังทำ", "In Process")}</button>
+          <button className={`stn-pill ${status === "finished" ? "sel-fin" : ""}`} disabled={finDisabled}
+            style={finDisabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+            onClick={() => { if (!finDisabled) setStatus("finished"); }}>{t("เสร็จแล้ว", "Finished")}</button>
         </div>
+        {finDisabled ? (
+          <div className="stn-status-hint" style={{ fontSize: 12.5, color: "#b45309", textAlign: "center", marginTop: 2, lineHeight: 1.5 }}>
+            {t(`ทำให้ครบ ${fmt(total)} ชิ้นก่อน ถึงจะเลือก "เสร็จแล้ว" ได้ (ตอนนี้ ${fmt(projected)})`, `Reach ${fmt(total)} pcs first to pick Finished (now ${fmt(projected)})`)}
+          </div>
+        ) : inpDisabled ? (
+          <div className="stn-status-hint" style={{ fontSize: 12.5, color: "#b45309", textAlign: "center", marginTop: 2, lineHeight: 1.5 }}>
+            {t("เบอร์นี้เครื่องนี้บันทึกเป็น \"เสร็จแล้ว\" แล้ว — เลือกได้เฉพาะ เสร็จแล้ว", "Marked Finished on this machine — Finished only")}
+          </div>
+        ) : (inpExists && !finExists && !noOp && total != null && reachedQty) ? (
+          <div className="stn-status-hint" style={{ fontSize: 12.5, color: "#0e9d63", textAlign: "center", marginTop: 2, lineHeight: 1.5 }}>
+            {t(`ครบ ${fmt(total)} แล้ว — กด "เสร็จแล้ว" เพื่อปิดงาน หรือทำสแปร์ต่อได้ (กำลังทำ)`, `Reached ${fmt(total)} — press Finished to close, or keep going for spares (In Process)`)}
+          </div>
+        ) : null}
         <div className="stn-row-btns">
           <button className="stn-pill no" onClick={rescan} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
           <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
