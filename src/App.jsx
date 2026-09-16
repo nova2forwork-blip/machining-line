@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -4380,22 +4380,35 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
   const [note, setNote] = useState(release.note ?? "");
   const [releaseOrder, setReleaseOrder] = useState(release.release_order ?? "");
+  const [lang] = useLang();
   const [material, setMaterial] = useState(release.part_master?.material ?? "");   // INV Code (part_master.material)
-  const [prodStatus, setProdStatus] = useState("inprocess");   // 'inprocess' | 'finished' (สถานะการผลิตที่จะบันทึก)
-  const [origStatus, setOrigStatus] = useState("inprocess");   // สถานะเดิม (ไว้เทียบว่าเปลี่ยนไหม)
+  const [machines, setMachines] = useState([]);   // เครื่องที่ทำพาร์ทนี้ [{machine_id, code, done, finished}]
+  const [selMachine, setSelMachine] = useState("");   // machine_id ที่เลือก (ว่าง = ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน)
+  const [prodStatus, setProdStatus] = useState("inprocess");   // สถานะที่จะบันทึก
   const [units, setUnits] = useState(null); // null = ยังโหลดไม่เสร็จ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // สถานะปัจจุบันของเครื่องหนึ่ง / ของฝั่งสำนักงาน (จากยอด finished vs done)
+  const machStatus = (m) => (m && Number(m.done) > 0 && Number(m.finished) >= Number(m.done)) ? "finished" : "inprocess";
+  const officeStatus = (u) => ((u || []).length > 0 && (u || []).every((x) => x.status === "finished")) ? "finished" : "inprocess";
+
   useEffect(() => {
-    listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }).then((u) => {
-      setUnits(u || []);
-      // สถานะปัจจุบัน = "เสร็จแล้ว" ถ้าทุกชิ้นเป็น finished แล้ว มิฉะนั้น "กำลังทำ"
-      const fin = (u || []).filter((x) => x.status === "finished").length;
-      const st = ((u || []).length > 0 && fin >= (u || []).length) ? "finished" : "inprocess";
-      setProdStatus(st); setOrigStatus(st);
+    Promise.all([
+      listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }),
+      getReleaseMachineProgress(release.id),
+    ]).then(([u, ms]) => {
+      const units2 = u || [];
+      const arr = Array.isArray(ms) ? ms : [];
+      setUnits(units2); setMachines(arr);
+      if (arr.length) { setSelMachine(arr[0].machine_id); setProdStatus(machStatus(arr[0])); }
+      else { setProdStatus(officeStatus(units2)); }
     });
   }, [release.id]);
+
+  const selM = machines.find((m) => m.machine_id === selMachine) || null;
+  const origStatus = selM ? machStatus(selM) : officeStatus(units);
+  const onSelMachine = (id) => { setSelMachine(id); const m = machines.find((x) => x.machine_id === id); if (m) setProdStatus(machStatus(m)); };
 
   const scannedCount = units ? units.filter((u) => u.status !== "released").length : 0;
   const releasedCount = units ? units.length - scannedCount : 0;
@@ -4456,12 +4469,16 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
       if (matVal !== (release.part_master?.material ?? null) && release.part_master_id) {
         await updateRow("part_master", release.part_master_id, { material: matVal });
       }
-      // ── เปลี่ยนสถานะการผลิต: ปิดงาน (finished) / เปิดต่อ (คำนวณจากสแกนจริงใหม่) ──
+      // ── เปลี่ยนสถานะการผลิต ──
+      //   มีงานหน้าเครื่อง → เปลี่ยนสถานะของ "เครื่องที่เลือก" (machine_records)
+      //   ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน (part_units): finished=ปิดงาน · inprocess=คำนวณใหม่จากสแกน
       if (prodStatus !== origStatus) {
-        if (prodStatus === "finished") {
-          await updateRows("part_units", { release_id: release.id }, { status: "finished" });   // ปิดงาน = นับทุกชิ้นเป็นเสร็จ
+        if (selM) {
+          await setReleaseMachineStatus(release.id, selM.machine_id, prodStatus);
+        } else if (prodStatus === "finished") {
+          await updateRows("part_units", { release_id: release.id }, { status: "finished" });
         } else if (release.part_master_id) {
-          await recalcPartStatus(release.part_master_id);   // เปิดต่อ = คำนวณสถานะจากงานที่สแกนจริง
+          await recalcPartStatus(release.part_master_id);
         }
       }
 
@@ -4497,26 +4514,39 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
           </Field>
 
+          <Field label="INV Code">
+            <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder={lang === "en" ? "e.g. 23AN01600C (optional)" : "เช่น 23AN01600C (ไม่บังคับ)"} />
+          </Field>
+
+          {/* สถานะการผลิต — ถ้ามีหลายเครื่องให้เลือกเครื่องก่อน แล้วเปลี่ยนสถานะของเครื่องนั้น */}
           <div className="grid-2">
-            <Field label="INV Code">
-              <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="เช่น 23AN01600C (ไม่บังคับ)" />
-            </Field>
-            <Field label="สถานะการผลิต">
+            {machines.length >= 1 && (
+              <Field label={lang === "en" ? "Machine" : "เครื่อง"}>
+                <select value={selMachine} onChange={(e) => onSelMachine(e.target.value)}
+                  style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
+                  {machines.map((m) => (
+                    <option key={m.machine_id} value={m.machine_id}>{(m.code || "—")} · {lang === "en" ? "done" : "ทำแล้ว"} {fmtNum(m.done)}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label={lang === "en" ? "Status" : "สถานะ"}>
               <select value={prodStatus} onChange={(e) => setProdStatus(e.target.value)}
                 style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
-                <option value="inprocess">กำลังทำ (ตามการสแกนจริง)</option>
-                <option value="finished">เสร็จแล้ว — ปิดงาน (นับครบ 100%)</option>
+                <option value="inprocess">{lang === "en" ? "In Process" : "กำลังทำ"}</option>
+                <option value="finished">{lang === "en" ? "Finished" : "เสร็จแล้ว"}</option>
               </select>
             </Field>
           </div>
-          {prodStatus === "finished" && origStatus !== "finished" && (
-            <div style={{ fontSize: 12, color: "var(--alert, #d97a00)", marginBottom: 10, lineHeight: 1.6 }}>
-              ⚠ ปิดงาน — จะนับทุกชิ้น ({units.length}) เป็น “เสร็จแล้ว” แม้ยังสแกนไม่ครบ (ใช้กรณีมีรีไวส์ / ไม่ต้องทำต่อ)
-            </div>
-          )}
-          {prodStatus === "inprocess" && origStatus === "finished" && (
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-              เปิดงานต่อ — จะคำนวณสถานะใหม่จากงานที่สแกนจริง
+          {prodStatus !== origStatus && (
+            <div style={{ fontSize: 12, color: prodStatus === "finished" ? "var(--alert, #d97a00)" : "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+              {selM
+                ? (lang === "en"
+                    ? `Set machine ${selM.code || ""} to “${prodStatus === "finished" ? "Finished" : "In Process"}”`
+                    : `เปลี่ยนสถานะเครื่อง ${selM.code || ""} เป็น “${prodStatus === "finished" ? "เสร็จแล้ว" : "กำลังทำ"}”`)
+                : (prodStatus === "finished"
+                    ? (lang === "en" ? `Close — count all ${units.length} pcs as Finished` : `ปิดงาน — นับทุกชิ้น (${units.length}) เป็นเสร็จ`)
+                    : (lang === "en" ? "Reopen — recompute from actual scans" : "เปิดงานต่อ — คำนวณสถานะใหม่จากงานที่สแกนจริง"))}
             </div>
           )}
 
