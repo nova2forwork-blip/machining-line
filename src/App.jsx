@@ -2456,13 +2456,17 @@ function PartProgressModal({ release, user, onClose }) {
                 const over = done > totalUnits;
                 return (
                   <div key={m.machine_id || m.code} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", background: "var(--surface-2)" }}>
-                    {/* หัว: รหัสเครื่องอย่างเดียว (ไม่แสดงชื่อเครื่อง) */}
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, marginBottom: 8 }}>
+                    {/* หัว: รหัสเครื่อง (ซ้าย) + สถานะ เสร็จ/กำลังทำ (มุมขวาบน) */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 9 }}>
                       <span style={{ fontWeight: 800, fontSize: 15, fontFamily: "var(--font-mono, ui-monospace, monospace)", letterSpacing: ".02em", whiteSpace: "nowrap" }}>{m.code || "—"}</span>
+                      <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span>
+                        <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span>
+                      </span>
                     </div>
-                    {/* บรรทัดเดียว: ชิปความสามารถ (ซ้าย) + สถานะ เสร็จ/กำลังทำ (ขวา) */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 9 }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, minWidth: 0 }}>
+                    {/* ชิปความสามารถ (แสดงทุกขั้นตอนที่ตั้งไว้) */}
+                    {caps.length ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
                         {caps.map((c, ci) => (
                           <span key={ci} style={{
                             fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
@@ -2470,11 +2474,7 @@ function PartProgressModal({ release, user, onClose }) {
                           }}>{opLabel(c.name, lang)}</span>
                         ))}
                       </div>
-                      <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span>
-                        <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span>
-                      </span>
-                    </div>
+                    ) : null}
                     {/* ทำแล้วรวม + แถบความคืบหน้า */}
                     <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
                       {lang === "en" ? "Done" : "ทำแล้ว"} {fmtNum(done)} / {fmtNum(totalUnits)} {lang === "en" ? "pcs" : "ชิ้น"}
