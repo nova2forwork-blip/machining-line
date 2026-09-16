@@ -2615,7 +2615,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     uw: (r) => Number(r.unit_weight) || 0,
     tw: (r) => (Number(r.unit_weight) || 0) * (Number(r.qty) || 0),
     len: (r) => Number(r.length_mm) || 0,
-    material: (r) => r.material || "",
+    material: (r) => r.part_master?.material || r.material || "",
     matlen: (r) => { const a = matLenList(r); return a.length ? Math.max(...a.map(Number)) : 0; },
   };
 
@@ -2644,7 +2644,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           row[lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)"] = r.unit_weight ? w2((Number(r.qty) || 0) * r.unit_weight) : "";
         }
         row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
-        row["INV Code"] = r.material || "";
+        row["INV Code"] = r.part_master?.material || r.material || "";
         { const a = matLenList(r); row[lang === "en" ? "Material len (mm)" : "ยาว material (มม.)"] = a.length === 1 ? Number(a[0]) : a.map((n) => fmtNum(n)).join(" · "); }
         row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
         return row;
@@ -2839,7 +2839,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     {!isAsmGroup && <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>}
                     {!isAsmGroup && <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>}
                     <td data-label="ความยาว/ชิ้น">{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
-                    <td data-label="INV Code" style={{ whiteSpace: "nowrap" }}>{r.material || "-"}</td>
+                    <td data-label="INV Code" style={{ whiteSpace: "nowrap" }}>{r.part_master?.material || r.material || "-"}</td>
                     <td data-label="ยาว material (มม.)" style={{ whiteSpace: "nowrap" }}>
                       {statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r)}
                     </td>
