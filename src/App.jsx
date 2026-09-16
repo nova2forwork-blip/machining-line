@@ -5202,20 +5202,63 @@ function MachineScanDetail({ machine, onBack }) {
   const mkey = machine.code || machine.name;              // คีย์เดียวกับ machineOpMatrix (code ก่อน ชื่อสำรอง)
   const mine = (logs || []).filter((l) => (l.machine?.code || l.machine?.name) === mkey);
 
-  const acc = {
-    time: (l) => l.scanned_at || "",
-    part: (l) => l.part_unit?.part_master?.part_no || "",
-    pname: (l) => l.part_unit?.part_master?.part_name || "",
-    ro: (l) => l.release_order || "",
-    op: (l) => l.operation?.name || "",
-    status: (l) => (String(l.status).toLowerCase() === "finished" ? 1 : 0),
-    qty: (l) => Number(l.quantity) || 0,
-    weight: (l) => logWeight(l),
-    secs: (l) => Number(l.process_seconds) || 0,
-  };
-  const sorted = sort.sortRows(mine, acc);
+  // ── จับกลุ่ม "1 การสแกน = 1 แถว" แล้วโชว์ทุกขั้นตอนที่ติ๊กในสแกนนั้น ──
+  //    หน้าเครื่องบันทึกแบบ count-once: ขั้นตอนหลัก (ติ๊กตัวแรก) = จำนวนจริง · ขั้นตอนอื่นที่ติ๊ก = อีก record แต่จำนวน 0
+  //    report_logs คืนทุก record (รวมตัวจำนวน 0) → ถ้าโชว์ดิบจะเห็นขั้นตอนเดียวต่อแถว + มีแถวจำนวน 0 เกลื่อน
+  //    จึงยุบ record จำนวน 0 (ขั้นตอนที่ติ๊กเพิ่ม) เข้ากับ record หลักของสแกนเดียวกัน แล้วโชว์ครบทุกขั้นตอน
+  //    (ตัวหลักถูกบันทึกก่อนเสมอ → เรียงตามเวลา asc แล้วตัว 0 ที่ตามมา = ขั้นตอนเสริมของสแกนนั้น)
+  const opOf = (l) => l.operation?.name || null;
+  const grouped = (() => {
+    const asc = [...mine].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+    const out = [];
+    let cur = null;
+    for (const l of asc) {
+      const qv = Number(l.quantity) || 0;
+      const op = opOf(l);
+      if (qv > 0) {                                       // record หลัก (มีจำนวนจริง) → เริ่มกลุ่มใหม่
+        cur = {
+          key: l.id || `${l.part_unit_id}-${l.scanned_at}`,
+          time: l.scanned_at,
+          part_no: l.part_unit?.part_master?.part_no || "—",
+          part_name: l.part_unit?.part_master?.part_name || "—",
+          release_order: l.release_order || "—",
+          status: l.status, part_unit_id: l.part_unit_id,
+          ops: op ? [op] : [], qty: qv, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+        };
+        out.push(cur);
+      } else if (cur && cur.part_unit_id === l.part_unit_id
+                 && String(cur.status).toLowerCase() === String(l.status).toLowerCase()) {
+        if (op && !cur.ops.includes(op)) cur.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → เติมเข้ากลุ่มเดียวกัน
+        cur.weight += logWeight(l); cur.secs += Number(l.process_seconds) || 0;
+      } else {                                            // record จำนวน 0 ที่ไม่มีตัวหลักคู่ (หายาก) → แถวเดี่ยว
+        out.push({
+          key: (l.id || `${l.part_unit_id}-${l.scanned_at}`) + "-x",
+          time: l.scanned_at,
+          part_no: l.part_unit?.part_master?.part_no || "—",
+          part_name: l.part_unit?.part_master?.part_name || "—",
+          release_order: l.release_order || "—",
+          status: l.status, part_unit_id: l.part_unit_id,
+          ops: op ? [op] : [], qty: 0, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+        });
+      }
+    }
+    return out;
+  })();
 
-  // สรุปหัวตาราง (เฉพาะเครื่องนี้ ในช่วงเวลาที่เลือก)
+  const acc = {
+    time: (g) => g.time || "",
+    part: (g) => g.part_no || "",
+    pname: (g) => g.part_name || "",
+    ro: (g) => g.release_order || "",
+    op: (g) => g.ops.join(" · "),
+    status: (g) => (String(g.status).toLowerCase() === "finished" ? 1 : 0),
+    qty: (g) => Number(g.qty) || 0,
+    weight: (g) => Number(g.weight) || 0,
+    secs: (g) => Number(g.secs) || 0,
+  };
+  const sorted = sort.sortRows(grouped, acc);
+
+  // สรุปหัวตาราง (เฉพาะเครื่องนี้ ในช่วงเวลาที่เลือก) — จำนวน/น้ำหนัก/เวลา ไม่นับซ้ำ (ตัวเสริมจำนวน 0)
   const totPcs = mine.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
   const totWt = mine.reduce((s, l) => s + logWeight(l), 0);
   const totSec = mine.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
@@ -5270,7 +5313,7 @@ function MachineScanDetail({ machine, onBack }) {
 
       <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(mine.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
+          <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(grouped.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</div><div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-dk)" }}>{fmtNum(totWt)} {lang === "en" ? "kg" : "กก."}</div></div>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Run time" : "เวลาเดินเครื่อง"}</div><div style={{ fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{totSec ? fmtHrs(totSec) : "—"}</div></div>
@@ -5304,17 +5347,26 @@ function MachineScanDetail({ machine, onBack }) {
                 <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</td></tr>
               ) : sorted.length === 0 ? (
                 <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
-              ) : sorted.map((l, i) => (
-                <tr key={l.id || `${l.part_unit_id}-${l.scanned_at}-${l.operation?.name}-${i}`}>
-                  <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(l.scanned_at)}</td>
-                  <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{l.part_unit?.part_master?.part_no || "—"}</td>
-                  <td data-label={lang === "en" ? "Part name" : "ชื่อพาร์ท"}>{l.part_unit?.part_master?.part_name || "—"}</td>
-                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{l.release_order || "—"}</td>
-                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"} style={{ whiteSpace: "nowrap" }}>{l.operation?.name ? opLabel(l.operation.name, lang) : "—"}</td>
-                  <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(l.status)}</td>
-                  <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(Number(l.quantity) || 0)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
-                  <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{logWeight(l) ? fmtNum(logWeight(l)) : "—"}</td>
-                  <td data-label={lang === "en" ? "Run time" : "เวลาเดินเครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{Number(l.process_seconds) ? fmtHrs(l.process_seconds) : "—"}</td>
+              ) : sorted.map((g) => (
+                <tr key={g.key}>
+                  <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
+                  <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}</td>
+                  <td data-label={lang === "en" ? "Part name" : "ชื่อพาร์ท"}>{g.part_name}</td>
+                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{g.release_order}</td>
+                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
+                    {g.ops.length ? (
+                      <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>
+                        {g.ops.map((o, oi) => (
+                          <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+                            color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
+                        ))}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(g.status)}</td>
+                  <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(g.qty)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
+                  <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{g.weight ? fmtNum(g.weight) : "—"}</td>
+                  <td data-label={lang === "en" ? "Run time" : "เวลาเดินเครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{g.secs ? fmtHrs(g.secs) : "—"}</td>
                 </tr>
               ))}
             </tbody>
