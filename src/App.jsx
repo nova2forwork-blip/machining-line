@@ -2459,9 +2459,11 @@ function PartProgressModal({ release, user, onClose }) {
                     {/* หัว: รหัสเครื่อง (ซ้าย) + สถานะ เสร็จ/กำลังทำ (มุมขวาบน) */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 9 }}>
                       <span style={{ fontWeight: 800, fontSize: 15, fontFamily: "var(--font-mono, ui-monospace, monospace)", letterSpacing: ".02em", whiteSpace: "nowrap" }}>{m.code || "—"}</span>
+                      {/* สถานะเดียวต่อเครื่อง — โชว์เฉพาะที่มีจริง (ซ่อนอันที่เป็น 0) */}
                       <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span>
-                        <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span>
+                        {fin > 0 ? <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span> : null}
+                        {inp > 0 ? <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span> : null}
+                        {fin === 0 && inp === 0 ? <span style={inStyle(0)}>{lang === "en" ? "in process" : "กำลังทำ"} 0</span> : null}
                       </span>
                     </div>
                     {/* ชิปความสามารถ (แสดงทุกขั้นตอนที่ตั้งไว้) */}
