@@ -453,6 +453,28 @@ export async function countUnitOpRecords(partUnitId, operationId) {
   return count || 0;
 }
 
+// ── สถานะที่ "ล็อกไว้" ของ (release + ขั้นตอน + เครื่อง) สำหรับกฎเลือกสถานะหน้าเครื่อง ──
+//   finishedExists  = เคยกด Finished ไปแล้ว → บังคับให้เลือกได้เฉพาะ Finished (กันย้อนกลับเป็น In Process)
+//   inProcessExists = เคยกด In Process ไปแล้ว → เลือก Finished ได้เมื่อ "ครบตามจำนวน" เท่านั้น
+// fail-open: ออฟไลน์ / พารามิเตอร์ไม่ครบ / error → { false, false } (ไม่ล็อก ไม่บล็อกการบันทึกงาน)
+export async function getScanStatusLock(releaseId, operationId, machineId) {
+  const none = { finishedExists: false, inProcessExists: false };
+  if (!releaseId || !operationId || !machineId) return none;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return none;
+  try {
+    const q = (st) => supabase
+      .from("machine_records")
+      .select("id", { count: "exact", head: true })
+      .eq("release_id", releaseId)
+      .eq("operation_id", operationId)
+      .eq("machine_id", machineId)
+      .eq("status", st);
+    const [fin, inp] = await Promise.all([q("finished"), q("inprocess")]);
+    if (fin.error || inp.error) { console.warn("getScanStatusLock error", fin.error || inp.error); return none; }
+    return { finishedExists: (fin.count || 0) > 0, inProcessExists: (inp.count || 0) > 0 };
+  } catch (e) { console.warn("getScanStatusLock exception", e); return none; }
+}
+
 // part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
 export async function getAllUnitsFull(statusFilter) {
   // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
