@@ -5655,11 +5655,13 @@ function ProjectsPage({ user, goTo }) {
     ]);
     const m = {};
     (summary || []).forEach((s) => { m[s.id] = { ...s }; });
-    // merge: ใช้ค่าที่ "มากกว่า" ระหว่างสแกนสำนักงาน (part_units.status) กับหน้าเครื่อง
+    // merge: "จำนวนเสร็จ" ใช้ค่าที่มากกว่า (สแกนสำนักงาน part_units.status vs งานหน้าเครื่อง)
+    // ★ แต่ "น้ำหนักวัสดุ" คงเป็นน้ำหนักรวมทั้งโปรเจค (project_summary) เสมอ — เดิมเอาน้ำหนักงานที่เสร็จหน้าเครื่องมาทับ
+    //   ทำให้โปรเจคที่มีงานหน้าเครื่องโชว์น้ำหนักน้อยผิด (เช่น 18,769 ชิ้น แต่ขึ้น 7.89 กก.)
     Object.entries(station || {}).forEach(([pid, st]) => {
       const base = m[pid] || { id: pid, total: 0, finished: 0, weight: 0 };
       const stFin = Number(st?.finished) || 0;
-      if (stFin >= (Number(base.finished) || 0)) { base.finished = stFin; base.weight = Number(st?.weight) || base.weight; }
+      if (stFin > (Number(base.finished) || 0)) base.finished = stFin;   // เอาเฉพาะจำนวนเสร็จที่มากกว่า · ไม่แตะน้ำหนัก
       m[pid] = base;
     });
     setProjects(ps); setStatMap(m); setLoading(false);
