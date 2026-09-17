@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -4482,6 +4482,9 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [releaseOrder, setReleaseOrder] = useState(release.release_order ?? "");
   const [lang] = useLang();
   const [material, setMaterial] = useState(release.part_master?.material ?? "");   // INV Code (part_master.material)
+  const [partName, setPartName] = useState(release.part_master?.part_name ?? "");   // ชื่อ Part (part_master.part_name — มีผลทุก Release ของพาร์ท)
+  const [matLen, setMatLen] = useState("");        // ความยาว material (mm) — ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้
+  const [matLens0, setMatLens0] = useState([]);     // ค่าปัจจุบัน (ไม่ซ้ำ) จากสแกนจริง — ไว้เทียบ/พรีฟิล
   const [machines, setMachines] = useState([]);   // เครื่องที่ทำพาร์ทนี้ [{machine_id, code, done, finished}]
   const [selMachine, setSelMachine] = useState("");   // machine_id ที่เลือก (ว่าง = ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน)
   const [prodStatus, setProdStatus] = useState("inprocess");   // สถานะที่จะบันทึก
@@ -4497,10 +4500,14 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
     Promise.all([
       listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }),
       getReleaseMachineProgress(release.id),
-    ]).then(([u, ms]) => {
+      getReleaseMaterialLengths([release.id]),
+    ]).then(([u, ms, ml]) => {
       const units2 = u || [];
       const arr = Array.isArray(ms) ? ms : [];
       setUnits(units2); setMachines(arr);
+      const lens = (ml && ml[release.id]) || [];      // ความยาว material ที่ใช้จริง (ไม่ซ้ำ)
+      setMatLens0(lens);
+      if (lens.length === 1) setMatLen(String(lens[0]));   // มีค่าเดียว → เติมให้แก้ได้ทันที
       if (arr.length) { setSelMachine(arr[0].machine_id); setProdStatus(machStatus(arr[0])); }
       else { setProdStatus(officeStatus(units2)); }
     });
@@ -4564,10 +4571,21 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
         await deleteRows("part_units", toRemove);
       }
 
-      // ── แก้ INV (material) — เก็บที่ part_master (มีผลกับทุก Release ของพาร์ทนี้) ──
+      // ── แก้ INV (material) + ชื่อ Part — เก็บที่ part_master (มีผลกับทุก Release ของพาร์ทนี้) ──
       const matVal = (material || "").trim() || null;
-      if (matVal !== (release.part_master?.material ?? null) && release.part_master_id) {
-        await updateRow("part_master", release.part_master_id, { material: matVal });
+      const pmPatch = {};
+      if (matVal !== (release.part_master?.material ?? null)) pmPatch.material = matVal;
+      const pnVal = (partName || "").trim();
+      if (pnVal && pnVal !== (release.part_master?.part_name ?? "")) pmPatch.part_name = pnVal;
+      if (Object.keys(pmPatch).length && release.part_master_id) {
+        await updateRow("part_master", release.part_master_id, pmPatch);
+      }
+
+      // ── ความยาว material — ตั้งค่าเดียวให้ "ทุกสแกน" ของล็อตนี้ (material_length_mm รายสแกน) ──
+      //   material_length_mm เป็นข้อมูลประกอบ ไม่กระทบน้ำหนัก/จำนวน · เขียนก็ต่อเมื่อกรอกค่าใหม่ที่ต่างจากเดิม
+      if (matLen !== "" && Number(matLen) > 0
+          && !(matLens0.length === 1 && Number(matLen) === Number(matLens0[0]))) {
+        await setReleaseMaterialLength(release.id, Number(matLen));
       }
       // ── เปลี่ยนสถานะการผลิต ──
       //   มีงานหน้าเครื่อง → เปลี่ยนสถานะของ "เครื่องที่เลือก" (machine_records)
@@ -4595,6 +4613,9 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
         <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
       ) : (
         <>
+          <Field label={lang === "en" ? "Part name" : "ชื่อ Part"}>
+            <Input value={partName} onChange={(e) => setPartName(e.target.value)} placeholder={release.part_master?.part_no || ""} />
+          </Field>
           <div className="grid-2">
             <Field label="จำนวน (ชิ้น)">
               <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
@@ -4614,9 +4635,23 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
           </Field>
 
-          <Field label="INV Code">
-            <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder={lang === "en" ? "e.g. 23AN01600C (optional)" : "เช่น 23AN01600C (ไม่บังคับ)"} />
-          </Field>
+          <div className="grid-2">
+            <Field label="INV Code">
+              <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder={lang === "en" ? "e.g. 23AN01600C (optional)" : "เช่น 23AN01600C (ไม่บังคับ)"} />
+            </Field>
+            <Field label={lang === "en" ? "Material len (mm)" : "ความยาว material (มม.)"}>
+              <Input type="number" step="0.1" min="0" value={matLen} onChange={(e) => setMatLen(e.target.value)}
+                placeholder={matLens0.length > 1
+                  ? (lang === "en" ? `multiple: ${matLens0.map(fmtNum).join(" · ")}` : `หลายค่า: ${matLens0.map(fmtNum).join(" · ")}`)
+                  : (matLens0.length === 0 ? (lang === "en" ? "no scans yet" : "ยังไม่มีสแกน") : "")} />
+            </Field>
+          </div>
+
+          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-4px 0 12px", lineHeight: 1.6 }}>
+            {lang === "en"
+              ? <><b>Part name / INV Code</b> apply to every release of this part · <b>Material len</b> sets one value on all scans of this lot (fixes mistyped values · doesn’t affect weight/qty) · <b>Part No.</b> is fixed (QR identity)</>
+              : <><b>ชื่อ Part / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (แก้ค่าที่พิมพ์ผิด · ไม่กระทบน้ำหนัก/จำนวน) · <b>เลขพาร์ท</b> แก้ไม่ได้ (เป็นรหัส QR)</>}
+          </div>
 
           {/* สถานะการผลิต — ถ้ามีหลายเครื่องให้เลือกเครื่องก่อน แล้วเปลี่ยนสถานะของเครื่องนั้น */}
           <div className="grid-2">
