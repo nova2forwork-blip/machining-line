@@ -77,30 +77,59 @@ export function unitsWeight(units, onlyFinished = false) {
 //   }
 // ใช้แสดงตารางแยกน้ำหนักของเครื่องตัวเดียวออกเป็นราย-ขั้นตอนได้
 // (เช่น "เครื่อง X: ตัด 500 กก. + เจาะ 300 กก.")
+// ★ นับ "จำนวนชิ้นต่อขั้นตอน" แบบรู้จัก co-tick:
+//   หน้าเครื่องติ๊กหลายขั้นตอนใน 1 สแกน → ขั้นตอนหลักถือ quantity จริง · ที่ติ๊กร่วม = อีก record quantity 0
+//   ถ้านับ sum(quantity) ดิบ ขั้นตอนที่ติ๊กร่วมจะได้ 0 (โชว์ "0 pcs" ทั้งที่เครื่องทำจริง)
+//   จึงจับ "1 สแกน" (record หลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน)
+//   แล้วเครดิตจำนวนของสแกนนั้นให้ "ทุกขั้นตอนที่ทำในสแกน" → ทุกขั้นตอนได้จำนวนชิ้นที่ผ่านจริง
+//   • total.count / weight / seconds = ผลรวมจริง (co-tick เป็น 0 อยู่แล้ว ไม่นับซ้ำ)
 export function machineOpMatrix(logs) {
   const byMachine = new Map();
   const opNames = new Set();
 
+  // จัดกลุ่ม log ตามเครื่องก่อน (key = code เพื่อกันชื่อซ้ำ) — แล้วค่อยคิดทีละเครื่อง
+  const byMachineLogs = new Map();
   for (const l of logs || []) {
     const mName = l.machine?.name || "ไม่ระบุ";
-    const m = l.machine?.code || mName;   // ★ key ด้วย code (unique) กันเครื่องชื่อซ้ำถูกยุบรวม · โชว์ชื่อตามเดิม
-    const op = l.operation?.name || "ไม่ระบุ";
-    const wt = logWeight(l);
-    opNames.add(op);
+    const mKey = l.machine?.code || mName;
+    opNames.add(l.operation?.name || "ไม่ระบุ");
+    if (!byMachineLogs.has(mKey)) byMachineLogs.set(mKey, { name: mName, code: l.machine?.code || "", rows: [] });
+    byMachineLogs.get(mKey).rows.push(l);
+  }
 
-    if (!byMachine.has(m)) {
-      byMachine.set(m, { name: mName, code: l.machine?.code || "", total: { count: 0, weight: 0, seconds: 0 }, ops: {} });
+  for (const [, mv] of byMachineLogs) {
+    const entry = { name: mv.name, code: mv.code, total: { count: 0, weight: 0, seconds: 0 }, ops: {} };
+    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0 });
+
+    // 1) น้ำหนัก/เวลา/ยอดรวม — รวมจาก record จริงทุกแถว (co-tick มีค่า 0 อยู่แล้ว)
+    for (const l of mv.rows) {
+      const op = l.operation?.name || "ไม่ระบุ";
+      const wt = logWeight(l), s = sec(l);
+      ensureOp(op).weight += wt;
+      entry.ops[op].seconds += s;
+      entry.total.weight += wt;
+      entry.total.seconds += s;
     }
-    const entry = byMachine.get(m);
-    const pcs = q(l);
-    const s = sec(l);
-    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0 };
-    entry.ops[op].count += pcs;
-    entry.ops[op].weight += wt;
-    entry.ops[op].seconds += s;
-    entry.total.count += pcs;
-    entry.total.weight += wt;
-    entry.total.seconds += s;
+
+    // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
+    const asc = [...mv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+    let cur = null;
+    for (const l of asc) {
+      const op = l.operation?.name || "ไม่ระบุ";
+      const qv = q(l);
+      const puid = l.part_unit_id;
+      const st = String(l.status || "").toLowerCase();
+      if (qv > 0) {                                   // record หลัก → เริ่มสแกนใหม่ + เครดิตขั้นตอนหลัก
+        cur = { qty: qv, puid, st, ops: new Set([op]) };
+        entry.total.count += qv;
+        ensureOp(op).count += qv;
+      } else if (cur && cur.puid === puid && cur.st === st) {   // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
+        if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
+      } else {
+        ensureOp(op);                                 // ติ๊กร่วมกำพร้า (ไม่มีตัวหลักคู่) → มีคอลัมน์ไว้ แต่ไม่เครดิต
+      }
+    }
+    byMachine.set(mv.code || mv.name, entry);
   }
 
   const machines = Array.from(byMachine.values()).sort(
