@@ -2334,17 +2334,25 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
 // ── Mini progress bar (inline, no extra deps) ───────────────────────────────
 function ProgressBar({ pct, finished, total }) {
   // "เสร็จจริง" = ชิ้นครบ (ไม่ใช่แค่ % ปัดขึ้นถึง 100) — กัน 199/200 = 99.5% ปัดเป็น 100% เขียว
-  const complete = (finished != null && total != null && total > 0) ? finished >= total : pct >= 100;
-  let p = Math.min(100, Math.max(0, pct));
-  if (!complete && p >= 100) p = 99;   // ยังไม่ครบ อย่าเพิ่งโชว์ 100%
-  const color = complete ? "var(--success)" : p > 0 ? "var(--accent-dk)" : "var(--border)";
+  const hasFT = finished != null && total != null && Number(total) > 0;
+  const rawPct = hasFT ? (Number(finished) / Number(total)) * 100 : (Number(pct) || 0);   // % จริง (ยังไม่ปัด)
+  const complete = hasFT ? Number(finished) >= Number(total) : rawPct >= 100;
+  let width = Math.min(100, Math.max(0, rawPct));
+  if (!complete && width >= 100) width = 99;   // ยังไม่ครบ อย่าเพิ่งเต็มแถบ
+  // ป้าย %: มีความคืบหน้าจริงแต่ปัดแล้วเป็น 0% (เช่น 71/18,769) → โชว์ทศนิยม/“<0.1%” กันเข้าใจผิดว่ายังไม่เริ่ม
+  let label;
+  if (complete) label = "100%";
+  else if (rawPct <= 0) label = "0%";
+  else if (rawPct < 1) label = rawPct >= 0.1 ? (Math.round(rawPct * 10) / 10) + "%" : "<0.1%";
+  else label = Math.min(99, Math.round(rawPct)) + "%";   // ยังไม่ครบ อย่าโชว์ 100%
+  const color = complete ? "var(--success)" : width > 0 ? "var(--accent-dk)" : "var(--border)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 160 }}>
       <div style={{ flex: 1, height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", border: "1px solid var(--border)" }}>
-        <div style={{ width: `${p}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
+        <div style={{ width: `${width}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
       </div>
-      <span style={{ fontSize: 12, fontWeight: 600, color, whiteSpace: "nowrap", minWidth: 38, textAlign: "right" }}>
-        {p}%
+      <span style={{ fontSize: 12, fontWeight: 600, color, whiteSpace: "nowrap", minWidth: 44, textAlign: "right" }}>
+        {label}
       </span>
       <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
         ({finished}/{total})
