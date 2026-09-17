@@ -2332,6 +2332,15 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
 }
 
 // ── Mini progress bar (inline, no extra deps) ───────────────────────────────
+// ป้าย % อัจฉริยะ (ใช้ร่วมกันหลายที่): มีคืบหน้าจริงแต่ปัดแล้วเป็น 0% (เช่น 73/18,769 = 0.4%)
+//   → โชว์ทศนิยม · ต่ำกว่า 0.1% → "<0.1%" · 1% ขึ้นไป → เลขเต็ม · ครบจริงเท่านั้นถึง 100%
+function pctLabel(rawPct, complete) {
+  if (complete) return "100%";
+  if (!(Number(rawPct) > 0)) return "0%";
+  if (rawPct < 1) return rawPct >= 0.1 ? (Math.round(rawPct * 10) / 10) + "%" : "<0.1%";
+  return Math.min(99, Math.round(rawPct)) + "%";   // ยังไม่ครบ อย่าโชว์ 100%
+}
+
 function ProgressBar({ pct, finished, total }) {
   // "เสร็จจริง" = ชิ้นครบ (ไม่ใช่แค่ % ปัดขึ้นถึง 100) — กัน 199/200 = 99.5% ปัดเป็น 100% เขียว
   const hasFT = finished != null && total != null && Number(total) > 0;
@@ -2340,11 +2349,7 @@ function ProgressBar({ pct, finished, total }) {
   let width = Math.min(100, Math.max(0, rawPct));
   if (!complete && width >= 100) width = 99;   // ยังไม่ครบ อย่าเพิ่งเต็มแถบ
   // ป้าย %: มีความคืบหน้าจริงแต่ปัดแล้วเป็น 0% (เช่น 71/18,769) → โชว์ทศนิยม/“<0.1%” กันเข้าใจผิดว่ายังไม่เริ่ม
-  let label;
-  if (complete) label = "100%";
-  else if (rawPct <= 0) label = "0%";
-  else if (rawPct < 1) label = rawPct >= 0.1 ? (Math.round(rawPct * 10) / 10) + "%" : "<0.1%";
-  else label = Math.min(99, Math.round(rawPct)) + "%";   // ยังไม่ครบ อย่าโชว์ 100%
+  const label = pctLabel(rawPct, complete);
   const color = complete ? "var(--success)" : width > 0 ? "var(--accent-dk)" : "var(--border)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 160 }}>
@@ -5887,7 +5892,8 @@ function ProjectsPage({ user, goTo }) {
                 }).map((p) => {
                   const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
                   const done = s.total > 0 && s.finished >= s.total;   // ครบจริง
-                  const pct = s.total ? (done ? 100 : Math.min(99, Math.round((s.finished / s.total) * 100))) : 0;
+                  const rawPct = s.total ? (s.finished / s.total) * 100 : 0;   // % จริง (ยังไม่ปัด — กัน 73/18,769 หายเป็น 0%)
+                  const barW = done ? 100 : Math.min(99, rawPct);
                   return (
                     <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้"
                       style={p.status === "closed" ? { opacity: 0.62 } : undefined}>
@@ -5900,9 +5906,9 @@ function ProjectsPage({ user, goTo }) {
                       <td data-label="% เสร็จ">
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
-                            <div style={{ width: `${pct}%`, height: "100%", background: done ? "var(--success)" : "var(--accent)" }} />
+                            <div style={{ width: barW > 0 ? `max(3px, ${barW}%)` : "0%", height: "100%", background: done ? "var(--success)" : "var(--accent)" }} />
                           </div>
-                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{pct}%</span>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, whiteSpace: "nowrap" }}>{pctLabel(rawPct, done)}</span>
                         </div>
                       </td>
                       <td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(s.weight)}</td>
