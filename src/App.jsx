@@ -2810,25 +2810,37 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
             นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน (ตัด/เจาะ/บาก) — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalQty)} ชิ้น
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {opAgg.map((o) => {
-              const pct = totalQty > 0 ? Math.round((o.done / totalQty) * 100) : 0;
-              const over = o.done > totalQty;
-              return (
-                <div key={o.op}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
-                    <span style={{ fontWeight: 600 }}>{o.op}</span>
-                    <span style={{ color: "var(--muted)" }}>
-                      ทำแล้ว {fmtNum(o.done)} / {fmtNum(totalQty)} ชิ้น
-                      {o.finished > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(o.finished)}</span> : null}
-                      {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
-                    </span>
-                  </div>
-                  <ProgressBar pct={Math.min(pct, 100)} finished={o.done} total={totalQty} />
+          {/* ★ ยุบเป็นแถวเดียว: ชิปทุกขั้นตอน (Cut·Notch·Milling·Drill) + แถบรวม (ยึดขั้นตอนสุดท้ายจริง) */}
+          {(() => {
+            const rep = lastOp || opAgg[opAgg.length - 1];
+            const repDone = Number(rep?.done) || 0;
+            const repFin = Number(rep?.finished) || 0;
+            const pct = totalQty > 0 ? Math.round((repDone / totalQty) * 100) : 0;
+            const over = repDone > totalQty;
+            // ★ ถ้าบางชิ้นทำไม่ครบทุกขั้นตอน (จำนวนแต่ละขั้นตอนไม่เท่ากัน) → โชว์จำนวนบนชิปแต่ละอัน
+            const doneList = opAgg.map((o) => Number(o.done) || 0);
+            const uniform = doneList.every((d) => d === doneList[0]);
+            return (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+                  <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6 }}>
+                    {opAgg.map((o) => (
+                      <span key={o.op} style={{ fontSize: 12, fontWeight: 700, padding: "3px 11px", borderRadius: 99, whiteSpace: "nowrap",
+                        color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>
+                        {o.op}{!uniform ? <span style={{ marginLeft: 6, fontWeight: 800 }}>{fmtNum(Number(o.done) || 0)}</span> : null}
+                      </span>
+                    ))}
+                  </span>
+                  <span style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>
+                    {uniform ? (lang === "en" ? "Done" : "ทำแล้ว") : (lang === "en" ? "All steps done" : "ทำครบทุกขั้นตอน")} {fmtNum(repDone)} / {fmtNum(totalQty)} {lang === "en" ? "pcs" : "ชิ้น"}
+                    {repFin > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(repFin)}</span> : null}
+                    {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
+                  </span>
                 </div>
-              );
-            })}
-          </div>
+                <ProgressBar pct={Math.min(pct, 100)} finished={repDone} total={totalQty} />
+              </div>
+            );
+          })()}
         </Card>
       )}
 
