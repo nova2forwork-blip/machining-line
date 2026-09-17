@@ -84,6 +84,43 @@ function CountNumber({ value, format = fmtInt, className = "" }) {
 
 const keyOf = (l) => `${l.part_unit_id || "?"}|${l.scanned_at}|${l.operation?.name || "?"}|${l.quantity}`;
 
+// จับ "1 การสแกน = 1 รายการ" แล้วรวมทุกขั้นตอนที่ติ๊กในสแกนนั้น
+// หน้าเครื่องบันทึกแบบ count-once: ขั้นตอนหลัก (ติ๊กตัวแรก) = จำนวนจริง · ขั้นตอนอื่นที่ติ๊ก = อีก record จำนวน 0
+// report_logs คืนทุก record → เดิม feed โชว์ทีละ record เลยเห็นขั้นตอนเดียว · ยุบ record จำนวน 0 เข้าสแกนเดียวกัน แล้วโชว์ครบทุกขั้นตอน
+// (ตัวหลักถูกบันทึกก่อนเสมอ → เรียงเวลา asc แล้วตัวจำนวน 0 ที่ตามมา = ขั้นตอนเสริมของสแกนนั้น)
+function groupScans(rows) {
+  const asc = [...(rows || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+  const out = [];
+  let cur = null;
+  for (const l of asc) {
+    const qv = Number(l.quantity) || 0;
+    const op = l.operation?.name || null;
+    if (qv > 0) {                                        // record หลัก (มีจำนวนจริง) → เริ่มรายการใหม่
+      cur = {
+        fkey: keyOf(l), key: `${l.part_unit_id || "?"}|${l.scanned_at}`,
+        part_no: l.part_unit?.part_master?.part_no || "—",
+        machine_code: l.machine?.code || "", machine_name: l.machine?.name || "",
+        scanned_at: l.scanned_at, status: l.status, part_unit_id: l.part_unit_id,
+        ops: op ? [op] : [], qty: qv,
+      };
+      out.push(cur);
+    } else if (cur && cur.part_unit_id === l.part_unit_id
+               && String(cur.status).toLowerCase() === String(l.status).toLowerCase()) {
+      if (op && !cur.ops.includes(op)) cur.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → เติมเข้ารายการเดียวกัน
+    } else {                                             // record จำนวน 0 ที่ไม่มีตัวหลักคู่ (หายาก) → รายการเดี่ยว
+      out.push({
+        fkey: keyOf(l), key: `${l.part_unit_id || "?"}|${l.scanned_at}|x`,
+        part_no: l.part_unit?.part_master?.part_no || "—",
+        machine_code: l.machine?.code || "", machine_name: l.machine?.name || "",
+        scanned_at: l.scanned_at, status: l.status, part_unit_id: l.part_unit_id,
+        ops: op ? [op] : [], qty: 0,
+      });
+    }
+  }
+  out.sort((a, b) => String(b.scanned_at || "").localeCompare(String(a.scanned_at || "")));   // ล่าสุดก่อน
+  return out;
+}
+
 // ชื่อขั้นตอน ไทย→อังกฤษ (สำหรับ dashboard เมื่อเลือกภาษา EN)
 const OP_EN = {
   "ตัด": "Cut", "เจาะ": "Drill", "บาก": "Notch", "พับ": "Bend", "เชื่อม": "Weld", "ประกอบ": "Assemble",
@@ -219,7 +256,7 @@ export default function Dashboard() {
     });
     return {
       totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
-      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: logs.slice(0, 9),
+      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: groupScans(logs).slice(0, 9),
     };
   }, [logs]);
 
@@ -391,19 +428,17 @@ export default function Dashboard() {
           <div className="dash-empty">{t.waitingScan}</div>
         ) : (
           <div className="dash-feed-list">
-            {feed.map((l) => {
-              return (
-                <div key={keyOf(l)} className={`dash-feed-item ${fresh.has(keyOf(l)) ? "fresh" : ""}`}>
-                  <div className="part">{l.part_unit?.part_master?.part_no || "—"}</div>
-                  <div className="qty">+{fmtInt(l.quantity)}</div>
-                  <div className="line2">
-                    <span className="chip">{l.machine?.name || "—"}</span>
-                    {l.operation?.name ? <span className="op">{opLabel(l.operation.name, lang)}</span> : null}
-                  </div>
-                  <div className="time dash-num">{timeOf(l.scanned_at)}</div>
+            {feed.map((g) => (
+              <div key={g.key} className={`dash-feed-item ${fresh.has(g.fkey) ? "fresh" : ""}`}>
+                <div className="part">{g.part_no}</div>
+                <div className="qty">+{fmtInt(g.qty)}</div>
+                <div className="line2">
+                  <span className="chip">{g.machine_code || g.machine_name || "—"}</span>
+                  {g.ops.length ? <span className="op">{g.ops.map((o) => opLabel(o, lang)).join(" · ")}</span> : null}
                 </div>
-              );
-            })}
+                <div className="time dash-num">{timeOf(g.scanned_at)}</div>
+              </div>
+            ))}
           </div>
         )}
       </div>
