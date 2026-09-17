@@ -4868,19 +4868,18 @@ function ReportPage({ goTo }) {
   const material = materialWeight(filteredLogs);
   const processed = processedWeight(filteredLogs);
   const distinctUnits = distinctUnitCount(filteredLogs);
-  const byOp = {};
-  filteredLogs.forEach((l) => {
-    const name = l.operation?.name || "ไม่ระบุ";
-    byOp[name] = byOp[name] || { name, count: 0, weight: 0 };
-    byOp[name].count += Number(l.quantity ?? 1) || 0;   // นับจำนวนชิ้น (งานหน้าเครื่อง = quantity)
-    byOp[name].weight += logWeight(l);   // ★ ใช้ตัวช่วยเดียวกับ metrics.js (fallback คูณ quantity ด้วย)
-  });
-  const chartData = Object.values(byOp);
   // ลำดับขั้นตอนตาม seq จากตาราง operations (ตัด→บาก→กัด→เจาะ…) → เรียงคอลัมน์ให้ตรงกระบวนการจริง
   const opOrder = {};
   operations.forEach((o) => { if (o && o.name != null) opOrder[o.name] = o.seq; });
   const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
   const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
+  // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
+  //   เดิมบวก quantity ดิบ → ขั้นตอนที่ติ๊กร่วม (quantity 0) ได้ 0 เลยขึ้นแต่ Cut · ตอนนี้ทุกขั้นตอนโชว์ชิ้นที่ผ่านจริง
+  const chartData = matrix.opNames.map((op) => {
+    let count = 0, weight = 0;
+    matrix.machines.forEach((m) => { const c = m.ops[op]; if (c) { count += c.count || 0; weight += c.weight || 0; } });
+    return { name: op, count, weight };
+  });
   const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
   // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
   const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
