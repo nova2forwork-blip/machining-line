@@ -604,6 +604,18 @@ export async function setReleaseMachineStatus(releaseId, machineId, status) {
   return data || { ok: true };
 }
 
+// แก้ "ความยาว material" (machine_records.material_length_mm) ของทุกสแกนใน Release ให้เป็นค่าเดียว
+// ใช้ในหน้า Edit Release (แอดมิน/ออฟฟิศ) — material_length_mm เป็นข้อมูลประกอบ ไม่กระทบน้ำหนัก/จำนวน/ยอด
+// ดู migration-set-release-material-length.sql
+export async function setReleaseMaterialLength(releaseId, length) {
+  const { data, error } = await supabase.rpc("set_release_material_length", {
+    p_token: authToken(), p_release_id: releaseId, p_length: Number(length),
+  });
+  if (error) { console.warn("set_release_material_length error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+
 // ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
 // คืน { <project_id>: { finished, weight } }
 export async function getProjectStationProgress() {
