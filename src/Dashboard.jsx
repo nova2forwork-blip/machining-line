@@ -251,7 +251,8 @@ export default function Dashboard() {
     const tSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
     const matrix = machineOpMatrix(logs);
     const mach = matrix.machines.map((m) => {
-      const op = Object.entries(m.ops).sort((a, b) => b[1].count - a[1].count)[0];
+      // ขั้นตอนเด่น: จำนวนมากสุด · เท่ากันตัดสินด้วยน้ำหนัก (ขั้นตอนหลักถือน้ำหนักจริง · co-tick = 0) → โชว์ขั้นตอนหลัก
+      const op = Object.entries(m.ops).sort((a, b) => (b[1].count - a[1].count) || (b[1].weight - a[1].weight))[0];
       return { name: m.name, code: m.code || "", op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
     });
     return {
