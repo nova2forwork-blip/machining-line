@@ -4766,6 +4766,118 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
   );
 }
 
+// ── จับกลุ่ม "1 การสแกน = 1 แถว" (รู้จัก co-tick) — ใช้ร่วมกันหลายที่ ──────────
+//   ตัวหลัก quantity>0 = เริ่มสแกนใหม่ · ตัวติ๊กร่วม quantity 0 ที่ตามมา (ชิ้น+สถานะเดียวกัน) = ขั้นตอนเสริมของสแกนนั้น
+//   เรียงตามเวลา asc (ตัวหลักถูกบันทึกก่อนเสมอ) แล้วยุบตัว 0 เข้ากลุ่มเดียวกัน → 1 แถวโชว์ครบทุกขั้นตอน
+function groupCoTickScans(rows) {
+  const opOf = (l) => l.operation?.name || null;
+  const asc = [...(rows || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+  const out = [];
+  let cur = null;
+  const mk = (l, qty) => ({
+    key: (l.id || `${l.part_unit_id}-${l.scanned_at}`) + (qty > 0 ? "" : "-x"),
+    time: l.scanned_at,
+    part_no: l.part_unit?.part_master?.part_no || "—",
+    part_name: l.part_unit?.part_master?.part_name || "—",
+    release_order: l.release_order || "—",
+    machine_code: l.machine?.code || l.machine?.name || "—",
+    status: l.status, part_unit_id: l.part_unit_id,
+    ops: opOf(l) ? [opOf(l)] : [], qty, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+  });
+  for (const l of asc) {
+    const qv = Number(l.quantity) || 0;
+    const op = opOf(l);
+    if (qv > 0) { cur = mk(l, qv); out.push(cur); }
+    else if (cur && cur.part_unit_id === l.part_unit_id
+             && String(cur.status).toLowerCase() === String(l.status).toLowerCase()) {
+      if (op && !cur.ops.includes(op)) cur.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → เติมเข้ากลุ่ม
+      cur.weight += logWeight(l); cur.secs += Number(l.process_seconds) || 0;
+    } else { out.push(mk(l, 0)); }                          // ตัว 0 กำพร้า (หายาก) → แถวเดี่ยว
+  }
+  return out;
+}
+
+// ── ป็อปอัป "ดูรายละเอียดการสแกน" — เปิดจากแถวในตารางรายงาน (เครื่อง หรือ พาร์ท) ──
+//   ใช้ logs ชุดเดียวกับที่นับในตาราง (filteredLogs กรองเฉพาะแถวนั้น) → ตัวเลขในป็อปอัปตรงกับแถวเป๊ะ
+//   mode="machine" → ซ่อนคอลัมน์เครื่อง (เครื่องเดียวทั้งตาราง) โชว์พาร์ท · mode="part" → ซ่อนพาร์ท โชว์เครื่องแทน
+function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onClose }) {
+  const [lang] = useLang();
+  const sort = useTableSort("time", "desc");
+  const grouped = useMemo(() => groupCoTickScans(logs), [logs]);
+  const rankOps = (ops) => ops.slice().sort((a, b) => ((opOrder?.[a] ?? 999) - (opOrder?.[b] ?? 999)) || String(a).localeCompare(String(b)));
+  const acc = {
+    time: (g) => g.time || "",
+    part: (g) => g.part_no || "",
+    mach: (g) => g.machine_code || "",
+    op: (g) => rankOps(g.ops).map((o) => opLabel(o, lang)).join(" · "),
+    status: (g) => (String(g.status).toLowerCase() === "finished" ? 1 : 0),
+    qty: (g) => Number(g.qty) || 0,
+    weight: (g) => Number(g.weight) || 0,
+  };
+  const sorted = sort.sortRows(grouped, acc);
+  const totPcs = grouped.reduce((s, g) => s + (Number(g.qty) || 0), 0);
+  const totWt = grouped.reduce((s, g) => s + (Number(g.weight) || 0), 0);
+  const showMachine = mode === "part";
+  const showPart = mode === "machine";
+  const colCount = 5 + (showMachine ? 1 : 0) + (showPart ? 1 : 0);
+  const statCell = { flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
+  const statLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const pill = (st) => {
+    const fin = String(st).toLowerCase() === "finished";
+    return (
+      <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+        color: fin ? "var(--success)" : "var(--accent-dk)",
+        background: fin ? "rgba(16,157,99,.12)" : "rgba(37,99,235,.10)",
+        border: `1px solid ${fin ? "var(--success)" : "var(--accent-dk)"}` }}>
+        {fin ? (lang === "en" ? "finished" : "เสร็จ") : (lang === "en" ? "in process" : "กำลังทำ")}
+      </span>
+    );
+  };
+  const chip = (o, oi) => (
+    <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+      color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
+  );
+  return (
+    <Modal title={title} sub={subtitle} onClose={onClose} wide>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(grouped.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
+        <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
+        <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</div><div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-dk)" }}>{fmtNum(totWt)} {lang === "en" ? "kg" : "กก."}</div></div>
+      </div>
+      <div className="table-wrap tall-scroll">
+        <table className="data-table responsive-cards">
+          <thead><tr>
+            <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
+            {showPart && <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>}
+            {showMachine && <SortTh k="mach" sort={sort}>{lang === "en" ? "Machine" : "เครื่อง"}</SortTh>}
+            <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
+            <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
+            <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
+            <SortTh k="weight" sort={sort}>{lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"}</SortTh>
+          </tr></thead>
+          <tbody>
+            {sorted.length === 0 ? (
+              <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans" : "ไม่มีการสแกน"}</td></tr>
+            ) : sorted.map((g) => (
+              <tr key={g.key}>
+                <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
+                {showPart && <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}{g.part_name && g.part_name !== g.part_no ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {g.part_name}</span> : null}</td>}
+                {showMachine && <td data-label={lang === "en" ? "Machine" : "เครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{g.machine_code}</td>}
+                <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
+                  {g.ops.length ? <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>{rankOps(g.ops).map(chip)}</span> : "—"}
+                </td>
+                <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(g.status)}</td>
+                <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(g.qty)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
+                <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{g.weight ? fmtNum(g.weight) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
 function ReportPage({ goTo }) {
   const [lang] = useLang();
   // ── Flexible date filter: quick preset / specific month / custom from–to ──
@@ -4786,6 +4898,7 @@ function ReportPage({ goTo }) {
   const [logs, setLogs] = useState([]);
   const [deptFilter, setDeptFilter] = useState("machine");   // "machine"/"assembly"/"packing" — แต่ละแผนกดูคนละแบบ
   const [operations, setOperations] = useState([]);   // ไว้แม็ป operation → แผนก (op_type)
+  const [drill, setDrill] = useState(null);   // ป็อปอัปดูรายละเอียดการสแกน (เปิดจากแถวตาราง) — {mode,title,subtitle,logs}
 
   // ── เลือกตารางก่อน export + สถานะระหว่างสร้างไฟล์ ──
   const [exportOpen, setExportOpen] = useState(false);
@@ -4873,6 +4986,8 @@ function ReportPage({ goTo }) {
   operations.forEach((o) => { if (o && o.name != null) opOrder[o.name] = o.seq; });
   const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
   const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
+  // คีย์จับคู่ log → แถวในตาราง Part (ต้องตรงกับ partOpMatrix เป๊ะ) สำหรับ drill-down
+  const partKeyOf = (l) => `${(l.release_id || l.part_unit?.release_id) || (l.release_order || "—")}|${l.part_unit?.part_master?.part_no || "ไม่ระบุ"}`;
   // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
   //   เดิมบวก quantity ดิบ → ขั้นตอนที่ติ๊กร่วม (quantity 0) ได้ 0 เลยขึ้นแต่ Cut · ตอนนี้ทุกขั้นตอนโชว์ชิ้นที่ผ่านจริง
   const chartData = matrix.opNames.map((op) => {
@@ -5151,7 +5266,14 @@ function ReportPage({ goTo }) {
                 {sortM.sortRows(matrix.machines, machineAcc).map((m) => {
                   const dm = dailyMatrix.machines.find((x) => x.name === m.name);
                   return (
-                    <tr key={m.name}>
+                    <tr key={m.name} className="release-row" style={{ cursor: "pointer" }}
+                      onClick={() => setDrill({
+                        mode: "machine",
+                        title: m.code || m.name,
+                        subtitle: (m.code && m.name ? m.name + " · " : "") + (lang === "en" ? "scans in the selected period" : "การสแกนในช่วงที่เลือก"),
+                        logs: filteredLogs.filter((l) => (l.machine?.code || l.machine?.name) === (m.code || m.name)),
+                      })}
+                      title={lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้"}>
                       <td style={{ fontFamily: "var(--font-mono)", color: "var(--muted)", whiteSpace: "nowrap" }}>{m.code || "—"}</td>
                       <td style={{ fontWeight: 600 }}>{m.name}</td>
                       {matrix.opNames.map((op) => {
@@ -5210,7 +5332,14 @@ function ReportPage({ goTo }) {
               </thead>
               <tbody>
                 {sortP.sortRows(partMatrix.parts, partAcc).map((p) => (
-                  <tr key={`${p.releaseOrder} ${p.partNo}`}>
+                  <tr key={`${p.releaseOrder} ${p.partNo}`} className="release-row" style={{ cursor: "pointer" }}
+                    onClick={() => setDrill({
+                      mode: "part",
+                      title: p.partNo + (p.partName && p.partName !== p.partNo ? " · " + p.partName : ""),
+                      subtitle: `Release ${p.releaseOrder}`,
+                      logs: filteredLogs.filter((l) => partKeyOf(l) === `${p.releaseId || p.releaseOrder}|${p.partNo}`),
+                    })}
+                    title={lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้"}>
                     <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.releaseOrder}</td>
                     <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partNo}</td>
                     <td style={{ color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partName}</td>
@@ -5234,6 +5363,11 @@ function ReportPage({ goTo }) {
           </div>
         )}
       </Card>
+
+      {drill && (
+        <ScanDrillModal mode={drill.mode} title={drill.title} subtitle={drill.subtitle}
+          logs={drill.logs} opOrder={opOrder} onClose={() => setDrill(null)} />
+      )}
 
       {/* ── Finished Part (รวมมาไว้ในหน้า Report) ──────────────────────────── */}
       <div className="section-heading" style={{ margin: "26px 2px 12px", fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
