@@ -317,6 +317,55 @@ const Select = ({ options, className = "", ...props }) => (
     {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
   </select>
 );
+// ── ดรอปดาวน์ค้นหาได้ (พิมพ์เพื่อกรอง) — ใช้ตอนตัวเลือกเยอะ เช่น เลือกโปรเจคหน้า "ล้างข้อมูลสแกน" ──
+function SearchSelect({ value, onChange, options, placeholder = "— เลือก / พิมพ์เพื่อค้นหา —", className = "" }) {
+  const [open, setOpen] = useState(false);
+  const [touched, setTouched] = useState(false);   // เริ่มพิมพ์แล้วหรือยัง (พิมพ์ = โชว์คำค้น · ไม่พิมพ์ = โชว์ค่าที่เลือก)
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const selected = options.find((o) => String(o.value) === String(value)) || null;
+  const shown = touched ? query : (selected ? selected.label : "");
+  const q = query.trim().toLowerCase();
+  const list = (touched && q) ? options.filter((o) => String(o.label).toLowerCase().includes(q)) : options;
+
+  useEffect(() => {
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setTouched(false); setQuery(""); } };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const choose = (o) => { onChange(o.value); setOpen(false); setTouched(false); setQuery(""); };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input className={`input ${className}`} value={shown} placeholder={placeholder} style={{ width: "100%" }}
+        onFocus={(e) => { setOpen(true); e.target.select(); }}
+        onChange={(e) => { setQuery(e.target.value); setTouched(true); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setOpen(false); setTouched(false); setQuery(""); e.currentTarget.blur(); }
+          else if (e.key === "Enter" && open && list.length) { e.preventDefault(); choose(list[0]); }
+        }} />
+      {open && (
+        <div style={{ position: "absolute", zIndex: 40, top: "calc(100% + 4px)", left: 0, right: 0,
+          maxHeight: 280, overflowY: "auto", background: "var(--surface, #fff)",
+          border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 14px 36px rgba(15,23,42,.18)" }}>
+          {list.length === 0 ? (
+            <div style={{ padding: "10px 12px", fontSize: 13, color: "var(--muted)" }}>ไม่พบรายการที่ตรงกับ “{query}”</div>
+          ) : list.map((o) => (
+            <div key={o.value} title={o.label} onMouseDown={(e) => { e.preventDefault(); choose(o); }}
+              style={{ padding: "9px 12px", fontSize: 13.5, cursor: "pointer",
+                background: String(o.value) === String(value) ? "var(--surface-2)" : "transparent",
+                borderBottom: "1px solid var(--surface-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = String(o.value) === String(value) ? "var(--surface-2)" : "transparent"; }}>
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 const Field = ({ label, children }) => (
   <div className="field"><div className="label-el">{label}</div>{children}</div>
 );
@@ -6300,6 +6349,7 @@ function ClearScansCard() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [msg, setMsg] = useState(null);
+  const [scanned, setScanned] = useState(null);   // Set ของ release_id ที่มีข้อมูลสแกน (null=ยังไม่โหลด)
   useEffect(() => { getReleasesFull().then(setReleases); }, []);
 
   // โปรเจค (dedupe จาก releases) — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (ลิสต์สั้น เลือกง่าย)
@@ -6330,6 +6380,35 @@ function ClearScansCard() {
     }
     return Array.from(m.values());
   }, [projReleases]);
+
+  // โหลดว่า release ไหน "มีข้อมูลสแกน" ของโปรเจคที่เลือก (ออฟฟิศ part_units + งานหน้าเครื่อง machine_records)
+  useEffect(() => {
+    if (!projId) { setScanned(null); return; }
+    const ids = projReleases.map((r) => r.id);
+    if (!ids.length) { setScanned(new Set()); return; }
+    let alive = true;
+    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+      .then(([stats, op]) => {
+        if (!alive) return;
+        const s = new Set();
+        for (const id of ids) {
+          const us = stats[id];
+          const hasOffice = us && ((Number(us.finished) || 0) > 0 || (Number(us.inProgress) || 0) > 0);
+          const ops = op[id] || [];
+          const hasTerm = Array.isArray(ops) && ops.some((o) => (Number(o.done) || 0) > 0);
+          if (hasOffice || hasTerm) s.add(id);
+        }
+        setScanned(s);
+      })
+      .catch(() => { if (alive) setScanned(new Set()); });
+    return () => { alive = false; };
+  }, [projId, projReleases]);
+
+  // Part ที่ "มีข้อมูลสแกน" เท่านั้น (ระหว่างโหลด = โชว์ทั้งหมดไปก่อน)
+  const scannedReleases = useMemo(
+    () => (scanned ? projReleases.filter((r) => scanned.has(r.id)) : projReleases),
+    [projReleases, scanned]
+  );
 
   function resetSel() { setPreview(null); setMsg(null); setProgress(""); }
   function pickProject(id) { setProjId(id); setScope("project"); setGrpKey(""); setRelId(""); setQr(""); resetSel(); }
@@ -6411,11 +6490,12 @@ function ClearScansCard() {
       </div>
 
       <Field label="1) เลือกโปรเจค">
-        <Select value={projId} onChange={(e) => pickProject(e.target.value)}
-          options={[{ value: "", label: "— เลือกโปรเจค —" }, ...projects.map((p) => ({
+        <SearchSelect value={projId} onChange={(v) => pickProject(v)}
+          placeholder="พิมพ์ชื่อ/รหัสโปรเจคเพื่อค้นหา…"
+          options={projects.map((p) => ({
             value: p.id,
             label: `${p.name}${p.code ? " (" + p.code + ")" : ""} — ${p.parts} Part × ${fmtNum(p.qty)} ชิ้น${p.status === "closed" ? " · ปิดแล้ว" : ""}`,
-          }))]} />
+          }))} />
       </Field>
 
       {projId && (
@@ -6443,11 +6523,15 @@ function ClearScansCard() {
             </Field>
           )}
           {scope === "part" && (
-            <Field label="เลือก Part">
-              <Select value={relId} onChange={(e) => { setRelId(e.target.value); setPreview(null); }}
-                options={[{ value: "", label: "— เลือก Part —" }, ...projReleases.map((r) => ({
+            <Field label={`เลือก Part${scanned ? ` (มีข้อมูลสแกน ${scannedReleases.length})` : "…"}`}>
+              <SearchSelect value={relId} onChange={(v) => { setRelId(v); setPreview(null); }}
+                placeholder="พิมพ์เบอร์พาร์ทเพื่อค้นหา…"
+                options={scannedReleases.map((r) => ({
                   value: r.id, label: `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""} × ${r.qty} ชิ้น`,
-                }))]} />
+                }))} />
+              {scanned && scannedReleases.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>ไม่มี Part ที่มีข้อมูลสแกนในโปรเจคนี้</div>
+              )}
             </Field>
           )}
           {scope === "unit" && (
