@@ -146,37 +146,59 @@ export function machineOpMatrix(logs) {
 //   }
 export function partOpMatrix(logs) {
   // แยกราย (Release + Part) → รู้ว่า Part ไหนมาจาก Release ไหน · เก็บ finished แยกด้วย
-  const byKey = new Map();
+  // ★ จำนวนต่อขั้นตอน = "ชิ้นที่ผ่านขั้นตอนนั้น" แบบรู้จัก co-tick (1 สแกนติ๊กหลายขั้น = ตัวหลักมีจำนวน · ที่ติ๊กร่วม = 0)
+  //   จับ 1 สแกน (ตัวหลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน) แล้วเครดิตจำนวนให้ทุกขั้นตอนในสแกนนั้น
   const opNames = new Set();
-
+  const byKeyLogs = new Map();
   for (const l of logs || []) {
-    const releaseId = l.release_id || l.part_unit?.release_id || null;   // ★ จัดกลุ่มด้วย release_id (unique) — release_order อาจไม่ถูกคืนจาก RPC แล้ว
+    const releaseId = l.release_id || l.part_unit?.release_id || null;   // จัดกลุ่มด้วย release_id (unique)
     const releaseOrder = l.release_order || "—";
     const partNo   = l.part_unit?.part_master?.part_no   || "ไม่ระบุ";
     const partName = l.part_unit?.part_master?.part_name || "";
-    const op       = l.operation?.name || "ไม่ระบุ";
-    const wt       = logWeight(l);
-    const pcs      = q(l);
-    const fin      = String(l.status).toLowerCase() === "finished" ? pcs : 0;
-    opNames.add(op);
-
-    const key = `${releaseId || releaseOrder}|${partNo}`;   // ★ ไม่ยุบ 2 Release ของ Part เดียวกันเข้าด้วยกัน
-    if (!byKey.has(key)) {
-      byKey.set(key, { releaseId, releaseOrder, partNo, partName, total: { count: 0, weight: 0, finished: 0 }, ops: {} });
-    }
-    const entry = byKey.get(key);
-    entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 };
-    entry.ops[op].count  += pcs;
-    entry.ops[op].weight += wt;
-    entry.total.count    += pcs;
-    entry.total.weight   += wt;
-    entry.total.finished += fin;
+    opNames.add(l.operation?.name || "ไม่ระบุ");
+    const key = `${releaseId || releaseOrder}|${partNo}`;
+    if (!byKeyLogs.has(key)) byKeyLogs.set(key, { releaseId, releaseOrder, partNo, partName, rows: [] });
+    byKeyLogs.get(key).rows.push(l);
   }
 
-  const parts = Array.from(byKey.values()).sort(
-    (a, b) => (a.releaseOrder || "").localeCompare(b.releaseOrder || "", undefined, { numeric: true })
-              || (b.total.count - a.total.count)
-  );
+  const parts = [];
+  for (const [, kv] of byKeyLogs) {
+    const entry = { releaseId: kv.releaseId, releaseOrder: kv.releaseOrder, partNo: kv.partNo, partName: kv.partName,
+                    total: { count: 0, weight: 0, finished: 0 }, ops: {} };
+    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 });
+
+    // 1) น้ำหนัก / finished / น้ำหนักรวม — รวมจาก record จริง (co-tick มีค่า 0 อยู่แล้ว)
+    for (const l of kv.rows) {
+      const op = l.operation?.name || "ไม่ระบุ";
+      const wt = logWeight(l);
+      ensureOp(op).weight += wt;
+      entry.total.weight += wt;
+      entry.total.finished += (String(l.status).toLowerCase() === "finished" ? q(l) : 0);
+    }
+
+    // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
+    const asc = [...kv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+    let cur = null;
+    for (const l of asc) {
+      const op = l.operation?.name || "ไม่ระบุ";
+      const qv = q(l);
+      const puid = l.part_unit_id;
+      const st = String(l.status || "").toLowerCase();
+      if (qv > 0) {                                   // record หลัก → เริ่มสแกนใหม่ + เครดิตขั้นตอนหลัก
+        cur = { qty: qv, puid, st, ops: new Set([op]) };
+        entry.total.count += qv;
+        ensureOp(op).count += qv;
+      } else if (cur && cur.puid === puid && cur.st === st) {   // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
+        if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
+      } else {
+        ensureOp(op);                                 // ติ๊กร่วมกำพร้า → มีคอลัมน์ไว้ แต่ไม่เครดิต
+      }
+    }
+    parts.push(entry);
+  }
+
+  parts.sort((a, b) => (a.releaseOrder || "").localeCompare(b.releaseOrder || "", undefined, { numeric: true })
+                      || (b.total.count - a.total.count));
   return { parts, opNames: Array.from(opNames).sort() };
 }
 
