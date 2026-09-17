@@ -1305,6 +1305,7 @@ async function offlineMachineDay() {
   let item = records.length;
   for (const it of q) {
     const mw = it.machineWork;
+    if (!(Number(mw.p_quantity) > 0)) continue;   // ★ ข้ามขั้นตอนที่ติ๊กร่วม (co-tick จำนวน 0) — ไม่โชว์เป็นแถวในตารางหน้าเครื่อง (ยอดรวมไม่กระทบ เพราะบวก 0)
     daily.quantity = (Number(daily.quantity) || 0) + (Number(mw.p_quantity) || 0);
     daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(mw.p_process_seconds) || 0);
     daily.weight = (Number(daily.weight) || 0) + (Number(it.weight) || 0);   // ★ บวกน้ำหนักงานค้างด้วย
