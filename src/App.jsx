@@ -2271,7 +2271,9 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
     }
   }
   const opAgg = Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
-  const lastOp = opAgg.length ? opAgg[opAgg.length - 1] : null;
+  // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
+  const aggWithDone = opAgg.filter((o) => (Number(o.done) || 0) > 0);
+  const lastOp = aggWithDone.length ? aggWithDone[aggWithDone.length - 1] : (opAgg.length ? opAgg[opAgg.length - 1] : null);
   const stationFinished = lastOp ? Math.min(lastOp.finished, totalQty) : 0;
   const officeFinished = releases.reduce((s, r) => s + (unitStats?.[r.id]?.finished || 0), 0);
   const finished = Math.min(Math.max(officeFinished, stationFinished), totalQty);
@@ -2346,7 +2348,9 @@ function PartProgressModal({ release, user, onClose }) {
         // งานหน้าเครื่อง (terminal) ไม่ได้อัปเดต part_units.status → ยอดสำนักงานอ่านได้ 0
         // จึงต้องใช้ MAX(ยอดสำนักงาน, ยอดขั้นตอนสุดท้ายหน้าเครื่อง) มิฉะนั้นการ์ดบนสุดโชว์ 0 ไม่ตรงกับตาราง
         const sorted = ops.slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
-        const last = sorted.length ? sorted[sorted.length - 1] : null;   // ขั้นตอนสุดท้ายของงานหน้าเครื่อง
+        // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
+        const sWithDone = sorted.filter((o) => (Number(o.done) || 0) > 0);
+        const last = sWithDone.length ? sWithDone[sWithDone.length - 1] : (sorted.length ? sorted[sorted.length - 1] : null);
         const stationFin = last ? Number(last.finished) || 0 : 0;
         const stationDone = last ? Number(last.done) || 0 : 0;           // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
         const officeFin = Number(s.finished ?? 0) || 0;
@@ -2598,7 +2602,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const office = unitStats[r.id] || null;
     const total = Number(office?.total ?? r.qty) || 0;
     const ops = (opProg?.[r.id] || []).slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
-    const last = ops.length ? ops[ops.length - 1] : null;   // ขั้นตอนสุดท้ายของงานหน้าเครื่อง (นิยาม "เสร็จ" เดียวกับการ์ดรวม)
+    // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
+    const oWithDone = ops.filter((o) => (Number(o.done) || 0) > 0);
+    const last = oWithDone.length ? oWithDone[oWithDone.length - 1] : (ops.length ? ops[ops.length - 1] : null);   // นิยาม "เสร็จ" เดียวกับการ์ดรวม
     const stationFin = last ? Number(last.finished) || 0 : 0;
     const stationDone = last ? Number(last.done) || 0 : 0;   // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
     const officeFin = Number(office?.finished ?? 0) || 0;
