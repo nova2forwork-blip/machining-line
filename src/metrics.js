@@ -69,6 +69,26 @@ export function unitsWeight(units, onlyFinished = false) {
     .reduce((sum, u) => sum + w(u.weight, u.part_master?.unit_weight), 0);
 }
 
+// ── เรียงชื่อขั้นตอนตาม "ลำดับกระบวนการจริง" (seq) ไม่ใช่ตามตัวอักษร ─────────
+// ปัญหาเดิม: Array.from(set).sort() เรียงตาม Unicode ของชื่อไทย → กัด·ตัด·บาก·เจาะ
+//   (Milling·Cut·Notch·Drill) ผิดลำดับการผลิต ที่ถูกคือ ตัด→บาก→กัด→เจาะ
+// opOrder (ถ้าส่งมา) = แม็ป { ชื่อขั้นตอน → seq } จากตาราง operations (แหล่งจริง ผู้ดูแลแก้ได้)
+// ไม่ได้ส่ง opOrder (เช่น caller เก่า/ออฟไลน์) → ใช้ลำดับมาตรฐานในตัวด้านล่าง
+const OP_RANK = { "ตัด": 1, "บาก": 2, "กัด": 3, "MILLING": 3, "เจาะ": 4, "พับ": 10, "เชื่อม": 11, "ประกอบ": 12 };
+function opRank(name, opOrder) {
+  if (opOrder) {                                   // ยึด seq จากฐานข้อมูลก่อน (ตรงกับที่ผู้ดูแลตั้ง)
+    const s = opOrder[name];
+    if (s != null && s !== "" && isFinite(Number(s))) return Number(s);
+  }
+  const r = OP_RANK[name] ?? OP_RANK[String(name).toUpperCase()];   // สำรอง: ลำดับมาตรฐาน (รองรับทั้ง "กัด" และ "MILLING")
+  return r != null ? r : 999;                      // ขั้นตอนไม่รู้จัก → ไว้ท้าย แล้วเรียงตามชื่อ
+}
+function sortOpNames(nameSet, opOrder) {
+  return Array.from(nameSet).sort(
+    (a, b) => (opRank(a, opOrder) - opRank(b, opOrder)) || String(a).localeCompare(String(b))
+  );
+}
+
 // ── 4) machine × operation matrix (สำหรับเครื่องที่ทำได้หลายอย่าง) ─────────
 // คืนโครงสร้าง:
 //   {
@@ -83,7 +103,7 @@ export function unitsWeight(units, onlyFinished = false) {
 //   จึงจับ "1 สแกน" (record หลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน)
 //   แล้วเครดิตจำนวนของสแกนนั้นให้ "ทุกขั้นตอนที่ทำในสแกน" → ทุกขั้นตอนได้จำนวนชิ้นที่ผ่านจริง
 //   • total.count / weight / seconds = ผลรวมจริง (co-tick เป็น 0 อยู่แล้ว ไม่นับซ้ำ)
-export function machineOpMatrix(logs) {
+export function machineOpMatrix(logs, opOrder) {
   const byMachine = new Map();
   const opNames = new Set();
 
@@ -135,7 +155,7 @@ export function machineOpMatrix(logs) {
   const machines = Array.from(byMachine.values()).sort(
     (a, b) => b.total.count - a.total.count
   );
-  return { machines, opNames: Array.from(opNames).sort() };
+  return { machines, opNames: sortOpNames(opNames, opOrder) };
 }
 
 // ── 5b) part × operation matrix (แสดงว่าแต่ละ Part No. ทำขั้นตอนอะไรบ้าง กี่ครั้ง) ─
@@ -144,7 +164,7 @@ export function machineOpMatrix(logs) {
 //     parts: [{ partNo, partName, total:{count,weight}, ops:{ opName:{count,weight} } }],
 //     opNames: [ชื่อขั้นตอนทั้งหมดที่พบ เรียงแล้ว],
 //   }
-export function partOpMatrix(logs) {
+export function partOpMatrix(logs, opOrder) {
   // แยกราย (Release + Part) → รู้ว่า Part ไหนมาจาก Release ไหน · เก็บ finished แยกด้วย
   // ★ จำนวนต่อขั้นตอน = "ชิ้นที่ผ่านขั้นตอนนั้น" แบบรู้จัก co-tick (1 สแกนติ๊กหลายขั้น = ตัวหลักมีจำนวน · ที่ติ๊กร่วม = 0)
   //   จับ 1 สแกน (ตัวหลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน) แล้วเครดิตจำนวนให้ทุกขั้นตอนในสแกนนั้น
@@ -199,7 +219,7 @@ export function partOpMatrix(logs) {
 
   parts.sort((a, b) => (a.releaseOrder || "").localeCompare(b.releaseOrder || "", undefined, { numeric: true })
                       || (b.total.count - a.total.count));
-  return { parts, opNames: Array.from(opNames).sort() };
+  return { parts, opNames: sortOpNames(opNames, opOrder) };
 }
 
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────
