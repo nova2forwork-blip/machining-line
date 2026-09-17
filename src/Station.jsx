@@ -711,20 +711,23 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       let anyRow = false;
       if (res.daily) setDaily(res.daily);
       if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
-      // ขั้นตอนอื่นที่เลือก — มาร์กว่า "ทำแล้ว" ยอด 0 (ไม่บวกซ้ำ) · best-effort ไม่บล็อกถ้าพลาด/เซิร์ฟไม่รับ 0
+      // ขั้นตอนอื่นที่เลือก — มาร์กว่า "ทำแล้ว" ยอด 0 (ไม่บวกซ้ำ) · นับผลไว้แจ้งบนจอ (วินิจฉัยบนแท็บเล็ตได้)
+      let coOk = 0, coFail = 0, coReason = "";
       for (const oid of opIds.slice(1)) {
         const k = String(oid);
         if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId();
         try {
-          await recordMachineWork({
+          const cr = await recordMachineWork({
             qr: unit.qr_code, quantity: 0,
             materialLengthMm: materialLen === "" ? null : Number(materialLen),
             processSeconds: 0, status,
             releaseId: unit.release_id, operationId: oid,
             clientId: clientIdMapRef.current[k], weight: 0,
           });
-        } catch { /* ไม่บล็อก — ขั้นตอนหลักนับแล้ว */ }
+          if (cr && cr.ok !== false) coOk++; else { coFail++; coReason = cr?.reason || coReason; }
+        } catch { coFail++; coReason = coReason || "exception"; }
       }
+      const savedSteps = 1 + coOk;   // ขั้นตอนหลัก + co-tick ที่สำเร็จ
       setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
       if (res.queued) {
         okBeep();
@@ -735,7 +738,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       if (!anyRow) reload();   // เผื่อ server ไม่คืน row — ดึงยอด/ตารางใหม่
       okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
-      flash("บันทึกแล้ว ✓ พร้อมงานถัดไป", "ok");
+      // แจ้งผลจำนวนขั้นตอนที่บันทึก — โชว์บนจอ (เห็นบนแท็บเล็ตโดยไม่ต้องเปิด DevTools)
+      if (opIds.length > 1 && coFail > 0) {
+        flash(t(`บันทึก ${savedSteps}/${opIds.length} ขั้นตอน · พลาด ${coFail} (${coReason})`,
+                `Saved ${savedSteps}/${opIds.length} steps · ${coFail} failed (${coReason})`), "warn");
+      } else {
+        // โชว์จำนวนขั้นตอนเสมอ (ต่างจากข้อความเดิม) → ถ้ายังเห็น "บันทึกแล้ว ✓ พร้อมงานถัดไป" = แท็บเล็ตยังรันโค้ดเก่า (แคช)
+        flash(t(`บันทึกครบ ${savedSteps} ขั้นตอน ✓`, `Saved ${savedSteps} step(s) ✓`), "ok");
+      }
       resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
     } finally {
       setBusy(false);
