@@ -5298,7 +5298,7 @@ function MachineScanDetail({ machine, onBack }) {
       <Card title={lang === "en" ? "Period to view" : "ช่วงเวลาที่ต้องการดู"}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 9 }}>{lang === "en" ? "Period" : "ช่วงเวลา"}</div>
         <div className="chip-row" style={{ marginBottom: 12 }}>
-          {RANGE_MODES.map((m) => (
+          {RANGE_MODES.filter((m) => m.value !== "month").map((m) => (   // เอา "รายเดือน" ออกจากหน้ารายการสแกนของเครื่อง
             <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>{m.label}</span>
           ))}
         </div>
