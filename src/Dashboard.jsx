@@ -230,16 +230,27 @@ export default function Dashboard() {
     return () => { clearInterval(poll); clearTimeout(hitTimer.current); };
   }, [fetchNow]);
 
-  // เรียลไทม์: มีงานหน้าเครื่องเข้ามาปุ๊บ ดึงใหม่ทันที (ถ้าเปิด replication ไว้)
+  // เรียลไทม์: มีงานหน้าเครื่องเข้ามาปุ๊บ ดึงใหม่ (ถ้าเปิด replication ไว้)
+  // ★ throttle/รวม burst: 1 สแกน co-tick = สูงสุด 4 INSERT (recordMachineWork แยกทีละขั้นตอน) ·
+  //   50 เครื่องยิงพร้อมกัน → ถ้าดึงทุก event จะยิง report_logs ซ้ำ 20–60 ครั้ง/วิ ทุกจอ (เปล่าประโยชน์ · poll 5 วิ ก็ครอบอยู่แล้ว)
+  //   จึงรวมเป็น fetchNow ไม่เกิน 1 ครั้ง/วินาที: อัปเดตแรกทันที · ที่เหลือในวินาทีนั้นหน่วงรวมเป็นครั้งเดียว
   useEffect(() => {
-    let ch;
+    let ch, timer = null, last = 0;
+    const MIN_GAP = 1000;
+    const trigger = () => {
+      const now = Date.now();
+      if (now - last >= MIN_GAP) { last = now; fetchNow(); }
+      else if (!timer) {
+        timer = setTimeout(() => { timer = null; last = Date.now(); fetchNow(); }, MIN_GAP - (now - last));
+      }
+    };
     try {
       ch = supabase
         .channel("dash-machine-records")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "machine_records" }, () => fetchNow())
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "machine_records" }, trigger)
         .subscribe();
     } catch { /* ถ้าไม่รองรับ realtime ก็ยังมี poll 5 วิ */ }
-    return () => { try { ch && supabase.removeChannel(ch); } catch { /* ignore */ } };
+    return () => { if (timer) clearTimeout(timer); try { ch && supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, [fetchNow]);
 
   // ── สรุปตัวเลข ────────────────────────────────────────────────────────
