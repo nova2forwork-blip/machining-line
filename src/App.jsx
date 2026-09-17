@@ -1252,7 +1252,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       {busy && progress && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{progress}</div>}
 
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
-        วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Code · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
+        วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Part No. · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
         (คอลัมน์ No. และ Total Kg ระบบจัดการ/คำนวณให้เอง) · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M
         <br />จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ (ไม่ต้องตั้ง Routing ต่อ Part แล้ว)
       </div>
@@ -1270,7 +1270,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
           <thead>
             <tr>
               <th style={{ width: 34 }}>#</th>
-              <th style={{ minWidth: 130 }}>Code *</th>
+              <th style={{ minWidth: 130 }}>Part No. *</th>
               <th style={{ width: 64 }}>REV.</th>
               <th style={{ width: 78 }}>จำนวน</th>
               <th style={{ width: 90 }}>Length (มม.)</th>
@@ -1451,7 +1451,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
           <div className="table-wrap" style={{ maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
             <table className="data-table">
               <thead>
-                <tr><th>Code</th><th>Qty</th><th>ยาว (มม.)</th><th>น้ำหนัก/ชิ้น</th><th>วัสดุ</th><th>สถานะ</th></tr>
+                <tr><th>Part No.</th><th>Qty</th><th>ยาว (มม.)</th><th>น้ำหนัก/ชิ้น</th><th>วัสดุ</th><th>สถานะ</th></tr>
               </thead>
               <tbody>
                 {rowsPreview.map((r, i) => (
@@ -2713,7 +2713,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         const row = {};
         row[lang === "en" ? "Item" : "ลำดับ"] = i + 1;
         row[lang === "en" ? "Part No." : "เบอร์พาร์ท"] = r.part_master?.part_no || "";
-        row[lang === "en" ? "Part Name" : "ชื่อพาร์ท"] = r.part_master?.part_name || "";
         row[lang === "en" ? "Qty" : "จำนวน"] = Number(r.qty) || 0;
         row[lang === "en" ? "Finished" : "เสร็จแล้ว"] = done;
         row[lang === "en" ? "Spare (over)" : "เกิน (สแปร์)"] = over || "";
@@ -2865,7 +2864,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           </Btn>
         }>
         <SortControl sort={sort} options={[
-          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "part_name", label: lang === "en" ? "Part Name" : "ชื่อพาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
+          { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
           { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น" }, { k: "tw", label: lang === "en" ? "Total weight" : "น้ำหนักรวม" }] : []), { k: "len", label: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น" },
           { k: "material", label: "INV Code" }, { k: "matlen", label: lang === "en" ? "Material len" : "ยาว material" },
@@ -2876,7 +2875,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               <tr>
                 <th style={{ minWidth: 44, textAlign: "right", whiteSpace: "nowrap" }}>{lang === "en" ? "Item" : "ลำดับ"}</th>
                 <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
-                <SortTh k="part_name" sort={sort}>{lang === "en" ? "Part Name" : "ชื่อพาร์ท"}</SortTh>
                 <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
                 <SortTh k="finished" sort={sort}>{lang === "en" ? "Finished" : "เสร็จแล้ว"}</SortTh>
                 <SortTh k="progress" sort={sort}>{lang === "en" ? "Progress" : "ความคืบหน้า"}</SortTh>
@@ -2904,7 +2902,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                   <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
                     <td data-label={lang === "en" ? "Item" : "ลำดับ"} style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
                     <td data-label="Part No." style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_master?.part_no || "-"}</td>
-                    <td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_master?.part_name || "-"}</td>
                     <td data-label="จำนวน">{fmtNum(r.qty)}</td>
                     <td data-label="เสร็จแล้ว">
                       {statsLoading ? (
@@ -4481,8 +4478,8 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [note, setNote] = useState(release.note ?? "");
   const [releaseOrder, setReleaseOrder] = useState(release.release_order ?? "");
   const [lang] = useLang();
+  const [partNo, setPartNo] = useState(release.part_master?.part_no ?? "");   // Part No. (part_master.part_no — มีผลทุก Release ของพาร์ท)
   const [material, setMaterial] = useState(release.part_master?.material ?? "");   // INV Code (part_master.material)
-  const [partName, setPartName] = useState(release.part_master?.part_name ?? "");   // ชื่อ Part (part_master.part_name — มีผลทุก Release ของพาร์ท)
   const [matLen, setMatLen] = useState("");        // ความยาว material (mm) — ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้
   const [matLens0, setMatLens0] = useState([]);     // ค่าปัจจุบัน (ไม่ซ้ำ) จากสแกนจริง — ไว้เทียบ/พรีฟิล
   const [machines, setMachines] = useState([]);   // เครื่องที่ทำพาร์ทนี้ [{machine_id, code, done, finished}]
@@ -4554,12 +4551,12 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
       if (delta > 0) {
         const maxUnitNo = units.reduce((m, u) => Math.max(m, u.unit_no), 0);
         const suffix = release.id.slice(0, 6).toUpperCase();
-        const partNo = release.part_master?.part_no || "PART";
+        const qrPartNo = (partNo || "").trim() || release.part_master?.part_no || "PART";   // ใช้เลขที่แก้ล่าสุดสำหรับ QR ใหม่
         const newUnits = Array.from({ length: delta }, (_, i) => ({
           release_id: release.id,
           part_master_id: release.part_master_id,
           unit_no: maxUnitNo + i + 1,
-          qr_code: `${partNo}-${suffix}-${String(maxUnitNo + i + 1).padStart(4, "0")}`,
+          qr_code: `${qrPartNo}-${suffix}-${String(maxUnitNo + i + 1).padStart(4, "0")}`,
           status: "released",
           weight: patch.unit_weight,
           length_mm: patch.length_mm,
@@ -4571,12 +4568,13 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
         await deleteRows("part_units", toRemove);
       }
 
-      // ── แก้ INV (material) + ชื่อ Part — เก็บที่ part_master (มีผลกับทุก Release ของพาร์ทนี้) ──
+      // ── แก้ Part No. + INV (material) — เก็บที่ part_master (มีผลกับทุก Release ของพาร์ทนี้) ──
+      //   part_name ให้ตาม part_no เสมอ (ระบบใช้ค่าเดียวกัน) → ไม่มีข้อมูลค้างไม่ตรง
       const matVal = (material || "").trim() || null;
       const pmPatch = {};
       if (matVal !== (release.part_master?.material ?? null)) pmPatch.material = matVal;
-      const pnVal = (partName || "").trim();
-      if (pnVal && pnVal !== (release.part_master?.part_name ?? "")) pmPatch.part_name = pnVal;
+      const pnoVal = (partNo || "").trim();
+      if (pnoVal && pnoVal !== (release.part_master?.part_no ?? "")) { pmPatch.part_no = pnoVal; pmPatch.part_name = pnoVal; }
       if (Object.keys(pmPatch).length && release.part_master_id) {
         await updateRow("part_master", release.part_master_id, pmPatch);
       }
@@ -4613,8 +4611,8 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
         <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
       ) : (
         <>
-          <Field label={lang === "en" ? "Part name" : "ชื่อ Part"}>
-            <Input value={partName} onChange={(e) => setPartName(e.target.value)} placeholder={release.part_master?.part_no || ""} />
+          <Field label={lang === "en" ? "Part No." : "เบอร์พาร์ท (Part No.)"}>
+            <Input value={partNo} onChange={(e) => setPartNo(e.target.value)} />
           </Field>
           <div className="grid-2">
             <Field label="จำนวน (ชิ้น)">
@@ -4649,8 +4647,8 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
 
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-4px 0 12px", lineHeight: 1.6 }}>
             {lang === "en"
-              ? <><b>Part name / INV Code</b> apply to every release of this part · <b>Material len</b> sets one value on all scans of this lot (fixes mistyped values · doesn’t affect weight/qty) · <b>Part No.</b> is fixed (QR identity)</>
-              : <><b>ชื่อ Part / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (แก้ค่าที่พิมพ์ผิด · ไม่กระทบน้ำหนัก/จำนวน) · <b>เลขพาร์ท</b> แก้ไม่ได้ (เป็นรหัส QR)</>}
+              ? <><b>Part No. / INV Code</b> apply to every release of this part (QR already printed still scans) · <b>Material len</b> sets one value on all scans of this lot (doesn’t affect weight/qty)</>
+              : <><b>Part No. / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ (QR ที่พิมพ์แล้วยังสแกนได้) · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (ไม่กระทบน้ำหนัก/จำนวน)</>}
           </div>
 
           {/* สถานะการผลิต — ถ้ามีหลายเครื่องให้เลือกเครื่องก่อน แล้วเปลี่ยนสถานะของเครื่องนั้น */}
