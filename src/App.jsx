@@ -4876,8 +4876,11 @@ function ReportPage({ goTo }) {
     byOp[name].weight += logWeight(l);   // ★ ใช้ตัวช่วยเดียวกับ metrics.js (fallback คูณ quantity ด้วย)
   });
   const chartData = Object.values(byOp);
-  const matrix = machineOpMatrix(filteredLogs); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
-  const partMatrix = partOpMatrix(filteredLogs); // ตารางแยก Part No. × ขั้นตอน
+  // ลำดับขั้นตอนตาม seq จากตาราง operations (ตัด→บาก→กัด→เจาะ…) → เรียงคอลัมน์ให้ตรงกระบวนการจริง
+  const opOrder = {};
+  operations.forEach((o) => { if (o && o.name != null) opOrder[o.name] = o.seq; });
+  const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
+  const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
   const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
   // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
   const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
