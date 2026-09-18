@@ -131,6 +131,150 @@ function SortControl({ sort, options }) {
   );
 }
 
+// ── คอลัมน์ลากสลับตำแหน่งได้ + จำลำดับไว้ (ต่อผู้ใช้ในเครื่องนี้) ─────────────────
+// ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อย้าย · ลำดับเก็บใน localStorage แยกตามตาราง (id)
+function loadColOrder(id) {
+  try {
+    const s = window.localStorage.getItem("mls.cols." + id);
+    if (s) { const a = JSON.parse(s); if (Array.isArray(a)) return a.filter((x) => typeof x === "string"); }
+  } catch { /* ignore */ }
+  return null;
+}
+function saveColOrder(id, order) {
+  try { window.localStorage.setItem("mls.cols." + id, JSON.stringify(order)); } catch { /* ignore */ }
+}
+// รวมลำดับที่บันทึกไว้กับชุดคอลัมน์ปัจจุบัน (ตัดตัวที่หายไป · ต่อท้ายตัวที่เพิ่มใหม่)
+function mergeColOrder(saved, keys) {
+  if (!saved || !saved.length) return keys.slice();
+  const set = new Set(keys);
+  const out = saved.filter((k) => set.has(k));
+  keys.forEach((k) => { if (!out.includes(k)) out.push(k); });
+  return out;
+}
+function useColOrder(id, keys) {
+  const keySig = keys.join("|");
+  const [order, setOrder] = useState(() => mergeColOrder(loadColOrder(id), keys));
+  useEffect(() => { setOrder((o) => mergeColOrder(o, keys)); }, [keySig]);   // ชุดคอลัมน์เปลี่ยน → รวมลำดับใหม่
+  const [drag, setDrag] = useState(null);   // { from, over, side }
+  const move = (fromKey, overKey, side) => {
+    if (!fromKey || !overKey || fromKey === overKey) return;
+    setOrder((cur) => {
+      const arr = cur.filter((k) => k !== fromKey);
+      let idx = arr.indexOf(overKey);
+      if (idx < 0) return cur;
+      if (side === "right") idx += 1;
+      arr.splice(idx, 0, fromKey);
+      saveColOrder(id, arr);
+      return arr;
+    });
+  };
+  const reset = () => { const k = keys.slice(); setOrder(k); saveColOrder(id, k); };
+  return { order, move, reset, drag, setDrag };
+}
+// หัวคอลัมน์: คลิก = เรียงลำดับ (ถ้ามี sortKey) · ลากที่จับ ⠿ = ย้ายตำแหน่งคอลัมน์ (เมาส์/สัมผัส)
+function ReorderTh({ col, sort, drag, setDrag, onMove }) {
+  const active = sort && col.sortKey && sort.key === col.sortKey;
+  const isFrom = drag && drag.from === col.key;
+  const isOver = drag && drag.over === col.key && drag.from !== col.key;
+  const grab = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const grip = e.currentTarget;
+    const pid = e.pointerId;
+    try { grip.setPointerCapture(pid); } catch { /* ignore */ }
+    let cur = { from: col.key, over: col.key, side: "left" };
+    setDrag(cur);
+    const onPtMove = (ev) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const th = el && el.closest && el.closest("th[data-colkey]");
+      if (!th) return;
+      const k = th.getAttribute("data-colkey");
+      const r = th.getBoundingClientRect();
+      const side = ev.clientX < r.left + r.width / 2 ? "left" : "right";
+      cur = { from: col.key, over: k, side };
+      setDrag(cur);
+    };
+    const done = () => {
+      grip.removeEventListener("pointermove", onPtMove);
+      grip.removeEventListener("pointerup", done);
+      grip.removeEventListener("pointercancel", done);
+      try { grip.releasePointerCapture(pid); } catch { /* ignore */ }
+      onMove(cur.from, cur.over, cur.side);
+      setDrag(null);
+    };
+    grip.addEventListener("pointermove", onPtMove);
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+  };
+  const thStyle = {
+    ...(col.thStyle || {}),
+    cursor: col.sortKey ? "pointer" : ((col.thStyle && col.thStyle.cursor) || "default"),
+    userSelect: "none",
+    opacity: isFrom ? 0.45 : 1,
+    boxShadow: isOver ? (drag.side === "left" ? "inset 3px 0 0 var(--accent-dk, #0a7)" : "inset -3px 0 0 var(--accent-dk, #0a7)") : undefined,
+    transition: "box-shadow .08s",
+  };
+  return (
+    <th data-colkey={col.key} style={thStyle}
+        onClick={col.sortKey ? () => sort.toggle(col.sortKey) : undefined}
+        title={col.sortKey ? "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์" : "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์"}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+        <span onPointerDown={grab} onClick={(e) => e.stopPropagation()} title="ลากเพื่อย้ายคอลัมน์"
+              style={{ cursor: "grab", opacity: 0.4, touchAction: "none", padding: "0 2px", fontSize: 12, lineHeight: 1, letterSpacing: -2 }}>⠿</span>
+        {col.header}
+        {col.sortKey && <span style={{ marginLeft: 3, fontSize: 11, opacity: active ? 1 : 0.5 }}>{active ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>}
+      </span>
+    </th>
+  );
+}
+// ตารางข้อมูลที่คอลัมน์ลากสลับได้ (ขับด้วย config: หัว+ค่าอยู่ด้วยกัน จึงไม่มีทางสลับผิดคู่)
+// columns: [{ key, header, sortKey?, thStyle?, tdStyle?, tdProps?(row,i,ctx), cell(row,i,ctx), dataLabel? }]
+function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, empty, orderApiRef }) {
+  const cols0 = (columns || []).filter(Boolean);
+  const keys = cols0.map((c) => c.key);
+  const { order, move, reset, drag, setDrag } = useColOrder(id, keys);
+  if (orderApiRef) orderApiRef.current = { reset };
+  const byKey = {};
+  cols0.forEach((c) => { byKey[c.key] = c; });
+  const cols = order.map((k) => byKey[k]).filter(Boolean);
+  const data = (sort && sortAccessors) ? sort.sortRows(rows, sortAccessors) : (rows || []);
+  return (
+    <div className={wrapClass || "table-wrap"}>
+      <table className={tableClass || "data-table"}>
+        <thead>
+          <tr>
+            {cols.map((c) => <ReorderTh key={c.key} col={c} sort={sort} drag={drag} setDrag={setDrag} onMove={move} />)}
+          </tr>
+        </thead>
+        <tbody>
+          {(!data || data.length === 0) ? (
+            <tr><td colSpan={cols.length || 1} style={{ color: "var(--muted)", textAlign: "center", padding: "16px 8px" }}>{empty || "—"}</td></tr>
+          ) : data.map((row, i) => {
+            const ctx = rowCtx ? rowCtx(row, i) : undefined;
+            const rp = rowProps ? rowProps(row, i, ctx) : null;
+            return (
+              <tr key={rowKey ? rowKey(row, i) : i} {...(rp || {})}>
+                {cols.map((c) => {
+                  const tp = c.tdProps ? c.tdProps(row, i, ctx) : null;
+                  let tstyle, trest = null;
+                  if (tp) { const { style, ...rest } = tp; tstyle = style; trest = rest; }
+                  return (
+                    <td key={c.key}
+                        data-label={c.dataLabel != null ? c.dataLabel : (typeof c.header === "string" ? c.header : "")}
+                        style={{ ...(c.tdStyle || {}), ...(tstyle || {}) }} {...(trest || {})}>
+                      {c.cell ? c.cell(row, i, ctx) : null}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Toast แจ้งเตือนแบบไม่บล็อกหน้าจอ (แทน alert) ──────────────────────────────
 function mlsToast(text, tone = "info") {
   try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text, tone } })); } catch { /* ignore */ }
@@ -2589,6 +2733,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [hdr, setHdr] = useState({ ro: group.releaseOrder, date: group.date });   // ค่าหัวเอกสารที่โชว์ (อัปเดตหลังบันทึก)
   const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
   const sort = useTableSort();
+  const colApi = useRef(null);   // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มาให้)
 
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
   const totalQty = releases.reduce((s, r) => s + (r.qty || 0), 0);
@@ -2724,7 +2869,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         }
         row[lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)"] = r.length_mm ? Number(r.length_mm) : "";
         row["INV Code"] = r.part_master?.material || r.material || "";
-        { const a = matLenList(r); row[lang === "en" ? "Material len (mm)" : "ยาว material (มม.)"] = a.length === 1 ? Number(a[0]) : a.map((n) => fmtNum(n)).join(" · "); }
+        { const a = matLenList(r); row[lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"] = a.length === 1 ? Number(a[0]) : a.map((n) => fmtNum(n)).join(" · "); }
         row[lang === "en" ? "Remark" : "หมายเหตุ"] = r.note || "";
         return row;
       });
@@ -2858,110 +3003,86 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
       <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
         right={
-          <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || releases.length === 0}
-            title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
-            <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : (lang === "en" ? "Export Excel" : "Export Excel")}
-          </Btn>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.reset()}
+              title={lang === "en" ? "Reset column order" : "รีเซ็ตลำดับคอลัมน์กลับค่าเริ่มต้น"}>
+              ↺ {lang === "en" ? "Columns" : "คอลัมน์"}
+            </Btn>
+            <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || releases.length === 0}
+              title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
+              <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : (lang === "en" ? "Export Excel" : "Export Excel")}
+            </Btn>
+          </div>
         }>
         <SortControl sort={sort} options={[
           { k: "part_no", label: lang === "en" ? "Part No." : "เบอร์พาร์ท" }, { k: "qty", label: lang === "en" ? "Qty" : "จำนวน" },
           { k: "finished", label: lang === "en" ? "Finished" : "เสร็จแล้ว" }, { k: "progress", label: lang === "en" ? "Progress" : "ความคืบหน้า" },
           ...(!isAsmGroup ? [{ k: "uw", label: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น" }, { k: "tw", label: lang === "en" ? "Total weight" : "น้ำหนักรวม" }] : []), { k: "len", label: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น" },
-          { k: "material", label: "INV Code" }, { k: "matlen", label: lang === "en" ? "Material len" : "ยาว material" },
+          { k: "material", label: "INV Code" }, { k: "matlen", label: "Mat. Length" },
         ]} />
-        <div className="table-wrap tall-scroll">
-          <table className="data-table responsive-cards">
-            <thead>
-              <tr>
-                <th style={{ minWidth: 44, textAlign: "right", whiteSpace: "nowrap" }}>{lang === "en" ? "Item" : "ลำดับ"}</th>
-                <SortTh k="part_no" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
-                <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
-                <SortTh k="finished" sort={sort}>{lang === "en" ? "Finished" : "เสร็จแล้ว"}</SortTh>
-                <SortTh k="progress" sort={sort}>{lang === "en" ? "Progress" : "ความคืบหน้า"}</SortTh>
-                {!isAsmGroup && <SortTh k="uw" sort={sort}>{lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น"}</SortTh>}
-                {!isAsmGroup && <SortTh k="tw" sort={sort}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</SortTh>}
-                <SortTh k="len" sort={sort}>{lang === "en" ? "Length/pc" : "ความยาว/ชิ้น"}</SortTh>
-                <SortTh k="material" sort={sort}>{lang === "en" ? "INV Code" : "INV Code"}</SortTh>
-                <SortTh k="matlen" sort={sort}>{lang === "en" ? "Material len (mm)" : "ยาว material (มม.)"}</SortTh>
-                <th>{lang === "en" ? "Remark" : "หมายเหตุ"}</th>
-                {canEdit && <th>{lang === "en" ? "Manage" : "จัดการ"}</th>}
-                <th>{lang === "en" ? "Print" : "พิมพ์"}</th>
-                <th>{lang === "en" ? "Steps" : "ขั้นตอน"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sort.sortRows(releases, sortAccessors).map((r, i) => {
-                const p = rowProg(r);
-                const finished = p.finished;
-                const inProgress = p.inProgress;
-                const over = p.over || 0;               // เกินจำนวนสั่ง (สแปร์)
-                const done = p.done ?? finished;         // จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
-                const total = p.total || r.qty;
-                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-                return (
-                  <tr key={r.id} className="release-row" onClick={() => setViewPart(r)} title="กดเพื่อดูความคืบหน้าแยกขั้นตอน">
-                    <td data-label={lang === "en" ? "Item" : "ลำดับ"} style={{ color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>{i + 1}</td>
-                    <td data-label="Part No." style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_master?.part_no || "-"}</td>
-                    <td data-label="จำนวน">{fmtNum(r.qty)}</td>
-                    <td data-label="เสร็จแล้ว">
-                      {statsLoading ? (
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
-                      ) : (
-                        <>
-                          <span style={{ fontWeight: 600, color: done > 0 ? "var(--success)" : "var(--muted)" }}>
-                            {fmtNum(done)} ชิ้น
-                          </span>
-                          {over > 0 && (
-                            <div style={{ fontSize: 11, color: "var(--alert, #d97a00)", fontWeight: 700, marginTop: 2, whiteSpace: "nowrap" }}
-                              title={lang === "en" ? "Over ordered qty (spare)" : "เกินจำนวนสั่ง (สแปร์)"}>
-                              +{fmtNum(over)} {lang === "en" ? "spare" : "เกิน (สแปร์)"}
-                            </div>
-                          )}
-                          {inProgress > 0 && (
-                            <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
-                              title={lang === "en" ? "Started but not marked Finished yet" : "เริ่มทำแล้วแต่ยังไม่ได้กด Finished"}>
-                              +{fmtNum(inProgress)} {lang === "en" ? "in progress" : "กำลังทำ"}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </td>
-                    <td data-label="ความคืบหน้า" style={{ minWidth: 180 }}>
-                      {statsLoading ? (
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span>
-                      ) : (
-                        <ProgressBar pct={pct} finished={done} total={total} />
-                      )}
-                    </td>
-                    {!isAsmGroup && <td data-label="น้ำหนัก/ชิ้น">{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>}
-                    {!isAsmGroup && <td data-label="น้ำหนักรวม">{r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-"}</td>}
-                    <td data-label="ความยาว/ชิ้น">{r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-"}</td>
-                    <td data-label="INV Code" style={{ whiteSpace: "nowrap" }}>{r.part_master?.material || r.material || "-"}</td>
-                    <td data-label="ยาว material (มม.)" style={{ whiteSpace: "nowrap" }}>
-                      {statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r)}
-                    </td>
-                    <td data-label="หมายเหตุ">{r.note || "-"}</td>
-                    {canEdit && (
-                      <td data-label="จัดการ" style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-                        <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>
-                          {busyId === r.id ? "กำลังลบ..." : "แก้ไข"}
-                        </span>
-                      </td>
-                    )}
-                    <td data-label="พิมพ์">
-                      <span onClick={(e) => { e.stopPropagation(); goTo && goTo("labels", { releaseId: r.id }); }} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}>
-                        <Icon name="printer" size={13} /> พิมพ์ QR
-                      </span>
-                    </td>
-                    <td data-label="" style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
-                      ดูขั้นตอน <Icon name="arrowLeft" size={12} style={{ transform: "rotate(180deg)", verticalAlign: "-1px" }} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        {(() => {
+          const cols = [
+            { key: "item", header: lang === "en" ? "Item" : "ลำดับ",
+              thStyle: { minWidth: 44, textAlign: "right", whiteSpace: "nowrap" },
+              tdStyle: { color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" },
+              cell: (r, i) => i + 1 },
+            { key: "part_no", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part_no",
+              tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.part_master?.part_no || "-" },
+            { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", cell: (r) => fmtNum(r.qty) },
+            { key: "finished", header: lang === "en" ? "Finished" : "เสร็จแล้ว", sortKey: "finished",
+              cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : (
+                <>
+                  <span style={{ fontWeight: 600, color: c.done > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(c.done)} ชิ้น</span>
+                  {c.over > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--alert, #d97a00)", fontWeight: 700, marginTop: 2, whiteSpace: "nowrap" }}
+                      title={lang === "en" ? "Over ordered qty (spare)" : "เกินจำนวนสั่ง (สแปร์)"}>
+                      +{fmtNum(c.over)} {lang === "en" ? "spare" : "เกิน (สแปร์)"}
+                    </div>
+                  )}
+                  {c.inProgress > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
+                      title={lang === "en" ? "Started but not marked Finished yet" : "เริ่มทำแล้วแต่ยังไม่ได้กด Finished"}>
+                      +{fmtNum(c.inProgress)} {lang === "en" ? "in progress" : "กำลังทำ"}
+                    </div>
+                  )}
+                </>
+              ) },
+            { key: "progress", header: lang === "en" ? "Progress" : "ความคืบหน้า", sortKey: "progress",
+              tdStyle: { minWidth: 180 },
+              cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : <ProgressBar pct={c.pct} finished={c.done} total={c.total} /> },
+            ...(!isAsmGroup ? [
+              { key: "uw", header: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น", sortKey: "uw", cell: (r) => r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-" },
+              { key: "tw", header: lang === "en" ? "Total weight" : "น้ำหนักรวม", sortKey: "tw", cell: (r) => r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-" },
+            ] : []),
+            { key: "len", header: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น", sortKey: "len", cell: (r) => r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-" },
+            { key: "material", header: "INV Code", sortKey: "material", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_master?.material || r.material || "-" },
+            { key: "matlen", header: "Mat. Length", sortKey: "matlen", tdStyle: { whiteSpace: "nowrap" },
+              cell: (r) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r) },
+            { key: "remark", header: lang === "en" ? "Remark" : "หมายเหตุ", cell: (r) => r.note || "-" },
+            ...(canEdit ? [{ key: "manage", header: lang === "en" ? "Manage" : "จัดการ",
+              tdStyle: { whiteSpace: "nowrap" }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
+              cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>{busyId === r.id ? "กำลังลบ..." : "แก้ไข"}</span> }] : []),
+            { key: "print", header: lang === "en" ? "Print" : "พิมพ์",
+              cell: (r) => <span onClick={(e) => { e.stopPropagation(); goTo && goTo("labels", { releaseId: r.id }); }} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}><Icon name="printer" size={13} /> พิมพ์ QR</span> },
+            { key: "steps", header: lang === "en" ? "Steps" : "ขั้นตอน", dataLabel: "",
+              tdStyle: { color: "var(--muted)", whiteSpace: "nowrap" },
+              cell: () => <>ดูขั้นตอน <Icon name="arrowLeft" size={12} style={{ transform: "rotate(180deg)", verticalAlign: "-1px" }} /></> },
+          ];
+          const rctx = (r) => {
+            const p = rowProg(r);
+            const over = p.over || 0;
+            const done = p.done ?? p.finished;
+            const total = p.total || r.qty;
+            return { finished: p.finished, inProgress: p.inProgress, over, done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+          };
+          return (
+            <DataTable id="lot-parts" columns={cols} rows={releases} rowKey={(r) => r.id}
+              sort={sort} sortAccessors={sortAccessors} rowCtx={rctx} orderApiRef={colApi}
+              wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+              rowProps={(r) => ({ className: "release-row", onClick: () => setViewPart(r), title: "กดเพื่อดูความคืบหน้าแยกขั้นตอน" })}
+              empty={lang === "en" ? "No parts" : "ยังไม่มีข้อมูล"} />
+          );
+        })()}
       </Card>
       {noteLabel !== "-" && notes.size > 1 && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...notes].join(" · ")}</div>
@@ -4675,9 +4796,6 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
               <Input type="number" step="0.1" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
             </Field>
           </div>
-          <Field label="หมายเหตุ">
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
-          </Field>
 
           <div className="grid-2">
             <Field label="INV Code">
@@ -4696,6 +4814,10 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
               ? <><b>Part No. / INV Code</b> apply to every release of this part (QR already printed still scans) · <b>Material len</b> sets one value on all scans of this lot (doesn’t affect weight/qty)</>
               : <><b>Part No. / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ (QR ที่พิมพ์แล้วยังสแกนได้) · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (ไม่กระทบน้ำหนัก/จำนวน)</>}
           </div>
+
+          <Field label="หมายเหตุ">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ไม่บังคับ" />
+          </Field>
 
           {/* เครื่อง + จำนวนที่ทำเสร็จ (แอดมินปรับเพิ่ม/ลดได้) + สถานะ */}
           <Field label={lang === "en" ? "Machine" : "เครื่อง"}>
