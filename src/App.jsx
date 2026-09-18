@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setReleaseMachineDone, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -4483,6 +4483,8 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [matLen, setMatLen] = useState("");        // ความยาว material (mm) — ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้
   const [matLens0, setMatLens0] = useState([]);     // ค่าปัจจุบัน (ไม่ซ้ำ) จากสแกนจริง — ไว้เทียบ/พรีฟิล
   const [machines, setMachines] = useState([]);   // เครื่องที่ทำพาร์ทนี้ [{machine_id, code, done, finished}]
+  const [allMachines, setAllMachines] = useState([]);   // เครื่องทั้งหมด (ไว้เลือกปรับ done ให้พาร์ทที่ยังไม่มีสแกน)
+  const [doneTarget, setDoneTarget] = useState("");     // จำนวนที่ทำเสร็จ (done) เป้าหมายของเครื่องที่เลือก
   const [selMachine, setSelMachine] = useState("");   // machine_id ที่เลือก (ว่าง = ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน)
   const [prodStatus, setProdStatus] = useState("inprocess");   // สถานะที่จะบันทึก
   const [units, setUnits] = useState(null); // null = ยังโหลดไม่เสร็จ
@@ -4498,21 +4500,23 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
       listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }),
       getReleaseMachineProgress(release.id),
       getReleaseMaterialLengths([release.id]),
-    ]).then(([u, ms, ml]) => {
+      listRows("machines", { order: "code" }),
+    ]).then(([u, ms, ml, allM]) => {
       const units2 = u || [];
       const arr = Array.isArray(ms) ? ms : [];
-      setUnits(units2); setMachines(arr);
+      setUnits(units2); setMachines(arr); setAllMachines(Array.isArray(allM) ? allM : []);
       const lens = (ml && ml[release.id]) || [];      // ความยาว material ที่ใช้จริง (ไม่ซ้ำ)
       setMatLens0(lens);
       if (lens.length === 1) setMatLen(String(lens[0]));   // มีค่าเดียว → เติมให้แก้ได้ทันที
-      if (arr.length) { setSelMachine(arr[0].machine_id); setProdStatus(machStatus(arr[0])); }
+      if (arr.length) { setSelMachine(arr[0].machine_id); setProdStatus(machStatus(arr[0])); setDoneTarget(String(Number(arr[0].done) || 0)); }
       else { setProdStatus(officeStatus(units2)); }
     });
   }, [release.id]);
 
   const selM = machines.find((m) => m.machine_id === selMachine) || null;
   const origStatus = selM ? machStatus(selM) : officeStatus(units);
-  const onSelMachine = (id) => { setSelMachine(id); const m = machines.find((x) => x.machine_id === id); if (m) setProdStatus(machStatus(m)); };
+  const onSelMachine = (id) => { setSelMachine(id); const m = machines.find((x) => x.machine_id === id); if (m) setProdStatus(machStatus(m)); setDoneTarget(String(m ? Number(m.done) || 0 : 0)); };
+  const curDoneOf = (mid) => machines.find((m) => m.machine_id === mid)?.done ?? 0;   // done ปัจจุบันของเครื่องนั้น
 
   const scannedCount = units ? units.filter((u) => u.status !== "released").length : 0;
   const releasedCount = units ? units.length - scannedCount : 0;
@@ -4588,6 +4592,23 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           && !(matLens0.length === 1 && Number(matLen) === Number(matLens0[0]))) {
         await setReleaseMaterialLength(release.id, Number(matLen));
       }
+      // ── ปรับจำนวนที่ทำเสร็จ (done) ของเครื่องที่เลือก — เพิ่ม=สร้างงาน · ลด=เอาสแกนออก (แอดมิน) ──
+      if (selMachine && doneTarget !== "") {
+        const tgt = Math.max(0, Math.floor(Number(doneTarget) || 0));
+        const cur = curDoneOf(selMachine);
+        if (tgt !== cur) {
+          const diff = tgt - cur;
+          const mcode = (allMachines.find((m) => m.id === selMachine)?.code) || (machines.find((m) => m.machine_id === selMachine)?.code) || "";
+          const ok = await askConfirm({
+            message: diff > 0
+              ? `ยืนยันเพิ่มงานเครื่อง ${mcode} อีก ${fmtNum(diff)} ชิ้น?\nระบบจะสร้างบันทึกการทำ (สแกน) ให้ชิ้นที่ยังไม่ทำ`
+              : `ยืนยันเอางานเครื่อง ${mcode} ออก ${fmtNum(-diff)} ชิ้น?\nลบสแกนของเครื่องนี้ · ลบแล้วกู้คืนไม่ได้`,
+            tone: diff > 0 ? "warn" : "danger", confirmText: "ยืนยัน", cancelText: "ยกเลิก",
+          });
+          if (ok) await setReleaseMachineDone(release.id, selMachine, tgt);
+        }
+      }
+
       // ── เปลี่ยนสถานะการผลิต ──
       //   มีงานหน้าเครื่อง → เปลี่ยนสถานะของ "เครื่องที่เลือก" (machine_records)
       //   ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน (part_units): finished=ปิดงาน · inprocess=คำนวณใหม่จากสแกน
@@ -4676,18 +4697,22 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
               : <><b>Part No. / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ (QR ที่พิมพ์แล้วยังสแกนได้) · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (ไม่กระทบน้ำหนัก/จำนวน)</>}
           </div>
 
-          {/* สถานะการผลิต — ถ้ามีหลายเครื่องให้เลือกเครื่องก่อน แล้วเปลี่ยนสถานะของเครื่องนั้น */}
+          {/* เครื่อง + จำนวนที่ทำเสร็จ (แอดมินปรับเพิ่ม/ลดได้) + สถานะ */}
+          <Field label={lang === "en" ? "Machine" : "เครื่อง"}>
+            <select value={selMachine} onChange={(e) => onSelMachine(e.target.value)}
+              style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
+              <option value="">{lang === "en" ? "— pick a machine —" : "— เลือกเครื่อง —"}</option>
+              {(allMachines.length ? allMachines : machines.map((m) => ({ id: m.machine_id, code: m.code, name: "" }))).map((m) => {
+                const d = curDoneOf(m.id);
+                return <option key={m.id} value={m.id}>{(m.code || "—")}{m.name ? " · " + m.name : ""}{d ? ` · ${lang === "en" ? "done" : "ทำแล้ว"} ${fmtNum(d)}` : ""}</option>;
+              })}
+            </select>
+          </Field>
           <div className="grid-2">
-            {machines.length >= 1 && (
-              <Field label={lang === "en" ? "Machine" : "เครื่อง"}>
-                <select value={selMachine} onChange={(e) => onSelMachine(e.target.value)}
-                  style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
-                  {machines.map((m) => (
-                    <option key={m.machine_id} value={m.machine_id}>{(m.code || "—")} · {lang === "en" ? "done" : "ทำแล้ว"} {fmtNum(m.done)}</option>
-                  ))}
-                </select>
-              </Field>
-            )}
+            <Field label={lang === "en" ? "Finished (pcs)" : "ทำเสร็จ (ชิ้น)"}>
+              <Input type="number" min={0} value={doneTarget} onChange={(e) => setDoneTarget(e.target.value)}
+                disabled={!selMachine} placeholder={selMachine ? "" : (lang === "en" ? "pick a machine first" : "เลือกเครื่องก่อน")} />
+            </Field>
             <Field label={lang === "en" ? "Status" : "สถานะ"}>
               <select value={prodStatus} onChange={(e) => setProdStatus(e.target.value)}
                 style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
@@ -4696,6 +4721,19 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
               </select>
             </Field>
           </div>
+          {selMachine && doneTarget !== "" && (() => {
+            const cur = curDoneOf(selMachine);
+            const tgt = Math.max(0, Math.floor(Number(doneTarget) || 0));
+            if (tgt === cur) return null;
+            const diff = tgt - cur;
+            return (
+              <div style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.6, color: diff > 0 ? "var(--accent-dk)" : "var(--alert, #d97a00)" }}>
+                {diff > 0
+                  ? (lang === "en" ? `+ mark ${fmtNum(diff)} more pcs done by this machine (creates work records)` : `เพิ่มงานเครื่องนี้อีก ${fmtNum(diff)} ชิ้น (สร้างบันทึกการทำ)`)
+                  : (lang === "en" ? `− remove ${fmtNum(-diff)} pcs of this machine's work` : `เอางานเครื่องนี้ออก ${fmtNum(-diff)} ชิ้น`)}
+              </div>
+            );
+          })()}
           {prodStatus !== origStatus && (
             <div style={{ fontSize: 12, color: prodStatus === "finished" ? "var(--alert, #d97a00)" : "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
               {selM
