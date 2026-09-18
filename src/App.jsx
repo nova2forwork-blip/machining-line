@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, setReleaseMachineDone, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -5560,8 +5560,12 @@ function MachineScanDetail({ machine, onBack }) {
   const [newQty, setNewQty] = useState(1);                 // จำนวนใหม่ในป็อปอัป (เพิ่ม/ลด/0=ลบ)
   const [relInfo, setRelInfo] = useState({});              // release_id → { qty, length_mm, part_master_id, material, default_length_mm }
   const [matLenMap, setMatLenMap] = useState({});          // release_id → [material_length_mm ที่ใช้จริง]
-  const [edForm, setEdForm] = useState({ runMin: "", status: "", mat: "", partLen: "", matLen: "" });   // ฟิลด์อื่นในฟอร์มแก้ทั้งแถว
+  const [allOps, setAllOps] = useState([]);                // รายการขั้นตอนทั้งหมด (ไว้เลือก STEP)
+  // ฟอร์มแก้ทั้งแถว — รายสแกน (dt/weight/runMin/status/opIds) + ระดับล็อต/พาร์ท (partNo/releaseOrder/ordered/mat/partLen/matLen)
+  const [edForm, setEdForm] = useState({ dt: "", weight: "", runMin: "", status: "", opIds: [], partNo: "", releaseOrder: "", ordered: "", mat: "", partLen: "", matLen: "" });
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setAllOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
 
   useEffect(() => {
     let alive = true;
@@ -5680,6 +5684,11 @@ function MachineScanDetail({ machine, onBack }) {
   // ── ค่าระดับล็อต/พาร์ท (ต่อ release) สำหรับคอลัมน์ + ฟอร์มแก้ ──
   const partLenOf = (rid) => { const ri = relInfo[rid]; const v = ri?.length_mm ?? ri?.default_length_mm; return (v == null || v === "") ? null : v; };
   const matLenTextOf = (rid) => { const a = matLenMap[rid] || []; if (!a.length) return "-"; return a.length === 1 ? fmtNum(a[0]) : a.map((n) => fmtNum(n)).join(" · "); };
+  // แปลงเวลา ↔ ช่อง datetime-local (เวลาเครื่องผู้ใช้)
+  const toDTLocal = (iso) => { try { const d = new Date(iso); if (isNaN(d)) return ""; const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; } catch { return ""; } };
+  const fromDTLocal = (s) => { try { const d = new Date(s); return isNaN(d) ? null : d.toISOString(); } catch { return null; } };
+  // ขั้นตอน (STEP) ปัจจุบันของสแกน → operation_id ตามลำดับ (ตัวหลักก่อน) อิงชื่อจาก allOps
+  const opIdsOf = (g) => { const byName = {}; allOps.forEach((o) => { if (o && o.name != null) byName[o.name] = o.id; }); return (g.ops || []).map((n) => byName[n]).filter(Boolean); };
 
   // ── เปิดฟอร์มแก้ทั้งแถว — เติมค่าเดิมทุกฟิลด์ (รายสแกน + ระดับล็อต) ──
   const openEdit = (g) => {
@@ -5689,8 +5698,14 @@ function MachineScanDetail({ machine, onBack }) {
     const ml = matLenMap[g.release_id] || [];
     const pl = ri.length_mm ?? ri.default_length_mm;
     setEdForm({
+      dt: toDTLocal(g.time),
+      weight: "",   // เว้นว่าง = คิดจากจำนวนอัตโนมัติ · พิมพ์เอง = กำหนดน้ำหนักเอง
       runMin: g.secs ? String(Math.round((Number(g.secs) || 0) / 60)) : "",
       status: (String(g.status).toLowerCase() === "finished") ? "finished" : "inprocess",
+      opIds: opIdsOf(g),
+      partNo: (g.part_no && g.part_no !== "—") ? g.part_no : "",
+      releaseOrder: (g.release_order && g.release_order !== "—") ? g.release_order : "",
+      ordered: ri.qty != null ? String(ri.qty) : (orderQty[g.release_id] != null ? String(orderQty[g.release_id]) : ""),
       mat: ri.material || "",
       partLen: (pl == null || pl === "") ? "" : String(pl),
       matLen: ml.length === 1 ? String(ml[0]) : "",
@@ -5703,56 +5718,88 @@ function MachineScanDetail({ machine, onBack }) {
     const nq = Math.max(0, Math.floor(Number(newQty) || 0));
     const ri = relInfo[g.release_id] || {};
     const ml0 = matLenMap[g.release_id] || [];
-    // ค่าเดิม (ไว้เทียบว่าฟิลด์ไหนถูกแก้จริง — ไม่ยิง RPC ที่ไม่จำเป็น)
+    // ── ค่าเดิม (เทียบว่าฟิลด์ไหนถูกแก้จริง) ──
+    const origDT = toDTLocal(g.time);
+    const origWeight = g.weight != null ? Number(g.weight) : 0;
     const origRunMin = g.secs ? Math.round((Number(g.secs) || 0) / 60) : 0;
     const origStatus = (String(g.status).toLowerCase() === "finished") ? "finished" : "inprocess";
+    const origOps = opIdsOf(g);
+    const origPartNo = (g.part_no && g.part_no !== "—") ? g.part_no : "";
+    const origRO = (g.release_order && g.release_order !== "—") ? g.release_order : "";
+    const origOrdered = ri.qty != null ? Number(ri.qty) : (orderQty[g.release_id] != null ? Number(orderQty[g.release_id]) : null);
     const origMat = ri.material || "";
     const origPartLen = (ri.length_mm ?? ri.default_length_mm ?? "");
     const origMatLen = ml0.length === 1 ? Number(ml0[0]) : null;
 
+    const isDelete = nq === 0;
+    const nWeight = edForm.weight === "" ? null : Number(edForm.weight);
     const nRunMin = edForm.runMin === "" ? null : Math.max(0, Math.floor(Number(edForm.runMin) || 0));
     const nStatus = edForm.status || origStatus;
+    const nOps = Array.isArray(edForm.opIds) ? edForm.opIds : [];
+    const nPartNo = (edForm.partNo || "").trim();
+    const nRO = (edForm.releaseOrder || "").trim();
+    const nOrdered = edForm.ordered === "" ? null : Math.max(0, Math.floor(Number(edForm.ordered) || 0));
     const nMat = (edForm.mat || "").trim();
-    const nPartLen = edForm.partLen;   // string ("" = ล้างค่า)
+    const nPartLen = edForm.partLen;
     const nMatLen = edForm.matLen === "" ? "" : Number(edForm.matLen);
 
-    const isDelete = nq === 0;
+    // รายสแกน (แถวนี้)
     const qtyChanged = nq !== cur;
-    const metaChanged = !isDelete && ((nRunMin != null && nRunMin !== origRunMin) || nStatus !== origStatus);
+    const wtChanged = !isDelete && nWeight != null;   // พิมพ์น้ำหนักเอง = override (เว้นว่าง = auto จากจำนวน)
+    const runChanged = !isDelete && nRunMin != null && nRunMin !== origRunMin;
+    const statusChanged = !isDelete && nStatus !== origStatus;
+    const dtChanged = !isDelete && edForm.dt !== "" && edForm.dt !== origDT;
+    const opsChanged = !isDelete && nOps.length >= 1 && nOps.join(",") !== origOps.join(",");
+    const scanChanged = qtyChanged || wtChanged || runChanged || statusChanged || dtChanged || opsChanged;
+    // ระดับล็อต/พาร์ท
+    const partNoChanged = !isDelete && nPartNo !== "" && nPartNo !== origPartNo;
+    const roChanged = !isDelete && nRO !== origRO;
+    const orderedChanged = !isDelete && nOrdered != null && nOrdered !== (origOrdered ?? NaN);
     const matChanged = !isDelete && nMat !== (origMat || "");
     const plChanged = !isDelete && String(nPartLen) !== String(origPartLen ?? "");
     const mlChanged = !isDelete && nMatLen !== "" && Number(nMatLen) > 0 && Number(nMatLen) !== (origMatLen ?? NaN);
+    const lotChanged = partNoChanged || roChanged || orderedChanged || matChanged || plChanged || mlChanged;
 
-    if (!qtyChanged && !metaChanged && !matChanged && !plChanged && !mlChanged) { setEditRow(null); return; }
+    if (!isDelete && !scanChanged && !lotChanged) { setEditRow(null); return; }
 
-    const lotWarn = matChanged || plChanged || mlChanged;
     const ok = await askConfirm({
       message: isDelete
         ? `ยืนยันลบสแกนนี้ทั้งแถว?\n${g.part_no} · ${fmtNum(cur)} ชิ้น → ชิ้นกลับเป็น "ยังไม่ทำ" (QR/ล็อตยังอยู่) · ลบแล้วกู้คืนไม่ได้`
         : `ยืนยันบันทึกการแก้ไขแถวนี้?\n${g.part_no} · ${fmtDT(g.time)}`
-          + (qtyChanged ? `\n· จำนวน ${fmtNum(cur)} → ${fmtNum(nq)} ชิ้น (น้ำหนักปรับอัตโนมัติ)` : "")
-          + (metaChanged ? `\n· เวลาเดินเครื่อง/สถานะ ของสแกนนี้` : "")
-          + (lotWarn ? `\n\n⚠️ INV Code / ความยาวพาร์ท / Mat. Length มีผลกับ "ทุกสแกน" ของ Release/พาร์ทนี้ ไม่ใช่แค่แถวนี้` : ""),
+          + (scanChanged ? `\n· แก้ข้อมูลเฉพาะสแกนนี้` : "")
+          + (lotChanged ? `\n\n⚠️ Part No. / Release / จำนวนสั่ง / INV / ความยาว / Mat. Length มีผลกับ "ทุกสแกน" ของ Release/พาร์ทนี้ ไม่ใช่แค่แถวนี้` : ""),
       tone: isDelete ? "danger" : "warn", confirmText: isDelete ? "ลบทั้งแถว" : "บันทึก", cancelText: "ยกเลิก",
     });
     if (!ok) return;
     setBusy(true);
     try {
       if (isDelete) {
-        await setScanQuantity(g.part_unit_id, g.time, 0);
+        await editScan(g.part_unit_id, g.time, { qty: 0 });
         auditRecord("clear_scans", "scan_data", g.release_id, { scope: "scan_delete", machine: mkey, from: cur });
       } else {
-        if (qtyChanged) await setScanQuantity(g.part_unit_id, g.time, nq);   // น้ำหนักปรับตามจำนวนอัตโนมัติ
-        if (metaChanged) await setScanMeta(g.part_unit_id, g.time,
-          (nRunMin != null && nRunMin !== origRunMin) ? nRunMin * 60 : null,
-          nStatus !== origStatus ? nStatus : null);
-        // ── ค่าระดับล็อต/พาร์ท — ใช้กลไกเดียวกับหน้า Edit Release (มีผลทุกสแกนของ Release/พาร์ท) ──
-        if (matChanged && ri.part_master_id) await updateRow("part_master", ri.part_master_id, { material: nMat || null });
-        if (plChanged) {
-          const lv = nPartLen === "" ? null : Number(nPartLen);
-          await updateRow("releases", g.release_id, { length_mm: lv });
-          await updateRows("part_units", { release_id: g.release_id }, { length_mm: lv });
+        // ── รายสแกน (แถวนี้) — RPC เดียวครบ: จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน ──
+        if (scanChanged) {
+          await editScan(g.part_unit_id, g.time, {
+            qty: nq,
+            weight: wtChanged ? nWeight : null,           // null = คิดอัตโนมัติจากจำนวน
+            secs: runChanged ? nRunMin * 60 : null,
+            status: statusChanged ? nStatus : null,
+            recordedAt: dtChanged ? fromDTLocal(edForm.dt) : null,
+            opIds: opsChanged ? nOps : null,
+          });
         }
+        // ── ระดับพาร์ท (part_master: Part No. + INV) — มีผลทุก Release ของพาร์ทนี้ ──
+        const pmPatch = {};
+        if (partNoChanged) { pmPatch.part_no = nPartNo; pmPatch.part_name = nPartNo; }
+        if (matChanged) pmPatch.material = nMat || null;
+        if (Object.keys(pmPatch).length && ri.part_master_id) await updateRow("part_master", ri.part_master_id, pmPatch);
+        // ── ระดับ Release (release_order + จำนวนสั่ง + ความยาวพาร์ท) ──
+        const relPatch = {};
+        if (roChanged) relPatch.release_order = nRO || null;
+        if (orderedChanged) relPatch.qty = nOrdered;
+        if (plChanged) relPatch.length_mm = (nPartLen === "" ? null : Number(nPartLen));
+        if (Object.keys(relPatch).length) await updateRow("releases", g.release_id, relPatch);
+        if (plChanged) await updateRows("part_units", { release_id: g.release_id }, { length_mm: (nPartLen === "" ? null : Number(nPartLen)) });
         if (mlChanged) await setReleaseMaterialLength(g.release_id, Number(nMatLen));
         auditRecord("clear_scans", "scan_data", g.release_id, { scope: "scan_edit_all", machine: mkey });
       }
@@ -5857,14 +5904,19 @@ function MachineScanDetail({ machine, onBack }) {
         const inSel = { width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 };
         return (
         <Modal title={lang === "en" ? "Edit scan (all fields)" : "แก้ไขสแกน (ทั้งแถว)"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
-          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.7 }}>
-            {lang === "en" ? "Step" : "ขั้นตอน"}: {editRow.ops.map((o) => opLabel(o, lang)).join(" · ") || "—"}
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, fontWeight: 700 }}>
+            {lang === "en" ? "This scan (row)" : "เฉพาะสแกนนี้ (แถวนี้)"}
           </div>
-
-          {/* รายสแกน — จำนวน (น้ำหนักปรับอัตโนมัติ) · เวลาเดินเครื่อง · สถานะ */}
           <div className="grid-2">
+            <Field label={lang === "en" ? "Date · time" : "วัน · เวลา"}>
+              <Input type="datetime-local" value={edForm.dt} onChange={(e) => setEdForm((f) => ({ ...f, dt: e.target.value }))} disabled={nq === 0} />
+            </Field>
             <Field label={lang === "en" ? "Quantity (0 = delete row)" : "จำนวน (0 = ลบทั้งแถว)"}>
               <Input type="number" min={0} value={newQty} onChange={(e) => setNewQty(e.target.value)} />
+            </Field>
+            <Field label={lang === "en" ? "Weight (kg) — blank = auto" : "น้ำหนัก (กก.) — เว้นว่าง = auto"}>
+              <Input type="number" step="0.01" min="0" value={edForm.weight} onChange={(e) => setEdForm((f) => ({ ...f, weight: e.target.value }))} disabled={nq === 0}
+                placeholder={editRow.weight ? `${lang === "en" ? "now" : "ปัจจุบัน"} ${fmtNum(editRow.weight)}` : (lang === "en" ? "auto from qty" : "คิดจากจำนวน")} />
             </Field>
             <Field label={lang === "en" ? "Run time (min)" : "เวลาเดินเครื่อง (นาที)"}>
               <Input type="number" min={0} value={edForm.runMin} onChange={(e) => setEdForm((f) => ({ ...f, runMin: e.target.value }))} disabled={nq === 0} />
@@ -5876,29 +5928,55 @@ function MachineScanDetail({ machine, onBack }) {
               <option value="finished">{lang === "en" ? "Finished" : "เสร็จ"}</option>
             </select>
           </Field>
+          <Field label={lang === "en" ? "Step (tap to toggle · first = main)" : "ขั้นตอน (แตะเลือก/เอาออก · ตัวแรก = หลัก)"}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {allOps.length === 0 ? <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span> : allOps.map((o) => {
+                const on = edForm.opIds.includes(o.id);
+                return (
+                  <span key={o.id} onClick={nq === 0 ? undefined : () => setEdForm((f) => ({ ...f, opIds: on ? f.opIds.filter((x) => x !== o.id) : [...f.opIds, o.id] }))}
+                    style={{ cursor: nq === 0 ? "default" : "pointer", opacity: nq === 0 ? 0.5 : 1, fontSize: 12, fontWeight: 700, padding: "3px 11px", borderRadius: 99, whiteSpace: "nowrap",
+                      color: on ? "#fff" : "var(--accent-dk)", background: on ? "var(--accent)" : "rgba(37,99,235,.08)", border: `1px solid ${on ? "var(--accent)" : "rgba(37,99,235,.35)"}` }}>
+                    {opLabel(o.name, lang)}
+                  </span>
+                );
+              })}
+            </div>
+          </Field>
           <div style={{ fontSize: 12, margin: "2px 0 12px", lineHeight: 1.6, color: nq === 0 ? "var(--danger-hi)" : diff !== 0 ? "var(--accent-dk)" : "var(--muted)" }}>
             {nq === 0 ? (lang === "en" ? "= delete the whole scan · piece back to “Not started” (QR/lot kept)" : "= ลบทั้งแถว · ชิ้นกลับเป็น “ยังไม่ทำ” (QR/ล็อตยังอยู่)")
-              : diff > 0 ? (lang === "en" ? `Qty +${fmtNum(diff)} → ${fmtNum(nq)} pcs (weight auto)` : `จำนวน +${fmtNum(diff)} → ${fmtNum(nq)} ชิ้น (น้ำหนักปรับอัตโนมัติ)`)
-              : diff < 0 ? (lang === "en" ? `Qty −${fmtNum(-diff)} → ${fmtNum(nq)} pcs (weight auto)` : `จำนวน −${fmtNum(-diff)} → ${fmtNum(nq)} ชิ้น (น้ำหนักปรับอัตโนมัติ)`)
-              : (lang === "en" ? "Weight is auto-computed from quantity" : "น้ำหนักคิดจากจำนวนอัตโนมัติ")}
+              : diff > 0 ? (lang === "en" ? `Qty +${fmtNum(diff)} → ${fmtNum(nq)} pcs` : `จำนวน +${fmtNum(diff)} → ${fmtNum(nq)} ชิ้น`)
+              : diff < 0 ? (lang === "en" ? `Qty −${fmtNum(-diff)} → ${fmtNum(nq)} pcs` : `จำนวน −${fmtNum(-diff)} → ${fmtNum(nq)} ชิ้น`)
+              : (lang === "en" ? "Leave weight blank to auto-compute from quantity" : "เว้นน้ำหนักว่างไว้ = คิดจากจำนวนอัตโนมัติ")}
           </div>
 
-          {/* ระดับล็อต/พาร์ท — INV Code · ความยาวพาร์ท · Mat. Length */}
-          <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0 12px" }} />
+          {/* ระดับล็อต/พาร์ท — Part No. · Release · จำนวนสั่ง · INV · ความยาว · Mat. Length */}
+          <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0 10px" }} />
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, fontWeight: 700 }}>
+            {lang === "en" ? "Whole Release / part (every scan)" : "ระดับ Release / พาร์ท (มีผลทุกสแกน)"}
+          </div>
           <div className="grid-2">
+            <Field label="Part No.">
+              <Input value={edForm.partNo} onChange={(e) => setEdForm((f) => ({ ...f, partNo: e.target.value }))} disabled={nq === 0} />
+            </Field>
+            <Field label="Release">
+              <Input value={edForm.releaseOrder} onChange={(e) => setEdForm((f) => ({ ...f, releaseOrder: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. P-184" : "เช่น P-184"} />
+            </Field>
+            <Field label={lang === "en" ? "Ordered (pcs)" : "จำนวนสั่ง (ชิ้น)"}>
+              <Input type="number" min={0} value={edForm.ordered} onChange={(e) => setEdForm((f) => ({ ...f, ordered: e.target.value }))} disabled={nq === 0} />
+            </Field>
             <Field label="INV Code">
               <Input value={edForm.mat} onChange={(e) => setEdForm((f) => ({ ...f, mat: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. 23AN01600C" : "เช่น 23AN01600C"} />
             </Field>
             <Field label={lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)"}>
               <Input type="number" step="0.1" min="0" value={edForm.partLen} onChange={(e) => setEdForm((f) => ({ ...f, partLen: e.target.value }))} disabled={nq === 0} />
             </Field>
+            <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
+              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
+                placeholder={mls0.length > 1 ? `${lang === "en" ? "multiple" : "หลายค่า"}: ${mls0.map(fmtNum).join(" · ")}` : (mls0.length === 0 ? (lang === "en" ? "no scans yet" : "ยังไม่มีค่า") : "")} />
+            </Field>
           </div>
-          <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
-            <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
-              placeholder={mls0.length > 1 ? `${lang === "en" ? "multiple" : "หลายค่า"}: ${mls0.map(fmtNum).join(" · ")}` : (mls0.length === 0 ? (lang === "en" ? "no scans yet" : "ยังไม่มีค่า") : "")} />
-          </Field>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 14px", lineHeight: 1.6 }}>
-            ⚠️ <b>INV Code / {lang === "en" ? "Part length" : "ความยาวพาร์ท"} / Mat. Length</b> {lang === "en" ? "apply to the whole Release/part (every scan), not just this row" : "มีผลกับทั้ง Release/พาร์ท (ทุกสแกน) ไม่ใช่แค่แถวนี้"}
+            ⚠️ {lang === "en" ? "These 6 fields change the whole Release/part (every scan), not just this row" : "6 ช่องนี้มีผลกับทั้ง Release/พาร์ท (ทุกสแกน) ไม่ใช่แค่แถวนี้"}
           </div>
 
           <div className="modal-actions">
