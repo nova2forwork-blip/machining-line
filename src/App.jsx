@@ -5816,11 +5816,12 @@ function MachineScanDetail({ machine, onBack }) {
           { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
         ]} />
 
-        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: use Edit at the end of a row to change the quantity (add/reduce) or delete the whole scan" : "แอดมิน: กด Edit ท้ายแถวเพื่อแก้จำนวน (เพิ่ม/ลด) หรือ ลบทั้งแถว"}</div>}
+        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: click a row to edit (quantity / weight / status / INV / lengths) or delete the whole scan" : "แอดมิน: กดที่แถวเพื่อแก้ไข (จำนวน / น้ำหนัก / สถานะ / INV / ความยาว) หรือ ลบทั้งแถว"}</div>}
 
         <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
           rows={sorted} rowKey={(g) => g.key} sort={sort}
           empty={logs === null ? (lang === "en" ? "Loading…" : "กำลังโหลด...") : (lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้")}
+          rowProps={admin ? (g) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => openEdit(g), title: lang === "en" ? "Click the row to edit / delete" : "กดที่แถวเพื่อแก้ไข / ลบ" }) : undefined}
           columns={[
             { key: "time", header: lang === "en" ? "Date · time" : "วัน · เวลา", sortKey: "time", tdStyle: { whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (g) => fmtDT(g.time) },
             { key: "part", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (g) => g.part_no },
@@ -5845,8 +5846,6 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "inv", header: "INV Code", dataLabel: "INV Code", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => relInfo[g.release_id]?.material || "-" },
             { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
             { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => matLenTextOf(g.release_id) },
-            ...(admin ? [{ key: "manage", header: "", dataLabel: lang === "en" ? "Manage" : "จัดการ", thStyle: { width: 66 }, tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
-              cell: (g) => <Btn variant="ghost" size="sm" onClick={() => openEdit(g)} style={{ color: "var(--danger-hi)" }}>Edit</Btn> }] : []),
           ]} />
       </Card>
 
