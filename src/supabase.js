@@ -616,6 +616,18 @@ export async function setReleaseMaterialLength(releaseId, length) {
   return data || { ok: true };
 }
 
+// ลบ/ลดจำนวนของ "1 การสแกน" (แอดมิน) — ใช้หน้า Scans ของเครื่อง (ปุ่ม Edit ท้ายแถว)
+// delQty < จำนวนของสแกน → ลดจำนวน · delQty >= จำนวน → ลบทั้งสแกน (+ รีเซ็ตสถานะถ้าไม่เหลือสแกนอื่นของชิ้นนั้น)
+// ดู migration-delete-scan-pieces.sql
+export async function deleteScanPieces(partUnitId, scannedAt, delQty) {
+  const { data, error } = await supabase.rpc("delete_scan_pieces", {
+    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null, p_del: Number(delQty),
+  });
+  if (error) { console.warn("delete_scan_pieces error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+
 // ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
 // คืน { <project_id>: { finished, weight } }
 export async function getProjectStationProgress() {
