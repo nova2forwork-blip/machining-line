@@ -628,6 +628,18 @@ export async function setScanQuantity(partUnitId, scannedAt, newQty) {
   return data || { ok: true };
 }
 
+// ปรับ "จำนวนที่ทำเสร็จ (done)" ของเครื่องต่อ Release (แอดมิน) — เพิ่ม/ลด
+// target > done → สร้างสแกน (co-tick ครบขั้นตอนของเครื่อง) ให้ชิ้นที่ยังไม่ทำ · target < done → ลบสแกนเครื่องนี้ออก
+// ดู migration-set-release-machine-done.sql
+export async function setReleaseMachineDone(releaseId, machineId, target) {
+  const { data, error } = await supabase.rpc("set_release_machine_done", {
+    p_token: authToken(), p_release_id: releaseId, p_machine_id: machineId, p_target: Number(target),
+  });
+  if (error) { console.warn("set_release_machine_done error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+
 // ความคืบหน้า "เสร็จ" ต่อโปรเจค จากงานหน้าเครื่อง (ขั้นตอนสุดท้าย) — ดู migration 13
 // คืน { <project_id>: { finished, weight } }
 export async function getProjectStationProgress() {
