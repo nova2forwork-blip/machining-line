@@ -360,8 +360,8 @@ const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString("th-TH", { dateStyl
 // เวลาเป็น ชม.:นาที (สำหรับ "เวลาเดินเครื่อง") — ปัดวินาทีทิ้ง อ่านง่ายในรายงาน
 const fmtHrs = (secs) => {
   const s = Math.max(0, Math.floor(Number(secs) || 0));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h} ชม. ${String(m).padStart(2, "0")} น.` : `${m} น.`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;   // HH:MM:SS
 };
 
 // ─── เสียง + สั่น ตอบรับการสแกน (สำคัญบนหน้าโรงงานที่ไม่ได้จ้องจอ) ───────────────
@@ -5655,7 +5655,7 @@ function MachineScanDetail({ machine, onBack }) {
   const colCount = 9 + (admin ? 1 : 0);
   // ── ค่าระดับล็อต/พาร์ท (ต่อ release) สำหรับคอลัมน์ + ฟอร์มแก้ ──
   const partLenOf = (rid) => { const ri = relInfo[rid]; const v = ri?.length_mm ?? ri?.default_length_mm; return (v == null || v === "") ? null : v; };
-  const matLenTextOf = (rid) => { const a = matLenMap[rid] || []; if (!a.length) return "-"; return a.length === 1 ? `${fmtNum(a[0])} มม.` : a.map((n) => fmtNum(n)).join(" · "); };
+  const matLenTextOf = (rid) => { const a = matLenMap[rid] || []; if (!a.length) return "-"; return a.length === 1 ? fmtNum(a[0]) : a.map((n) => fmtNum(n)).join(" · "); };
 
   // ── เปิดฟอร์มแก้ทั้งแถว — เติมค่าเดิมทุกฟิลด์ (รายสแกน + ระดับล็อต) ──
   const openEdit = (g) => {
@@ -5819,8 +5819,8 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (g) => g.weight ? fmtNum(g.weight) : "—" },
             { key: "secs", header: lang === "en" ? "Run time" : "เวลาเดินเครื่อง", sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.secs ? fmtHrs(g.secs) : "—" },
             { key: "inv", header: "INV Code", dataLabel: "INV Code", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => relInfo[g.release_id]?.material || "-" },
-            { key: "partlen", header: lang === "en" ? "Part length" : "ความยาวพาร์ท", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? `${fmtNum(v)} มม.` : "-"; } },
-            { key: "matlen", header: "Mat. Length", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => matLenTextOf(g.release_id) },
+            { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
+            { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => matLenTextOf(g.release_id) },
             ...(admin ? [{ key: "manage", header: "", dataLabel: lang === "en" ? "Manage" : "จัดการ", thStyle: { width: 66 }, tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
               cell: (g) => <Btn variant="ghost" size="sm" onClick={() => openEdit(g)} style={{ color: "var(--danger-hi)" }}>Edit</Btn> }] : []),
           ]} />
