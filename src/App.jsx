@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, deleteScanPieces, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -5472,8 +5472,9 @@ function MachineScanDetail({ machine, onBack }) {
   const admin = isAdmin(getSession());                     // เฉพาะแอดมินถึงจะลบสแกนได้
   const [reloadTick, setReloadTick] = useState(0);         // บวกเพื่อโหลดใหม่หลังลบ
   const [orderQty, setOrderQty] = useState({});            // จำนวนสั่ง ต่อ release_id (ไว้ดูสแปร์)
-  const [sel, setSel] = useState(() => new Set());         // แถวที่ติ๊กไว้จะลบ (เก็บ key)
-  const [deleting, setDeleting] = useState(false);
+  const [editRow, setEditRow] = useState(null);            // แถว (scan) ที่กด Edit เพื่อลบ/ลดจำนวน
+  const [delQty, setDelQty] = useState(1);                 // จำนวนที่จะลบในป็อปอัป
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -5580,29 +5581,22 @@ function MachineScanDetail({ machine, onBack }) {
   // ── จำนวนสั่ง/สแปร์ + เลือกหลายแถวเพื่อลบ (admin) ──
   const scannedByRel = {};   // สแกนไปแล้วกี่ชิ้นต่อ release (เฉพาะเครื่องนี้) → เทียบจำนวนสั่งดูสแปร์
   grouped.forEach((g) => { if (g.release_id) scannedByRel[g.release_id] = (scannedByRel[g.release_id] || 0) + (Number(g.qty) || 0); });
-  const selPcs = sorted.filter((g) => sel.has(g.key)).reduce((s, g) => s + (Number(g.qty) || 0), 0);
-  const toggleRow = (k) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const toggleAll = () => setSel((s) => (sorted.length && sorted.every((g) => s.has(g.key)) ? new Set() : new Set(sorted.map((g) => g.key))));
   const colCount = 9 + (admin ? 1 : 0);
-  async function doDeleteSelected() {
-    const rows = sorted.filter((g) => sel.has(g.key));
-    if (!rows.length) return;
-    const puids = [...new Set(rows.map((g) => g.part_unit_id).filter(Boolean))];   // ลบต่อชิ้น (part_unit) แบบไม่ซ้ำ
-    const ok = await askConfirm({
-      message: `ลบสแกนที่เลือก ${fmtNum(rows.length)} แถว (${fmtNum(selPcs)} ชิ้น)?\nชิ้นที่ลบจะกลับเป็น "ยังไม่ทำ" · QR/ล็อตยังอยู่ · ลบแล้วกู้คืนไม่ได้`,
-      tone: "danger", confirmText: "ลบสแกน", cancelText: "ยกเลิก",
-    });
-    if (!ok) return;
-    setDeleting(true);
+  const openEdit = (g) => { setEditRow(g); setDelQty(Math.max(1, Number(g.qty) || 1)); };   // ค่าเริ่มต้น = ลบทั้งแถว
+  async function doDelete() {
+    if (!editRow) return;
+    const q = Number(editRow.qty) || 0;
+    const del = Math.min(Math.max(1, Number(delQty) || 1), q || 1);
+    setBusy(true);
     try {
-      for (const id of puids) await clearScansUnit(id, {});   // ลบสแกนของชิ้นนั้น + รีเซ็ตสถานะ (RPC เดิม เฉพาะ admin)
-      auditRecord("clear_scans", "scan_data", null, { scope: "unit_multi", machine: mkey, units: puids.length });
-      setSel(new Set());
+      const res = await deleteScanPieces(editRow.part_unit_id, editRow.time, del);   // del<qty = ลด · del>=qty = ลบทั้งสแกน
+      auditRecord("clear_scans", "scan_data", null, { scope: "scan_edit", machine: mkey, mode: res?.mode, del });
+      setEditRow(null);
       setReloadTick((t) => t + 1);
-      mlsToast(`ลบสแกนแล้ว ${fmtNum(puids.length)} ชิ้น`, "ok");
+      mlsToast(del >= q ? "ลบสแกนแล้ว" : `ลบ ${fmtNum(del)} ชิ้นแล้ว`, "ok");
     } catch (e) {
       mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "err");
-    } finally { setDeleting(false); }
+    } finally { setBusy(false); }
   }
 
   return (
@@ -5657,34 +5651,21 @@ function MachineScanDetail({ machine, onBack }) {
           { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
         ]} />
 
-        {admin && (sel.size > 0 ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(220,38,38,.06)", border: "1px solid rgba(220,38,38,.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>{lang === "en" ? `Selected ${fmtNum(sel.size)} rows · ${fmtNum(selPcs)} pcs` : `เลือกแล้ว ${fmtNum(sel.size)} แถว · ${fmtNum(selPcs)} ชิ้น`}</span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn variant="ghost" size="sm" onClick={() => setSel(new Set())} disabled={deleting}>{lang === "en" ? "Clear" : "ยกเลิกเลือก"}</Btn>
-              <Btn size="sm" onClick={doDeleteSelected} disabled={deleting} style={{ background: "var(--danger-hi)", color: "#fff", border: "none" }}>{deleting ? (lang === "en" ? "Deleting…" : "กำลังลบ...") : (lang === "en" ? "Delete selected" : "ลบที่เลือก")}</Btn>
-            </div>
-          </div>
-        ) : (
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: tick rows to delete scans (choose how many · select all = whole rows go)" : "แอดมิน: ติ๊กแถวเพื่อลบสแกน (เลือกจำนวนได้ · เลือกทั้งหมด = หายทั้งแถว)"}</div>
-        ))}
+        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: use Edit at the end of a row to delete some pieces or the whole scan" : "แอดมิน: กด Edit ท้ายแถวเพื่อเลือกจำนวนที่จะลบ หรือ ลบทั้งแถว"}</div>}
 
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead><tr>
-              {admin && <th style={{ width: 34, textAlign: "center" }}>
-                <input type="checkbox" checked={sorted.length > 0 && sorted.every((g) => sel.has(g.key))} onChange={toggleAll}
-                  style={{ width: 16, height: 16, accentColor: "var(--accent)" }} title={lang === "en" ? "Select all" : "เลือกทั้งหมด"} />
-              </th>}
               <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
               <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
-              <th style={{ whiteSpace: "nowrap" }}>{lang === "en" ? "Ordered" : "สั่ง"}</th>
               <SortTh k="ro" sort={sort}>Release</SortTh>
+              <th style={{ whiteSpace: "nowrap" }}>{lang === "en" ? "Ordered" : "สั่ง"}</th>
               <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
               <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
               <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
               <SortTh k="weight" sort={sort}>{lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"}</SortTh>
               <SortTh k="secs" sort={sort}>{lang === "en" ? "Run time" : "เวลาเดินเครื่อง"}</SortTh>
+              {admin && <th style={{ width: 66 }}></th>}
             </tr></thead>
             <tbody>
               {logs === null ? (
@@ -5692,19 +5673,15 @@ function MachineScanDetail({ machine, onBack }) {
               ) : sorted.length === 0 ? (
                 <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
               ) : sorted.map((g) => (
-                <tr key={g.key} style={admin && sel.has(g.key) ? { background: "rgba(37,99,235,.06)" } : undefined}>
-                  {admin && <td style={{ textAlign: "center" }}>
-                    <input type="checkbox" checked={sel.has(g.key)} onChange={() => toggleRow(g.key)}
-                      style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
-                  </td>}
+                <tr key={g.key}>
                   <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
                   <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}</td>
+                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{g.release_order}</td>
                   <td data-label={lang === "en" ? "Ordered" : "สั่ง"} style={{ whiteSpace: "nowrap" }}>
                     {orderQty[g.release_id] != null
-                      ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? "spare" : "สแปร์"}</span>}</>
+                      ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? `spare ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}` : `สแปร์ ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}`}</span>}</>
                       : "—"}
                   </td>
-                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{g.release_order}</td>
                   <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
                     {g.ops.length ? (
                       <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>
@@ -5719,12 +5696,40 @@ function MachineScanDetail({ machine, onBack }) {
                   <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(g.qty)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
                   <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{g.weight ? fmtNum(g.weight) : "—"}</td>
                   <td data-label={lang === "en" ? "Run time" : "เวลาเดินเครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{g.secs ? fmtHrs(g.secs) : "—"}</td>
+                  {admin && <td data-label={lang === "en" ? "Manage" : "จัดการ"} style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                    <Btn variant="ghost" size="sm" onClick={() => openEdit(g)} style={{ color: "var(--danger-hi)" }}>Edit</Btn>
+                  </td>}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {admin && editRow && (
+        <Modal title={lang === "en" ? "Delete scan" : "ลบสแกน"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.7 }}>
+            {lang === "en" ? "Step" : "ขั้นตอน"}: {editRow.ops.map((o) => opLabel(o, lang)).join(" · ") || "—"}<br />
+            {lang === "en" ? "Pieces in this scan" : "จำนวนในสแกนนี้"}: <b>{fmtNum(editRow.qty)}</b> {lang === "en" ? "pcs" : "ชิ้น"}
+          </div>
+          <Field label={lang === "en" ? `Pieces to delete (1–${fmtNum(editRow.qty)})` : `จำนวนที่จะลบ (1–${fmtNum(editRow.qty)})`}>
+            <Input type="number" min={1} max={editRow.qty} value={delQty}
+              onChange={(e) => setDelQty(e.target.value)} disabled={Number(editRow.qty) <= 1} />
+          </Field>
+          <div style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.6, color: Number(delQty) >= Number(editRow.qty) ? "var(--danger-hi)" : "var(--muted)" }}>
+            {Number(delQty) >= Number(editRow.qty)
+              ? (lang === "en" ? "= delete the whole scan · piece goes back to “Not started” (QR/lot kept)" : "= ลบทั้งแถว · ชิ้นกลับเป็น “ยังไม่ทำ” (QR/ล็อตยังอยู่)")
+              : (lang === "en" ? `Reduce to ${fmtNum(Number(editRow.qty) - Number(delQty))} pcs` : `ลดเหลือ ${fmtNum(Number(editRow.qty) - Number(delQty))} ชิ้น`)}
+          </div>
+          <div className="modal-actions">
+            <Btn variant="ghost" onClick={() => setEditRow(null)} disabled={busy}>{lang === "en" ? "Cancel" : "ยกเลิก"}</Btn>
+            <Btn onClick={doDelete} disabled={busy} style={{ background: "var(--danger-hi)", color: "#fff", border: "none" }}>
+              {busy ? (lang === "en" ? "Deleting…" : "กำลังลบ...")
+                : (Number(delQty) >= Number(editRow.qty) ? (lang === "en" ? "Delete whole row" : "ลบทั้งแถว") : (lang === "en" ? `Delete ${fmtNum(delQty)}` : `ลบ ${fmtNum(delQty)} ชิ้น`))}
+            </Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
