@@ -134,7 +134,7 @@ function SortControl({ sort, options }) {
 
 // ── คอลัมน์ลากสลับตำแหน่งได้ + จำลำดับใน DB 2 ระดับ (ค่ากลาง company + รายคน user) ─────────────
 //   ลำดับที่ใช้จริง: ของฉัน (user) > ค่ากลาง (company) > ค่าเริ่มต้นในโค้ด
-//   ลากที่จับ ⠿ = บันทึกเป็น "ของฉัน" อัตโนมัติ (ตามติด login ทุกเครื่อง) · มิเรอร์ค่ากลางใน localStorage ให้ลื่น/ออฟไลน์
+//   แอดมินลาก = บันทึกเป็น "ค่ากลาง" (ทุกเครื่องเห็น) · คนอื่นลาก = "ของฉัน" (ตามติด login) · มิเรอร์ค่ากลางใน localStorage ให้ลื่น/ออฟไลน์
 function _cpLoad(k) { try { const s = window.localStorage.getItem(k); return s ? JSON.parse(s) : {}; } catch { return {}; } }
 function _cpSaveLS(k, v) { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } }
 const COL_PREFS = { user: {}, company: _cpLoad("mls.colprefs.company"), loaded: false };   // user โหลดจาก DB ตอน login (ไม่มิเรอร์ กันปนกันบนเครื่องรวม)
@@ -151,13 +151,26 @@ async function loadColPrefs() {
   COL_PREFS.loaded = true; _cpMirror(); _cpNotify();
 }
 function colOrderFor(id) { return COL_PREFS.user[id] || COL_PREFS.company[id] || null; }
-async function saveUserColOrder(id, order) {
-  COL_PREFS.user[id] = order; _cpNotify();
-  try { await setColumnPref("user", id, order); } catch { /* เก็บในหน่วยความจำแล้ว */ }
+// แอดมินลาก = บันทึกเป็น "ค่ากลาง" (ทุกเครื่องเห็น) · คนอื่นลาก = บันทึกเป็น "ของฉัน"
+async function saveColOrderScoped(id, order, admin) {
+  if (admin) {
+    COL_PREFS.company[id] = order;
+    if (COL_PREFS.user[id]) { delete COL_PREFS.user[id]; try { await clearColumnPref("user", id); } catch { /* ignore */ } }   // กันลำดับ "ของฉัน" เดิมบังค่ากลางที่เพิ่งตั้ง
+    _cpMirror(); _cpNotify();
+    try { await setColumnPref("company", id, order); } catch { /* เก็บในหน่วยความจำแล้ว */ }
+  } else {
+    COL_PREFS.user[id] = order; _cpNotify();
+    try { await setColumnPref("user", id, order); } catch { /* เก็บในหน่วยความจำแล้ว */ }
+  }
 }
-async function clearUserColOrder(id) {
-  delete COL_PREFS.user[id]; _cpNotify();
-  try { await clearColumnPref("user", id); } catch { /* ignore */ }
+async function clearColOrderScoped(id, admin) {
+  if (admin) {
+    delete COL_PREFS.company[id]; _cpMirror(); _cpNotify();
+    try { await clearColumnPref("company", id); } catch { /* ignore */ }
+  } else {
+    delete COL_PREFS.user[id]; _cpNotify();
+    try { await clearColumnPref("user", id); } catch { /* ignore */ }
+  }
 }
 async function publishCompanyColPrefs() {   // แอดมิน: เอาลำดับ "ของฉัน" ทั้งหมด → ค่ากลาง
   const prefs = { ...COL_PREFS.user };
@@ -189,9 +202,9 @@ function useColOrder(id, keys) {
     if (idx < 0) return;
     if (side === "right") idx += 1;
     arr.splice(idx, 0, fromKey);
-    saveUserColOrder(id, arr);
+    saveColOrderScoped(id, arr, isAdmin(getSession()));   // แอดมิน → ค่ากลาง · คนอื่น → ของฉัน
   };
-  const reset = () => { clearUserColOrder(id); };
+  const reset = () => { clearColOrderScoped(id, isAdmin(getSession())); };
   return { order, move, reset, drag, setDrag };
 }
 // หัวคอลัมน์: คลิก = เรียงลำดับ (ถ้ามี sortKey) · ลากที่จับ ⠿ = ย้ายตำแหน่งคอลัมน์ (เมาส์/สัมผัส)
@@ -7070,21 +7083,51 @@ function ColumnLayoutCard() {
   return (
     <Card title="ลำดับคอลัมน์ในตาราง">
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.75 }}>
-        ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อจัดลำดับ — ระบบจำเป็น <b>ของคุณเอง</b> อัตโนมัติ (ตามติดทุกเครื่องที่ล็อกอินบัญชีนี้)<br />
-        ลำดับที่ใช้จริง: <b>ของฉัน</b> ก่อน · ถ้าไม่ได้ตั้งเองใช้ <b>ค่ากลาง</b> · ถ้าไม่มีทั้งคู่ใช้ <b>ค่าเริ่มต้น</b><br />
+        ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อจัดลำดับ<br />
+        {admin
+          ? <>• คุณเป็น <b>แอดมิน</b> — ลากที่ตารางไหน จะกลายเป็น <b>ค่ากลาง</b> ให้ทุกเครื่องเห็นเหมือนกันทันที</>
+          : <>• คุณลากเอง = จำเป็น <b>ของคุณเอง</b> (ตามติดทุกเครื่องที่ล็อกอินบัญชีนี้)</>}<br />
+        ลำดับที่ใช้จริง: <b>ของฉัน</b> ก่อน · ถ้าไม่ได้ตั้งเองใช้ <b>ค่ากลาง</b> (ที่แอดมินจัด) · ถ้าไม่มีใช้ <b>ค่าเริ่มต้น</b><br />
         ตอนนี้: ตั้งเอง <b>{nMine}</b> ตาราง · ค่ากลาง <b>{nCompany}</b> ตาราง
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Btn variant="ghost" onClick={() => run("clearMine")} disabled={!!busy}>{busy === "clearMine" ? "กำลังล้าง..." : "ล้างลำดับของฉัน (กลับค่ากลาง/เริ่มต้น)"}</Btn>
-        {admin && <Btn variant="accent" onClick={() => run("publish")} disabled={!!busy}>{busy === "publish" ? "กำลังตั้ง..." : "ตั้งลำดับปัจจุบันของฉันเป็นค่ากลาง (ทุกเครื่อง)"}</Btn>}
-        {admin && <Btn variant="ghost" onClick={() => run("clearCompany")} disabled={!!busy} style={{ color: "var(--danger-hi)" }}>{busy === "clearCompany" ? "กำลังล้าง..." : "ล้างค่ากลางทั้งหมด"}</Btn>}
+        <Btn variant="ghost" onClick={() => run("clearMine")} disabled={!!busy}>{busy === "clearMine" ? "กำลังล้าง..." : "ล้างลำดับของฉัน (กลับไปใช้ค่ากลาง)"}</Btn>
+        {admin && <Btn variant="ghost" onClick={() => run("clearCompany")} disabled={!!busy} style={{ color: "var(--danger-hi)" }}>{busy === "clearCompany" ? "กำลังล้าง..." : "ล้างค่ากลางทั้งหมด (รีเซ็ตทุกตาราง)"}</Btn>}
       </div>
-      {admin && (
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
-          💡 วิธีตั้งค่ากลาง: จัดลำดับคอลัมน์แต่ละตารางให้เรียบร้อย (ลาก ⠿) แล้วกด <b>"ตั้งเป็นค่ากลาง"</b> — ระบบจะเอาลำดับทุกตารางที่คุณจัดไว้ไปเป็นค่ากลางให้ทุกเครื่อง (คนที่ตั้งเองไว้แล้วยังใช้ของตัวเอง จนกว่าจะกด "ล้างลำดับของฉัน")
-        </div>
-      )}
     </Card>
+  );
+}
+
+// ─── ปุ่มลอย "ไปบนสุด" — โผล่เมื่อเลื่อนลง · กดแล้วเลื่อนหน้าขึ้นบนสุด (ทุกหน้าหลังบ้าน) ──
+function ScrollTopButton() {
+  const [show, setShow] = useState(false);
+  const scrollerRef = useRef(null);
+  useEffect(() => {
+    const onScroll = (e) => {
+      const winY = window.pageYOffset || document.documentElement.scrollTop || 0;
+      let y = winY;
+      const t = e && e.target;
+      if (t && t !== document && t !== window && t.scrollTop != null && t.scrollTop > 0) { y = Math.max(y, t.scrollTop); scrollerRef.current = t; }
+      else if (winY > 0) { scrollerRef.current = null; }
+      setShow(y > 300);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });   // capture = จับสกอลล์ของกล่องด้านในด้วย
+    onScroll({});
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
+  if (!show) return null;
+  const toTop = () => {
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { try { window.scrollTo(0, 0); } catch { /* ignore */ } }
+    try { const el = document.scrollingElement || document.documentElement; if (el && el.scrollTo) el.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
+    try { const s = scrollerRef.current; if (s && s.scrollTo) s.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
+  };
+  return (
+    <button type="button" onClick={toTop} aria-label="ไปบนสุด" title="ไปบนสุด"
+      style={{ position: "fixed", right: 18, bottom: 18, zIndex: 850, width: 46, height: 46, borderRadius: 12,
+        background: "#1f5288", color: "#fff", border: "none", cursor: "pointer",
+        boxShadow: "0 6px 18px rgba(0,0,0,.24)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6" /></svg>
+    </button>
   );
 }
 
@@ -8417,6 +8460,6 @@ export default function App() {
   return <ErrorBoundary>
     {/* ทุกตารางหลังบ้านไม่ตัดบรรทัด (เดสก์ท็อป/แท็บเล็ต ≥768px) — ยาวเกินให้เลื่อนแนวนอนแทน · มือถือโหมดการ์ดไม่กระทบ */}
     <style>{`@media(min-width:768px){.data-table th,.data-table td,.pgrid th,.pgrid td{white-space:nowrap}.data-table td *{flex-wrap:nowrap!important}}`}</style>
-    <UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint />
+    <UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint />{user && <ScrollTopButton />}
   </ErrorBoundary>;
 }
