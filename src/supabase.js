@@ -641,6 +641,26 @@ export async function setScanMeta(partUnitId, scannedAt, processSeconds, status)
   return data || { ok: true };
 }
 
+// แก้ "1 การสแกน" ครบทุกช่องรายสแกน (แอดมิน) — จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน · ดู migration-edit-scan.sql
+// qty=0 → ลบทั้งสแกน · weight=null → คิดอัตโนมัติจากจำนวน · ช่องอื่น null = ไม่แก้
+export async function editScan(partUnitId, scannedAt, opts = {}) {
+  const { qty, weight, secs, status, recordedAt, opIds } = opts;
+  const { data, error } = await supabase.rpc("edit_scan", {
+    p_token: authToken(),
+    p_part_unit_id: partUnitId,
+    p_scanned_at: scannedAt || null,
+    p_new_qty: Number(qty),
+    p_weight: weight == null || weight === "" ? null : Number(weight),
+    p_process_seconds: secs == null ? null : Math.round(Number(secs)),
+    p_status: status || null,
+    p_recorded_at: recordedAt || null,
+    p_operation_ids: opIds && opIds.length ? opIds : null,
+  });
+  if (error) { console.warn("edit_scan error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+
 // ── ลำดับคอลัมน์ในตาราง (2 ระดับ: company ค่ากลาง + user รายคน) · ดู migration-column-prefs.sql ──
 export async function getColumnPrefs() {
   const { data, error } = await supabase.rpc("get_column_prefs", { p_token: authToken() });
