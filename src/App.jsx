@@ -8294,5 +8294,9 @@ export default function App() {
   const content = !user
     ? <Login onLogin={setUser} />
     : goStation ? <LoginSplash text="กำลังเปิดหน้างาน…" /> : <Shell user={user} onLogout={logout} />;
-  return <ErrorBoundary><UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint /></ErrorBoundary>;
+  return <ErrorBoundary>
+    {/* ทุกตารางหลังบ้านไม่ตัดบรรทัด (เดสก์ท็อป/แท็บเล็ต ≥768px) — ยาวเกินให้เลื่อนแนวนอนแทน · มือถือโหมดการ์ดไม่กระทบ */}
+    <style>{`@media(min-width:768px){.data-table th,.data-table td,.pgrid th,.pgrid td{white-space:nowrap}.data-table td *{flex-wrap:nowrap!important}}`}</style>
+    <UpdateBanner />{content}<Toaster /><ConfirmHost /><UndoHint />
+  </ErrorBoundary>;
 }
