@@ -5682,9 +5682,9 @@ function MachineScanDetail({ machine, onBack }) {
                       ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? `spare ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}` : `สแปร์ ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}`}</span>}</>
                       : "—"}
                   </td>
-                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
+                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"} style={{ whiteSpace: "nowrap" }}>
                     {g.ops.length ? (
-                      <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>
+                      <span style={{ display: "inline-flex", flexWrap: "nowrap", gap: 5 }}>
                         {g.ops.map((o, oi) => (
                           <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
                             color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
