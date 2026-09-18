@@ -5469,6 +5469,11 @@ function MachineScanDetail({ machine, onBack }) {
   const [customTo, setCustomTo] = useState(todayStr());
   const [logs, setLogs] = useState(null);                 // null = กำลังโหลด
   const sort = useTableSort("time", "desc");               // ค่าเริ่มต้น: วัน-เวลา ล่าสุดอยู่บนสุด
+  const admin = isAdmin(getSession());                     // เฉพาะแอดมินถึงจะลบสแกนได้
+  const [reloadTick, setReloadTick] = useState(0);         // บวกเพื่อโหลดใหม่หลังลบ
+  const [orderQty, setOrderQty] = useState({});            // จำนวนสั่ง ต่อ release_id (ไว้ดูสแปร์)
+  const [sel, setSel] = useState(() => new Set());         // แถวที่ติ๊กไว้จะลบ (เก็บ key)
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -5481,7 +5486,18 @@ function MachineScanDetail({ machine, onBack }) {
       .then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); })
       .catch(() => { if (alive) setLogs([]); });
     return () => { alive = false; };
-  }, [rangeMode, preset, monthValue, customFrom, customTo]);
+  }, [rangeMode, preset, monthValue, customFrom, customTo, reloadTick]);
+
+  // จำนวนสั่ง (ordered qty) ต่อ release — ไว้เทียบว่ามีสแปร์ไหม (สแกนเกินจำนวนสั่ง)
+  useEffect(() => {
+    const ids = [...new Set((logs || []).map((l) => l.release_id).filter(Boolean))];
+    if (!ids.length) { setOrderQty({}); return; }
+    let alive = true;
+    supabase.from("releases").select("id, qty").in("id", ids)
+      .then(({ data }) => { if (alive && Array.isArray(data)) { const m = {}; data.forEach((r) => { m[r.id] = Number(r.qty) || 0; }); setOrderQty(m); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [logs]);
 
   const mkey = machine.code || machine.name;              // คีย์เดียวกับ machineOpMatrix (code ก่อน ชื่อสำรอง)
   const mine = (logs || []).filter((l) => (l.machine?.code || l.machine?.name) === mkey);
@@ -5505,7 +5521,7 @@ function MachineScanDetail({ machine, onBack }) {
           time: l.scanned_at,
           part_no: l.part_unit?.part_master?.part_no || "—",
           part_name: l.part_unit?.part_master?.part_name || "—",
-          release_order: l.release_order || "—",
+          release_order: l.release_order || "—", release_id: l.release_id,
           status: l.status, part_unit_id: l.part_unit_id,
           ops: op ? [op] : [], qty: qv, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
         };
@@ -5520,7 +5536,7 @@ function MachineScanDetail({ machine, onBack }) {
           time: l.scanned_at,
           part_no: l.part_unit?.part_master?.part_no || "—",
           part_name: l.part_unit?.part_master?.part_name || "—",
-          release_order: l.release_order || "—",
+          release_order: l.release_order || "—", release_id: l.release_id,
           status: l.status, part_unit_id: l.part_unit_id,
           ops: op ? [op] : [], qty: 0, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
         });
@@ -5560,6 +5576,34 @@ function MachineScanDetail({ machine, onBack }) {
       </span>
     );
   };
+
+  // ── จำนวนสั่ง/สแปร์ + เลือกหลายแถวเพื่อลบ (admin) ──
+  const scannedByRel = {};   // สแกนไปแล้วกี่ชิ้นต่อ release (เฉพาะเครื่องนี้) → เทียบจำนวนสั่งดูสแปร์
+  grouped.forEach((g) => { if (g.release_id) scannedByRel[g.release_id] = (scannedByRel[g.release_id] || 0) + (Number(g.qty) || 0); });
+  const selPcs = sorted.filter((g) => sel.has(g.key)).reduce((s, g) => s + (Number(g.qty) || 0), 0);
+  const toggleRow = (k) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleAll = () => setSel((s) => (sorted.length && sorted.every((g) => s.has(g.key)) ? new Set() : new Set(sorted.map((g) => g.key))));
+  const colCount = 9 + (admin ? 1 : 0);
+  async function doDeleteSelected() {
+    const rows = sorted.filter((g) => sel.has(g.key));
+    if (!rows.length) return;
+    const puids = [...new Set(rows.map((g) => g.part_unit_id).filter(Boolean))];   // ลบต่อชิ้น (part_unit) แบบไม่ซ้ำ
+    const ok = await askConfirm({
+      message: `ลบสแกนที่เลือก ${fmtNum(rows.length)} แถว (${fmtNum(selPcs)} ชิ้น)?\nชิ้นที่ลบจะกลับเป็น "ยังไม่ทำ" · QR/ล็อตยังอยู่ · ลบแล้วกู้คืนไม่ได้`,
+      tone: "danger", confirmText: "ลบสแกน", cancelText: "ยกเลิก",
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      for (const id of puids) await clearScansUnit(id, {});   // ลบสแกนของชิ้นนั้น + รีเซ็ตสถานะ (RPC เดิม เฉพาะ admin)
+      auditRecord("clear_scans", "scan_data", null, { scope: "unit_multi", machine: mkey, units: puids.length });
+      setSel(new Set());
+      setReloadTick((t) => t + 1);
+      mlsToast(`ลบสแกนแล้ว ${fmtNum(puids.length)} ชิ้น`, "ok");
+    } catch (e) {
+      mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "err");
+    } finally { setDeleting(false); }
+  }
 
   return (
     <div>
@@ -5613,12 +5657,28 @@ function MachineScanDetail({ machine, onBack }) {
           { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
         ]} />
 
+        {admin && (sel.size > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(220,38,38,.06)", border: "1px solid rgba(220,38,38,.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{lang === "en" ? `Selected ${fmtNum(sel.size)} rows · ${fmtNum(selPcs)} pcs` : `เลือกแล้ว ${fmtNum(sel.size)} แถว · ${fmtNum(selPcs)} ชิ้น`}</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="ghost" size="sm" onClick={() => setSel(new Set())} disabled={deleting}>{lang === "en" ? "Clear" : "ยกเลิกเลือก"}</Btn>
+              <Btn size="sm" onClick={doDeleteSelected} disabled={deleting} style={{ background: "var(--danger-hi)", color: "#fff", border: "none" }}>{deleting ? (lang === "en" ? "Deleting…" : "กำลังลบ...") : (lang === "en" ? "Delete selected" : "ลบที่เลือก")}</Btn>
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: tick rows to delete scans (choose how many · select all = whole rows go)" : "แอดมิน: ติ๊กแถวเพื่อลบสแกน (เลือกจำนวนได้ · เลือกทั้งหมด = หายทั้งแถว)"}</div>
+        ))}
+
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
             <thead><tr>
+              {admin && <th style={{ width: 34, textAlign: "center" }}>
+                <input type="checkbox" checked={sorted.length > 0 && sorted.every((g) => sel.has(g.key))} onChange={toggleAll}
+                  style={{ width: 16, height: 16, accentColor: "var(--accent)" }} title={lang === "en" ? "Select all" : "เลือกทั้งหมด"} />
+              </th>}
               <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
               <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
-              <SortTh k="pname" sort={sort}>{lang === "en" ? "Part name" : "ชื่อพาร์ท"}</SortTh>
+              <th style={{ whiteSpace: "nowrap" }}>{lang === "en" ? "Ordered" : "สั่ง"}</th>
               <SortTh k="ro" sort={sort}>Release</SortTh>
               <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
               <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
@@ -5628,14 +5688,22 @@ function MachineScanDetail({ machine, onBack }) {
             </tr></thead>
             <tbody>
               {logs === null ? (
-                <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</td></tr>
+                <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
+                <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
               ) : sorted.map((g) => (
-                <tr key={g.key}>
+                <tr key={g.key} style={admin && sel.has(g.key) ? { background: "rgba(37,99,235,.06)" } : undefined}>
+                  {admin && <td style={{ textAlign: "center" }}>
+                    <input type="checkbox" checked={sel.has(g.key)} onChange={() => toggleRow(g.key)}
+                      style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
+                  </td>}
                   <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
                   <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}</td>
-                  <td data-label={lang === "en" ? "Part name" : "ชื่อพาร์ท"}>{g.part_name}</td>
+                  <td data-label={lang === "en" ? "Ordered" : "สั่ง"} style={{ whiteSpace: "nowrap" }}>
+                    {orderQty[g.release_id] != null
+                      ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? "spare" : "สแปร์"}</span>}</>
+                      : "—"}
+                  </td>
                   <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{g.release_order}</td>
                   <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
                     {g.ops.length ? (
