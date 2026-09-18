@@ -5,6 +5,7 @@ import {
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, setReleaseMachineDone, supabase,
+  getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -131,18 +132,41 @@ function SortControl({ sort, options }) {
   );
 }
 
-// ── คอลัมน์ลากสลับตำแหน่งได้ + จำลำดับไว้ (ต่อผู้ใช้ในเครื่องนี้) ─────────────────
-// ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อย้าย · ลำดับเก็บใน localStorage แยกตามตาราง (id)
-function loadColOrder(id) {
+// ── คอลัมน์ลากสลับตำแหน่งได้ + จำลำดับใน DB 2 ระดับ (ค่ากลาง company + รายคน user) ─────────────
+//   ลำดับที่ใช้จริง: ของฉัน (user) > ค่ากลาง (company) > ค่าเริ่มต้นในโค้ด
+//   ลากที่จับ ⠿ = บันทึกเป็น "ของฉัน" อัตโนมัติ (ตามติด login ทุกเครื่อง) · มิเรอร์ค่ากลางใน localStorage ให้ลื่น/ออฟไลน์
+function _cpLoad(k) { try { const s = window.localStorage.getItem(k); return s ? JSON.parse(s) : {}; } catch { return {}; } }
+function _cpSaveLS(k, v) { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } }
+const COL_PREFS = { user: {}, company: _cpLoad("mls.colprefs.company"), loaded: false };   // user โหลดจาก DB ตอน login (ไม่มิเรอร์ กันปนกันบนเครื่องรวม)
+const _cpSubs = new Set();
+function _cpNotify() { _cpSubs.forEach((fn) => { try { fn(); } catch { /* ignore */ } }); }
+function _cpMirror() { _cpSaveLS("mls.colprefs.company", COL_PREFS.company); }
+async function loadColPrefs() {
+  COL_PREFS.user = {}; _cpNotify();   // ล้างของคนก่อนทันที (กันเห็นลำดับคนอื่นชั่ววูบบนเครื่องรวม)
   try {
-    const s = window.localStorage.getItem("mls.cols." + id);
-    if (s) { const a = JSON.parse(s); if (Array.isArray(a)) return a.filter((x) => typeof x === "string"); }
-  } catch { /* ignore */ }
-  return null;
+    const d = await getColumnPrefs();
+    COL_PREFS.user = d?.user || {};
+    COL_PREFS.company = d?.company || {};
+  } catch { /* ignore — ใช้ค่ามิเรอร์เดิม */ }
+  COL_PREFS.loaded = true; _cpMirror(); _cpNotify();
 }
-function saveColOrder(id, order) {
-  try { window.localStorage.setItem("mls.cols." + id, JSON.stringify(order)); } catch { /* ignore */ }
+function colOrderFor(id) { return COL_PREFS.user[id] || COL_PREFS.company[id] || null; }
+async function saveUserColOrder(id, order) {
+  COL_PREFS.user[id] = order; _cpNotify();
+  try { await setColumnPref("user", id, order); } catch { /* เก็บในหน่วยความจำแล้ว */ }
 }
+async function clearUserColOrder(id) {
+  delete COL_PREFS.user[id]; _cpNotify();
+  try { await clearColumnPref("user", id); } catch { /* ignore */ }
+}
+async function publishCompanyColPrefs() {   // แอดมิน: เอาลำดับ "ของฉัน" ทั้งหมด → ค่ากลาง
+  const prefs = { ...COL_PREFS.user };
+  COL_PREFS.company = { ...COL_PREFS.company, ...prefs }; _cpMirror(); _cpNotify();
+  return setColumnPrefsBulk("company", prefs);
+}
+async function clearAllMyColPrefs() { COL_PREFS.user = {}; _cpNotify(); return clearColumnPrefs("user"); }
+async function clearCompanyColPrefs() { COL_PREFS.company = {}; _cpMirror(); _cpNotify(); return clearColumnPrefs("company"); }
+
 // รวมลำดับที่บันทึกไว้กับชุดคอลัมน์ปัจจุบัน (ตัดตัวที่หายไป · ต่อท้ายตัวที่เพิ่มใหม่)
 function mergeColOrder(saved, keys) {
   if (!saved || !saved.length) return keys.slice();
@@ -153,22 +177,21 @@ function mergeColOrder(saved, keys) {
 }
 function useColOrder(id, keys) {
   const keySig = keys.join("|");
-  const [order, setOrder] = useState(() => mergeColOrder(loadColOrder(id), keys));
-  useEffect(() => { setOrder((o) => mergeColOrder(o, keys)); }, [keySig]);   // ชุดคอลัมน์เปลี่ยน → รวมลำดับใหม่
+  const [, force] = useState(0);
+  useEffect(() => { const fn = () => force((n) => n + 1); _cpSubs.add(fn); return () => { _cpSubs.delete(fn); }; }, []);
+  const saved = colOrderFor(id);
+  const order = useMemo(() => mergeColOrder(saved, keys), [saved ? saved.join("|") : "", keySig]);
   const [drag, setDrag] = useState(null);   // { from, over, side }
   const move = (fromKey, overKey, side) => {
     if (!fromKey || !overKey || fromKey === overKey) return;
-    setOrder((cur) => {
-      const arr = cur.filter((k) => k !== fromKey);
-      let idx = arr.indexOf(overKey);
-      if (idx < 0) return cur;
-      if (side === "right") idx += 1;
-      arr.splice(idx, 0, fromKey);
-      saveColOrder(id, arr);
-      return arr;
-    });
+    const arr = order.filter((k) => k !== fromKey);
+    let idx = arr.indexOf(overKey);
+    if (idx < 0) return;
+    if (side === "right") idx += 1;
+    arr.splice(idx, 0, fromKey);
+    saveUserColOrder(id, arr);
   };
-  const reset = () => { const k = keys.slice(); setOrder(k); saveColOrder(id, k); };
+  const reset = () => { clearUserColOrder(id); };
   return { order, move, reset, drag, setDrag };
 }
 // หัวคอลัมน์: คลิก = เรียงลำดับ (ถ้ามี sortKey) · ลากที่จับ ⠿ = ย้ายตำแหน่งคอลัมน์ (เมาส์/สัมผัส)
@@ -800,6 +823,7 @@ function Shell({ user, onLogout }) {
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
   const [verifyPreselect, setVerifyPreselect] = useState(""); // parent QR ส่งมาจากรายงานประกอบ/แพ็ก → เปิดหน้าตรวจเบอร์นั้นอัตโนมัติ
   const [verifyNonce, setVerifyNonce] = useState(0); // บั๊มพ์ทุกครั้งที่เข้าหน้าตรวจ → remount หน้าใหม่ (กดเมนูซ้ำ = เคลียร์ผลเดิม)
+  useEffect(() => { loadColPrefs(); }, [user?.id]);   // โหลดลำดับคอลัมน์ (ค่ากลาง company + ของฉัน user) จาก DB ตอนเข้าระบบ
 
   const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
   const currentLabel = MENU.flatMap((g) => g.items).find((i) => i.key === tab)?.label || "";
@@ -6919,6 +6943,7 @@ function SetupPage() {
     { key: "sessions", label: "ผู้ใช้ออนไลน์" },
     { key: "audit", label: "ประวัติการแก้ไข" },
     { key: "backup", label: "สำรองข้อมูล" },
+    { key: "display", label: "ลำดับคอลัมน์" },
   ];
   return (
     <div>
@@ -6936,7 +6961,51 @@ function SetupPage() {
       {tab === "audit" && <AuditLogCard />}
       {tab === "parts" && <PartMasterCrud />}
       {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
+      {tab === "display" && <ColumnLayoutCard />}
     </div>
+  );
+}
+
+// ─── ลำดับคอลัมน์ในตาราง: ล้างของฉัน · (แอดมิน) ตั้งเป็นค่ากลาง / ล้างค่ากลาง ────────
+function ColumnLayoutCard() {
+  const admin = isAdmin(getSession());
+  const [busy, setBusy] = useState("");
+  const [, force] = useState(0);
+  useEffect(() => { const fn = () => force((n) => n + 1); _cpSubs.add(fn); return () => { _cpSubs.delete(fn); }; }, []);
+  const nMine = Object.keys(COL_PREFS.user || {}).length;
+  const nCompany = Object.keys(COL_PREFS.company || {}).length;
+  async function run(kind) {
+    if (busy) return;
+    setBusy(kind);
+    try {
+      if (kind === "clearMine") { await clearAllMyColPrefs(); mlsToast("ล้างลำดับคอลัมน์ของฉันแล้ว", "ok"); }
+      else if (kind === "publish") { await publishCompanyColPrefs(); mlsToast("ตั้งลำดับปัจจุบันเป็นค่ากลางแล้ว — ทุกเครื่องจะเห็นเหมือนกัน", "ok"); }
+      else if (kind === "clearCompany") {
+        const ok = await askConfirm({ message: "ล้างลำดับคอลัมน์ค่ากลางทั้งหมด?\nทุกเครื่องที่ไม่ได้ตั้งเอง จะกลับไปใช้ลำดับเริ่มต้น", tone: "danger", confirmText: "ล้างค่ากลาง", cancelText: "ยกเลิก" });
+        if (!ok) { setBusy(""); return; }
+        await clearCompanyColPrefs(); mlsToast("ล้างค่ากลางแล้ว", "ok");
+      }
+    } catch (e) { mlsToast("ไม่สำเร็จ: " + (e?.message || e), "err"); }
+    finally { setBusy(""); }
+  }
+  return (
+    <Card title="ลำดับคอลัมน์ในตาราง">
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.75 }}>
+        ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อจัดลำดับ — ระบบจำเป็น <b>ของคุณเอง</b> อัตโนมัติ (ตามติดทุกเครื่องที่ล็อกอินบัญชีนี้)<br />
+        ลำดับที่ใช้จริง: <b>ของฉัน</b> ก่อน · ถ้าไม่ได้ตั้งเองใช้ <b>ค่ากลาง</b> · ถ้าไม่มีทั้งคู่ใช้ <b>ค่าเริ่มต้น</b><br />
+        ตอนนี้: ตั้งเอง <b>{nMine}</b> ตาราง · ค่ากลาง <b>{nCompany}</b> ตาราง
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Btn variant="ghost" onClick={() => run("clearMine")} disabled={!!busy}>{busy === "clearMine" ? "กำลังล้าง..." : "ล้างลำดับของฉัน (กลับค่ากลาง/เริ่มต้น)"}</Btn>
+        {admin && <Btn variant="accent" onClick={() => run("publish")} disabled={!!busy}>{busy === "publish" ? "กำลังตั้ง..." : "ตั้งลำดับปัจจุบันของฉันเป็นค่ากลาง (ทุกเครื่อง)"}</Btn>}
+        {admin && <Btn variant="ghost" onClick={() => run("clearCompany")} disabled={!!busy} style={{ color: "var(--danger-hi)" }}>{busy === "clearCompany" ? "กำลังล้าง..." : "ล้างค่ากลางทั้งหมด"}</Btn>}
+      </div>
+      {admin && (
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12, lineHeight: 1.6 }}>
+          💡 วิธีตั้งค่ากลาง: จัดลำดับคอลัมน์แต่ละตารางให้เรียบร้อย (ลาก ⠿) แล้วกด <b>"ตั้งเป็นค่ากลาง"</b> — ระบบจะเอาลำดับทุกตารางที่คุณจัดไว้ไปเป็นค่ากลางให้ทุกเครื่อง (คนที่ตั้งเองไว้แล้วยังใช้ของตัวเอง จนกว่าจะกด "ล้างลำดับของฉัน")
+        </div>
+      )}
+    </Card>
   );
 }
 
