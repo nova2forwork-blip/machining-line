@@ -5577,6 +5577,7 @@ function MachineScanDetail({ machine, onBack }) {
   // ฟอร์มแก้ทั้งแถว — รายสแกน (dt/weight/runMin/status/opIds) + ระดับล็อต/พาร์ท (partNo/releaseOrder/ordered/mat/partLen/matLen)
   const [edForm, setEdForm] = useState({ dt: "", weight: "", runMin: "", status: "", opIds: [], partNo: "", releaseOrder: "", ordered: "", mat: "", partLen: "", matLen: "" });
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
 
   useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setAllOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
 
@@ -5824,6 +5825,38 @@ function MachineScanDetail({ machine, onBack }) {
     } finally { setBusy(false); }
   }
 
+  // ── ดาวน์โหลดตารางสแกนของเครื่องนี้เป็น Excel (.xlsx) — คอลัมน์/ลำดับตรงกับที่เห็นบนจอ ──
+  async function doExportExcel() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const rows = sorted.map((g) => {
+        const row = {};
+        row[lang === "en" ? "Date · time" : "วัน · เวลา"] = fmtDT(g.time);
+        row[lang === "en" ? "Part No." : "เบอร์พาร์ท"] = g.part_no;
+        row["Release"] = g.release_order;
+        row[lang === "en" ? "Ordered" : "สั่ง"] = orderQty[g.release_id] != null ? orderQty[g.release_id] : "";
+        row[lang === "en" ? "Step" : "ขั้นตอน"] = (g.ops || []).map((o) => opLabel(o, lang)).join(" · ");
+        row[lang === "en" ? "Status" : "สถานะ"] = String(g.status).toLowerCase() === "finished" ? (lang === "en" ? "finished" : "เสร็จ") : (lang === "en" ? "in process" : "กำลังทำ");
+        row[lang === "en" ? "Qty" : "จำนวน"] = Number(g.qty) || 0;
+        { const v = partLenOf(g.release_id); row[lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)"] = v != null ? Number(v) : ""; }
+        row[lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"] = g.weight ? Number(g.weight) : "";
+        row["INV Code"] = relInfo[g.release_id]?.material || "";
+        { const ml = matLenMap[g.release_id] || []; row[lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"] = g.material_length_mm != null ? Number(g.material_length_mm) : (ml.length === 1 ? Number(ml[0]) : ""); }
+        row[lang === "en" ? "Run time" : "เวลาเดินเครื่อง"] = g.secs ? fmtHrs(g.secs) : "";
+        return row;
+      });
+      const tag = String(machine.code || machine.name || "machine").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 40);
+      const { downloadSheets } = await import("./excelExport.js");
+      await downloadSheets(`scans-${tag}-${todayStr()}.xlsx`, [{ name: lang === "en" ? "Scans" : "รายการสแกน", rows }]);
+    } catch (e) {
+      console.warn("export scans excel error", e);
+      mlsToast(lang === "en" ? "Export failed, please try again" : "สร้างไฟล์ Excel ไม่สำเร็จ ลองใหม่อีกครั้ง", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -5858,7 +5891,13 @@ function MachineScanDetail({ machine, onBack }) {
         </div>
       </Card>
 
-      <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}>
+      <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}
+        right={
+          <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || sorted.length === 0}
+            title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
+            <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : "Export Excel"}
+          </Btn>
+        }>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(grouped.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
