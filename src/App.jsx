@@ -5923,15 +5923,15 @@ function MachineScanDetail({ machine, onBack }) {
             </Field>
           </div>
           <div className="grid-2">
+            <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
+              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
+                placeholder={mls0.length > 1 ? `${lang === "en" ? "release has" : "ในล็อตมี"}: ${mls0.map(fmtNum).join(" · ")}` : ""} />
+            </Field>
             <Field label={lang === "en" ? "Status" : "สถานะ"}>
               <select value={edForm.status} onChange={(e) => setEdForm((f) => ({ ...f, status: e.target.value }))} disabled={nq === 0} style={inSel}>
                 <option value="inprocess">{lang === "en" ? "In process" : "กำลังทำ"}</option>
                 <option value="finished">{lang === "en" ? "Finished" : "เสร็จ"}</option>
               </select>
-            </Field>
-            <Field label={lang === "en" ? "Mat. Length (mm) — this scan" : "Mat. Length (มม.) — เฉพาะสแกนนี้"}>
-              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
-                placeholder={mls0.length > 1 ? `${lang === "en" ? "release has" : "ในล็อตมี"}: ${mls0.map(fmtNum).join(" · ")}` : ""} />
             </Field>
           </div>
           <Field label={lang === "en" ? "Step (tap to toggle · first = main)" : "ขั้นตอน (แตะเลือก/เอาออก · ตัวแรก = หลัก)"}>
