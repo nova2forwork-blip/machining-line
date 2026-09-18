@@ -641,6 +641,35 @@ export async function setScanMeta(partUnitId, scannedAt, processSeconds, status)
   return data || { ok: true };
 }
 
+// ── ลำดับคอลัมน์ในตาราง (2 ระดับ: company ค่ากลาง + user รายคน) · ดู migration-column-prefs.sql ──
+export async function getColumnPrefs() {
+  const { data, error } = await supabase.rpc("get_column_prefs", { p_token: authToken() });
+  if (error) { console.warn("get_column_prefs error", error); return { company: {}, user: {} }; }
+  return { company: (data && data.company) || {}, user: (data && data.user) || {} };
+}
+export async function setColumnPref(scope, tableId, colOrder) {
+  const { data, error } = await supabase.rpc("set_column_pref", { p_token: authToken(), p_scope: scope, p_table_id: tableId, p_col_order: colOrder });
+  if (error) { console.warn("set_column_pref error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+export async function setColumnPrefsBulk(scope, prefs) {
+  const { data, error } = await supabase.rpc("set_column_prefs_bulk", { p_token: authToken(), p_scope: scope, p_prefs: prefs || {} });
+  if (error) { console.warn("set_column_prefs_bulk error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+export async function clearColumnPref(scope, tableId) {
+  const { data, error } = await supabase.rpc("clear_column_pref", { p_token: authToken(), p_scope: scope, p_table_id: tableId });
+  if (error) { console.warn("clear_column_pref error", error); flagAuth(error); throw error; }
+  return data || { ok: true };
+}
+export async function clearColumnPrefs(scope) {
+  const { data, error } = await supabase.rpc("clear_column_prefs", { p_token: authToken(), p_scope: scope });
+  if (error) { console.warn("clear_column_prefs error", error); flagAuth(error); throw error; }
+  return data || { ok: true };
+}
+
 // ปรับ "จำนวนที่ทำเสร็จ (done)" ของเครื่องต่อ Release (แอดมิน) — เพิ่ม/ลด
 // target > done → สร้างสแกน (co-tick ครบขั้นตอนของเครื่อง) ให้ชิ้นที่ยังไม่ทำ · target < done → ลบสแกนเครื่องนี้ออก
 // ดู migration-set-release-machine-done.sql
