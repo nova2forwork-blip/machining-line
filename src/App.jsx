@@ -4518,6 +4518,9 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const releasedCount = units ? units.length - scannedCount : 0;
   const qtyNum = Number(qty) || 0;
   const delta = qtyNum - release.qty;
+  // ทำไปแล้วสูงสุด (ไว้เทียบสแปร์) — จากยอด done ของเครื่อง (co-tick aware) · ไม่มีงานเครื่อง → ใช้ยอดสแกนสำนักงาน
+  const doneMax = machines.length ? Math.max(0, ...machines.map((m) => Number(m.done) || 0)) : scannedCount;
+  const spare = Math.max(0, doneMax - qtyNum);   // เกินจำนวนสั่ง = สแปร์
 
   async function doSave() {
     if (!units) return;
@@ -4605,6 +4608,28 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
     setBusy(false);
   }
 
+  // ── ลบข้อมูลสแกนของล็อตนี้ (แก้กรณีสแกนเกิน/ผิด) — ใช้ตัวเดียวกับการ์ด "ล้างข้อมูลสแกน" ──
+  //   ลบ machine_records + รีเซ็ตสถานะชิ้นงานกลับเป็น "ยังไม่ทำ" · QR/ล็อต/พาร์ท ยังอยู่ครบ · กู้คืนไม่ได้
+  async function doClearScans() {
+    setErr("");
+    try {
+      const prev = await clearScansRelease(release.id, { preview: true });   // นับก่อนว่าจะลบกี่รายการ
+      const mr = Number(prev?.machine_records || 0);
+      if (mr === 0) { setErr("ล็อตนี้ยังไม่มีข้อมูลสแกนให้ลบ"); return; }
+      const ok = await askConfirm({
+        message: `ยืนยันลบข้อมูลสแกนของ Part นี้ (${fmtNum(mr)} รายการ · ${fmtNum(scannedCount)} ชิ้น)?\nยอดสแกนจะกลับเป็น 0 · QR/ล็อตยังอยู่ครบ · ลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`,
+        tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก",
+      });
+      if (!ok) return;
+      setBusy(true);
+      const res = await clearScansRelease(release.id, {});
+      auditRecord("clear_scans", "scan_data", release.id, { scope: "part", machine_records: res?.machine_records || 0, scan_logs: res?.scan_logs || 0 });
+      onSaved();
+    } catch (e) {
+      setErr("ลบข้อมูลสแกนไม่สำเร็จ: " + (e?.message || e));
+    } finally { setBusy(false); }
+  }
+
   return (
     <Modal title="แก้ไข Release" sub={`Part ${release.part_master?.part_no || "-"} — โปรเจค ${release.part_master?.projects?.code || "-"}`} onClose={onClose}>
       {units === null ? (
@@ -4684,7 +4709,9 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           )}
 
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-            ตอนนี้มี {units.length} ชิ้น — สแกนไปแล้ว {scannedCount} ชิ้น, ยังไม่สแกน {releasedCount} ชิ้น
+            สั่ง <b>{fmtNum(qtyNum)}</b> ชิ้น · สแกนแล้ว <b>{fmtNum(doneMax)}</b> ชิ้น
+            {spare > 0 && <span style={{ color: "var(--alert, #d97a00)", fontWeight: 700 }}> · เกิน {fmtNum(spare)} (สแปร์)</span>}
+            {releasedCount > 0 && <>{" "}· ยังไม่สแกน {fmtNum(releasedCount)} ชิ้น</>}
             {delta > 0 && <><br />จะสร้าง QR เพิ่มอีก <b>{delta}</b> ใบ ต่อท้ายล็อตเดิม</>}
             {delta < 0 && <><br />จะลบ QR ที่ยังไม่สแกนออก <b>{Math.abs(delta)}</b> ใบ</>}
           </div>
@@ -4692,12 +4719,20 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
 
           <div className="modal-actions" style={{ justifyContent: "space-between" }}>
-            {onDelete ? (
-              <Btn type="button" variant="ghost" onClick={onDelete} disabled={busy}
-                style={{ color: "var(--danger-hi)" }}>
-                ลบ Part นี้
-              </Btn>
-            ) : <span />}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {onDelete && (
+                <Btn type="button" variant="ghost" onClick={onDelete} disabled={busy}
+                  style={{ color: "var(--danger-hi)" }}>
+                  ลบ Part นี้
+                </Btn>
+              )}
+              {scannedCount > 0 && (
+                <Btn type="button" variant="ghost" onClick={doClearScans} disabled={busy}
+                  style={{ color: "var(--danger-hi)" }} title="ลบข้อมูลสแกนของล็อตนี้ (แก้สแกนเกิน/ผิด) — QR/ล็อตยังอยู่">
+                  ลบข้อมูลสแกน
+                </Btn>
+              )}
+            </div>
             <div style={{ display: "flex", gap: 8 }}>
               <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
               <Btn type="button" variant="accent" onClick={doSave} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
