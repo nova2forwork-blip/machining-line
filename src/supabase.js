@@ -644,7 +644,7 @@ export async function setScanMeta(partUnitId, scannedAt, processSeconds, status)
 // แก้ "1 การสแกน" ครบทุกช่องรายสแกน (แอดมิน) — จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน · ดู migration-edit-scan.sql
 // qty=0 → ลบทั้งสแกน · weight=null → คิดอัตโนมัติจากจำนวน · ช่องอื่น null = ไม่แก้
 export async function editScan(partUnitId, scannedAt, opts = {}) {
-  const { qty, weight, secs, status, recordedAt, opIds } = opts;
+  const { qty, weight, secs, status, recordedAt, opIds, matLen } = opts;
   const { data, error } = await supabase.rpc("edit_scan", {
     p_token: authToken(),
     p_part_unit_id: partUnitId,
@@ -655,6 +655,7 @@ export async function editScan(partUnitId, scannedAt, opts = {}) {
     p_status: status || null,
     p_recorded_at: recordedAt || null,
     p_operation_ids: opIds && opIds.length ? opIds : null,
+    p_material_length_mm: matLen == null || matLen === "" ? null : Number(matLen),
   });
   if (error) { console.warn("edit_scan error", error); flagAuth(error); throw error; }
   if (data && data.ok === false) throw new Error(data.reason || "failed");
