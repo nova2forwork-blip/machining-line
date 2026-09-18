@@ -5623,7 +5623,7 @@ function MachineScanDetail({ machine, onBack }) {
           part_name: l.part_unit?.part_master?.part_name || "—",
           release_order: l.release_order || "—", release_id: l.release_id,
           status: l.status, part_unit_id: l.part_unit_id,
-          ops: op ? [op] : [], qty: qv, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+          ops: op ? [op] : [], qty: qv, weight: logWeight(l), secs: Number(l.process_seconds) || 0, material_length_mm: l.material_length_mm != null ? Number(l.material_length_mm) : null,
         };
         out.push(cur);
       } else if (cur && cur.part_unit_id === l.part_unit_id
@@ -5638,7 +5638,7 @@ function MachineScanDetail({ machine, onBack }) {
           part_name: l.part_unit?.part_master?.part_name || "—",
           release_order: l.release_order || "—", release_id: l.release_id,
           status: l.status, part_unit_id: l.part_unit_id,
-          ops: op ? [op] : [], qty: 0, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+          ops: op ? [op] : [], qty: 0, weight: logWeight(l), secs: Number(l.process_seconds) || 0, material_length_mm: l.material_length_mm != null ? Number(l.material_length_mm) : null,
         });
       }
     }
@@ -5708,7 +5708,7 @@ function MachineScanDetail({ machine, onBack }) {
       ordered: ri.qty != null ? String(ri.qty) : (orderQty[g.release_id] != null ? String(orderQty[g.release_id]) : ""),
       mat: ri.material || "",
       partLen: (pl == null || pl === "") ? "" : String(pl),
-      matLen: ml.length === 1 ? String(ml[0]) : "",
+      matLen: g.material_length_mm != null ? String(g.material_length_mm) : (ml.length === 1 ? String(ml[0]) : ""),
     });
   };
   async function doApply() {
@@ -5729,7 +5729,7 @@ function MachineScanDetail({ machine, onBack }) {
     const origOrdered = ri.qty != null ? Number(ri.qty) : (orderQty[g.release_id] != null ? Number(orderQty[g.release_id]) : null);
     const origMat = ri.material || "";
     const origPartLen = (ri.length_mm ?? ri.default_length_mm ?? "");
-    const origMatLen = ml0.length === 1 ? Number(ml0[0]) : null;
+    const origMatLen = g.material_length_mm != null ? Number(g.material_length_mm) : (ml0.length === 1 ? Number(ml0[0]) : null);
 
     const isDelete = nq === 0;
     const nWeight = edForm.weight === "" ? null : Number(edForm.weight);
@@ -5750,15 +5750,15 @@ function MachineScanDetail({ machine, onBack }) {
     const statusChanged = !isDelete && nStatus !== origStatus;
     const dtChanged = !isDelete && edForm.dt !== "" && edForm.dt !== origDT;
     const opsChanged = !isDelete && nOps.length >= 1 && nOps.join(",") !== origOps.join(",");
-    const scanChanged = qtyChanged || wtChanged || runChanged || statusChanged || dtChanged || opsChanged;
+    const mlChanged = !isDelete && nMatLen !== "" && Number(nMatLen) > 0 && Number(nMatLen) !== (origMatLen ?? NaN);   // Mat. Length = รายสแกน
+    const scanChanged = qtyChanged || wtChanged || runChanged || statusChanged || dtChanged || opsChanged || mlChanged;
     // ระดับล็อต/พาร์ท
     const partNoChanged = !isDelete && nPartNo !== "" && nPartNo !== origPartNo;
     const roChanged = !isDelete && nRO !== origRO;
     const orderedChanged = !isDelete && nOrdered != null && nOrdered !== (origOrdered ?? NaN);
     const matChanged = !isDelete && nMat !== (origMat || "");
     const plChanged = !isDelete && String(nPartLen) !== String(origPartLen ?? "");
-    const mlChanged = !isDelete && nMatLen !== "" && Number(nMatLen) > 0 && Number(nMatLen) !== (origMatLen ?? NaN);
-    const lotChanged = partNoChanged || roChanged || orderedChanged || matChanged || plChanged || mlChanged;
+    const lotChanged = partNoChanged || roChanged || orderedChanged || matChanged || plChanged;
 
     if (!isDelete && !scanChanged && !lotChanged) { setEditRow(null); return; }
 
@@ -5767,7 +5767,7 @@ function MachineScanDetail({ machine, onBack }) {
         ? `ยืนยันลบสแกนนี้ทั้งแถว?\n${g.part_no} · ${fmtNum(cur)} ชิ้น → ชิ้นกลับเป็น "ยังไม่ทำ" (QR/ล็อตยังอยู่) · ลบแล้วกู้คืนไม่ได้`
         : `ยืนยันบันทึกการแก้ไขแถวนี้?\n${g.part_no} · ${fmtDT(g.time)}`
           + (scanChanged ? `\n· แก้ข้อมูลเฉพาะสแกนนี้` : "")
-          + (lotChanged ? `\n\n⚠️ Part No. / Release / จำนวนสั่ง / INV / ความยาว / Mat. Length มีผลกับ "ทุกสแกน" ของ Release/พาร์ทนี้ ไม่ใช่แค่แถวนี้` : ""),
+          + (lotChanged ? `\n\n⚠️ Part No. / Release / จำนวนสั่ง / INV / ความยาวพาร์ท มีผลกับ "ทุกสแกน" ของ Release/พาร์ทนี้ ไม่ใช่แค่แถวนี้` : ""),
       tone: isDelete ? "danger" : "warn", confirmText: isDelete ? "ลบทั้งแถว" : "บันทึก", cancelText: "ยกเลิก",
     });
     if (!ok) return;
@@ -5786,6 +5786,7 @@ function MachineScanDetail({ machine, onBack }) {
             status: statusChanged ? nStatus : null,
             recordedAt: dtChanged ? fromDTLocal(edForm.dt) : null,
             opIds: opsChanged ? nOps : null,
+            matLen: mlChanged ? nMatLen : null,           // Mat. Length = เฉพาะสแกนนี้
           });
         }
         // ── ระดับพาร์ท (part_master: Part No. + INV) — มีผลทุก Release ของพาร์ทนี้ ──
@@ -5800,7 +5801,6 @@ function MachineScanDetail({ machine, onBack }) {
         if (plChanged) relPatch.length_mm = (nPartLen === "" ? null : Number(nPartLen));
         if (Object.keys(relPatch).length) await updateRow("releases", g.release_id, relPatch);
         if (plChanged) await updateRows("part_units", { release_id: g.release_id }, { length_mm: (nPartLen === "" ? null : Number(nPartLen)) });
-        if (mlChanged) await setReleaseMaterialLength(g.release_id, Number(nMatLen));
         auditRecord("clear_scans", "scan_data", g.release_id, { scope: "scan_edit_all", machine: mkey });
       }
       setEditRow(null);
@@ -5892,7 +5892,7 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "secs", header: lang === "en" ? "Run time" : "เวลาเดินเครื่อง", sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.secs ? fmtHrs(g.secs) : "—" },
             { key: "inv", header: "INV Code", dataLabel: "INV Code", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => relInfo[g.release_id]?.material || "-" },
             { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
-            { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => matLenTextOf(g.release_id) },
+            { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.material_length_mm != null ? fmtNum(g.material_length_mm) : matLenTextOf(g.release_id) },
           ]} />
       </Card>
 
@@ -5922,12 +5922,18 @@ function MachineScanDetail({ machine, onBack }) {
               <Input type="number" min={0} value={edForm.runMin} onChange={(e) => setEdForm((f) => ({ ...f, runMin: e.target.value }))} disabled={nq === 0} />
             </Field>
           </div>
-          <Field label={lang === "en" ? "Status" : "สถานะ"}>
-            <select value={edForm.status} onChange={(e) => setEdForm((f) => ({ ...f, status: e.target.value }))} disabled={nq === 0} style={inSel}>
-              <option value="inprocess">{lang === "en" ? "In process" : "กำลังทำ"}</option>
-              <option value="finished">{lang === "en" ? "Finished" : "เสร็จ"}</option>
-            </select>
-          </Field>
+          <div className="grid-2">
+            <Field label={lang === "en" ? "Status" : "สถานะ"}>
+              <select value={edForm.status} onChange={(e) => setEdForm((f) => ({ ...f, status: e.target.value }))} disabled={nq === 0} style={inSel}>
+                <option value="inprocess">{lang === "en" ? "In process" : "กำลังทำ"}</option>
+                <option value="finished">{lang === "en" ? "Finished" : "เสร็จ"}</option>
+              </select>
+            </Field>
+            <Field label={lang === "en" ? "Mat. Length (mm) — this scan" : "Mat. Length (มม.) — เฉพาะสแกนนี้"}>
+              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
+                placeholder={mls0.length > 1 ? `${lang === "en" ? "release has" : "ในล็อตมี"}: ${mls0.map(fmtNum).join(" · ")}` : ""} />
+            </Field>
+          </div>
           <Field label={lang === "en" ? "Step (tap to toggle · first = main)" : "ขั้นตอน (แตะเลือก/เอาออก · ตัวแรก = หลัก)"}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {allOps.length === 0 ? <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span> : allOps.map((o) => {
@@ -5970,13 +5976,9 @@ function MachineScanDetail({ machine, onBack }) {
             <Field label={lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)"}>
               <Input type="number" step="0.1" min="0" value={edForm.partLen} onChange={(e) => setEdForm((f) => ({ ...f, partLen: e.target.value }))} disabled={nq === 0} />
             </Field>
-            <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
-              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
-                placeholder={mls0.length > 1 ? `${lang === "en" ? "multiple" : "หลายค่า"}: ${mls0.map(fmtNum).join(" · ")}` : (mls0.length === 0 ? (lang === "en" ? "no scans yet" : "ยังไม่มีค่า") : "")} />
-            </Field>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 14px", lineHeight: 1.6 }}>
-            ⚠️ {lang === "en" ? "These 6 fields change the whole Release/part (every scan), not just this row" : "6 ช่องนี้มีผลกับทั้ง Release/พาร์ท (ทุกสแกน) ไม่ใช่แค่แถวนี้"}
+            ⚠️ {lang === "en" ? "These 5 fields change the whole Release/part (every scan), not just this row" : "5 ช่องนี้มีผลกับทั้ง Release/พาร์ท (ทุกสแกน) ไม่ใช่แค่แถวนี้"}
           </div>
 
           <div className="modal-actions">
