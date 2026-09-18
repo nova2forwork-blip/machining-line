@@ -208,6 +208,7 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
   };
   const thStyle = {
     ...(col.thStyle || {}),
+    ...(col.align ? { textAlign: col.align } : {}),
     cursor: col.sortKey ? "pointer" : ((col.thStyle && col.thStyle.cursor) || "default"),
     userSelect: "none",
     opacity: isFrom ? 0.45 : 1,
@@ -229,7 +230,7 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
 }
 // ตารางข้อมูลที่คอลัมน์ลากสลับได้ (ขับด้วย config: หัว+ค่าอยู่ด้วยกัน จึงไม่มีทางสลับผิดคู่)
 // columns: [{ key, header, sortKey?, thStyle?, tdStyle?, tdProps?(row,i,ctx), cell(row,i,ctx), dataLabel? }]
-function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, empty, orderApiRef }) {
+function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef }) {
   const cols0 = (columns || []).filter(Boolean);
   const keys = cols0.map((c) => c.key);
   const { order, move, reset, drag, setDrag } = useColOrder(id, keys);
@@ -239,8 +240,8 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
   const cols = order.map((k) => byKey[k]).filter(Boolean);
   const data = (sort && sortAccessors) ? sort.sortRows(rows, sortAccessors) : (rows || []);
   return (
-    <div className={wrapClass || "table-wrap"}>
-      <table className={tableClass || "data-table"}>
+    <div className={wrapClass || "table-wrap"} style={wrapStyle}>
+      <table className={tableClass || "data-table"} style={tableStyle}>
         <thead>
           <tr>
             {cols.map((c) => <ReorderTh key={c.key} col={c} sort={sort} drag={drag} setDrag={setDrag} onMove={move} />)}
@@ -261,7 +262,7 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
                   return (
                     <td key={c.key}
                         data-label={c.dataLabel != null ? c.dataLabel : (typeof c.header === "string" ? c.header : "")}
-                        style={{ ...(c.tdStyle || {}), ...(tstyle || {}) }} {...(trest || {})}>
+                        style={{ ...(c.align ? { textAlign: c.align } : {}), ...(c.tdStyle || {}), ...(tstyle || {}) }} {...(trest || {})}>
                       {c.cell ? c.cell(row, i, ctx) : null}
                     </td>
                   );
@@ -2496,8 +2497,8 @@ function ProgressBar({ pct, finished, total }) {
   const label = pctLabel(rawPct, complete);
   const color = complete ? "var(--success)" : width > 0 ? "var(--accent-dk)" : "var(--border)";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 160 }}>
-      <div style={{ flex: 1, height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", border: "1px solid var(--border)" }}>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <div style={{ flex: "0 0 90px", width: 90, height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", border: "1px solid var(--border)" }}>
         <div style={{ width: `${width}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
       </div>
       <span style={{ fontSize: 12, fontWeight: 600, color, whiteSpace: "nowrap", minWidth: 44, textAlign: "right" }}>
@@ -3028,7 +3029,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               cell: (r, i) => i + 1 },
             { key: "part_no", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part_no",
               tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.part_master?.part_no || "-" },
-            { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", cell: (r) => fmtNum(r.qty) },
+            { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", cell: (r) => fmtNum(r.qty) },
             { key: "finished", header: lang === "en" ? "Finished" : "เสร็จแล้ว", sortKey: "finished",
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : (
                 <>
@@ -3048,15 +3049,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 </>
               ) },
             { key: "progress", header: lang === "en" ? "Progress" : "ความคืบหน้า", sortKey: "progress",
-              tdStyle: { minWidth: 180 },
+              tdStyle: { whiteSpace: "nowrap" },
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : <ProgressBar pct={c.pct} finished={c.done} total={c.total} /> },
             ...(!isAsmGroup ? [
-              { key: "uw", header: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น", sortKey: "uw", cell: (r) => r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-" },
-              { key: "tw", header: lang === "en" ? "Total weight" : "น้ำหนักรวม", sortKey: "tw", cell: (r) => r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-" },
+              { key: "uw", header: lang === "en" ? "Weight/pc" : "น้ำหนัก/ชิ้น", sortKey: "uw", align: "right", cell: (r) => r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-" },
+              { key: "tw", header: lang === "en" ? "Total weight" : "น้ำหนักรวม", sortKey: "tw", align: "right", cell: (r) => r.unit_weight ? `${fmtNum(r.qty * r.unit_weight)} กก.` : "-" },
             ] : []),
-            { key: "len", header: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น", sortKey: "len", cell: (r) => r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-" },
+            { key: "len", header: lang === "en" ? "Length/pc" : "ความยาว/ชิ้น", sortKey: "len", align: "right", cell: (r) => r.length_mm ? `${fmtNum(r.length_mm)} มม.` : "-" },
             { key: "material", header: "INV Code", sortKey: "material", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_master?.material || r.material || "-" },
-            { key: "matlen", header: "Mat. Length", sortKey: "matlen", tdStyle: { whiteSpace: "nowrap" },
+            { key: "matlen", header: "Mat. Length", sortKey: "matlen", align: "right", tdStyle: { whiteSpace: "nowrap" },
               cell: (r) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r) },
             { key: "remark", header: lang === "en" ? "Remark" : "หมายเหตุ", cell: (r) => r.note || "-" },
             ...(canEdit ? [{ key: "manage", header: lang === "en" ? "Manage" : "จัดการ",
@@ -3271,64 +3272,40 @@ function ReleasePage({ user, goTo }) {
           { k: "date", label: "วันที่" }, { k: "project", label: "โปรเจค" }, { k: "order", label: "Release Order" },
           { k: "parts", label: "Part No." }, { k: "qty", label: "จำนวน" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
         ]} />
-        <div className="table-wrap tall-scroll">
-          <table className="data-table responsive-cards">
-            <thead><tr>
-              <SortTh k="date" sort={sort}>วันที่</SortTh>
-              <SortTh k="project" sort={sort}>โปรเจค</SortTh>
-              <SortTh k="order" sort={sort}>Release Order</SortTh>
-              <SortTh k="parts" sort={sort}>Part No.</SortTh>
-              <SortTh k="qty" sort={sort}>จำนวน</SortTh>
-              <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
-              <SortTh k="weight" sort={sort}>น้ำหนักรวม</SortTh>
-              <th>หมายเหตุ</th>
-            </tr></thead>
-            <tbody>
-              {sort.sortRows(groups, {
-                date: (g) => new Date(g.date).getTime() || 0,
-                project: (g) => g.projectCode || "",
-                order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
-                parts: (g) => g.releases.length,
-                qty: (g) => g.totalQty || 0,
-                weight: (g) => g.totalWeight || 0,
-                progress: (g) => {
-                  const t = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
-                  const f = computeGroupProgress(g.releases, allUnitStats, allOpProg, t).finished;
-                  return t > 0 ? f / t : 0;
-                },
-              }).map((g) => {
-                // รวม stats ของทุก release ในกลุ่มนี้ — "เสร็จ" = MAX(สแกนออฟฟิศ, งานหน้าเครื่องขั้นตอนสุดท้าย)
-                const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
-                const gFinished = computeGroupProgress(g.releases, allUnitStats, allOpProg, gTotal).finished;
-                const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
-                const statsReady = g.releases.every((r) => r.id in allUnitStats);
-                return (
-                  <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
-                    <td data-label="วันที่">{fmtD(g.date)}</td>
-                    <td data-label="โปรเจค">{g.projectCode}</td>
-                    <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                    <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
-                    <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
-                    <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
-                      {statsReady && gPct !== null ? (
-                        <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
-                      ) : (
-                        <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
-                      )}
-                    </td>
-                    <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
-                    <td data-label="หมายเหตุ">{g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ`}</td>
-                  </tr>
-                );
-              })}
-              {!loading && groups.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>
-                  {hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม"}
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable id="release-history" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+          rows={groups} rowKey={(g) => g.key} sort={sort}
+          sortAccessors={{
+            date: (g) => new Date(g.date).getTime() || 0,
+            project: (g) => g.projectCode || "",
+            order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
+            parts: (g) => g.releases.length,
+            qty: (g) => g.totalQty || 0,
+            weight: (g) => g.totalWeight || 0,
+            progress: (g) => {
+              const t = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
+              const f = computeGroupProgress(g.releases, allUnitStats, allOpProg, t).finished;
+              return t > 0 ? f / t : 0;
+            },
+          }}
+          rowCtx={(g) => {
+            const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
+            const gFinished = computeGroupProgress(g.releases, allUnitStats, allOpProg, gTotal).finished;
+            const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
+            return { gTotal, gFinished, gPct, statsReady: g.releases.every((r) => r.id in allUnitStats) };
+          }}
+          rowProps={(g) => ({ className: "release-row", onClick: () => setViewGroup(g) })}
+          empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม")}
+          columns={[
+            { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
+            { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
+            { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-") },
+            { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
+            { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
+            { key: "progress", header: "ความคืบหน้า", sortKey: "progress", tdStyle: { whiteSpace: "nowrap" },
+              cell: (g, i, c) => c.statsReady && c.gPct !== null ? <ProgressBar pct={c.gPct} finished={c.gFinished} total={c.gTotal} /> : <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span> },
+            { key: "weight", header: "น้ำหนักรวม", sortKey: "weight", align: "right", cell: (g) => g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-" },
+            { key: "remark", header: "หมายเหตุ", cell: (g) => g.notes.size === 0 ? "-" : g.notes.size === 1 ? [...g.notes][0] : `${g.notes.size} หมายเหตุ` },
+          ]} />
       </Card>
 
       {showAdd && (
@@ -4092,33 +4069,21 @@ function FinishedPartSection() {
             <div className="empty-state-sub">รายการจะปรากฏที่นี่เมื่อชิ้นงานผ่านครบทุกขั้นตอนตาม Routing</div>
           </div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr>
-                <SortTh k="qr" sort={sort}>QR</SortTh>
-                <SortTh k="part" sort={sort}>Part</SortTh>
-                <SortTh k="proj" sort={sort}>โปรเจค</SortTh>
-                <SortTh k="weight" sort={sort}>น้ำหนัก</SortTh>
-                <SortTh k="len" sort={sort}>ความยาว</SortTh>
-              </tr></thead>
-              <tbody>
-                {sort.sortRows(units, {
-                  qr: (u) => u.qr_code || "", part: (u) => u.part_master?.part_no || "",
-                  proj: (u) => u.part_master?.projects?.name || "",
-                  weight: (u) => Number(u.weight || u.part_master?.unit_weight || 0),
-                  len: (u) => Number(u.length_mm || u.part_master?.default_length_mm || 0),
-                }).map((u) => (
-                  <tr key={u.id}>
-                    <td style={{ fontFamily: "var(--font-mono)" }}>{u.qr_code}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>{u.part_master?.part_no} — {u.part_master?.part_name}</td>
-                    <td>{u.part_master?.projects?.name || "-"}</td>
-                    <td>{fmtNum(u.weight || u.part_master?.unit_weight)}</td>
-                    <td>{u.length_mm || u.part_master?.default_length_mm ? `${fmtNum(u.length_mm || u.part_master?.default_length_mm)} มม.` : "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="finished-parts" wrapClass="table-wrap" tableClass="data-table"
+            rows={units} rowKey={(u) => u.id} sort={sort}
+            sortAccessors={{
+              qr: (u) => u.qr_code || "", part: (u) => u.part_master?.part_no || "",
+              proj: (u) => u.part_master?.projects?.name || "",
+              weight: (u) => Number(u.weight || u.part_master?.unit_weight || 0),
+              len: (u) => Number(u.length_mm || u.part_master?.default_length_mm || 0),
+            }}
+            columns={[
+              { key: "qr", header: "QR", sortKey: "qr", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (u) => u.qr_code },
+              { key: "part", header: "Part", sortKey: "part", tdStyle: { whiteSpace: "nowrap" }, cell: (u) => <>{u.part_master?.part_no} — {u.part_master?.part_name}</> },
+              { key: "proj", header: "โปรเจค", sortKey: "proj", cell: (u) => u.part_master?.projects?.name || "-" },
+              { key: "weight", header: "น้ำหนัก", sortKey: "weight", align: "right", cell: (u) => fmtNum(u.weight || u.part_master?.unit_weight) },
+              { key: "len", header: "ความยาว", sortKey: "len", align: "right", cell: (u) => u.length_mm || u.part_master?.default_length_mm ? `${fmtNum(u.length_mm || u.part_master?.default_length_mm)} มม.` : "-" },
+            ]} />
         )}
       </Card>
     </>
@@ -4966,33 +4931,27 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
         {loading ? <div style={{ color: "var(--muted)", padding: 12 }}>กำลังโหลด…</div>
           : rows.length === 0 ? <div style={{ color: "var(--muted)", padding: 12 }}>ไม่มีข้อมูลในช่วงนี้</div>
           : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="data-table" style={{ minWidth: 620 }}>
-                <thead><tr>
-                  <th>เบอร์แม่</th><th>เบอร์ลูก</th><th>ชนิด</th>
-                  <th style={{ textAlign: "right" }}>ยาว (มม.)</th><th style={{ textAlign: "right" }}>จำนวน (ชิ้น)</th>
-                </tr></thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i}
-                      onClick={() => goTo && goTo("verify", { qr: r.parent_qr })}
-                      title={goTo ? "กดเพื่อเปิดหน้าตรวจเบอร์นี้" : undefined}
-                      style={{ cursor: goTo ? "pointer" : "default" }}
-                      onMouseEnter={(e) => { if (goTo) e.currentTarget.style.background = "var(--accent-soft, rgba(16,185,129,.07))"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>
-                      <td>
-                        <span style={{ fontWeight: 700, color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit" }}>{r.parent_no}</span>
-                        <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
-                      </td>
-                      <td>{r.child_no}</td>
-                      <td>{kindTh(r.child_kind)}</td>
-                      <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fmtL(r.length_mm)}</td>
-                      <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{r.qty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable id="assembly-report" wrapClass="table-wrap" wrapStyle={{ overflowX: "auto" }} tableClass="data-table" tableStyle={{ minWidth: 620 }}
+              rows={rows} rowKey={(r, i) => i}
+              rowProps={(r) => ({
+                onClick: () => goTo && goTo("verify", { qr: r.parent_qr }),
+                title: goTo ? "กดเพื่อเปิดหน้าตรวจเบอร์นี้" : undefined,
+                style: { cursor: goTo ? "pointer" : "default" },
+                onMouseEnter: (e) => { if (goTo) e.currentTarget.style.background = "var(--accent-soft, rgba(16,185,129,.07))"; },
+                onMouseLeave: (e) => { e.currentTarget.style.background = ""; },
+              })}
+              columns={[
+                { key: "parent", header: "เบอร์แม่", cell: (r) => (
+                  <>
+                    <span style={{ fontWeight: 700, color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit" }}>{r.parent_no}</span>
+                    <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
+                  </>
+                ) },
+                { key: "child", header: "เบอร์ลูก", cell: (r) => r.child_no },
+                { key: "kind", header: "ชนิด", cell: (r) => kindTh(r.child_kind) },
+                { key: "length", header: "ยาว (มม.)", align: "right", tdStyle: { fontFamily: "monospace" }, cell: (r) => fmtL(r.length_mm) },
+                { key: "qty", header: "จำนวน (ชิ้น)", align: "right", tdStyle: { fontFamily: "monospace", fontWeight: 700 }, cell: (r) => r.qty },
+              ]} />
           )}
       </Card>
     </div>
@@ -5077,36 +5036,19 @@ function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onCl
         <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
         <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</div><div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-dk)" }}>{fmtNum(totWt)} {lang === "en" ? "kg" : "กก."}</div></div>
       </div>
-      <div className="table-wrap tall-scroll">
-        <table className="data-table responsive-cards">
-          <thead><tr>
-            <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
-            {showPart && <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>}
-            {showMachine && <SortTh k="mach" sort={sort}>{lang === "en" ? "Machine" : "เครื่อง"}</SortTh>}
-            <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
-            <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
-            <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
-            <SortTh k="weight" sort={sort}>{lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"}</SortTh>
-          </tr></thead>
-          <tbody>
-            {sorted.length === 0 ? (
-              <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans" : "ไม่มีการสแกน"}</td></tr>
-            ) : sorted.map((g) => (
-              <tr key={g.key}>
-                <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
-                {showPart && <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}{g.part_name && g.part_name !== g.part_no ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {g.part_name}</span> : null}</td>}
-                {showMachine && <td data-label={lang === "en" ? "Machine" : "เครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{g.machine_code}</td>}
-                <td data-label={lang === "en" ? "Step" : "ขั้นตอน"}>
-                  {g.ops.length ? <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>{rankOps(g.ops).map(chip)}</span> : "—"}
-                </td>
-                <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(g.status)}</td>
-                <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(g.qty)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
-                <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{g.weight ? fmtNum(g.weight) : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id="scan-drill" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+        rows={sorted} rowKey={(g) => g.key} sort={sort}
+        empty={lang === "en" ? "No scans" : "ไม่มีการสแกน"}
+        columns={[
+          { key: "time", header: lang === "en" ? "Date · time" : "วัน · เวลา", sortKey: "time", tdStyle: { whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (g) => fmtDT(g.time) },
+          ...(showPart ? [{ key: "part", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" },
+            cell: (g) => <>{g.part_no}{g.part_name && g.part_name !== g.part_no ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {g.part_name}</span> : null}</> }] : []),
+          ...(showMachine ? [{ key: "mach", header: lang === "en" ? "Machine" : "เครื่อง", sortKey: "mach", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.machine_code }] : []),
+          { key: "op", header: lang === "en" ? "Step" : "ขั้นตอน", sortKey: "op", cell: (g) => g.ops.length ? <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>{rankOps(g.ops).map(chip)}</span> : "—" },
+          { key: "status", header: lang === "en" ? "Status" : "สถานะ", sortKey: "status", cell: (g) => pill(g.status) },
+          { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", tdStyle: { fontWeight: 600 }, cell: (g) => `${fmtNum(g.qty)} ${lang === "en" ? "pcs" : "ชิ้น"}` },
+          { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (g) => g.weight ? fmtNum(g.weight) : "—" },
+        ]} />
     </Modal>
   );
 }
@@ -5480,59 +5422,35 @@ function ReportPage({ goTo }) {
         {matrix.machines.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (
-          <div className="table-wrap tall-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <SortTh k="code" sort={sortM}>{lang === "en" ? "Machine code" : "รหัสเครื่อง"}</SortTh>
-                  <SortTh k="name" sort={sortM}>เครื่องจักร</SortTh>
-                  {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortM} key={op}>{opLabel(op, lang)}</SortTh>)}
-                  <SortTh k="total" sort={sortM}>รวม (ชิ้น)</SortTh>
-                  <SortTh k="weight" sort={sortM}>น้ำหนัก (กก.)</SortTh>
-                  <SortTh k="time" sort={sortM}>เวลาเดินเครื่อง</SortTh>
-                  <SortTh k="secPer" sort={sortM}>วินาที/ชิ้น</SortTh>
-                  <SortTh k="avgKg" sort={sortM}>เฉลี่ย กก./วัน</SortTh>
-                  <SortTh k="avgPcs" sort={sortM}>เฉลี่ย ชิ้น/วัน</SortTh>
-                </tr>
-              </thead>
-              <tbody>
-                {sortM.sortRows(matrix.machines, machineAcc).map((m) => {
-                  const dm = dailyMatrix.machines.find((x) => x.name === m.name);
-                  return (
-                    <tr key={m.name} className="release-row" style={{ cursor: "pointer" }}
-                      onClick={() => setDrill({
-                        mode: "machine",
-                        title: m.code || m.name,
-                        subtitle: (m.code && m.name ? m.name + " · " : "") + (lang === "en" ? "scans in the selected period" : "การสแกนในช่วงที่เลือก"),
-                        logs: filteredLogs.filter((l) => (l.machine?.code || l.machine?.name) === (m.code || m.name)),
-                      })}
-                      title={lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้"}>
-                      <td style={{ fontFamily: "var(--font-mono)", color: "var(--muted)", whiteSpace: "nowrap" }}>{m.code || "—"}</td>
-                      <td style={{ fontWeight: 600 }}>{m.name}</td>
-                      {matrix.opNames.map((op) => {
-                        const cell = m.ops[op];
-                        return (
-                          <td key={op}>
-                            {cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>}
-                          </td>
-                        );
-                      })}
-                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{m.total.count.toLocaleString()} ชิ้น</td>
-                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—"}</td>
-                      <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
-                      <td style={{ fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }}>{(m.total.seconds && m.total.count) ? `${(m.total.seconds / m.total.count).toFixed(1)} วิ` : "—"}</td>
-                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{dm ? `${fmtNum(dm.avg.weight)} กก.` : "—"}</td>
-                      <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>
-                        {dm
-                          ? <span>{fmtNum(dm.avg.count)} ชิ้น{dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(dm.avg.seconds)}</span> : null}</span>
-                          : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="report-machine-op" wrapClass="table-wrap tall-scroll" tableClass="data-table"
+            rows={matrix.machines} rowKey={(m) => m.name} sort={sortM} sortAccessors={machineAcc}
+            rowCtx={(m) => ({ dm: dailyMatrix.machines.find((x) => x.name === m.name) })}
+            rowProps={(m) => ({
+              className: "release-row", style: { cursor: "pointer" },
+              onClick: () => setDrill({
+                mode: "machine",
+                title: m.code || m.name,
+                subtitle: (m.code && m.name ? m.name + " · " : "") + (lang === "en" ? "scans in the selected period" : "การสแกนในช่วงที่เลือก"),
+                logs: filteredLogs.filter((l) => (l.machine?.code || l.machine?.name) === (m.code || m.name)),
+              }),
+              title: lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้",
+            })}
+            columns={[
+              { key: "code", header: lang === "en" ? "Machine code" : "รหัสเครื่อง", sortKey: "code",
+                tdStyle: { fontFamily: "var(--font-mono)", color: "var(--muted)", whiteSpace: "nowrap" }, cell: (m) => m.code || "—" },
+              { key: "name", header: "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
+              ...matrix.opNames.map((op) => ({
+                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
+                cell: (m) => { const cell = m.ops[op]; return cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+              })),
+              { key: "total", header: "รวม (ชิ้น)", sortKey: "total", align: "right", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (m) => `${m.total.count.toLocaleString()} ชิ้น` },
+              { key: "weight", header: "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m) => m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—" },
+              { key: "time", header: "เวลาเดินเครื่อง", sortKey: "time", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
+              { key: "secPer", header: "วินาที/ชิ้น", sortKey: "secPer", align: "right", tdStyle: { fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => (m.total.seconds && m.total.count) ? `${(m.total.seconds / m.total.count).toFixed(1)} วิ` : "—" },
+              { key: "avgKg", header: "เฉลี่ย กก./วัน", sortKey: "avgKg", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m, i, c) => c.dm ? `${fmtNum(c.dm.avg.weight)} กก.` : "—" },
+              { key: "avgPcs", header: "เฉลี่ย ชิ้น/วัน", sortKey: "avgPcs", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" },
+                cell: (m, i, c) => c.dm ? <span>{fmtNum(c.dm.avg.count)} ชิ้น{c.dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(c.dm.avg.seconds)}</span> : null}</span> : "—" },
+            ]} />
         )}
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
           {lang === "en"
@@ -5550,50 +5468,32 @@ function ReportPage({ goTo }) {
         {partMatrix.parts.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (
-          <div className="table-wrap tall-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <SortTh k="release" sort={sortP}>Release</SortTh>
-                  <SortTh k="part_no" sort={sortP}>Part No.</SortTh>
-                  <SortTh k="part_name" sort={sortP}>ชื่อ Part</SortTh>
-                  {partMatrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortP} key={op}>{opLabel(op, lang)}</SortTh>)}
-                  <SortTh k="total" sort={sortP}>รวม (ชิ้น)</SortTh>
-                  <SortTh k="weight" sort={sortP}>น้ำหนัก (กก.)</SortTh>
-                  <SortTh k="finished" sort={sortP}>เสร็จ (ชิ้น)</SortTh>
-                </tr>
-              </thead>
-              <tbody>
-                {sortP.sortRows(partMatrix.parts, partAcc).map((p) => (
-                  <tr key={`${p.releaseOrder} ${p.partNo}`} className="release-row" style={{ cursor: "pointer" }}
-                    onClick={() => setDrill({
-                      mode: "part",
-                      title: p.partNo + (p.partName && p.partName !== p.partNo ? " · " + p.partName : ""),
-                      subtitle: `Release ${p.releaseOrder}`,
-                      logs: filteredLogs.filter((l) => partKeyOf(l) === `${p.releaseId || p.releaseOrder}|${p.partNo}`),
-                    })}
-                    title={lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้"}>
-                    <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.releaseOrder}</td>
-                    <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partNo}</td>
-                    <td style={{ color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }}>{p.partName}</td>
-                    {partMatrix.opNames.map((op) => {
-                      const cell = p.ops[op];
-                      return (
-                        <td key={op}>
-                          {cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>}
-                        </td>
-                      );
-                    })}
-                    <td style={{ fontWeight: 600 }}>{p.total.count.toLocaleString()} ชิ้น</td>
-                    <td style={{ whiteSpace: "nowrap", color: "var(--accent-dk)" }}>{p.total.weight > 0 ? `${fmtNum(p.total.weight)} กก.` : "—"}</td>
-                    <td style={{ fontWeight: 700, color: p.total.finished > 0 ? "var(--success)" : "var(--muted)" }}>
-                      {p.total.finished > 0 ? `${p.total.finished.toLocaleString()} ชิ้น` : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="report-part-op" wrapClass="table-wrap tall-scroll" tableClass="data-table"
+            rows={partMatrix.parts} rowKey={(p) => `${p.releaseOrder} ${p.partNo}`} sort={sortP} sortAccessors={partAcc}
+            rowProps={(p) => ({
+              className: "release-row", style: { cursor: "pointer" },
+              onClick: () => setDrill({
+                mode: "part",
+                title: p.partNo + (p.partName && p.partName !== p.partNo ? " · " + p.partName : ""),
+                subtitle: `Release ${p.releaseOrder}`,
+                logs: filteredLogs.filter((l) => partKeyOf(l) === `${p.releaseId || p.releaseOrder}|${p.partNo}`),
+              }),
+              title: lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้",
+            })}
+            columns={[
+              { key: "release", header: "Release", sortKey: "release", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.releaseOrder },
+              { key: "part_no", header: "Part No.", sortKey: "part_no", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.partNo },
+              { key: "part_name", header: "ชื่อ Part", sortKey: "part_name", tdStyle: { color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.partName },
+              ...partMatrix.opNames.map((op) => ({
+                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
+                cell: (p) => { const cell = p.ops[op]; return cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+              })),
+              { key: "total", header: "รวม (ชิ้น)", sortKey: "total", align: "right", tdStyle: { fontWeight: 600 }, cell: (p) => `${p.total.count.toLocaleString()} ชิ้น` },
+              { key: "weight", header: "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (p) => p.total.weight > 0 ? `${fmtNum(p.total.weight)} กก.` : "—" },
+              { key: "finished", header: "เสร็จ (ชิ้น)", sortKey: "finished", align: "right",
+                tdProps: (p) => ({ style: { fontWeight: 700, color: p.total.finished > 0 ? "var(--success)" : "var(--muted)" } }),
+                cell: (p) => p.total.finished > 0 ? `${p.total.finished.toLocaleString()} ชิ้น` : "—" },
+            ]} />
         )}
       </Card>
 
@@ -5822,57 +5722,33 @@ function MachineScanDetail({ machine, onBack }) {
 
         {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: use Edit at the end of a row to change the quantity (add/reduce) or delete the whole scan" : "แอดมิน: กด Edit ท้ายแถวเพื่อแก้จำนวน (เพิ่ม/ลด) หรือ ลบทั้งแถว"}</div>}
 
-        <div className="table-wrap tall-scroll">
-          <table className="data-table responsive-cards">
-            <thead><tr>
-              <SortTh k="time" sort={sort}>{lang === "en" ? "Date · time" : "วัน · เวลา"}</SortTh>
-              <SortTh k="part" sort={sort}>{lang === "en" ? "Part No." : "เบอร์พาร์ท"}</SortTh>
-              <SortTh k="ro" sort={sort}>Release</SortTh>
-              <th style={{ whiteSpace: "nowrap" }}>{lang === "en" ? "Ordered" : "สั่ง"}</th>
-              <SortTh k="op" sort={sort}>{lang === "en" ? "Step" : "ขั้นตอน"}</SortTh>
-              <SortTh k="status" sort={sort}>{lang === "en" ? "Status" : "สถานะ"}</SortTh>
-              <SortTh k="qty" sort={sort}>{lang === "en" ? "Qty" : "จำนวน"}</SortTh>
-              <SortTh k="weight" sort={sort}>{lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"}</SortTh>
-              <SortTh k="secs" sort={sort}>{lang === "en" ? "Run time" : "เวลาเดินเครื่อง"}</SortTh>
-              {admin && <th style={{ width: 66 }}></th>}
-            </tr></thead>
-            <tbody>
-              {logs === null ? (
-                <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</td></tr>
-              ) : sorted.length === 0 ? (
-                <tr><td colSpan={colCount} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
-              ) : sorted.map((g) => (
-                <tr key={g.key}>
-                  <td data-label={lang === "en" ? "Date · time" : "วัน · เวลา"} style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDT(g.time)}</td>
-                  <td data-label={lang === "en" ? "Part No." : "เบอร์พาร์ท"} style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{g.part_no}</td>
-                  <td data-label="Release" style={{ whiteSpace: "nowrap" }}>{g.release_order}</td>
-                  <td data-label={lang === "en" ? "Ordered" : "สั่ง"} style={{ whiteSpace: "nowrap" }}>
-                    {orderQty[g.release_id] != null
-                      ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? `spare ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}` : `สแปร์ ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}`}</span>}</>
-                      : "—"}
-                  </td>
-                  <td data-label={lang === "en" ? "Step" : "ขั้นตอน"} style={{ whiteSpace: "nowrap" }}>
-                    {g.ops.length ? (
-                      <span style={{ display: "inline-flex", flexWrap: "nowrap", gap: 5 }}>
-                        {g.ops.map((o, oi) => (
-                          <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
-                            color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
-                        ))}
-                      </span>
-                    ) : "—"}
-                  </td>
-                  <td data-label={lang === "en" ? "Status" : "สถานะ"}>{pill(g.status)}</td>
-                  <td data-label={lang === "en" ? "Qty" : "จำนวน"} style={{ fontWeight: 600 }}>{fmtNum(g.qty)} {lang === "en" ? "pcs" : "ชิ้น"}</td>
-                  <td data-label={lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"} style={{ color: "var(--accent-dk)" }}>{g.weight ? fmtNum(g.weight) : "—"}</td>
-                  <td data-label={lang === "en" ? "Run time" : "เวลาเดินเครื่อง"} style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{g.secs ? fmtHrs(g.secs) : "—"}</td>
-                  {admin && <td data-label={lang === "en" ? "Manage" : "จัดการ"} style={{ whiteSpace: "nowrap", textAlign: "right" }}>
-                    <Btn variant="ghost" size="sm" onClick={() => openEdit(g)} style={{ color: "var(--danger-hi)" }}>Edit</Btn>
-                  </td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+          rows={sorted} rowKey={(g) => g.key} sort={sort}
+          empty={logs === null ? (lang === "en" ? "Loading…" : "กำลังโหลด...") : (lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้")}
+          columns={[
+            { key: "time", header: lang === "en" ? "Date · time" : "วัน · เวลา", sortKey: "time", tdStyle: { whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (g) => fmtDT(g.time) },
+            { key: "part", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (g) => g.part_no },
+            { key: "ro", header: "Release", sortKey: "ro", dataLabel: "Release", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.release_order },
+            { key: "ordered", header: lang === "en" ? "Ordered" : "สั่ง", align: "right", tdStyle: { whiteSpace: "nowrap" },
+              cell: (g) => orderQty[g.release_id] != null
+                ? <>{fmtNum(orderQty[g.release_id])}{scannedByRel[g.release_id] > orderQty[g.release_id] && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{lang === "en" ? `spare ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}` : `สแปร์ ${fmtNum(scannedByRel[g.release_id] - orderQty[g.release_id])}`}</span>}</>
+                : "—" },
+            { key: "op", header: lang === "en" ? "Step" : "ขั้นตอน", sortKey: "op", tdStyle: { whiteSpace: "nowrap" },
+              cell: (g) => g.ops.length ? (
+                <span style={{ display: "inline-flex", flexWrap: "nowrap", gap: 5 }}>
+                  {g.ops.map((o, oi) => (
+                    <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+                      color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
+                  ))}
+                </span>
+              ) : "—" },
+            { key: "status", header: lang === "en" ? "Status" : "สถานะ", sortKey: "status", cell: (g) => pill(g.status) },
+            { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", tdStyle: { fontWeight: 600 }, cell: (g) => `${fmtNum(g.qty)} ${lang === "en" ? "pcs" : "ชิ้น"}` },
+            { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (g) => g.weight ? fmtNum(g.weight) : "—" },
+            { key: "secs", header: lang === "en" ? "Run time" : "เวลาเดินเครื่อง", sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.secs ? fmtHrs(g.secs) : "—" },
+            ...(admin ? [{ key: "manage", header: "", dataLabel: lang === "en" ? "Manage" : "จัดการ", thStyle: { width: 66 }, tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
+              cell: (g) => <Btn variant="ghost" size="sm" onClick={() => openEdit(g)} style={{ color: "var(--danger-hi)" }}>Edit</Btn> }] : []),
+          ]} />
       </Card>
 
       {admin && editRow && (() => {
@@ -5948,46 +5824,21 @@ function MachinesSummaryPage() {
         <div style={{ marginBottom: 16 }}>
           <SimpleBarChart data={rows} color={CHART.success} height={240} />
         </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <SortTh k="code" sort={sortW}>รหัสเครื่อง</SortTh>
-                <SortTh k="name" sort={sortW}>เครื่องจักร</SortTh>
-                {matrix.opNames.map((op) => <SortTh k={`op:${op}`} sort={sortW} key={op}>{opLabel(op, lang)}</SortTh>)}
-                <SortTh k="total" sort={sortW}>รวมทุกขั้นตอน</SortTh>
-                <SortTh k="weight" sort={sortW}>น้ำหนักรวม (กก.)</SortTh>
-                <SortTh k="time" sort={sortW}>เวลาเดินเครื่อง</SortTh>
-              </tr>
-            </thead>
-            <tbody>
-              {sortW.sortRows(matrix.machines, machineAcc).map((m) => (
-                <tr key={m.name} className="release-row" style={{ cursor: "pointer" }}
-                  onClick={() => setViewMachine({ code: m.code, name: m.name })}
-                  title={lang === "en" ? "Click to see all scans of this machine" : "แตะเพื่อดูการสแกนทั้งหมดของเครื่องนี้"}>
-                  <td style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{m.code || "—"}</td>
-                  <td style={{ fontWeight: 600 }}>{m.name}</td>
-                  {matrix.opNames.map((op) => {
-                    const cell = m.ops[op];
-                    return (
-                      <td key={op}>
-                        {cell
-                          ? <span>{cell.count} ชิ้น</span>
-                          : <span style={{ color: "var(--surface-3)" }}>—</span>}
-                      </td>
-                    );
-                  })}
-                  <td style={{ fontWeight: 600 }}>{m.total.count} ชิ้น</td>
-                  <td style={{ fontWeight: 600, color: "var(--accent-dk)" }}>{m.total.weight ? fmtNum(m.total.weight) : "—"}</td>
-                  <td style={{ fontFamily: "var(--font-mono)" }}>{m.total.seconds ? fmtHrs(m.total.seconds) : "—"}</td>
-                </tr>
-              ))}
-              {matrix.machines.length === 0 && (
-                <tr><td colSpan={matrix.opNames.length + 5} style={{ textAlign: "center", color: "var(--muted)", padding: 20 }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable id="machines-summary" wrapClass="table-wrap" tableClass="data-table"
+          rows={matrix.machines} rowKey={(m) => m.name} sort={sortW} sortAccessors={machineAcc}
+          empty={lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}
+          rowProps={(m) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => setViewMachine({ code: m.code, name: m.name }), title: lang === "en" ? "Click to see all scans of this machine" : "แตะเพื่อดูการสแกนทั้งหมดของเครื่องนี้" })}
+          columns={[
+            { key: "code", header: "รหัสเครื่อง", sortKey: "code", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700 }, cell: (m) => m.code || "—" },
+            { key: "name", header: "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
+            ...matrix.opNames.map((op) => ({
+              key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
+              cell: (m) => { const cell = m.ops[op]; return cell ? <span>{cell.count} ชิ้น</span> : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+            })),
+            { key: "total", header: "รวมทุกขั้นตอน", sortKey: "total", align: "right", tdStyle: { fontWeight: 600 }, cell: (m) => `${m.total.count} ชิ้น` },
+            { key: "weight", header: "น้ำหนักรวม (กก.)", sortKey: "weight", align: "right", tdStyle: { fontWeight: 600, color: "var(--accent-dk)" }, cell: (m) => m.total.weight ? fmtNum(m.total.weight) : "—" },
+            { key: "time", header: "เวลาเดินเครื่อง", sortKey: "time", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
+          ]} />
       </Card>
     </div>
   );
@@ -6057,57 +5908,38 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             <div className="empty-state-sub">ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก</div>
           </div>
         ) : (
-          <div className="table-wrap tall-scroll">
-            <table className="data-table responsive-cards">
-              <thead><tr>
-                <SortTh k="date" sort={sort}>วันที่</SortTh>
-                <SortTh k="order" sort={sort}>Release Order</SortTh>
-                <SortTh k="parts" sort={sort}>Part No.</SortTh>
-                <SortTh k="qty" sort={sort}>จำนวน</SortTh>
-                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
-                <SortTh k="progress" sort={sort}>ความคืบหน้า</SortTh>
-                <SortTh k="weight" sort={sort}>น้ำหนักรวม</SortTh>
-              </tr></thead>
-              <tbody>
-                {sort.sortRows(groups, {
-                  date: (g) => new Date(g.date).getTime() || 0,
-                  order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
-                  parts: (g) => g.releases.length,
-                  qty: (g) => g.totalQty || 0,
-                  weight: (g) => g.totalWeight || 0,
-                  finished: (g) => computeGroupProgress(g.releases, stats, opProg, g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0)).finished,
-                  progress: (g) => {
-                    const t = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
-                    return t > 0 ? computeGroupProgress(g.releases, stats, opProg, t).finished / t : 0;
-                  },
-                }).map((g) => {
-                  const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
-                  // ★ นิยาม "เสร็จ" เดียวกับหน้า Projects และรายละเอียด Release (max สำนักงาน/หน้าเครื่อง)
-                  const { finished: gFinished } = computeGroupProgress(g.releases, stats, opProg, gTotal);
-                  const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
-                  return (
-                    <tr key={g.key} className="release-row" onClick={() => setViewGroup(g)}>
-                      <td data-label="วันที่">{fmtD(g.date)}</td>
-                      <td data-label="Release Order">{g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")}</td>
-                      <td data-label="Part No.">{fmtNum(g.releases.length)} Part</td>
-                      <td data-label="จำนวน">{fmtNum(g.totalQty)} ชิ้น</td>
-                      <td data-label="เสร็จแล้ว" style={{ fontWeight: 700, color: statsReady && gFinished > 0 ? "var(--success)" : "var(--muted)" }}>
-                        {statsReady ? `${fmtNum(gFinished)} ชิ้น` : "—"}
-                      </td>
-                      <td data-label="ความคืบหน้า" style={{ minWidth: 160 }}>
-                        {statsReady && gPct !== null ? (
-                          <ProgressBar pct={gPct} finished={gFinished} total={gTotal} />
-                        ) : (
-                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
-                        )}
-                      </td>
-                      <td data-label="น้ำหนักรวม">{g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="project-releases" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+            rows={groups} rowKey={(g) => g.key} sort={sort}
+            sortAccessors={{
+              date: (g) => new Date(g.date).getTime() || 0,
+              order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
+              parts: (g) => g.releases.length,
+              qty: (g) => g.totalQty || 0,
+              weight: (g) => g.totalWeight || 0,
+              finished: (g) => computeGroupProgress(g.releases, stats, opProg, g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0)).finished,
+              progress: (g) => {
+                const t = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
+                return t > 0 ? computeGroupProgress(g.releases, stats, opProg, t).finished / t : 0;
+              },
+            }}
+            rowCtx={(g) => {
+              const gTotal = g.releases.reduce((s, r) => s + (stats[r.id]?.total ?? r.qty), 0);
+              const { finished: gFinished } = computeGroupProgress(g.releases, stats, opProg, gTotal);
+              return { gTotal, gFinished, gPct: gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null };
+            }}
+            rowProps={(g) => ({ className: "release-row", onClick: () => setViewGroup(g) })}
+            columns={[
+              { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
+              { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-") },
+              { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
+              { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
+              { key: "finished", header: "เสร็จแล้ว", sortKey: "finished", align: "right",
+                tdProps: (g, i, c) => ({ style: { fontWeight: 700, color: statsReady && c.gFinished > 0 ? "var(--success)" : "var(--muted)" } }),
+                cell: (g, i, c) => statsReady ? `${fmtNum(c.gFinished)} ชิ้น` : "—" },
+              { key: "progress", header: "ความคืบหน้า", sortKey: "progress", tdStyle: { whiteSpace: "nowrap" },
+                cell: (g, i, c) => statsReady && c.gPct !== null ? <ProgressBar pct={c.gPct} finished={c.gFinished} total={c.gTotal} /> : <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span> },
+              { key: "weight", header: "น้ำหนักรวม", sortKey: "weight", align: "right", cell: (g) => g.totalWeight ? `${fmtNum(g.totalWeight)} กก.` : "-" },
+            ]} />
         )}
       </Card>
     </div>
@@ -6189,64 +6021,45 @@ function ProjectsPage({ user, goTo }) {
             <div className="empty-state-sub">กด “เพิ่มโปรเจค” เพื่อสร้างโปรเจคแรก</div>
           </div>
         ) : (
-          <div className="table-wrap tall-scroll">
-            <table className="data-table responsive-cards">
-              <thead><tr>
-                <SortTh k="code" sort={sort}>รหัส</SortTh>
-                <SortTh k="name" sort={sort}>ชื่อโปรเจค</SortTh>
-                <SortTh k="total" sort={sort}>ปล่อยงาน (ชิ้น)</SortTh>
-                <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
-                <SortTh k="pct" sort={sort}>% เสร็จ</SortTh>
-                <SortTh k="weight" sort={sort}>น้ำหนักวัสดุ (กก.)</SortTh>{canEdit && <th></th>}
-              </tr></thead>
-              <tbody>
-                {sort.sortRows(projects, {
-                  code: (p) => p.code, name: (p) => p.name,
-                  total: (p) => statMap[p.id]?.total || 0,
-                  finished: (p) => statMap[p.id]?.finished || 0,
-                  pct: (p) => { const s = statMap[p.id]; return s?.total ? s.finished / s.total : 0; },
-                  weight: (p) => statMap[p.id]?.weight || 0,
-                }).map((p) => {
-                  const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
-                  const done = s.total > 0 && s.finished >= s.total;   // ครบจริง
-                  const rawPct = s.total ? (s.finished / s.total) * 100 : 0;   // % จริง (ยังไม่ปัด — กัน 73/18,769 หายเป็น 0%)
-                  const barW = done ? 100 : Math.min(99, rawPct);
-                  return (
-                    <tr key={p.id} className="release-row" onClick={() => setViewProject(p)} title="กดเพื่อดู Release ในโปรเจคนี้"
-                      style={p.status === "closed" ? { opacity: 0.62 } : undefined}>
-                      <td data-label="รหัส" style={{ fontFamily: "var(--font-mono)" }}>{p.code}
-                        {p.status === "closed" && <span className="proj-closed-badge">ปิดแล้ว</span>}
-                      </td>
-                      <td data-label="ชื่อโปรเจค">{p.name}</td>
-                      <td data-label="ปล่อยงาน (ชิ้น)">{fmtNum(s.total)}</td>
-                      <td data-label="เสร็จแล้ว" style={{ fontWeight: 700, color: s.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(s.finished)}</td>
-                      <td data-label="% เสร็จ">
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
-                            <div style={{ width: barW > 0 ? `max(3px, ${barW}%)` : "0%", height: "100%", background: done ? "var(--success)" : "var(--accent)" }} />
-                          </div>
-                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, whiteSpace: "nowrap" }}>{pctLabel(rawPct, done)}</span>
-                        </div>
-                      </td>
-                      <td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(s.weight)}</td>
-                      {canEdit && (
-                        <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                          {p.status === "closed" && (
-                            <span title="โปรเจคนี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข"
-                              style={{ fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fff4e5",
-                                       border: "1px solid #f5c98a", borderRadius: 999, padding: "3px 10px", marginRight: 8 }}>
-                              ปิดแล้ว
-                            </span>
-                          )}
-                          <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="projects" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+            rows={projects} rowKey={(p) => p.id} sort={sort}
+            sortAccessors={{
+              code: (p) => p.code, name: (p) => p.name,
+              total: (p) => statMap[p.id]?.total || 0,
+              finished: (p) => statMap[p.id]?.finished || 0,
+              pct: (p) => { const s = statMap[p.id]; return s?.total ? s.finished / s.total : 0; },
+              weight: (p) => statMap[p.id]?.weight || 0,
+            }}
+            rowCtx={(p) => {
+              const s = statMap[p.id] || { total: 0, finished: 0, weight: 0 };
+              const done = s.total > 0 && s.finished >= s.total;
+              const rawPct = s.total ? (s.finished / s.total) * 100 : 0;
+              return { s, done, rawPct, barW: done ? 100 : Math.min(99, rawPct) };
+            }}
+            rowProps={(p) => ({ className: "release-row", onClick: () => setViewProject(p), title: "กดเพื่อดู Release ในโปรเจคนี้", style: p.status === "closed" ? { opacity: 0.62 } : undefined })}
+            columns={[
+              { key: "code", header: "รหัส", sortKey: "code", tdStyle: { fontFamily: "var(--font-mono)" },
+                cell: (p) => <>{p.code}{p.status === "closed" && <span className="proj-closed-badge">ปิดแล้ว</span>}</> },
+              { key: "name", header: "ชื่อโปรเจค", sortKey: "name", cell: (p) => p.name },
+              { key: "total", header: "ปล่อยงาน (ชิ้น)", sortKey: "total", align: "right", cell: (p, i, c) => fmtNum(c.s.total) },
+              { key: "finished", header: "เสร็จแล้ว", sortKey: "finished", align: "right",
+                tdProps: (p, i, c) => ({ style: { fontWeight: 700, color: c.s.finished > 0 ? "var(--success)" : "var(--muted)" } }), cell: (p, i, c) => fmtNum(c.s.finished) },
+              { key: "pct", header: "% เสร็จ", sortKey: "pct",
+                cell: (p, i, c) => (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 64, height: 6, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden", flex: "0 0 64px" }}>
+                      <div style={{ width: c.barW > 0 ? `max(3px, ${c.barW}%)` : "0%", height: "100%", background: c.done ? "var(--success)" : "var(--accent)" }} />
+                    </div>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, whiteSpace: "nowrap" }}>{pctLabel(c.rawPct, c.done)}</span>
+                  </div>
+                ) },
+              { key: "weight", header: "น้ำหนักวัสดุ (กก.)", sortKey: "weight", align: "right", cell: (p, i, c) => fmtNum(c.s.weight) },
+              ...(canEdit ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { textAlign: "right", whiteSpace: "nowrap" },
+                cell: (p) => <>{p.status === "closed" && (
+                    <span title="โปรเจคนี้ปิดแล้ว — เปิด/แก้ได้ในปุ่มแก้ไข"
+                      style={{ fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fff4e5", border: "1px solid #f5c98a", borderRadius: 999, padding: "3px 10px", marginRight: 8 }}>ปิดแล้ว</span>
+                  )}<Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Icon name="settings" size={13} /> แก้ไข</Btn></> }] : []),
+            ]} />
         )}
       </Card>
 
@@ -6281,34 +6094,27 @@ function PartsSummaryPage() {
           { k: "part_no", label: "Part No." }, { k: "part_name", label: "ชื่อ Part" },
           { k: "total", label: "ปล่อยงาน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "weight", label: "น้ำหนักวัสดุ" },
         ]} />
-        <div className="table-wrap tall-scroll">
-          <table className="data-table responsive-cards">
-            <thead><tr>
-              <SortTh k="part_no" sort={sort}>Part No.</SortTh>
-              <SortTh k="part_name" sort={sort}>ชื่อ Part</SortTh>
-              <SortTh k="total" sort={sort}>ปล่อยงาน</SortTh>
-              <SortTh k="finished" sort={sort}>เสร็จแล้ว</SortTh>
-              <SortTh k="weight" sort={sort}>น้ำหนักวัสดุ (กก.)</SortTh>
-            </tr></thead>
-            <tbody>
-              {sort.sortRows(rows, {
-                part_no: (r) => r.part_no || "", part_name: (r) => r.part_name || "",
-                total: (r) => Number(r.total) || 0, finished: (r) => Number(r.finished) || 0, weight: (r) => Number(r.weight) || 0,
-              }).map((r) => (
-                <tr key={r.id}><td data-label="Part No." style={{ whiteSpace: "nowrap" }}>{r.part_no}</td><td data-label="ชื่อ Part" style={{ whiteSpace: "nowrap" }}>{r.part_name}</td><td data-label="ปล่อยงาน">{fmtNum(r.total)}</td><td data-label="เสร็จแล้ว" style={{ fontWeight: 600, color: r.finished > 0 ? "var(--success)" : "var(--muted)" }}>{fmtNum(r.finished)}</td><td data-label="น้ำหนักวัสดุ (กก.)">{fmtNum(r.weight)}</td></tr>
-              ))}
-              {rows.length === 0 && (
-                <tr><td colSpan={5}>
-                  <div className="empty-state" style={{ padding: "24px 0" }}>
-                    <Icon name="grid" size={30} />
-                    <div className="empty-state-title">ยังไม่มีข้อมูลการปล่อยงาน</div>
-                    <div className="empty-state-sub">เมื่อมีการปล่อยงาน/สแกน จะเห็นสรุปแยกตาม Part ที่นี่</div>
-                  </div>
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable id="parts-summary" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+          rows={rows} rowKey={(r) => r.id} sort={sort}
+          sortAccessors={{
+            part_no: (r) => r.part_no || "", part_name: (r) => r.part_name || "",
+            total: (r) => Number(r.total) || 0, finished: (r) => Number(r.finished) || 0, weight: (r) => Number(r.weight) || 0,
+          }}
+          empty={
+            <div className="empty-state" style={{ padding: "24px 0" }}>
+              <Icon name="grid" size={30} />
+              <div className="empty-state-title">ยังไม่มีข้อมูลการปล่อยงาน</div>
+              <div className="empty-state-sub">เมื่อมีการปล่อยงาน/สแกน จะเห็นสรุปแยกตาม Part ที่นี่</div>
+            </div>
+          }
+          columns={[
+            { key: "part_no", header: "Part No.", sortKey: "part_no", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_no },
+            { key: "part_name", header: "ชื่อ Part", sortKey: "part_name", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_name },
+            { key: "total", header: "ปล่อยงาน", sortKey: "total", align: "right", cell: (r) => fmtNum(r.total) },
+            { key: "finished", header: "เสร็จแล้ว", sortKey: "finished", align: "right",
+              tdProps: (r) => ({ style: { fontWeight: 600, color: r.finished > 0 ? "var(--success)" : "var(--muted)" } }), cell: (r) => fmtNum(r.finished) },
+            { key: "weight", header: "น้ำหนักวัสดุ (กก.)", sortKey: "weight", align: "right", cell: (r) => fmtNum(r.weight) },
+          ]} />
       </Card>
     </div>
   );
@@ -6473,30 +6279,18 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
             ) : orders.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มี Release</div>
             ) : (
-              <div style={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                <table className="data-table" style={{ fontSize: 12.5 }}>
-                  <thead><tr><th>วันที่</th><th>Release Order</th><th>Part No.</th><th>จำนวนรวม</th>{canDelRelease && <th></th>}</tr></thead>
-                  <tbody>
-                    {orders.map((g, i) => {
-                      const deleting = delKey === g.key;
-                      return (
-                      <tr key={i}>
-                        <td>{fmtD(g.date)}</td>
-                        <td>{g.order}</td>
-                        <td>{g.parts} Part</td>
-                        <td>{fmtNum(g.qty)} ชิ้น</td>
-                        {canDelRelease && <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
-                          {deleting
-                            ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {delProg}/{g.ids.length}…</span>
-                            : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด"
-                                style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span>}
-                        </td>}
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable id="project-impact" wrapClass="table-wrap" wrapStyle={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}
+                tableClass="data-table" tableStyle={{ fontSize: 12.5 }} rows={orders} rowKey={(g, i) => i}
+                columns={[
+                  { key: "date", header: "วันที่", cell: (g) => fmtD(g.date) },
+                  { key: "order", header: "Release Order", cell: (g) => g.order },
+                  { key: "parts", header: "Part No.", align: "right", cell: (g) => `${g.parts} Part` },
+                  { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => `${fmtNum(g.qty)} ชิ้น` },
+                  ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
+                    cell: (g) => delKey === g.key
+                      ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {delProg}/{g.ids.length}…</span>
+                      : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด" style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span> }] : []),
+                ]} />
             )}
           </div>
         );
@@ -6610,38 +6404,18 @@ function ActiveSessionsCard() {
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
             ทั้งหมด <b>{rows.length}</b> เซสชัน · ออนไลน์ตอนนี้ <b style={{ color: "var(--accent-dk)" }}>{online}</b>
           </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr>
-                <th style={{ width: 44 }}>สถานะ</th><th>บัญชี</th><th>บทบาท</th><th>เครื่อง</th><th>ใช้งานล่าสุด</th><th></th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.sid}>
-                    <td>
-                      <span title={r.online ? "ออนไลน์" : "เงียบ (แท็บปิด/ออฟไลน์)"} style={{
-                        display: "inline-block", width: 10, height: 10, borderRadius: 999,
-                        background: r.online ? "var(--success, #22c55e)" : "var(--border, #cbd5d1)",
-                        boxShadow: r.online ? "0 0 0 3px rgba(34,197,94,.18)" : "none",
-                      }} />
-                    </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 600 }}>{r.code || "-"}</span>{r.name ? <span style={{ color: "var(--muted)" }}> — {r.name}</span> : null}
-                      {r.is_self && <> <Badge tone="steel">เครื่องนี้</Badge></>}
-                    </td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{ROLE_LABELS[r.role] || r.role || "-"}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.is_machine ? `${r.machine_code || "-"}${r.machine_name ? " — " + r.machine_name : ""}` : <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: r.online ? "var(--text)" : "var(--muted)" }}>{ago(r.last_seen)}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <Btn variant="danger" size="sm" disabled={r.is_self || busy === r.sid} onClick={() => kick(r)}>
-                        {busy === r.sid ? "กำลังเตะ..." : "บังคับออกจากระบบ"}
-                      </Btn>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="sessions" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.sid}
+            columns={[
+              { key: "status", header: "สถานะ", thStyle: { width: 44 },
+                cell: (r) => <span title={r.online ? "ออนไลน์" : "เงียบ (แท็บปิด/ออฟไลน์)"} style={{ display: "inline-block", width: 10, height: 10, borderRadius: 999, background: r.online ? "var(--success, #22c55e)" : "var(--border, #cbd5d1)", boxShadow: r.online ? "0 0 0 3px rgba(34,197,94,.18)" : "none" }} /> },
+              { key: "account", header: "บัญชี", tdStyle: { whiteSpace: "nowrap" },
+                cell: (r) => <><span style={{ fontWeight: 600 }}>{r.code || "-"}</span>{r.name ? <span style={{ color: "var(--muted)" }}> — {r.name}</span> : null}{r.is_self && <> <Badge tone="steel">เครื่องนี้</Badge></>}</> },
+              { key: "role", header: "บทบาท", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }, cell: (r) => ROLE_LABELS[r.role] || r.role || "-" },
+              { key: "machine", header: "เครื่อง", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (r) => r.is_machine ? `${r.machine_code || "-"}${r.machine_name ? " — " + r.machine_name : ""}` : <span style={{ color: "var(--muted)" }}>—</span> },
+              { key: "lastseen", header: "ใช้งานล่าสุด", tdProps: (r) => ({ style: { whiteSpace: "nowrap", fontSize: 12.5, color: r.online ? "var(--text)" : "var(--muted)" } }), cell: (r) => ago(r.last_seen) },
+              { key: "manage", header: "", dataLabel: "", tdStyle: { textAlign: "right" },
+                cell: (r) => <Btn variant="danger" size="sm" disabled={r.is_self || busy === r.sid} onClick={() => kick(r)}>{busy === r.sid ? "กำลังเตะ..." : "บังคับออกจากระบบ"}</Btn> },
+            ]} />
         </>
       )}
     </Card>
@@ -6693,25 +6467,16 @@ function DeadLetterCard() {
           <div className="empty-state-sub">ทุกเครื่องซิงค์งานเข้าระบบครบ</div>
         </div>
       ) : (
-        <div className="table-wrap tall-scroll">
-          <table className="data-table">
-            <thead><tr><th>เวลาทำงาน</th><th>เครื่อง</th><th>ผู้ทำ</th><th>งาน</th><th>เหตุผล</th><th></th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{fmtDT(r.client_ts || r.reported_at)}</td>
-                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.machine_code || "-"}</td>
-                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.actor_code || "-"}</td>
-                  <td style={{ fontSize: 12.5 }}>{itemText(r)}</td>
-                  <td><Badge tone="danger">{DL_REASONS[r.reason] || r.reason || "-"}</Badge></td>
-                  <td style={{ textAlign: "right" }}>
-                    <Btn variant="ghost" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id)}>{busy === r.id ? "..." : "✓ จัดการแล้ว"}</Btn>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable id="deadletter" wrapClass="table-wrap tall-scroll" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+          columns={[
+            { key: "time", header: "เวลาทำงาน", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }, cell: (r) => fmtDT(r.client_ts || r.reported_at) },
+            { key: "machine", header: "เครื่อง", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (r) => r.machine_code || "-" },
+            { key: "actor", header: "ผู้ทำ", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (r) => r.actor_code || "-" },
+            { key: "item", header: "งาน", tdStyle: { fontSize: 12.5 }, cell: (r) => itemText(r) },
+            { key: "reason", header: "เหตุผล", cell: (r) => <Badge tone="danger">{DL_REASONS[r.reason] || r.reason || "-"}</Badge> },
+            { key: "manage", header: "", dataLabel: "", tdStyle: { textAlign: "right" },
+              cell: (r) => <Btn variant="ghost" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id)}>{busy === r.id ? "..." : "✓ จัดการแล้ว"}</Btn> },
+          ]} />
       )}
     </Card>
   );
@@ -6790,24 +6555,13 @@ function AuditLogCard() {
         </div>
       ) : (
         <>
-          <div className="table-wrap tall-scroll">
-            <table className="data-table">
-              <thead><tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>รายละเอียด</th></tr></thead>
-              <tbody>
-                {rows.map((r) => {
-                  const a = AUDIT_ACTIONS[r.action] || { label: r.action, tone: "muted" };
-                  return (
-                    <tr key={r.id}>
-                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }}>{fmtDT(r.created_at)}</td>
-                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{r.actor_code || "-"}{r.actor_name ? <span style={{ color: "var(--muted)" }}> — {r.actor_name}</span> : null}</td>
-                      <td style={{ whiteSpace: "nowrap" }}><Badge tone={a.tone}>{a.label}</Badge></td>
-                      <td style={{ fontSize: 12.5 }}>{auditDetailText(r)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="audit" wrapClass="table-wrap tall-scroll" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+            columns={[
+              { key: "time", header: "เวลา", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }, cell: (r) => fmtDT(r.created_at) },
+              { key: "actor", header: "ผู้ทำ", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (r) => <>{r.actor_code || "-"}{r.actor_name ? <span style={{ color: "var(--muted)" }}> — {r.actor_name}</span> : null}</> },
+              { key: "action", header: "การกระทำ", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => { const a = AUDIT_ACTIONS[r.action] || { label: r.action, tone: "muted" }; return <Badge tone={a.tone}>{a.label}</Badge>; } },
+              { key: "detail", header: "รายละเอียด", tdStyle: { fontSize: 12.5 }, cell: (r) => auditDetailText(r) },
+            ]} />
           {canMore && (
             <div style={{ marginTop: 10 }}>
               <Btn variant="ghost" size="sm" onClick={loadMore} disabled={more}>{more ? "กำลังโหลด..." : "โหลดเพิ่ม"}</Btn>
@@ -7228,31 +6982,20 @@ function RestorePointsCard() {
             <div className="empty-state-sub">กด “สร้างจุดกู้คืนตอนนี้” เพื่อสำรองครั้งแรก</div>
           </div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>วันที่/เวลา</th><th>โปรเจค</th><th>ชนิด</th><th>จำนวนแถว</th><th></th></tr></thead>
-              <tbody>
-                {shown.map((b) => (
-                  <tr key={b.id}>
-                    <td style={{ whiteSpace: "nowrap" }}>{fmtDT(b.taken_at)}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>{b.project_code} — {b.project_name}</td>
-                    <td>
-                      <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 999,
-                        background: b.kind === "auto" ? "var(--surface-3)" : "var(--accent)", color: b.kind === "auto" ? "var(--muted)" : "#fff" }}>
-                        {b.kind === "auto" ? "อัตโนมัติ" : "สร้างเอง"}
-                      </span>
-                    </td>
-                    <td>{fmtNum(b.total_rows)}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <Btn variant="ghost" size="sm" onClick={() => setRestoring(b)}>
-                        <Icon name="refresh" size={13} /> กู้คืน
-                      </Btn>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable id="restore-points" wrapClass="table-wrap" tableClass="data-table" rows={shown} rowKey={(b) => b.id}
+            columns={[
+              { key: "date", header: "วันที่/เวลา", tdStyle: { whiteSpace: "nowrap" }, cell: (b) => fmtDT(b.taken_at) },
+              { key: "project", header: "โปรเจค", tdStyle: { whiteSpace: "nowrap" }, cell: (b) => `${b.project_code} — ${b.project_name}` },
+              { key: "kind", header: "ชนิด", cell: (b) => (
+                <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 999,
+                  background: b.kind === "auto" ? "var(--surface-3)" : "var(--accent)", color: b.kind === "auto" ? "var(--muted)" : "#fff" }}>
+                  {b.kind === "auto" ? "อัตโนมัติ" : "สร้างเอง"}
+                </span>
+              ) },
+              { key: "rows", header: "จำนวนแถว", align: "right", cell: (b) => fmtNum(b.total_rows) },
+              { key: "manage", header: "", dataLabel: "", tdStyle: { textAlign: "right" },
+                cell: (b) => <Btn variant="ghost" size="sm" onClick={() => setRestoring(b)}><Icon name="refresh" size={13} /> กู้คืน</Btn> },
+            ]} />
         )}
       </Card>
 
@@ -7573,45 +7316,30 @@ function MachineCrud() {
         { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
         { k: "type", label: "ประเภท" }, { k: "caps", label: "ขั้นตอนที่ทำได้" },
       ]} />
-      <div className="table-wrap tall-scroll">
-        <table className="data-table responsive-cards">
-          <thead><tr>
-            <SortTh k="code" sort={sort}>รหัสเครื่อง</SortTh>
-            <SortTh k="name" sort={sort}>ชื่อเครื่อง/สถานี</SortTh>
-            <SortTh k="type" sort={sort}>ประเภท</SortTh>
-            <SortTh k="caps" sort={sort}>ขั้นตอนที่ทำได้</SortTh>
-            <th></th>
-          </tr></thead>
-          <tbody>
-            {sort.sortRows(rows, {
-              code: (r) => r.code, name: (r) => r.name, type: (r) => r.type || "",
-              caps: (r) => capNames(r.id).join(", "),
-            }).map((r) => {
-              const names = capNames(r.id);
-              return (
-                <tr key={r.id}>
-                  <td data-label="รหัสเครื่อง">{r.code}</td>
-                  <td data-label="ชื่อเครื่อง/สถานี">{r.name}</td>
-                  <td data-label="ประเภท">{r.type || "-"}</td>
-                  <td data-label="ขั้นตอนที่ทำได้">
-                    {names.length > 0
-                      ? names.join(" · ")
-                      : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
-                    {(() => { const ds = capDests(r.id); return ds.length > 0 ? (
-                      <div style={{ fontSize: 11.5, color: ds.length > 1 ? "var(--warning)" : "var(--muted)", marginTop: 3 }}>
-                        {ds.length > 1 ? "⚠️ " : "→ "}{ds.map((d) => `${d.th} (${d.path})`).join(" · ")}
-                      </div>
-                    ) : null; })()}
-                  </td>
-                  <td data-label="" style={{ whiteSpace: "nowrap" }}>
-                    <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id="machine-crud" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+        rows={rows} rowKey={(r) => r.id} sort={sort}
+        sortAccessors={{
+          code: (r) => r.code, name: (r) => r.name, type: (r) => r.type || "",
+          caps: (r) => capNames(r.id).join(", "),
+        }}
+        columns={[
+          { key: "code", header: "รหัสเครื่อง", sortKey: "code", cell: (r) => r.code },
+          { key: "name", header: "ชื่อเครื่อง/สถานี", sortKey: "name", cell: (r) => r.name },
+          { key: "type", header: "ประเภท", sortKey: "type", cell: (r) => r.type || "-" },
+          { key: "caps", header: "ขั้นตอนที่ทำได้", sortKey: "caps",
+            cell: (r) => { const names = capNames(r.id); return (
+              <>
+                {names.length > 0 ? names.join(" · ") : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
+                {(() => { const ds = capDests(r.id); return ds.length > 0 ? (
+                  <div style={{ fontSize: 11.5, color: ds.length > 1 ? "var(--warning)" : "var(--muted)", marginTop: 3 }}>
+                    {ds.length > 1 ? "⚠️ " : "→ "}{ds.map((d) => `${d.th} (${d.path})`).join(" · ")}
+                  </div>
+                ) : null; })()}
+              </>
+            ); } },
+          { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" },
+            cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span> },
+        ]} />
       {editing && (
         <MachineEditModal
           machine={editing} operations={operations} caps={caps}
@@ -7804,35 +7532,22 @@ function OperationsCrud() {
         </div>
         <Field label={" "}><Btn variant="accent" onClick={add} style={{ height: 42 }}>เพิ่ม</Btn></Field>
       </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead><tr><th>ชื่อขั้นตอน</th><th>ลำดับ</th><th>ประเภทงาน</th><th>หน้าปลายทาง (แผนก/URL)</th><th></th></tr></thead>
-          <tbody>
-            {rows.map((r) => {
-              const dest = opTypeDest(r.op_type || "machining");
-              return (
-              <tr key={r.id}>
-                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{opLabel(r.name, lang)}</td>
-                <td>{r.seq}</td>
-                <td>
-                  <select className="select" value={r.op_type || "machining"} onChange={(e) => changeType(r.id, e.target.value)} style={{ minWidth: 190 }}>
-                    {OP_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </td>
-                <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>
-                  <span style={{ fontWeight: 600 }}>{dest.th}</span>
-                  <span style={{ color: "var(--muted)", marginLeft: 6 }}>{dest.path}</span>
-                </td>
-                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
-              </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr><td colSpan={5}><div className="empty-state" style={{ padding: "20px 0" }}><Icon name="settings" size={28} /><div className="empty-state-title">ยังไม่มีขั้นตอน</div><div className="empty-state-sub">เพิ่มขั้นตอนแรกด้านบน</div></div></td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id="operations-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+        empty={<div className="empty-state" style={{ padding: "20px 0" }}><Icon name="settings" size={28} /><div className="empty-state-title">ยังไม่มีขั้นตอน</div><div className="empty-state-sub">เพิ่มขั้นตอนแรกด้านบน</div></div>}
+        columns={[
+          { key: "name", header: "ชื่อขั้นตอน", tdStyle: { whiteSpace: "nowrap", fontWeight: 600 }, cell: (r) => opLabel(r.name, lang) },
+          { key: "seq", header: "ลำดับ", align: "right", cell: (r) => r.seq },
+          { key: "op_type", header: "ประเภทงาน", cell: (r) => (
+            <select className="select" value={r.op_type || "machining"} onChange={(e) => changeType(r.id, e.target.value)} style={{ minWidth: 190 }}>
+              {OP_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          ) },
+          { key: "dest", header: "หน้าปลายทาง (แผนก/URL)", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 },
+            cell: (r) => { const dest = opTypeDest(r.op_type || "machining"); return (
+              <><span style={{ fontWeight: 600 }}>{dest.th}</span><span style={{ color: "var(--muted)", marginLeft: 6 }}>{dest.path}</span></>
+            ); } },
+          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+        ]} />
     </Card>
   );
 }
@@ -7871,19 +7586,11 @@ function SimpleCrud({ table, fields }) {
         ))}
         <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
       </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead><tr>{fields.map((f) => <th key={f.key}>{f.label}</th>)}<th></th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                {fields.map((f) => <td key={f.key}>{r[f.key]}</td>)}
-                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id={`simple-crud-${table}`} wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+        columns={[
+          ...fields.map((f) => ({ key: f.key, header: f.label, align: f.type === "number" ? "right" : undefined, cell: (r) => r[f.key] })),
+          { key: "__manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+        ]} />
     </Card>
   );
 }
@@ -8107,33 +7814,26 @@ function EmployeeCrud() {
           </span>
         )}
       </div>
-      <div className="table-wrap" style={{ marginTop: 16 }}>
-        <table className="data-table">
-          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>แผนก</th><th>สิทธิ์</th><th>เครื่อง/สถานีประจำ</th><th>ขั้นตอนประจำ</th><th>สถานะ</th><th></th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td>{r.code}</td><td>{r.name}</td>
-                <td>{departments.find((d) => d.id === r.department_id)?.name || "-"}</td>
-                <td>{ROLE_LABELS[r.role] || r.role}</td>
-                <td>{machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>}</td>
-                <td>{(() => {
-                  const ids = new Set(caps.filter((c) => c.machine_id === r.machine_id).map((c) => c.operation_id));
-                  let names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
-                  if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [opLabel(o.name, lang)]; }
-                  return names.length ? names.join(", ") : <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>;
-                })()}</td>
-                <td>
-                  <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
-                    <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
-                  </span>
-                </td>
-                <td><span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id="employee-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+        columns={[
+          { key: "code", header: "รหัส", cell: (r) => r.code },
+          { key: "name", header: "ชื่อ", cell: (r) => r.name },
+          { key: "dept", header: "แผนก", cell: (r) => departments.find((d) => d.id === r.department_id)?.name || "-" },
+          { key: "role", header: "สิทธิ์", cell: (r) => ROLE_LABELS[r.role] || r.role },
+          { key: "machine", header: "เครื่อง/สถานีประจำ", cell: (r) => machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span> },
+          { key: "ops", header: "ขั้นตอนประจำ", cell: (r) => {
+            const ids = new Set(caps.filter((c) => c.machine_id === r.machine_id).map((c) => c.operation_id));
+            let names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
+            if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [opLabel(o.name, lang)]; }
+            return names.length ? names.join(", ") : <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>;
+          } },
+          { key: "status", header: "สถานะ", cell: (r) => (
+            <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
+              <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
+            </span>
+          ) },
+          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span> },
+        ]} />
       {editing && (
         <EmployeeEditModal
           employee={editing} departments={departments} machines={machines} operations={operations} caps={caps}
@@ -8308,41 +8008,29 @@ function PartMasterCrud() {
         <b>ชนิด</b>: พาร์ท = ชิ้นส่วนปกติ · ซับ/แผง/แพ็ก = เบอร์ประกอบ (ประกอบจากลูก) — เลือกเป็นเบอร์ประกอบแล้วจะกำหนด BOM ได้ในตารางด้านล่าง
       </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
-      <div className="table-wrap" style={{ marginTop: 16 }}>
-        <table className="data-table">
-          <thead><tr><th>Part No.</th><th>ชื่อ</th><th>ชนิด</th><th>น้ำหนัก/ชิ้น</th><th>ความยาว/ชิ้น</th><th>BOM</th><th></th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td style={{ whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{r.part_no}</td>
-                <td style={{ whiteSpace: "nowrap" }}>{r.part_name}</td>
-                <td>
-                  <select className="select" value={r.kind || "part"} onChange={(e) => changeKind(r.id, e.target.value)} style={{ minWidth: 120 }}>
-                    {PM_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-                  </select>
-                </td>
-                <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                <td>{r.default_length_mm ? `${fmtNum(r.default_length_mm)} มม.` : "-"}</td>
-                <td>
-                  {(r.kind && r.kind !== "part")
-                    ? <Btn variant="ghost" size="sm" onClick={() => setBomParent(r)}><Icon name="grid" size={13} /> กำหนด BOM</Btn>
-                    : <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span>}
-                </td>
-                <td><span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={7}>
-                <div className="empty-state" style={{ padding: "24px 0" }}>
-                  <Icon name="grid" size={30} />
-                  <div className="empty-state-title">ยังไม่มี Part</div>
-                  <div className="empty-state-sub">กรอกฟอร์มด้านบนแล้วกด “เพิ่ม Part” เพื่อเพิ่มรายการแรก</div>
-                </div>
-              </td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable id="partmaster-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+        empty={
+          <div className="empty-state" style={{ padding: "24px 0" }}>
+            <Icon name="grid" size={30} />
+            <div className="empty-state-title">ยังไม่มี Part</div>
+            <div className="empty-state-sub">กรอกฟอร์มด้านบนแล้วกด “เพิ่ม Part” เพื่อเพิ่มรายการแรก</div>
+          </div>
+        }
+        columns={[
+          { key: "part_no", header: "Part No.", tdStyle: { whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontWeight: 600 }, cell: (r) => r.part_no },
+          { key: "part_name", header: "ชื่อ", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_name },
+          { key: "kind", header: "ชนิด", cell: (r) => (
+            <select className="select" value={r.kind || "part"} onChange={(e) => changeKind(r.id, e.target.value)} style={{ minWidth: 120 }}>
+              {PM_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+          ) },
+          { key: "unit_weight", header: "น้ำหนัก/ชิ้น", align: "right", cell: (r) => r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-" },
+          { key: "length", header: "ความยาว/ชิ้น", align: "right", cell: (r) => r.default_length_mm ? `${fmtNum(r.default_length_mm)} มม.` : "-" },
+          { key: "bom", header: "BOM", cell: (r) => (r.kind && r.kind !== "part")
+            ? <Btn variant="ghost" size="sm" onClick={() => setBomParent(r)}><Icon name="grid" size={13} /> กำหนด BOM</Btn>
+            : <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span> },
+          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+        ]} />
     </Card>
     {bomParent && (
       <BomEditorModal parent={bomParent} allParts={rows} onClose={() => setBomParent(null)} onSaved={load} />
