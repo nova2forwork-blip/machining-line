@@ -628,6 +628,19 @@ export async function setScanQuantity(partUnitId, scannedAt, newQty) {
   return data || { ok: true };
 }
 
+// แก้ "เวลาเดินเครื่อง (process_seconds) + สถานะ" ของ 1 การสแกน (แอดมิน) — ใช้คู่กับ setScanQuantity ในฟอร์มแก้ทั้งแถว
+// ดู migration-set-scan-meta.sql
+export async function setScanMeta(partUnitId, scannedAt, processSeconds, status) {
+  const { data, error } = await supabase.rpc("set_scan_meta", {
+    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null,
+    p_process_seconds: processSeconds == null ? null : Math.round(Number(processSeconds)),
+    p_status: status || null,
+  });
+  if (error) { console.warn("set_scan_meta error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+
 // ปรับ "จำนวนที่ทำเสร็จ (done)" ของเครื่องต่อ Release (แอดมิน) — เพิ่ม/ลด
 // target > done → สร้างสแกน (co-tick ครบขั้นตอนของเครื่อง) ให้ชิ้นที่ยังไม่ทำ · target < done → ลบสแกนเครื่องนี้ออก
 // ดู migration-set-release-machine-done.sql
