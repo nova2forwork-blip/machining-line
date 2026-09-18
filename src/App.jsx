@@ -4,7 +4,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, deleteScanPieces, supabase,
+  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, supabase,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -5472,8 +5472,8 @@ function MachineScanDetail({ machine, onBack }) {
   const admin = isAdmin(getSession());                     // เฉพาะแอดมินถึงจะลบสแกนได้
   const [reloadTick, setReloadTick] = useState(0);         // บวกเพื่อโหลดใหม่หลังลบ
   const [orderQty, setOrderQty] = useState({});            // จำนวนสั่ง ต่อ release_id (ไว้ดูสแปร์)
-  const [editRow, setEditRow] = useState(null);            // แถว (scan) ที่กด Edit เพื่อลบ/ลดจำนวน
-  const [delQty, setDelQty] = useState(1);                 // จำนวนที่จะลบในป็อปอัป
+  const [editRow, setEditRow] = useState(null);            // แถว (scan) ที่กด Edit เพื่อแก้จำนวน/ลบ
+  const [newQty, setNewQty] = useState(1);                 // จำนวนใหม่ในป็อปอัป (เพิ่ม/ลด/0=ลบ)
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -5582,20 +5582,29 @@ function MachineScanDetail({ machine, onBack }) {
   const scannedByRel = {};   // สแกนไปแล้วกี่ชิ้นต่อ release (เฉพาะเครื่องนี้) → เทียบจำนวนสั่งดูสแปร์
   grouped.forEach((g) => { if (g.release_id) scannedByRel[g.release_id] = (scannedByRel[g.release_id] || 0) + (Number(g.qty) || 0); });
   const colCount = 9 + (admin ? 1 : 0);
-  const openEdit = (g) => { setEditRow(g); setDelQty(Math.max(1, Number(g.qty) || 1)); };   // ค่าเริ่มต้น = ลบทั้งแถว
-  async function doDelete() {
+  const openEdit = (g) => { setEditRow(g); setNewQty(Math.max(0, Number(g.qty) || 0)); };   // ค่าเริ่มต้น = จำนวนเดิม
+  async function doApply() {
     if (!editRow) return;
-    const q = Number(editRow.qty) || 0;
-    const del = Math.min(Math.max(1, Number(delQty) || 1), q || 1);
+    const cur = Number(editRow.qty) || 0;
+    const nq = Math.max(0, Math.floor(Number(newQty) || 0));
+    if (nq === cur) { setEditRow(null); return; }   // ไม่เปลี่ยน
+    const ok = await askConfirm({
+      message: nq === 0
+        ? `ยืนยันลบสแกนนี้ทั้งแถว?\n${editRow.part_no} · ${fmtNum(cur)} ชิ้น → ชิ้นกลับเป็น "ยังไม่ทำ" (QR/ล็อตยังอยู่) · ลบแล้วกู้คืนไม่ได้`
+        : `ยืนยันปรับจำนวนสแกนนี้?\n${editRow.part_no} · จาก ${fmtNum(cur)} เป็น ${fmtNum(nq)} ชิ้น (น้ำหนักปรับตามอัตโนมัติ)`,
+      tone: nq === 0 ? "danger" : "warn",
+      confirmText: nq === 0 ? "ลบทั้งแถว" : "ยืนยัน", cancelText: "ยกเลิก",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
-      const res = await deleteScanPieces(editRow.part_unit_id, editRow.time, del);   // del<qty = ลด · del>=qty = ลบทั้งสแกน
-      auditRecord("clear_scans", "scan_data", null, { scope: "scan_edit", machine: mkey, mode: res?.mode, del });
+      await setScanQuantity(editRow.part_unit_id, editRow.time, nq);   // 0=ลบ · >เดิม=เพิ่ม · <เดิม=ลด
+      auditRecord("clear_scans", "scan_data", null, { scope: "scan_set_qty", machine: mkey, from: cur, to: nq });
       setEditRow(null);
       setReloadTick((t) => t + 1);
-      mlsToast(del >= q ? "ลบสแกนแล้ว" : `ลบ ${fmtNum(del)} ชิ้นแล้ว`, "ok");
+      mlsToast(nq === 0 ? "ลบสแกนแล้ว" : `ปรับจำนวนเป็น ${fmtNum(nq)} ชิ้นแล้ว`, "ok");
     } catch (e) {
-      mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "err");
+      mlsToast("ไม่สำเร็จ: " + (e?.message || e), "err");
     } finally { setBusy(false); }
   }
 
@@ -5651,7 +5660,7 @@ function MachineScanDetail({ machine, onBack }) {
           { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
         ]} />
 
-        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: use Edit at the end of a row to delete some pieces or the whole scan" : "แอดมิน: กด Edit ท้ายแถวเพื่อเลือกจำนวนที่จะลบ หรือ ลบทั้งแถว"}</div>}
+        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: use Edit at the end of a row to change the quantity (add/reduce) or delete the whole scan" : "แอดมิน: กด Edit ท้ายแถวเพื่อแก้จำนวน (เพิ่ม/ลด) หรือ ลบทั้งแถว"}</div>}
 
         <div className="table-wrap tall-scroll">
           <table className="data-table responsive-cards">
@@ -5706,30 +5715,37 @@ function MachineScanDetail({ machine, onBack }) {
         </div>
       </Card>
 
-      {admin && editRow && (
-        <Modal title={lang === "en" ? "Delete scan" : "ลบสแกน"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
+      {admin && editRow && (() => {
+        const cur = Number(editRow.qty) || 0;
+        const nq = Math.max(0, Math.floor(Number(newQty) || 0));
+        const diff = nq - cur;
+        return (
+        <Modal title={lang === "en" ? "Edit scan quantity" : "แก้ไขจำนวนสแกน"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.7 }}>
             {lang === "en" ? "Step" : "ขั้นตอน"}: {editRow.ops.map((o) => opLabel(o, lang)).join(" · ") || "—"}<br />
-            {lang === "en" ? "Pieces in this scan" : "จำนวนในสแกนนี้"}: <b>{fmtNum(editRow.qty)}</b> {lang === "en" ? "pcs" : "ชิ้น"}
+            {lang === "en" ? "Current quantity" : "จำนวนปัจจุบัน"}: <b>{fmtNum(cur)}</b> {lang === "en" ? "pcs" : "ชิ้น"}
           </div>
-          <Field label={lang === "en" ? `Pieces to delete (1–${fmtNum(editRow.qty)})` : `จำนวนที่จะลบ (1–${fmtNum(editRow.qty)})`}>
-            <Input type="number" min={1} max={editRow.qty} value={delQty}
-              onChange={(e) => setDelQty(e.target.value)} disabled={Number(editRow.qty) <= 1} />
+          <Field label={lang === "en" ? "New quantity (0 = delete)" : "จำนวนใหม่ (0 = ลบทั้งแถว)"}>
+            <Input type="number" min={0} value={newQty} onChange={(e) => setNewQty(e.target.value)} />
           </Field>
-          <div style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.6, color: Number(delQty) >= Number(editRow.qty) ? "var(--danger-hi)" : "var(--muted)" }}>
-            {Number(delQty) >= Number(editRow.qty)
-              ? (lang === "en" ? "= delete the whole scan · piece goes back to “Not started” (QR/lot kept)" : "= ลบทั้งแถว · ชิ้นกลับเป็น “ยังไม่ทำ” (QR/ล็อตยังอยู่)")
-              : (lang === "en" ? `Reduce to ${fmtNum(Number(editRow.qty) - Number(delQty))} pcs` : `ลดเหลือ ${fmtNum(Number(editRow.qty) - Number(delQty))} ชิ้น`)}
+          <div style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.6, color: nq === 0 ? "var(--danger-hi)" : diff > 0 ? "var(--accent-dk)" : "var(--muted)" }}>
+            {nq === cur ? (lang === "en" ? "No change" : "ไม่เปลี่ยนแปลง")
+              : nq === 0 ? (lang === "en" ? "= delete the whole scan · piece back to “Not started” (QR/lot kept)" : "= ลบทั้งแถว · ชิ้นกลับเป็น “ยังไม่ทำ” (QR/ล็อตยังอยู่)")
+              : diff > 0 ? (lang === "en" ? `Add ${fmtNum(diff)} → total ${fmtNum(nq)} pcs` : `เพิ่ม ${fmtNum(diff)} → รวม ${fmtNum(nq)} ชิ้น`)
+              : (lang === "en" ? `Reduce ${fmtNum(-diff)} → ${fmtNum(nq)} pcs` : `ลด ${fmtNum(-diff)} → เหลือ ${fmtNum(nq)} ชิ้น`)}
           </div>
           <div className="modal-actions">
             <Btn variant="ghost" onClick={() => setEditRow(null)} disabled={busy}>{lang === "en" ? "Cancel" : "ยกเลิก"}</Btn>
-            <Btn onClick={doDelete} disabled={busy} style={{ background: "var(--danger-hi)", color: "#fff", border: "none" }}>
-              {busy ? (lang === "en" ? "Deleting…" : "กำลังลบ...")
-                : (Number(delQty) >= Number(editRow.qty) ? (lang === "en" ? "Delete whole row" : "ลบทั้งแถว") : (lang === "en" ? `Delete ${fmtNum(delQty)}` : `ลบ ${fmtNum(delQty)} ชิ้น`))}
+            <Btn onClick={doApply} disabled={busy || nq === cur}
+              style={nq === 0 ? { background: "var(--danger-hi)", color: "#fff", border: "none" } : { background: "var(--accent)", color: "#fff", border: "none" }}>
+              {busy ? (lang === "en" ? "Saving…" : "กำลังบันทึก...")
+                : nq === 0 ? (lang === "en" ? "Delete whole row" : "ลบทั้งแถว")
+                : (lang === "en" ? "Save" : "บันทึก")}
             </Btn>
           </div>
         </Modal>
-      )}
+        );
+      })()}
     </div>
   );
 }
