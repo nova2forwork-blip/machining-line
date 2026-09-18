@@ -616,14 +616,14 @@ export async function setReleaseMaterialLength(releaseId, length) {
   return data || { ok: true };
 }
 
-// ลบ/ลดจำนวนของ "1 การสแกน" (แอดมิน) — ใช้หน้า Scans ของเครื่อง (ปุ่ม Edit ท้ายแถว)
-// delQty < จำนวนของสแกน → ลดจำนวน · delQty >= จำนวน → ลบทั้งสแกน (+ รีเซ็ตสถานะถ้าไม่เหลือสแกนอื่นของชิ้นนั้น)
-// ดู migration-delete-scan-pieces.sql
-export async function deleteScanPieces(partUnitId, scannedAt, delQty) {
-  const { data, error } = await supabase.rpc("delete_scan_pieces", {
-    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null, p_del: Number(delQty),
+// ตั้ง "จำนวนของ 1 การสแกน" ใหม่ (แอดมิน) — เพิ่ม/ลด/ลบ · ใช้หน้า Scans ของเครื่อง (ปุ่ม Edit ท้ายแถว)
+// newQty = 0 → ลบทั้งสแกน · newQty > เดิม → เพิ่ม · newQty < เดิม → ลด (น้ำหนักปรับตามสัดส่วน)
+// ดู migration-set-scan-quantity.sql
+export async function setScanQuantity(partUnitId, scannedAt, newQty) {
+  const { data, error } = await supabase.rpc("set_scan_quantity", {
+    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null, p_new_qty: Number(newQty),
   });
-  if (error) { console.warn("delete_scan_pieces error", error); flagAuth(error); throw error; }
+  if (error) { console.warn("set_scan_quantity error", error); flagAuth(error); throw error; }
   if (data && data.ok === false) throw new Error(data.reason || "failed");
   return data || { ok: true };
 }
