@@ -10,7 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
-  reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason,
+  reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason, listMachineReports,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -301,11 +301,29 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [slowArmed, setSlowArmed] = useState(null);     // { reason, note } — แนบกับสแกนถัดไป (ค้างจนกดยกเลิก)
   const [downStop, setDownStop] = useState(null);       // { id, reason } — เครื่องกำลังหยุด
   const [reportBusy, setReportBusy] = useState(false);
-  // กู้สถานะ "เครื่องกำลังหยุด" ตอนเข้า/รีโหลด (เผื่อรายงานหยุดค้างไว้ก่อนหน้า)
+  const [stnReports, setStnReports] = useState([]);     // รายการรายงานวันนี้ของเครื่องนี้ (โชว์ท้าย DAILY REPORT)
+  // ดึงรายการ "รายงานวันนี้" ของเครื่องนี้ (ไม่โชว์ระยะเวลาหยุด) — เรียกตอนเข้า + หลังรายงาน/สแกน
+  async function loadReports() {
+    if (!machine?.id) return;
+    const since = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();   // ต้นวันนี้ (เวลาเครื่อง)
+    try {
+      const r = await listMachineReports(machine.id, since);
+      const merged = [
+        ...((r && r.downtime) || []).map((d) => ({ kind: "stop", reason: d.reason, at: d.at, open: d.open, key: "d" + d.id })),
+        ...((r && r.slow) || []).map((s) => ({ kind: "slow", reason: s.reason, at: s.at, part_no: s.part_no, key: "s" + s.id })),
+      ].sort((a, b) => new Date(b.at) - new Date(a.at));
+      setStnReports(merged);
+    } catch { /* ignore */ }
+  }
+  // กู้สถานะ "เครื่องกำลังหยุด" + ดึงรายการรายงานวันนี้ ตอนเข้า/รีโหลด
   useEffect(() => {
     let ok = true;
-    if (machine?.id) getOpenDowntime(machine.id).then((r) => { if (ok && r && r.open) setDownStop({ id: r.id, reason: r.reason }); }).catch(() => {});
+    if (machine?.id) {
+      getOpenDowntime(machine.id).then((r) => { if (ok && r && r.open) setDownStop({ id: r.id, reason: r.reason }); }).catch(() => {});
+      loadReports();
+    }
     return () => { ok = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine?.id]);
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
@@ -597,12 +615,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       setDownStop({ id: r.id, reason });
       setReportOpen(null);
       flash(t("แจ้งเครื่องหยุดแล้ว", "Machine stop reported"), "ok");
+      loadReports();
     } catch { flash(t("แจ้งไม่สำเร็จ ลองใหม่", "Report failed, try again"), "warn"); }
     finally { setReportBusy(false); }
   }
   async function markReady() {
     if (reportBusy) return; setReportBusy(true);
-    try { await machineReady(machine?.id); setDownStop(null); flash(t("เครื่องพร้อมทำงาน", "Machine ready"), "ok"); }
+    try { await machineReady(machine?.id); setDownStop(null); flash(t("เครื่องพร้อมทำงาน", "Machine ready"), "ok"); loadReports(); }
     catch { flash(t("ทำรายการไม่สำเร็จ ลองใหม่", "Failed, try again"), "warn"); }
     finally { setReportBusy(false); }
   }
@@ -852,7 +871,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       // แนบเหตุผล "รอบช้า" กับชิ้นที่เพิ่งบันทึก (ออนไลน์เท่านั้น — มี record id) · ค้างไว้ต่อสำหรับชิ้นถัดไปจนกดยกเลิก
       if (slowArmed && res && res.row && res.row.id) {
-        try { await setScanSlowReason(res.row.id, slowArmed.reason, slowArmed.note); } catch { /* ไม่บล็อกงานหลัก */ }
+        try { await setScanSlowReason(res.row.id, slowArmed.reason, slowArmed.note); loadReports(); } catch { /* ไม่บล็อกงานหลัก */ }
       }
       resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
     } finally {
@@ -1509,6 +1528,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
               <div className="val mono">{hms(daily.process_seconds)}</div></div>
           </div>
+          {/* ท้ายสุด: รายงานวันนี้ของเครื่องนี้ (มีอะไรบ้าง) — ไม่โชว์ระยะเวลาที่หยุด */}
+          {stnReports.length > 0 && (
+            <div className="stn-daily-reports">
+              <div className="stn-dr-head">{t("รายงานวันนี้", "Reports today")} <span>({stnReports.length})</span></div>
+              <div className="stn-dr-list">
+                {stnReports.map((r) => {
+                  const d = new Date(r.at); const hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
+                  return (
+                    <div key={r.key} className="stn-dr-item">
+                      <span className={`stn-dr-tag ${r.kind}`}>{r.kind === "stop" ? t("หยุด", "Stop") : t("ทำงาน", "Work")}</span>
+                      <span className="stn-dr-reason" title={r.reason}>{r.reason}</span>
+                      <span className="stn-dr-time">{hm}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {loadErr && <div className="stn-err">{loadErr}</div>}
         </div>
 
