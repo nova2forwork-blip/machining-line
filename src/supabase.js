@@ -662,6 +662,47 @@ export async function editScan(partUnitId, scannedAt, opts = {}) {
   return data || { ok: true };
 }
 
+// ── รายงานปัญหาหน้าเครื่อง (เครื่องหยุด + รอบที่ช้า) · ดู migration-machine-reports.sql ──
+// แจ้งเครื่องหยุด → คืน { ok, id, started_at } · เก็บเวลาเริ่มหยุดหลังบ้าน (หน้าเครื่องไม่โชว์)
+export async function reportMachineStop(machineId, reason, note, operationId) {
+  const { data, error } = await supabase.rpc("report_machine_stop", {
+    p_token: authToken(), p_machine_id: machineId, p_reason: reason || "",
+    p_note: note || null, p_operation_id: operationId || null,
+  });
+  if (error) { console.warn("report_machine_stop error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+// แจ้ง "พร้อมทำงาน" → ปิดการหยุด (บันทึกเวลาสิ้นสุด)
+export async function machineReady(machineId) {
+  const { data, error } = await supabase.rpc("machine_ready", { p_token: authToken(), p_machine_id: machineId });
+  if (error) { console.warn("machine_ready error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+// อ่านการหยุดที่ยังเปิดอยู่ (กู้สถานะตอนรีโหลด) → { open, reason, note, started_at } · พลาด = ถือว่าไม่หยุด
+export async function getOpenDowntime(machineId) {
+  const { data, error } = await supabase.rpc("get_open_downtime", { p_token: authToken(), p_machine_id: machineId });
+  if (error) { console.warn("get_open_downtime error", error); return { ok: false, open: false }; }
+  return data || { ok: true, open: false };
+}
+// แนบเหตุผล "รอบช้า" กับ record ที่เพิ่งสแกน
+export async function setScanSlowReason(recordId, reason, note) {
+  const { data, error } = await supabase.rpc("set_scan_slow_reason", {
+    p_token: authToken(), p_record_id: recordId, p_reason: reason || "", p_note: note || null,
+  });
+  if (error) { console.warn("set_scan_slow_reason error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true };
+}
+// สรุปรายงานปัญหาให้แอดมิน (ตั้งแต่เวลา since) → { downtime:[...], slow:[...] }
+export async function machineReportSummary(since) {
+  const { data, error } = await supabase.rpc("machine_report_summary", { p_token: authToken(), p_since: since });
+  if (error) { console.warn("machine_report_summary error", error); flagAuth(error); throw error; }
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+  return data || { ok: true, downtime: [], slow: [] };
+}
+
 // ── ลำดับคอลัมน์ในตาราง (2 ระดับ: company ค่ากลาง + user รายคน) · ดู migration-column-prefs.sql ──
 export async function getColumnPrefs() {
   const { data, error } = await supabase.rpc("get_column_prefs", { p_token: authToken() });
