@@ -10,6 +10,7 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
+  reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -26,6 +27,69 @@ function StnLangToggle() {
       title="สลับภาษา / Switch language">
       {lang === "th" ? "ไทย" : "EN"}
     </button>
+  );
+}
+
+// ─── รายงานปัญหาหน้าเครื่อง — เหตุผล (ปรับได้) ────────────────────────────────
+const STN_STOP_REASONS = [
+  { i: "⚡", th: "ไฟดับ / ไฟตก", en: "Power outage" },
+  { i: "🔧", th: "เครื่องเสีย", en: "Machine breakdown" },
+  { i: "🧰", th: "บำรุงรักษา (PM)", en: "Maintenance" },
+  { i: "✏️", th: "อื่นๆ", en: "Other" },
+];
+const STN_WORK_REASONS = [
+  { i: "💨", th: "ปั้มลมมีปัญหา", en: "Air pump" },
+  { i: "🔩", th: "เครื่องเดินไม่เต็มที่ / รวน", en: "Machine unstable" },
+  { i: "🪚", th: "ดอก/ใบมีดสึก", en: "Tool worn" },
+  { i: "📐", th: "วัตถุดิบไม่ได้ขนาด/มีตำหนิ", en: "Material off-spec" },
+  { i: "📄", th: "แบบ/ดรออิงไม่ชัด", en: "Drawing unclear" },
+  { i: "🧩", th: "งานยาก/ซับซ้อนกว่าปกติ", en: "Harder job" },
+  { i: "✏️", th: "อื่นๆ", en: "Other" },
+];
+
+// ป็อปอัพเลือกเหตุผล — mode "stop" = แจ้งเครื่องหยุด · "work" = รายงานการทำงาน (แนบกับสแกน)
+function StnReportModal({ mode, onSubmit, onClose, busy }) {
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
+  const [pick, setPick] = useState(null);
+  const [note, setNote] = useState("");
+  const stop = mode === "stop";
+  const reasons = stop ? STN_STOP_REASONS : STN_WORK_REASONS;
+  const has = !!(pick || note.trim());
+  return (
+    <div className="stn-rep-ov" onClick={(e) => { if (e.target.classList.contains("stn-rep-ov")) onClose(); }}>
+      <div className="stn-rep-modal">
+        <div className="stn-rep-h">
+          <div className={`stn-rep-ico ${stop ? "stop" : "work"}`}>{stop ? "🛑" : "⚠️"}</div>
+          <div>
+            <div className="stn-rep-title">{stop ? t("เครื่องหยุด — เพราะอะไร?", "Machine stopped — why?") : t("รายงานการทำงาน — เหตุผล", "Work report — reason")}</div>
+            <div className="stn-rep-sub">{stop
+              ? t("เลือกสาเหตุ แล้วกด \"พร้อมทำงาน\" เมื่อเครื่องกลับมา", "Pick a reason; press \"Ready\" when the machine is back")
+              : t("เลือกเหตุผล แล้วจะบันทึกไปกับชิ้นที่กด SCAN", "Pick a reason; it saves with the next SCAN")}</div>
+          </div>
+          <button className="stn-rep-close" onClick={onClose} aria-label="close">✕</button>
+        </div>
+        <div className="stn-rep-grid">
+          {reasons.map((r) => (
+            <button key={r.th} type="button"
+              className={`stn-rep-reason${pick === r.th ? " sel " + (stop ? "stop" : "work") : ""}`}
+              onClick={() => setPick(r.th)}>
+              <span className="em">{r.i}</span><span>{lang === "en" ? r.en : r.th}</span>
+            </button>
+          ))}
+        </div>
+        <textarea className="stn-rep-note" value={note} onChange={(e) => setNote(e.target.value)}
+          placeholder={stop ? t("รายละเอียดเพิ่มเติม (พิมพ์เอง)", "More detail (optional)")
+            : t("เช่น ปั้มลมไม่แรง เลยทำรอบนี้ช้ากว่าปกติ", "e.g. weak air pressure, slower this round")} />
+        <div className="stn-rep-actions">
+          <button type="button" className="stn-rep-btn cancel" onClick={onClose}>{t("ยกเลิก", "Cancel")}</button>
+          <button type="button" className={`stn-rep-btn ${stop ? "go-stop" : "go-work"}`} disabled={!has || busy}
+            onClick={() => onSubmit(pick || t("อื่นๆ", "Other"), note.trim())}>
+            {stop ? t("บันทึกการหยุด", "Report stop") : t("ตั้งเหตุผล → SCAN", "Set reason → SCAN")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -232,6 +296,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
   const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
+  // ── รายงานปัญหาหน้าเครื่อง ──
+  const [reportOpen, setReportOpen] = useState(null);   // null | 'stop' | 'work'
+  const [slowArmed, setSlowArmed] = useState(null);     // { reason, note } — แนบกับสแกนถัดไป (ค้างจนกดยกเลิก)
+  const [downStop, setDownStop] = useState(null);       // { id, reason } — เครื่องกำลังหยุด
+  const [reportBusy, setReportBusy] = useState(false);
+  // กู้สถานะ "เครื่องกำลังหยุด" ตอนเข้า/รีโหลด (เผื่อรายงานหยุดค้างไว้ก่อนหน้า)
+  useEffect(() => {
+    let ok = true;
+    if (machine?.id) getOpenDowntime(machine.id).then((r) => { if (ok && r && r.open) setDownStop({ id: r.id, reason: r.reason }); }).catch(() => {});
+    return () => { ok = false; };
+  }, [machine?.id]);
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
   const [op, setOp] = useState(user.operation || null);
@@ -510,11 +585,39 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     clientIdMapRef.current = null;       // ★ ล้าง client_id ต่อขั้นตอนด้วย (ชิ้นใหม่ = ชุดใหม่)
   }
 
+  // ── รายงานปัญหา: เดินเครื่องอยู่ = "รายงานการทำงาน" · ยังไม่เริ่ม = "แจ้งเครื่องหยุด" ──
+  function openReport() {
+    if (downStop) return;                       // หยุดอยู่ → ให้กด "พร้อมทำงาน" ก่อน
+    setReportOpen(step !== STEP.IDLE ? "work" : "stop");
+  }
+  async function submitStop(reason, note) {
+    if (reportBusy) return; setReportBusy(true);
+    try {
+      const r = await reportMachineStop(machine?.id, reason, note, op?.id || null);
+      setDownStop({ id: r.id, reason });
+      setReportOpen(null);
+      flash(t("แจ้งเครื่องหยุดแล้ว", "Machine stop reported"), "ok");
+    } catch { flash(t("แจ้งไม่สำเร็จ ลองใหม่", "Report failed, try again"), "warn"); }
+    finally { setReportBusy(false); }
+  }
+  async function markReady() {
+    if (reportBusy) return; setReportBusy(true);
+    try { await machineReady(machine?.id); setDownStop(null); flash(t("เครื่องพร้อมทำงาน", "Machine ready"), "ok"); }
+    catch { flash(t("ทำรายการไม่สำเร็จ ลองใหม่", "Failed, try again"), "warn"); }
+    finally { setReportBusy(false); }
+  }
+  function submitWork(reason, note) {           // ตั้งเหตุผลค้างไว้ → บันทึกตอน SCAN (ผูกกับชิ้น)
+    setSlowArmed({ reason, note });
+    setReportOpen(null);
+    flash(t("ตั้งเหตุผลแล้ว — จะบันทึกตอนกด SCAN", "Reason set — saved on next SCAN"), "ok");
+  }
+
   // ── START / STOP (RECORD) ───────────────────────────────────────────────
   // ต้องกรอกความยาววัสดุก่อน ถึงจะกด Start ได้
   const matReady = materialLen !== "" && Number(materialLen) > 0;
   const prevStepRef = useRef(STEP.REC);
   function onRecord() {
+    if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
     if (step === STEP.IDLE) {
       if (!matReady) { flash("กรอกความยาววัสดุ (Material Length) ก่อน", "warn"); return; }
       startTimer();
@@ -537,6 +640,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function tickBeep() { beep(880, 45, 0.14); }                     // เสียงเบาๆ = สแกนเจอชิ้นงาน
 
   async function onScan() {
+    if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
     if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
     // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง กลับไปหน้าจับเวลา (toggle)
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
@@ -745,6 +849,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       } else {
         // โชว์จำนวนขั้นตอนเสมอ (ต่างจากข้อความเดิม) → ถ้ายังเห็น "บันทึกแล้ว ✓ พร้อมงานถัดไป" = แท็บเล็ตยังรันโค้ดเก่า (แคช)
         flash(t(`บันทึกครบ ${savedSteps} ขั้นตอน ✓`, `Saved ${savedSteps} step(s) ✓`), "ok");
+      }
+      // แนบเหตุผล "รอบช้า" กับชิ้นที่เพิ่งบันทึก (ออนไลน์เท่านั้น — มี record id) · ค้างไว้ต่อสำหรับชิ้นถัดไปจนกดยกเลิก
+      if (slowArmed && res && res.row && res.row.id) {
+        try { await setScanSlowReason(res.row.id, slowArmed.reason, slowArmed.note); } catch { /* ไม่บล็อกงานหลัก */ }
       }
       resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
     } finally {
@@ -1423,6 +1531,26 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 </div>
               </div>
             ) : null}
+            {/* เครื่องกำลังหยุด — บังหน้าจอทำงาน + ปุ่มพร้อมทำงาน (ไม่โชว์เวลาที่หยุด) */}
+            {downStop ? (
+              <div className="stn-down">
+                <div className="ico">⛔</div>
+                <div className="ttl">{t("เครื่องหยุด", "MACHINE STOPPED")}</div>
+                <div className="rsn">{downStop.reason}</div>
+                <button className="ready" disabled={reportBusy} onClick={markReady}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                  {t("พร้อมทำงาน", "READY TO WORK")}
+                </button>
+              </div>
+            ) : null}
+            {/* เหตุผล "รอบช้า" ที่ตั้งค้างไว้ — จะบันทึกกับชิ้นที่สแกนถัดไป */}
+            {slowArmed && !downStop ? (
+              <div className="stn-armed">
+                <span className="em">⚠️</span>
+                <div className="tx"><b>{t("จะแนบกับชิ้นที่สแกน", "Attaches to next SCAN")}:</b> {slowArmed.reason}</div>
+                <button className="x" onClick={() => setSlowArmed(null)}>{t("ยกเลิก", "Clear")}</button>
+              </div>
+            ) : null}
           </div>
 
           <div className="stn-control">
@@ -1439,15 +1567,23 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               </div>
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
-                disabled={busy}>
+                disabled={busy || !!downStop}>
                 <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy}>
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy || !!downStop}>
                 <div className="row1">
                   <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
                 </div>
                 <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close") : <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>}</div>
+              </button>
+              {/* ปุ่มรายงานปัญหา — เดินเครื่องอยู่ = รายงานการทำงาน · ยังไม่เริ่ม = แจ้งเครื่องหยุด */}
+              <button className={`stn-ctl-btn stn-scan-cell stn-report${slowArmed ? " armed" : ""}`} onClick={openReport} disabled={busy || !!downStop}>
+                <div className="row1">
+                  <span>{t("แจ้งปัญหา", "REPORT")}</span>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
+                </div>
+                <div className="qty">{recording ? (slowArmed ? t("ตั้งเหตุผลแล้ว ✓", "reason set ✓") : t("รายงานการทำงาน", "Work report")) : t("แจ้งเครื่องหยุด", "Machine stop")}</div>
               </button>
             </div>
             <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
@@ -1455,6 +1591,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9" /></svg>
             </button>
           </div>
+          {reportOpen ? (
+            <StnReportModal mode={reportOpen} busy={reportBusy}
+              onClose={() => setReportOpen(null)}
+              onSubmit={(reason, note) => (reportOpen === "stop" ? submitStop(reason, note) : submitWork(reason, note))} />
+          ) : null}
         </div>
       </div>
     </div>
