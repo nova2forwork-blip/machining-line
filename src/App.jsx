@@ -275,8 +275,14 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
   cols0.forEach((c) => { byKey[c.key] = c; });
   const cols = order.map((k) => byKey[k]).filter(Boolean);
   const data = (sort && sortAccessors) ? sort.sortRows(rows, sortAccessors) : (rows || []);
+  const [lang] = useLang();
+  const wrapRef = useRef(null);
+  const [showTableTop, setShowTableTop] = useState(false);
+  const onWrapScroll = (e) => { setShowTableTop((e.currentTarget.scrollTop || 0) > 120); };
+  const tableToTop = () => { const el = wrapRef.current; if (!el) return; try { el.scrollTo({ top: 0, behavior: "smooth" }); } catch { el.scrollTop = 0; } };
   return (
-    <div className={wrapClass || "table-wrap"} style={wrapStyle}>
+    <div className="dt-host" style={{ position: "relative" }}>
+      <div ref={wrapRef} onScroll={onWrapScroll} className={wrapClass || "table-wrap"} style={wrapStyle}>
       <table className={tableClass || "data-table"} style={tableStyle}>
         <thead>
           <tr>
@@ -308,6 +314,17 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
           })}
         </tbody>
       </table>
+      </div>
+      {showTableTop && (
+        <button type="button" onClick={tableToTop}
+          aria-label={lang === "en" ? "Scroll this table to top" : "เลื่อนตารางนี้ขึ้นบนสุด"}
+          title={lang === "en" ? "Scroll this table to top" : "เลื่อนตารางนี้ขึ้นบนสุด"}
+          style={{ position: "absolute", right: 14, bottom: 12, zIndex: 6, width: 38, height: 38, borderRadius: 10,
+            background: "var(--surface, #fff)", color: "#1f5288", border: "2px solid #1f5288", cursor: "pointer",
+            boxShadow: "0 4px 12px rgba(0,0,0,.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6" /></svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -7145,25 +7162,20 @@ function ColumnLayoutCard() {
 // ─── ปุ่มลอย "ไปบนสุด" — โผล่เมื่อเลื่อนลง · กดแล้วเลื่อนหน้าขึ้นบนสุด (ทุกหน้าหลังบ้าน) ──
 function ScrollTopButton() {
   const [show, setShow] = useState(false);
-  const scrollerRef = useRef(null);
   useEffect(() => {
-    const onScroll = (e) => {
-      const winY = window.pageYOffset || document.documentElement.scrollTop || 0;
-      let y = winY;
-      const t = e && e.target;
-      if (t && t !== document && t !== window && t.scrollTop != null && t.scrollTop > 0) { y = Math.max(y, t.scrollTop); scrollerRef.current = t; }
-      else if (winY > 0) { scrollerRef.current = null; }
-      setShow(y > 300);
+    const onScroll = () => {                                       // เฉพาะสกอลล์ของ "ทั้งหน้า" (ตารางมีปุ่มขึ้นของตัวเองแยกต่างหาก)
+      const se = document.scrollingElement;
+      const winY = window.pageYOffset || document.documentElement.scrollTop || (se ? se.scrollTop : 0) || 0;
+      setShow(winY > 300);
     };
-    window.addEventListener("scroll", onScroll, { passive: true, capture: true });   // capture = จับสกอลล์ของกล่องด้านในด้วย
-    onScroll({});
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+    window.addEventListener("scroll", onScroll, { passive: true });   // ไม่ capture = ไม่จับสกอลล์ในกล่องตาราง
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
   if (!show) return null;
-  const toTop = () => {
+  const toTop = () => {                                            // เลื่อน "ทั้งหน้า" ขึ้นบนสุด (ไม่ยุ่งกับสกอลล์ในตาราง)
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { try { window.scrollTo(0, 0); } catch { /* ignore */ } }
     try { const el = document.scrollingElement || document.documentElement; if (el && el.scrollTo) el.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
-    try { const s = scrollerRef.current; if (s && s.scrollTo) s.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
   };
   return (
     <button type="button" onClick={toTop} aria-label="ไปบนสุด" title="ไปบนสุด"
