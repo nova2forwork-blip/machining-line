@@ -6,6 +6,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
+  machineReportSummary,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -772,6 +773,7 @@ const MENU = [
   { group: "สรุปภาพรวม", items: [
     { key: "machines", label: "สรุปเครื่องจักร", icon: "machine" },
     { key: "parts", label: "สรุป Part", icon: "grid" },
+    { key: "machinereports", label: "รายงานปัญหาเครื่อง", icon: "warn", can: canManage },
   ] },
   { group: "จัดการ", items: [
     { key: "setup", label: "ตั้งค่า", icon: "settings", can: isAdmin },
@@ -964,6 +966,7 @@ function Shell({ user, onLogout }) {
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "verify" && <AssemblyVerifyPage key={"vf" + verifyNonce} initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
           {tab === "machines" && <MachinesSummaryPage />}
+          {tab === "machinereports" && canManage(user) && <MachineReportsPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
           {tab === "parts" && <PartsSummaryPage />}
           {tab === "setup" && isAdmin(user) && <SetupPage />}
@@ -6070,6 +6073,135 @@ function MachineScanDetail({ machine, onBack }) {
         </Modal>
         );
       })()}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// รายงานปัญหาเครื่อง (แอดมิน) — สรุปเวลาหยุด + ปัญหาระหว่างทำงาน · ดู migration-machine-reports.sql
+// ══════════════════════════════════════════════════════════════════════════
+function MReasonBars({ obj, total, empty }) {
+  const arr = Object.entries(obj).sort((a, b) => b[1] - a[1]);
+  const fmtMin = (m) => { m = Math.round(Number(m) || 0); if (m < 60) return m + " น."; const h = Math.floor(m / 60), mm = m % 60; return h + " ชม." + (mm ? " " + mm + " น." : ""); };
+  if (!arr.length) return <div style={{ color: "var(--muted-2)", fontSize: 13, textAlign: "center", padding: 18 }}>{empty}</div>;
+  const max = arr[0][1] || 1;
+  return (
+    <div>
+      {arr.map(([k, v]) => (
+        <div key={k} style={{ display: "grid", gridTemplateColumns: "minmax(84px,148px) 1fr auto", alignItems: "center", gap: 12, padding: "6px 0" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</div>
+          <div style={{ height: 16, background: "var(--surface-3)", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: (v / max * 100) + "%", background: "var(--danger)", borderRadius: "0 8px 8px 0", minWidth: 3 }} />
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", minWidth: 62, textAlign: "right" }}>
+            {fmtMin(v)}{total ? <span style={{ color: "var(--muted-2)", fontSize: 11 }}> {Math.round(v / total * 100)}%</span> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MachineReportsPage() {
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
+  const [data, setData] = useState({ downtime: [], slow: [] });
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [range, setRange] = useState("week");   // today | week | month
+  const [mFilter, setMFilter] = useState("");
+  const [tFilter, setTFilter] = useState("");    // "" | stop | slow
+
+  useEffect(() => {
+    let ok = true;
+    setLoading(true); setErr("");
+    const since = new Date(Date.now() - 31 * 864e5).toISOString();   // ดึงกว้าง 31 วัน แล้วค่อยกรองในจอ
+    machineReportSummary(since).then((r) => {
+      if (!ok) return;
+      setData({ downtime: r.downtime || [], slow: r.slow || [] });
+      setLoading(false);
+    }).catch((e) => { if (ok) { setErr(e?.message || "โหลดไม่สำเร็จ"); setLoading(false); } });
+    return () => { ok = false; };
+  }, []);
+
+  const fmtMin = (m) => { m = Math.round(Number(m) || 0); if (m < 60) return m + " " + t("น.", "min"); const h = Math.floor(m / 60), mm = m % 60; return h + " " + t("ชม.", "h") + (mm ? " " + mm + " " + t("น.", "m") : ""); };
+  const sinceMs = range === "today" ? new Date().setHours(0, 0, 0, 0) : (range === "week" ? Date.now() - 7 * 864e5 : Date.now() - 31 * 864e5);
+  const down = (data.downtime || []).filter((d) => new Date(d.started_at).getTime() >= sinceMs && (!mFilter || d.machine === mFilter));
+  const slow = (data.slow || []).filter((s) => new Date(s.recorded_at).getTime() >= sinceMs && (!mFilter || s.machine === mFilter));
+
+  const totalMin = down.reduce((a, d) => a + (Number(d.minutes) || 0), 0);
+  const byReason = {}; down.forEach((d) => { byReason[d.reason || "-"] = (byReason[d.reason || "-"] || 0) + (Number(d.minutes) || 0); });
+  const byMachine = {}; down.forEach((d) => { const k = d.machine || "-"; byMachine[k] = (byMachine[k] || 0) + (Number(d.minutes) || 0); });
+  const worst = Object.entries(byMachine).sort((a, b) => b[1] - a[1])[0];
+  const machines = [...new Set([...(data.downtime || []).map((d) => d.machine), ...(data.slow || []).map((s) => s.machine)].filter(Boolean))].sort();
+
+  let rows = [
+    ...down.map((d) => ({ kind: "stop", at: d.started_at, machine: d.machine, employee: d.employee, reason: d.reason, note: d.note, minutes: d.minutes, open: d.open, lot: "" })),
+    ...slow.map((s) => ({ kind: "slow", at: s.recorded_at, machine: s.machine, employee: s.employee, reason: s.reason, note: s.note, minutes: null, lot: [s.part_no, s.release_order].filter(Boolean).join(" · ") })),
+  ];
+  if (tFilter) rows = rows.filter((r) => r.kind === tFilter);
+  rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">{t("รายงานปัญหาเครื่อง", "Machine Reports")}</div>
+          <div className="page-sub">{t("สรุปเวลาเครื่องหยุด & ปัญหาระหว่างทำงาน — ทุกเครื่องในไลน์", "Downtime & in-process issues — all machines")}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+        <div className="chip-row">
+          {[["today", t("วันนี้", "Today")], ["week", t("สัปดาห์นี้", "Week")], ["month", t("เดือนนี้", "Month")]].map(([k, lbl]) => (
+            <button key={k} className={`chip${range === k ? " active" : ""}`} onClick={() => setRange(k)}>{lbl}</button>
+          ))}
+        </div>
+        <select className="select" value={mFilter} onChange={(e) => setMFilter(e.target.value)} style={{ maxWidth: 200 }}>
+          <option value="">{t("ทุกเครื่อง", "All machines")}</option>
+          {machines.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <select className="select" value={tFilter} onChange={(e) => setTFilter(e.target.value)} style={{ maxWidth: 200 }}>
+          <option value="">{t("ทุกประเภท", "All types")}</option>
+          <option value="stop">{t("เครื่องหยุด", "Machine stop")}</option>
+          <option value="slow">{t("ระหว่างทำงาน", "In-process")}</option>
+        </select>
+      </div>
+
+      {err && <Card><div style={{ color: "var(--danger)", padding: 6 }}>{err}</div></Card>}
+      {loading ? (
+        <Card><div style={{ color: "var(--muted)", padding: 22, textAlign: "center" }}>{t("กำลังโหลด…", "Loading…")}</div></Card>
+      ) : (
+        <>
+          <div className="stat-row">
+            <StatCard label={t("เวลาหยุดรวม", "Total downtime")} value={fmtMin(totalMin)} icon="warn" />
+            <StatCard label={t("จำนวนครั้งที่หยุด", "Stops")} value={fmtNum(down.length)} icon="clock" />
+            <StatCard label={t("ปัญหาระหว่างทำงาน", "In-process issues")} value={fmtNum(slow.length)} icon="bolt" />
+            <StatCard label={t("เครื่องหยุดนานสุด", "Top machine")} value={worst ? worst[0] : "—"} icon="machine" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
+            <Card title={t("เวลาหยุด แยกตามสาเหตุ", "Downtime by reason")}><MReasonBars obj={byReason} total={totalMin} empty={t("ไม่มีการหยุดในช่วงนี้", "No downtime in range")} /></Card>
+            <Card title={t("เวลาหยุด แยกตามเครื่อง", "By machine")}><MReasonBars obj={byMachine} total={totalMin} empty={t("ไม่มีการหยุดในช่วงนี้", "No downtime in range")} /></Card>
+          </div>
+
+          <Card title={`${t("รายการทั้งหมด", "All reports")} (${rows.length})`}>
+            <DataTable id="machine-reports" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+              rows={rows} rowKey={(r, i) => `${r.kind}-${i}`}
+              empty={t("ไม่มีรายการในช่วงที่เลือก", "No reports in range")}
+              columns={[
+                { key: "at", header: t("วัน–เวลา", "Date–time"), tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap", color: "var(--muted)" }, cell: (r) => fmtDT(r.at) },
+                { key: "machine", header: t("เครื่อง", "Machine"), tdStyle: { fontWeight: 600 }, cell: (r) => r.machine || "-" },
+                { key: "emp", header: t("พนักงาน", "Operator"), cell: (r) => r.employee || "-" },
+                { key: "type", header: t("ประเภท", "Type"), cell: (r) => r.kind === "stop" ? <Badge tone="danger">🛑 {t("เครื่องหยุด", "Stop")}</Badge> : <Badge tone="warning">⚠️ {t("ระหว่างทำงาน", "In-process")}</Badge> },
+                { key: "reason", header: t("สาเหตุ / ปัญหา", "Reason"), cell: (r) => r.reason || "-" },
+                { key: "dur", header: t("เวลาหยุด", "Downtime"), align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (r) => r.kind === "stop" ? (r.open ? <span style={{ color: "var(--danger)", fontWeight: 700 }}>● {t("ยังหยุด", "open")}</span> : fmtMin(r.minutes)) : <span style={{ color: "var(--muted-2)" }}>—</span> },
+                { key: "lot", header: t("ล็อต / พาร์ท", "Lot / part"), tdStyle: { fontFamily: "var(--font-mono)", fontSize: 12.5 }, cell: (r) => r.lot || "—" },
+                { key: "note", header: t("หมายเหตุ", "Note"), tdStyle: { color: "var(--muted)", fontSize: 12.5, maxWidth: 260 }, cell: (r) => r.note || "—" },
+              ]} />
+          </Card>
+        </>
+      )}
     </div>
   );
 }
