@@ -278,10 +278,13 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
   const [lang] = useLang();
   const wrapRef = useRef(null);
   const [showTableTop, setShowTableTop] = useState(false);
+  const [canScrollV, setCanScrollV] = useState(false);   // ตารางเลื่อนแนวตั้งในกล่องได้ไหม (มีปุ่มขึ้น + เว้นที่ท้ายตารางกันปุ่มทับ)
+  const recheckScroll = () => { const el = wrapRef.current; if (el) setCanScrollV((el.scrollHeight - el.clientHeight) > 24); };
+  useEffect(() => { recheckScroll(); const on = () => recheckScroll(); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, [data.length, cols.length]);
   const onWrapScroll = (e) => { setShowTableTop((e.currentTarget.scrollTop || 0) > 120); };
   const tableToTop = () => { const el = wrapRef.current; if (!el) return; try { el.scrollTo({ top: 0, behavior: "smooth" }); } catch { el.scrollTop = 0; } };
   return (
-    <div className="dt-host" style={{ position: "relative" }}>
+    <div className="dt-host" style={{ position: "relative", paddingBottom: canScrollV ? 42 : undefined }}>
       <div ref={wrapRef} onScroll={onWrapScroll} className={wrapClass || "table-wrap"} style={wrapStyle}>
       <table className={tableClass || "data-table"} style={tableStyle}>
         <thead>
@@ -319,7 +322,7 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
         <button type="button" onClick={tableToTop}
           aria-label={lang === "en" ? "Scroll this table to top" : "เลื่อนตารางนี้ขึ้นบนสุด"}
           title={lang === "en" ? "Scroll this table to top" : "เลื่อนตารางนี้ขึ้นบนสุด"}
-          style={{ position: "absolute", right: 14, bottom: 12, zIndex: 6, width: 38, height: 38, borderRadius: 10,
+          style={{ position: "absolute", right: 6, bottom: 3, zIndex: 6, width: 36, height: 36, borderRadius: 10,
             background: "var(--surface, #fff)", color: "#1f5288", border: "2px solid #1f5288", cursor: "pointer",
             boxShadow: "0 4px 12px rgba(0,0,0,.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6" /></svg>
