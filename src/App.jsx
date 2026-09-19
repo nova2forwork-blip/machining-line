@@ -2551,7 +2551,7 @@ function ProgressBar({ pct, finished, total }) {
 // ── รายละเอียดความคืบหน้าของ Part เดียว (แยกตามขั้นตอน) ─────────────────────
 // กดจากแถว Part ในหน้ารายละเอียด Release — แสดงว่าเบอร์นี้ ตัดไปกี่ชิ้น เหลือเจาะ
 // เหลือบาก ฯลฯ โดยนับ "จำนวนชิ้น (distinct) ที่ผ่านแต่ละขั้นตอน" จาก scan_logs จริง
-function PartProgressModal({ release, user, onClose }) {
+function PartProgressModal({ release, user, goTo, onClose }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (ใช้คิดยอดรวมบนสุด)
@@ -2748,7 +2748,10 @@ function PartProgressModal({ release, user, onClose }) {
         </>
       )}
 
-      <div className="modal-actions">
+      <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+        {goTo
+          ? <Btn type="button" variant="ghost" onClick={() => { goTo("labels", { releaseId: release.id }); onClose(); }} style={{ color: "var(--accent-dk)" }}><Icon name="printer" size={14} /> {lang === "en" ? "Print QR" : "พิมพ์ QR"}</Btn>
+          : <span />}
         <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>
       </div>
     </Modal>
@@ -3100,11 +3103,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             ...(canEdit ? [{ key: "manage", header: lang === "en" ? "Manage" : "จัดการ",
               tdStyle: { whiteSpace: "nowrap" }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
               cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>{busyId === r.id ? "กำลังลบ..." : "แก้ไข"}</span> }] : []),
-            { key: "print", header: lang === "en" ? "Print" : "พิมพ์",
-              cell: (r) => <span onClick={(e) => { e.stopPropagation(); goTo && goTo("labels", { releaseId: r.id }); }} style={{ color: "var(--accent-dk)", cursor: "pointer", whiteSpace: "nowrap" }}><Icon name="printer" size={13} /> พิมพ์ QR</span> },
-            { key: "steps", header: lang === "en" ? "Steps" : "ขั้นตอน", dataLabel: "",
-              tdStyle: { color: "var(--muted)", whiteSpace: "nowrap" },
-              cell: () => <>ดูขั้นตอน <Icon name="arrowLeft" size={12} style={{ transform: "rotate(180deg)", verticalAlign: "-1px" }} /></> },
           ];
           const rctx = (r) => {
             const p = rowProg(r);
@@ -3126,7 +3124,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...notes].join(" · ")}</div>
       )}
 
-      {viewPart && <PartProgressModal release={viewPart} user={user} onClose={() => { setViewPart(null); loadStats(); }} />}
+      {viewPart && <PartProgressModal release={viewPart} user={user} goTo={goTo} onClose={() => { setViewPart(null); loadStats(); }} />}
       {editing && (
         <ReleaseEditModal
           release={editing}
@@ -5840,7 +5838,7 @@ function MachineScanDetail({ machine, onBack }) {
         row[lang === "en" ? "Status" : "สถานะ"] = String(g.status).toLowerCase() === "finished" ? (lang === "en" ? "finished" : "เสร็จ") : (lang === "en" ? "in process" : "กำลังทำ");
         row[lang === "en" ? "Qty" : "จำนวน"] = Number(g.qty) || 0;
         { const v = partLenOf(g.release_id); row[lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)"] = v != null ? Number(v) : ""; }
-        row[lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"] = g.weight ? Number(g.weight) : "";
+        row[lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)"] = g.weight ? (Number(g.weight) || 0).toFixed(2) : "";   // น้ำหนัก 2 ตำแหน่งเสมอ
         row["INV Code"] = relInfo[g.release_id]?.material || "";
         { const ml = matLenMap[g.release_id] || []; row[lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"] = g.material_length_mm != null ? Number(g.material_length_mm) : (ml.length === 1 ? Number(ml[0]) : ""); }
         row[lang === "en" ? "Run time" : "เวลาเดินเครื่อง"] = g.secs ? fmtHrs(g.secs) : "";
