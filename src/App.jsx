@@ -6,7 +6,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
-  machineReportSummary,
+  machineReportSummary, listScanSlow,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
@@ -5576,6 +5576,9 @@ function ReportPage({ goTo }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 6) MACHINES SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
+// เหตุผล "รายงานการทำงาน (รอบช้า)" มาตรฐาน — ใช้ในตัวเลือกป็อปอัพแก้สแกน (ตรงกับหน้าเครื่อง)
+const SCAN_SLOW_REASONS = ["ปั้มลมมีปัญหา", "เครื่องเดินไม่เต็มที่ / รวน", "ดอก/ใบมีดสึก", "วัตถุดิบไม่ได้ขนาด/มีตำหนิ", "แบบ/ดรออิงไม่ชัด", "งานยาก/ซับซ้อนกว่าปกติ", "อื่นๆ"];
+
 // ── เจาะดู "สแกนทั้งหมดของเครื่องนี้" — ตารางบันทึกงานหน้าเครื่อง (วัน-เวลา · พาร์ท · ขั้นตอน · จำนวน) ──
 //    เปิดจากแถวเครื่องในหน้าสรุปเครื่องจักร · เลือกช่วงเวลาเองได้ (ด่วน/รายเดือน/กำหนดเอง) · ล่าสุดอยู่บนสุด
 function MachineScanDetail({ machine, onBack }) {
@@ -5595,8 +5598,9 @@ function MachineScanDetail({ machine, onBack }) {
   const [relInfo, setRelInfo] = useState({});              // release_id → { qty, length_mm, part_master_id, material, default_length_mm }
   const [matLenMap, setMatLenMap] = useState({});          // release_id → [material_length_mm ที่ใช้จริง]
   const [allOps, setAllOps] = useState([]);                // รายการขั้นตอนทั้งหมด (ไว้เลือก STEP)
-  // ฟอร์มแก้ทั้งแถว — รายสแกน (dt/weight/runMin/status/opIds) + ระดับล็อต/พาร์ท (partNo/releaseOrder/ordered/mat/partLen/matLen)
-  const [edForm, setEdForm] = useState({ dt: "", weight: "", runMin: "", status: "", opIds: [], partNo: "", releaseOrder: "", ordered: "", mat: "", partLen: "", matLen: "" });
+  const [slowRows, setSlowRows] = useState([]);            // เหตุผลรอบช้า (รายงานการทำงาน) ต่อสแกน — จับคู่ด้วย part_unit+เวลา
+  // ฟอร์มแก้ทั้งแถว — รายสแกน (dt/weight/runMin/status/opIds/slowReason/slowNote) + ระดับล็อต/พาร์ท (partNo/releaseOrder/ordered/mat/partLen/matLen)
+  const [edForm, setEdForm] = useState({ dt: "", weight: "", runMin: "", status: "", opIds: [], slowReason: "", slowNote: "", partNo: "", releaseOrder: "", ordered: "", mat: "", partLen: "", matLen: "" });
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
   const colApi = useRef(null);                          // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มา)
@@ -5613,6 +5617,9 @@ function MachineScanDetail({ machine, onBack }) {
     getScanLogsBetween(range.from, range.to)
       .then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); })
       .catch(() => { if (alive) setLogs([]); });
+    listScanSlow(range.from, range.to)
+      .then((d) => { if (alive) setSlowRows(Array.isArray(d) ? d : []); })
+      .catch(() => { if (alive) setSlowRows([]); });
     return () => { alive = false; };
   }, [rangeMode, preset, monthValue, customFrom, customTo, reloadTick]);
 
@@ -5678,6 +5685,13 @@ function MachineScanDetail({ machine, onBack }) {
         });
       }
     }
+    // จับคู่เหตุผล "รอบช้า" (รายงานการทำงาน) เข้าแต่ละสแกน — ตรง part_unit + เวลาใกล้กัน (±3 วิ)
+    if (slowRows && slowRows.length) {
+      for (const g of out) {
+        const m = slowRows.find((s) => s.part_unit_id === g.part_unit_id && Math.abs(new Date(s.at) - new Date(g.time)) < 3000);
+        if (m) { g.slow_reason = m.reason || ""; g.slow_note = m.note || ""; }
+      }
+    }
     return out;
   })();
 
@@ -5739,6 +5753,8 @@ function MachineScanDetail({ machine, onBack }) {
       runMin: g.secs ? String(Math.round((Number(g.secs) || 0) / 60)) : "",
       status: (String(g.status).toLowerCase() === "finished") ? "finished" : "inprocess",
       opIds: opIdsOf(g),
+      slowReason: g.slow_reason || "",
+      slowNote: g.slow_note || "",
       partNo: (g.part_no && g.part_no !== "—") ? g.part_no : "",
       releaseOrder: (g.release_order && g.release_order !== "—") ? g.release_order : "",
       ordered: ri.qty != null ? String(ri.qty) : (orderQty[g.release_id] != null ? String(orderQty[g.release_id]) : ""),
@@ -5766,6 +5782,8 @@ function MachineScanDetail({ machine, onBack }) {
     const origMat = ri.material || "";
     const origPartLen = (ri.length_mm ?? ri.default_length_mm ?? "");
     const origMatLen = g.material_length_mm != null ? Number(g.material_length_mm) : (ml0.length === 1 ? Number(ml0[0]) : null);
+    const origSlowReason = g.slow_reason || "";
+    const origSlowNote = g.slow_note || "";
 
     const isDelete = nq === 0;
     const nWeight = edForm.weight === "" ? null : Number(edForm.weight);
@@ -5778,6 +5796,8 @@ function MachineScanDetail({ machine, onBack }) {
     const nMat = (edForm.mat || "").trim();
     const nPartLen = edForm.partLen;
     const nMatLen = edForm.matLen === "" ? "" : Number(edForm.matLen);
+    const nSlowReason = (edForm.slowReason || "").trim();
+    const nSlowNote = (edForm.slowNote || "").trim();
 
     // รายสแกน (แถวนี้)
     const qtyChanged = nq !== cur;
@@ -5787,7 +5807,8 @@ function MachineScanDetail({ machine, onBack }) {
     const dtChanged = !isDelete && edForm.dt !== "" && edForm.dt !== origDT;
     const opsChanged = !isDelete && nOps.length >= 1 && nOps.join(",") !== origOps.join(",");
     const mlChanged = !isDelete && nMatLen !== "" && Number(nMatLen) > 0 && Number(nMatLen) !== (origMatLen ?? NaN);   // Mat. Length = รายสแกน
-    const scanChanged = qtyChanged || wtChanged || runChanged || statusChanged || dtChanged || opsChanged || mlChanged;
+    const slowChanged = !isDelete && (nSlowReason !== origSlowReason || nSlowNote !== origSlowNote);   // รายงานการทำงาน = รายสแกน
+    const scanChanged = qtyChanged || wtChanged || runChanged || statusChanged || dtChanged || opsChanged || mlChanged || slowChanged;
     // ระดับล็อต/พาร์ท
     const partNoChanged = !isDelete && nPartNo !== "" && nPartNo !== origPartNo;
     const roChanged = !isDelete && nRO !== origRO;
@@ -5823,6 +5844,8 @@ function MachineScanDetail({ machine, onBack }) {
             recordedAt: dtChanged ? fromDTLocal(edForm.dt) : null,
             opIds: opsChanged ? nOps : null,
             matLen: mlChanged ? nMatLen : null,           // Mat. Length = เฉพาะสแกนนี้
+            slowReason: slowChanged ? nSlowReason : null, // รายงานการทำงาน = เฉพาะสแกนนี้ (null = ไม่แตะ · '' = ล้าง)
+            slowNote: slowChanged ? nSlowNote : null,
           });
         }
         // ── ระดับพาร์ท (part_master: Part No. + INV) — มีผลทุก Release ของพาร์ทนี้ ──
@@ -5866,6 +5889,7 @@ function MachineScanDetail({ machine, onBack }) {
         row["INV Code"] = relInfo[g.release_id]?.material || "";
         { const ml = matLenMap[g.release_id] || []; row[lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"] = g.material_length_mm != null ? Number(g.material_length_mm) : (ml.length === 1 ? Number(ml[0]) : ""); }
         row[lang === "en" ? "Run time" : "เวลาเดินเครื่อง"] = g.secs ? fmtHrs(g.secs) : "";
+        row[lang === "en" ? "Work report" : "รายงานการทำงาน"] = g.slow_reason ? (g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")) : "";
         return row;
       });
       const tag = String(machine.code || machine.name || "machine").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 40);
@@ -5973,6 +5997,10 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "inv", header: "INV Code", dataLabel: "INV Code", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => relInfo[g.release_id]?.material || "-" },
             { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
             { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.material_length_mm != null ? fmtNum(g.material_length_mm) : matLenTextOf(g.release_id) },
+            { key: "slow", header: lang === "en" ? "Work report" : "รายงานการทำงาน", dataLabel: lang === "en" ? "Work report" : "รายงานการทำงาน", tdStyle: { whiteSpace: "nowrap", maxWidth: 200 },
+              cell: (g) => g.slow_reason
+                ? <span title={g.slow_note || ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#95610a", fontWeight: 600 }}><span>⚠️</span>{g.slow_reason}</span>
+                : <span style={{ color: "var(--muted-2)" }}>—</span> },
           ]} />
       </Card>
 
@@ -6028,6 +6056,18 @@ function MachineScanDetail({ machine, onBack }) {
               })}
             </div>
           </Field>
+          {/* รายงานการทำงาน (เหตุผลรอบช้า) — ผูกกับสแกนนี้ */}
+          <div className="grid-2">
+            <Field label={lang === "en" ? "Work report (slow reason)" : "รายงานการทำงาน (เหตุผลรอบช้า)"}>
+              <select value={edForm.slowReason} onChange={(e) => setEdForm((f) => ({ ...f, slowReason: e.target.value }))} disabled={nq === 0} style={inSel}>
+                <option value="">{lang === "en" ? "— none —" : "— ไม่มี —"}</option>
+                {(edForm.slowReason && !SCAN_SLOW_REASONS.includes(edForm.slowReason) ? [edForm.slowReason, ...SCAN_SLOW_REASONS] : SCAN_SLOW_REASONS).map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label={lang === "en" ? "Work report — note" : "รายงานการทำงาน — หมายเหตุ"}>
+              <Input value={edForm.slowNote} onChange={(e) => setEdForm((f) => ({ ...f, slowNote: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "detail (optional)" : "รายละเอียด (ถ้ามี)"} />
+            </Field>
+          </div>
           <div style={{ fontSize: 12, margin: "2px 0 12px", lineHeight: 1.6, color: nq === 0 ? "var(--danger-hi)" : diff !== 0 ? "var(--accent-dk)" : "var(--muted)" }}>
             {nq === 0 ? (lang === "en" ? "= delete the whole scan · piece back to “Not started” (QR/lot kept)" : "= ลบทั้งแถว · ชิ้นกลับเป็น “ยังไม่ทำ” (QR/ล็อตยังอยู่)")
               : diff > 0 ? (lang === "en" ? `Qty +${fmtNum(diff)} → ${fmtNum(nq)} pcs` : `จำนวน +${fmtNum(diff)} → ${fmtNum(nq)} ชิ้น`)
