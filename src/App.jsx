@@ -6011,11 +6011,11 @@ function MachineScanDetail({ machine, onBack }) {
         const mls0 = matLenMap[editRow.release_id] || [];
         const inSel = { width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 14 };
         return (
-        <Modal title={lang === "en" ? "Edit scan (all fields)" : "แก้ไขสแกน (ทั้งแถว)"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
+        <Modal wide title={lang === "en" ? "Edit scan (all fields)" : "แก้ไขสแกน (ทั้งแถว)"} sub={`${editRow.part_no} · ${fmtDT(editRow.time)}`} onClose={() => { if (!busy) setEditRow(null); }}>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, fontWeight: 700 }}>
             {lang === "en" ? "This scan (row)" : "เฉพาะสแกนนี้ (แถวนี้)"}
           </div>
-          <div className="grid-2">
+          <div className="grid-3">
             <Field label={lang === "en" ? "Date · time" : "วัน · เวลา"}>
               <Input type="datetime-local" value={edForm.dt} onChange={(e) => setEdForm((f) => ({ ...f, dt: e.target.value }))} disabled={nq === 0} />
             </Field>
@@ -6029,8 +6029,6 @@ function MachineScanDetail({ machine, onBack }) {
             <Field label={lang === "en" ? "Run time (min)" : "เวลาเดินเครื่อง (นาที)"}>
               <Input type="number" min={0} value={edForm.runMin} onChange={(e) => setEdForm((f) => ({ ...f, runMin: e.target.value }))} disabled={nq === 0} />
             </Field>
-          </div>
-          <div className="grid-2">
             <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
               <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
                 placeholder={mls0.length > 1 ? `${lang === "en" ? "release has" : "ในล็อตมี"}: ${mls0.map(fmtNum).join(" · ")}` : ""} />
@@ -6080,7 +6078,7 @@ function MachineScanDetail({ machine, onBack }) {
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, fontWeight: 700 }}>
             {lang === "en" ? "Whole Release / part (every scan)" : "ระดับ Release / พาร์ท (มีผลทุกสแกน)"}
           </div>
-          <div className="grid-2">
+          <div className="grid-3">
             <Field label="Part No.">
               <Input value={edForm.partNo} onChange={(e) => setEdForm((f) => ({ ...f, partNo: e.target.value }))} disabled={nq === 0} />
             </Field>
