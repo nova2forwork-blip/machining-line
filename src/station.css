@@ -998,3 +998,19 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-armed .tx b { color: #6f4a0e; }
 .stn-armed .x { border: 1px solid #f0c27a; background: #fff; color: #8a5c12; border-radius: 1.2vh;
   padding: 1.2vh 1.6vh; font-family: inherit; font-weight: 700; font-size: 1.7vh; cursor: pointer; flex-shrink: 0; }
+
+/* รายงานวันนี้ ท้าย DAILY REPORT (หน้าเครื่อง) — โชว์ว่ามีรายงานอะไรบ้าง (ไม่โชว์ระยะเวลาหยุด) */
+.stn-daily-reports { flex-shrink: 0; margin-top: 1.2vh; border-top: 1px solid var(--st-line);
+  padding-top: 1vh; text-align: left; max-height: 24vh; overflow-y: auto; }
+.stn-dr-head { font-size: 1.3vh; font-weight: 700; color: var(--st-muted); text-transform: uppercase;
+  letter-spacing: .04em; margin-bottom: .8vh; }
+.stn-dr-head span { color: var(--st-muted); font-weight: 500; }
+.stn-dr-list { display: flex; flex-direction: column; gap: .7vh; }
+.stn-dr-item { display: flex; align-items: center; gap: .8vh; font-size: 1.5vh; }
+.stn-dr-tag { flex-shrink: 0; font-size: 1.15vh; font-weight: 700; padding: .3vh .8vh; border-radius: .8vh; white-space: nowrap; }
+.stn-dr-tag.stop { background: #fdeaea; color: #c0292e; }
+.stn-dr-tag.slow { background: #fff6e7; color: #95610a; }
+.stn-dr-reason { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--st-ink); font-weight: 500; }
+.stn-dr-time { flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 1.3vh; color: var(--st-muted); }
+@media (max-width: 640px) { .stn-daily-reports { display: none; } }  /* จอเล็ก/มือถือ: ซ่อน (พื้นที่ไม่พอ) */
