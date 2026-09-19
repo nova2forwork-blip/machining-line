@@ -934,3 +934,67 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-crash-reload { background: linear-gradient(180deg, #1a9f74, #0e8a5b); color: #fff; border: none; border-radius: 11px; padding: 13px 22px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 3px 0 #0a6b47; }
 .stn-crash-reload:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a6b47; }
 .stn-crash-logout { background: #24302a; color: #cfe7dc; border: 1px solid #3a6b55; border-radius: 11px; padding: 13px 20px; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+/* ═══ รายงานปัญหาหน้าเครื่อง (REPORT) ═══════════════════════════════════════ */
+/* ปุ่มรายงาน — โทนเหลืองอำพัน แยกจาก START/SCAN (กันกดพลาด) */
+.stn-ctl-btn.stn-report { border-color: #f0c27a; }
+.stn-ctl-btn.stn-report .row1 span { color: #b5730a; }
+.stn-ctl-btn.stn-report svg { color: #e6912a; }
+.stn-ctl-btn.stn-report .qty { color: #8a5c12; }
+.stn-ctl-btn.stn-report.armed { background: #fff6e7; border-color: #e6912a; }
+
+/* ป็อปอัพเลือกเหตุผล */
+.stn-rep-ov { position: fixed; inset: 0; z-index: 400; background: rgba(10,18,40,.5);
+  display: flex; align-items: center; justify-content: center; padding: 3vh; }
+.stn-rep-modal { background: #fff; width: min(680px, 94vw); max-height: 92vh; overflow: auto;
+  border-radius: 20px; padding: 3vh 3vh 2.4vh; box-shadow: 0 24px 60px rgba(10,18,40,.4); }
+.stn-rep-h { display: flex; align-items: flex-start; gap: 1.6vh; margin-bottom: .6vh; }
+.stn-rep-ico { width: 6vh; height: 6vh; border-radius: 1.4vh; display: flex; align-items: center;
+  justify-content: center; font-size: 3vh; flex-shrink: 0; }
+.stn-rep-ico.stop { background: #fdeaea; } .stn-rep-ico.work { background: #fff6e7; }
+.stn-rep-title { font-size: 2.6vh; font-weight: 700; color: var(--st-ink); }
+.stn-rep-sub { font-size: 1.7vh; color: var(--st-muted); margin-top: .4vh; line-height: 1.4; }
+.stn-rep-close { margin-left: auto; width: 5vh; height: 5vh; border-radius: 1.2vh;
+  border: 1px solid var(--st-line); background: var(--st-panel); font-size: 2.4vh; color: var(--st-muted); cursor: pointer; flex-shrink: 0; }
+.stn-rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vh; margin: 1.8vh 0; }
+@media (max-width: 640px) { .stn-rep-grid { grid-template-columns: 1fr; } }
+.stn-rep-reason { display: flex; align-items: center; gap: 1.4vh; padding: 2vh 1.8vh;
+  border: 2px solid var(--st-line); border-radius: 1.6vh; background: #fff; font-family: inherit;
+  font-size: 2.2vh; font-weight: 600; color: var(--st-ink); cursor: pointer; text-align: left; }
+.stn-rep-reason:active { transform: scale(.98); }
+.stn-rep-reason .em { font-size: 3vh; flex-shrink: 0; }
+.stn-rep-reason.sel.stop { border-color: var(--st-alert); background: #fdeaea; color: #c0292e; }
+.stn-rep-reason.sel.work { border-color: #e6912a; background: #fff6e7; color: #95610a; }
+.stn-rep-note { width: 100%; border: 2px solid var(--st-line); border-radius: 1.4vh; padding: 1.6vh;
+  font-family: inherit; font-size: 2.1vh; resize: vertical; min-height: 8vh; margin-bottom: 1.8vh; box-sizing: border-box; color: var(--st-ink); }
+.stn-rep-note:focus { outline: none; border-color: var(--st-red); }
+.stn-rep-actions { display: flex; gap: 1.4vh; }
+.stn-rep-btn { flex: 1; border: none; border-radius: 1.6vh; padding: 2.2vh; font-family: inherit;
+  font-weight: 700; font-size: 2.4vh; cursor: pointer; }
+.stn-rep-btn.cancel { background: var(--st-panel); border: 1px solid var(--st-line); color: var(--st-ink); }
+.stn-rep-btn.go-stop { background: var(--st-alert); color: #fff; }
+.stn-rep-btn.go-work { background: #e6912a; color: #fff; }
+.stn-rep-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* บังหน้าจอทำงานตอน "เครื่องหยุด" (ไม่มีตัวจับเวลาโชว์) */
+.stn-down { position: absolute; inset: 0; z-index: 60; background: rgba(253,234,234,.97);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.6vh;
+  padding: 3vh; text-align: center; }
+.stn-down .ico { font-size: 8vh; line-height: 1; }
+.stn-down .ttl { font-size: 3.4vh; font-weight: 800; color: #c0292e; }
+.stn-down .rsn { font-size: 2.6vh; color: var(--st-ink); font-weight: 600; }
+.stn-down .ready { margin-top: 1.4vh; border: none; border-radius: 2vh; background: var(--st-green);
+  color: #fff; font-family: inherit; font-weight: 800; font-size: 2.8vh; padding: 2.4vh 4vh; cursor: pointer;
+  display: flex; align-items: center; gap: 1.2vh; box-shadow: 0 8px 20px -6px rgba(34,197,94,.6); }
+.stn-down .ready:active { transform: scale(.98); }
+.stn-down .ready:disabled { opacity: .5; cursor: not-allowed; }
+
+/* แถบเหตุผล "รอบช้า" ที่ตั้งค้างไว้ */
+.stn-armed { position: absolute; left: 1.4vh; right: 1.4vh; bottom: 1.4vh; z-index: 40;
+  display: flex; align-items: center; gap: 1.4vh; background: #fff6e7; border: 1.5px solid #f0c27a;
+  border-radius: 1.6vh; padding: 1.4vh 1.6vh; box-shadow: 0 6px 16px -8px rgba(160,110,20,.4); }
+.stn-armed .em { font-size: 2.8vh; flex-shrink: 0; }
+.stn-armed .tx { flex: 1; font-size: 1.9vh; color: #8a5c12; line-height: 1.4; text-align: left; }
+.stn-armed .tx b { color: #6f4a0e; }
+.stn-armed .x { border: 1px solid #f0c27a; background: #fff; color: #8a5c12; border-radius: 1.2vh;
+  padding: 1.2vh 1.6vh; font-family: inherit; font-weight: 700; font-size: 1.7vh; cursor: pointer; flex-shrink: 0; }
