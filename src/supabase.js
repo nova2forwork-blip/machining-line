@@ -644,7 +644,7 @@ export async function setScanMeta(partUnitId, scannedAt, processSeconds, status)
 // แก้ "1 การสแกน" ครบทุกช่องรายสแกน (แอดมิน) — จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน · ดู migration-edit-scan.sql
 // qty=0 → ลบทั้งสแกน · weight=null → คิดอัตโนมัติจากจำนวน · ช่องอื่น null = ไม่แก้
 export async function editScan(partUnitId, scannedAt, opts = {}) {
-  const { qty, weight, secs, status, recordedAt, opIds, matLen } = opts;
+  const { qty, weight, secs, status, recordedAt, opIds, matLen, slowReason, slowNote } = opts;
   const { data, error } = await supabase.rpc("edit_scan", {
     p_token: authToken(),
     p_part_unit_id: partUnitId,
@@ -656,6 +656,8 @@ export async function editScan(partUnitId, scannedAt, opts = {}) {
     p_recorded_at: recordedAt || null,
     p_operation_ids: opIds && opIds.length ? opIds : null,
     p_material_length_mm: matLen == null || matLen === "" ? null : Number(matLen),
+    p_slow_reason: slowReason == null ? null : String(slowReason),   // null = ไม่แตะ · '' = ล้าง
+    p_slow_note: slowNote == null ? null : String(slowNote),
   });
   if (error) { console.warn("edit_scan error", error); flagAuth(error); throw error; }
   if (data && data.ok === false) throw new Error(data.reason || "failed");
@@ -694,6 +696,12 @@ export async function setScanSlowReason(recordId, reason, note) {
   if (error) { console.warn("set_scan_slow_reason error", error); flagAuth(error); throw error; }
   if (data && data.ok === false) throw new Error(data.reason || "failed");
   return data || { ok: true };
+}
+// รายการรายงานของเครื่องนี้ ตั้งแต่ since (คนงานหน้าเครื่องดูได้) → { downtime:[...], slow:[...] } · พลาด = ว่าง
+export async function listMachineReports(machineId, since) {
+  const { data, error } = await supabase.rpc("list_machine_reports", { p_token: authToken(), p_machine_id: machineId, p_since: since });
+  if (error) { console.warn("list_machine_reports error", error); return { ok: false, downtime: [], slow: [] }; }
+  return data || { ok: true, downtime: [], slow: [] };
 }
 // สรุปรายงานปัญหาให้แอดมิน (ตั้งแต่เวลา since) → { downtime:[...], slow:[...] }
 export async function machineReportSummary(since) {
@@ -1355,6 +1363,13 @@ export async function getPartSummary() {
 export async function getScanLogsBetween(fromIso, toIso) {
   const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
   if (error) { console.warn("report_logs error", error); return []; }
+  return data || [];
+}
+
+// เหตุผล "รอบช้า" (รายงานการทำงาน) ต่อการสแกน ในช่วงเวลา — ออฟฟิศเอาไปจับคู่กับแถวสแกน (part_unit + เวลา)
+export async function listScanSlow(fromIso, toIso) {
+  const { data, error } = await supabase.rpc("list_scan_slow", { p_from: fromIso, p_to: toIso });
+  if (error) { console.warn("list_scan_slow error", error); return []; }
   return data || [];
 }
 
