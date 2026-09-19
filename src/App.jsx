@@ -5576,6 +5576,7 @@ function MachineScanDetail({ machine, onBack }) {
   const [edForm, setEdForm] = useState({ dt: "", weight: "", runMin: "", status: "", opIds: [], partNo: "", releaseOrder: "", ordered: "", mat: "", partLen: "", matLen: "" });
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
+  const colApi = useRef(null);                          // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มา)
 
   useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setAllOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
 
@@ -5891,10 +5892,16 @@ function MachineScanDetail({ machine, onBack }) {
 
       <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}
         right={
-          <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || sorted.length === 0}
-            title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
-            <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : "Export Excel"}
-          </Btn>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.reset()}
+              title={lang === "en" ? "Reset column order" : "รีเซ็ตลำดับคอลัมน์กลับค่าเริ่มต้น"}>
+              ↺ {lang === "en" ? "Columns" : "คอลัมน์"}
+            </Btn>
+            <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || sorted.length === 0}
+              title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
+              <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : "Export Excel"}
+            </Btn>
+          </div>
         }>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
           <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(grouped.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
@@ -5915,7 +5922,7 @@ function MachineScanDetail({ machine, onBack }) {
 
         {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: click a row to edit (quantity / weight / status / INV / lengths) or delete the whole scan" : "แอดมิน: กดที่แถวเพื่อแก้ไข (จำนวน / น้ำหนัก / สถานะ / INV / ความยาว) หรือ ลบทั้งแถว"}</div>}
 
-        <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+        <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" orderApiRef={colApi}
           rows={sorted} rowKey={(g) => g.key} sort={sort}
           empty={logs === null ? (lang === "en" ? "Loading…" : "กำลังโหลด...") : (lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้")}
           rowProps={admin ? (g) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => openEdit(g), title: lang === "en" ? "Click the row to edit / delete" : "กดที่แถวเพื่อแก้ไข / ลบ" }) : undefined}
