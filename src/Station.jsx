@@ -559,6 +559,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         unit, op, progress, dupCount,
         opSel: [...opSel],                  // ★ ขั้นตอนที่เลือกไว้ (หลายอัน) — กันรีโหลดแล้วกลับไปเลือกทุกอันเอง
         startTs: startTsRef.current,        // เวลาเริ่มจริง → คำนวณเวลาเดินเครื่องต่อได้
+        clientIdMap: clientIdMapRef.current || null,   // ★ client_id ต่อขั้นตอน — กู้กลับได้ ถ้ารีโหลดหลังกด OK แล้วตอบกลับหาย (กัน DB บันทึกซ้ำ)
         savedAt: Date.now(),
       }));
     } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
@@ -582,6 +583,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           if (d.op) setOp(d.op);
           if (Array.isArray(d.opSel)) setOpSel(new Set(d.opSel));   // ★ กู้ "ขั้นตอนที่เลือกไว้" (หลายอัน) ให้ตรงกับตอนก่อนรีโหลด
           clientIdRef.current = d.clientId ?? null;
+          if (d.clientIdMap && typeof d.clientIdMap === "object") clientIdMapRef.current = d.clientIdMap;   // ★ กู้ client_id ต่อขั้นตอน → กด OK ซ้ำหลังรีโหลด = ตัวเดิม → DB dedup ไม่บันทึกซ้ำ
           if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
           setStep(d.step);
           startTimer();   // เดินเวลาต่อทันที
@@ -803,6 +805,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // ★ ต้องเป็น "UUID จริง" เสมอ (คอลัมน์ client_id เป็น uuid) — newClientId() รับประกันได้แม้เครื่อง
     //   ไม่มี crypto.randomUUID (เปิดผ่าน http / webview เก่า) · เดิมใช้ fallback ที่ไม่ใช่ UUID → insert พัง
     if (!clientIdMapRef.current) clientIdMapRef.current = {};   // client_id แยกต่อขั้นตอน (คงเดิมตอน retry)
+    // ★ สร้าง client_id ของ "ทุกขั้นตอน" ล่วงหน้า แล้วเซฟลง draft ก่อนยิง —
+    //   ถ้ารีโหลด/แอปอัปเดตกลางการบันทึก (insert ติดแล้วแต่ตอบกลับหาย) แล้วกู้งานมากด OK ซ้ำ จะใช้ id เดิม → DB dedup ไม่บันทึกซ้ำ
+    for (const oid of opIds) { const k = String(oid); if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId(); }
+    try { const raw = localStorage.getItem(DRAFT_KEY); const d0 = raw ? JSON.parse(raw) : {}; d0.clientIdMap = clientIdMapRef.current; localStorage.setItem(DRAFT_KEY, JSON.stringify(d0)); } catch { /* localStorage เต็ม/ปิด — ข้าม */ }
     try {
       // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
       const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
