@@ -506,25 +506,21 @@ export async function deleteProjectCascade(projectId) {
 
 // ใช้ประเมินก่อนลบ/แก้ไขโปรเจค — บอกว่าใต้โปรเจคนี้มี Part/Release/QR ที่สแกนแล้วกี่ชิ้น
 export async function getProjectImpact(projectId) {
-  const { data: pm } = await supabase.from("part_master").select("id").eq("project_id", projectId);
-  const partIds = (pm || []).map((p) => p.id);
-  if (partIds.length === 0) return { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0 };
-
-  const { data: rel } = await supabase.from("releases").select("id").in("part_master_id", partIds);
-  const releaseIds = (rel || []).map((r) => r.id);
-  if (releaseIds.length === 0) return { partCount: partIds.length, releaseCount: 0, unitCount: 0, scannedCount: 0 };
-
-  // ★ นับ units/scanned ด้วย count query (head:true) — ไม่ดึงแถว ไม่ติดเพดาน 1000
-  //   เดิม select แถวมานับ → โปรเจคที่มี >1000 ชิ้น นับต่ำ → ด่านยืนยันลบโปรเจค (พิมพ์รหัส) อาจหลุดเป็นแค่กดยืนยันเฉยๆ
-  const { count: unitCount } = await supabase.from("part_units")
-    .select("id", { count: "exact", head: true }).in("release_id", releaseIds);
-  const { count: scannedCount } = await supabase.from("part_units")
-    .select("id", { count: "exact", head: true }).in("release_id", releaseIds).neq("status", "released");
+  // นับทุกอย่างด้วย count query (head:true) + inner join → ไม่ดึงแถว ไม่ติดเพดาน 1000
+  //   เดิม: select id ของ part/release มานับ (partIds/releaseIds) → PostgREST ตัดที่ 1000 แถวเงียบ ๆ
+  //         → โปรเจกต์ใหญ่ (>1000 part เช่น 840→โตขึ้น) แสดง "ผลกระทบตอนลบ" ต่ำกว่าจริง → ด่านยืนยันลบ (พิมพ์รหัส) อ่อนลง
+  //   ใหม่: นับตรงจาก project_id (part_master) และผ่าน part_master!inner (releases/part_units) → เลขจริงเสมอ ไม่ว่าโปรเจกต์ใหญ่แค่ไหน
+  const [pc, rc, uc, sc] = await Promise.all([
+    supabase.from("part_master").select("id", { count: "exact", head: true }).eq("project_id", projectId),
+    supabase.from("releases").select("id, part_master!inner(project_id)", { count: "exact", head: true }).eq("part_master.project_id", projectId),
+    supabase.from("part_units").select("id, part_master!inner(project_id)", { count: "exact", head: true }).eq("part_master.project_id", projectId),
+    supabase.from("part_units").select("id, part_master!inner(project_id)", { count: "exact", head: true }).eq("part_master.project_id", projectId).neq("status", "released"),
+  ]);
   return {
-    partCount: partIds.length,
-    releaseCount: releaseIds.length,
-    unitCount: unitCount || 0,
-    scannedCount: scannedCount || 0,
+    partCount: pc.count || 0,
+    releaseCount: rc.count || 0,
+    unitCount: uc.count || 0,
+    scannedCount: sc.count || 0,
   };
 }
 export async function getReleasesFull() {
