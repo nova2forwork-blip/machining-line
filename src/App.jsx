@@ -6002,7 +6002,7 @@ function MachineScanDetail({ machine, onBack }) {
               cell: (g) => (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   {pill(g.status)}
-                  {g.slow_reason && <span title={(lang === "en" ? "Work report: " : "รายงานการทำงาน: ") + g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ fontSize: 14, cursor: "help" }}>⚠️</span>}
+                  {g.slow_reason && <span title={g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ fontSize: 14, cursor: "help" }}>⚠️</span>}
                 </span>
               ) },
             { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", tdStyle: { fontWeight: 600 }, cell: (g) => `${fmtNum(g.qty)} ${lang === "en" ? "pcs" : "ชิ้น"}` },
@@ -6069,9 +6069,10 @@ function MachineScanDetail({ machine, onBack }) {
           {/* รายงานการทำงาน (เหตุผลรอบช้า) — ผูกกับสแกนนี้ */}
           <div className="grid-2">
             <Field label={lang === "en" ? "Work report (slow reason)" : "รายงานการทำงาน (เหตุผลรอบช้า)"}>
-              <select value={edForm.slowReason} onChange={(e) => setEdForm((f) => ({ ...f, slowReason: e.target.value }))} disabled={nq === 0} style={inSel}>
-                <option value="">{lang === "en" ? "— none —" : "— ไม่มี —"}</option>
-                {(edForm.slowReason && !SCAN_SLOW_REASONS.includes(edForm.slowReason) ? [edForm.slowReason, ...SCAN_SLOW_REASONS] : SCAN_SLOW_REASONS).map((r) => <option key={r} value={r}>{r}</option>)}
+              <select value={edForm.slowReason} onChange={(e) => setEdForm((f) => ({ ...f, slowReason: e.target.value }))} disabled={nq === 0}
+                style={edForm.slowReason ? { ...inSel, color: "#c2410c", fontWeight: 700, background: "#fff4e5", border: "1px solid #f5a623" } : inSel}>
+                <option value="" style={{ color: "var(--text)", fontWeight: 400 }}>{lang === "en" ? "— none —" : "— ไม่มี —"}</option>
+                {(edForm.slowReason && !SCAN_SLOW_REASONS.includes(edForm.slowReason) ? [edForm.slowReason, ...SCAN_SLOW_REASONS] : SCAN_SLOW_REASONS).map((r) => <option key={r} value={r} style={{ color: "#b45309", fontWeight: 600 }}>{r}</option>)}
               </select>
             </Field>
             <Field label={lang === "en" ? "Work report — note" : "รายงานการทำงาน — หมายเหตุ"}>
