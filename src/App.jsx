@@ -5990,7 +5990,13 @@ function MachineScanDetail({ machine, onBack }) {
                   ))}
                 </span>
               ) : "—" },
-            { key: "status", header: lang === "en" ? "Status" : "สถานะ", sortKey: "status", cell: (g) => pill(g.status) },
+            { key: "status", header: lang === "en" ? "Status" : "สถานะ", sortKey: "status", tdStyle: { whiteSpace: "nowrap" },
+              cell: (g) => (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {pill(g.status)}
+                  {g.slow_reason && <span title={(lang === "en" ? "Work report: " : "รายงานการทำงาน: ") + g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ fontSize: 14, cursor: "help" }}>⚠️</span>}
+                </span>
+              ) },
             { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", tdStyle: { fontWeight: 600 }, cell: (g) => `${fmtNum(g.qty)} ${lang === "en" ? "pcs" : "ชิ้น"}` },
             { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (g) => g.weight ? fmtNum(g.weight) : "—" },
             { key: "secs", header: lang === "en" ? "Run time" : "เวลาเดินเครื่อง", sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.secs ? fmtHrs(g.secs) : "—" },
@@ -5998,10 +6004,7 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
             { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" },
               cell: (g) => { if (g.material_length_mm != null) return fmtNum(g.material_length_mm); const a = matLenMap[g.release_id] || []; return a.length === 1 ? fmtNum(a[0]) : "—"; } },   // ค่าเฉพาะสแกน · ถ้าไม่รู้และล็อตมีหลายค่า = — (เลิกโชว์ปนกัน)
-            { key: "slow", header: lang === "en" ? "Report" : "รายงาน", dataLabel: lang === "en" ? "Work report" : "รายงานการทำงาน", align: "center", tdStyle: { whiteSpace: "nowrap" },
-              cell: (g) => g.slow_reason
-                ? <span title={g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ fontSize: 15, cursor: "help" }}>⚠️</span>
-                : <span style={{ color: "var(--muted-2)" }}>—</span> },
+            // หมายเหตุ: รายงานการทำงาน (slow_reason) ย้ายไปรวมกับคอลัมน์ "สถานะ" เป็นไอคอน ⚠️ แล้ว — เลิกทำคอลัมน์แยก (กันตารางตกขอบ)
           ]} />
       </Card>
 
