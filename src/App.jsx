@@ -5695,9 +5695,17 @@ function MachineScanDetail({ machine, onBack }) {
     }
     // จับคู่เหตุผล "รอบช้า" (รายงานการทำงาน) เข้าแต่ละสแกน — ตรง part_unit + เวลาใกล้กัน (±3 วิ)
     if (slowRows && slowRows.length) {
+      const usedSlow = new Set();   // กันเหตุผลเดียวถูกจับไปหลายแถว (rescan ชิ้นเดิมเร็วๆ)
       for (const g of out) {
-        const m = slowRows.find((s) => s.part_unit_id === g.part_unit_id && Math.abs(new Date(s.at) - new Date(g.time)) < 3000);
-        if (m) { g.slow_reason = m.reason || ""; g.slow_note = m.note || ""; }
+        let best = null, bestDt = 3000, bestIdx = -1;
+        for (let si = 0; si < slowRows.length; si++) {
+          if (usedSlow.has(si)) continue;
+          const s = slowRows[si];
+          if (s.part_unit_id !== g.part_unit_id) continue;
+          const dt = Math.abs(new Date(s.at) - new Date(g.time));
+          if (dt < bestDt) { best = s; bestDt = dt; bestIdx = si; }   // เลือกเวลาใกล้สุด — สแกนของเครื่องตัวเอง = 0 วิ → ไม่หยิบเหตุผลของเครื่องอื่น/รอบอื่น
+        }
+        if (best) { usedSlow.add(bestIdx); g.slow_reason = best.reason || ""; g.slow_note = best.note || ""; }
       }
     }
     return out;
