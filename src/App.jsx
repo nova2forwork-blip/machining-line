@@ -4681,6 +4681,14 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
       setErr(`ลบได้สูงสุด ${releasedCount} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
       return;
     }
+    // ลดจำนวน = ลบ QR ชิ้นที่ยังไม่สแกนออกถาวร → ต้องเตือนก่อนเสมอ (กันลบพลาด)
+    if (delta < 0) {
+      const ok = await askConfirm({
+        message: `ลดจำนวนล็อตนี้ลง ${fmtNum(Math.abs(delta))} ชิ้น\nจะลบ QR ${fmtNum(Math.abs(delta))} ชิ้นที่ยังไม่ได้สแกนออกถาวร · กู้คืนไม่ได้`,
+        tone: "danger", confirmText: "ลดจำนวน (ลบ QR)", cancelText: "ยกเลิก",
+      });
+      if (!ok) return;
+    }
     const ro = normalizeReleaseOrder(releaseOrder);
     if (ro && !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009 (หรือเว้นว่าง)'); return; }
     setBusy(true); setErr("");
