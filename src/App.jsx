@@ -6685,7 +6685,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
   }
 
   return (
-    <Modal title="แก้ไขโปรเจค" sub={`สร้างเมื่อ ${fmtDT(project.created_at)}`} onClose={onClose} locked={!!delKey}>
+    <Modal wide title="แก้ไขโปรเจค" sub={`สร้างเมื่อ ${fmtDT(project.created_at)}`} onClose={onClose} locked={!!delKey}>
       <div className="grid-2">
         <Field label="รหัสโปรเจค *"><Input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
         <Field label="ชื่อโปรเจค *"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
