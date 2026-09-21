@@ -5996,10 +5996,11 @@ function MachineScanDetail({ machine, onBack }) {
             { key: "secs", header: lang === "en" ? "Run time" : "เวลาเดินเครื่อง", sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.secs ? fmtHrs(g.secs) : "—" },
             { key: "inv", header: "INV Code", dataLabel: "INV Code", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => relInfo[g.release_id]?.material || "-" },
             { key: "partlen", header: lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => { const v = partLenOf(g.release_id); return v != null ? fmtNum(v) : "-"; } },
-            { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.material_length_mm != null ? fmtNum(g.material_length_mm) : matLenTextOf(g.release_id) },
-            { key: "slow", header: lang === "en" ? "Work report" : "รายงานการทำงาน", dataLabel: lang === "en" ? "Work report" : "รายงานการทำงาน", tdStyle: { whiteSpace: "nowrap", maxWidth: 200 },
+            { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", align: "right", tdStyle: { whiteSpace: "nowrap" },
+              cell: (g) => { if (g.material_length_mm != null) return fmtNum(g.material_length_mm); const a = matLenMap[g.release_id] || []; return a.length === 1 ? fmtNum(a[0]) : "—"; } },   // ค่าเฉพาะสแกน · ถ้าไม่รู้และล็อตมีหลายค่า = — (เลิกโชว์ปนกัน)
+            { key: "slow", header: lang === "en" ? "Report" : "รายงาน", dataLabel: lang === "en" ? "Work report" : "รายงานการทำงาน", align: "center", tdStyle: { whiteSpace: "nowrap" },
               cell: (g) => g.slow_reason
-                ? <span title={g.slow_note || ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#95610a", fontWeight: 600 }}><span>⚠️</span>{g.slow_reason}</span>
+                ? <span title={g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ fontSize: 15, cursor: "help" }}>⚠️</span>
                 : <span style={{ color: "var(--muted-2)" }}>—</span> },
           ]} />
       </Card>
