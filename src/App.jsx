@@ -5237,6 +5237,9 @@ function ReportPage({ goTo }) {
     return { name: op, count, weight };
   });
   const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
+  // น้ำหนักเฉลี่ยต่อวันทำงาน = ปริมาณงานที่ประมวลผล (นับต่อขั้นตอน · co-tick เครื่องเดียวนับครั้งเดียวอยู่แล้ว) ÷ จำนวนวันที่มีงานจริง
+  const activeDays = dailyMatrix.days.length;   // วันที่มีงานจริง (bucket เวลาไทย เหมือน 'เฉลี่ย/วัน' ในตารางด้านล่าง)
+  const avgWeightPerDay = activeDays > 0 ? processed / activeDays : 0;
   // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
   const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
   const sortW = useTableSort();   // ตารางปริมาณงานที่แต่ละเครื่องประมวลผล
@@ -5459,7 +5462,7 @@ function ReportPage({ goTo }) {
       <div className="stat-row">
         <StatCard label="จำนวนที่บันทึก · นับต่อขั้นตอน" value={totalPieces(filteredLogs).toLocaleString()} icon="scan" />
         <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
-        <StatCard label="น้ำหนักวัสดุ · นับต่อชิ้น (กก.)" value={fmtNum(material)} icon="weight" />
+        <StatCard label={lang === "en" ? "Avg weight · per active day (kg)" : "น้ำหนักเฉลี่ย · ต่อวันทำงาน (กก.)"} value={fmtNum(avgWeightPerDay)} icon="weight" />
         <StatCard label="ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)" value={fmtNum(processed)} icon="bolt" />
         <StatCard label="เวลาเดินเครื่องรวม (จับจากหน้าเครื่อง)" value={fmtHrs(totalSeconds)} icon="bolt" />
       </div>
@@ -5472,8 +5475,11 @@ function ReportPage({ goTo }) {
         </div>
       )}
       <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
-        <b>น้ำหนักวัสดุ</b> = น้ำหนักของชิ้นงานจริง นับแต่ละชิ้นครั้งเดียว ·{" "}
-        <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอนถูกนับซ้ำตามจำนวนขั้น (ใช้วัดภาระงานรวมของสายการผลิต)
+        {lang === "en"
+          ? <><b>Avg weight · per active day</b> = processed workload ÷ days that had work · a piece doing several ops in one machine at once counts once ·{" "}
+              <b>Processed workload</b> = every scan summed; a piece through several separate operations is counted per operation (production-line load)</>
+          : <><b>น้ำหนักเฉลี่ย/วัน</b> = ปริมาณงานที่ประมวลผล ÷ จำนวนวันที่มีงานจริง · ชิ้นที่ทำหลายขั้นตอนในเครื่องเดียว (สแกนครั้งเดียว) นับครั้งเดียว ·{" "}
+              <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอน (คนละครั้ง) นับต่อขั้นตอน (วัดภาระงานรวมของสาย)</>}
       </div>
       <Card title="แยกตามขั้นตอนการทำงาน">
         <SimpleBarChart data={chartData} color={CHART.accent} height={260} />
