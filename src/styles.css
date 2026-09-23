@@ -329,10 +329,17 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 }
 
 /* ── เลือกคอลัมน์ที่จะแสดง: ปุ่มมุมขวาบนของตาราง + เมนูคลิกขวาที่หัวตาราง ───────── */
+/* ปุ่มอยู่ในคอลัมน์ของตัวเอง (th.dt-colth) ท้ายหัวตาราง — ไม่ลอยทับหัวคอลัมน์สุดท้าย/สกอร์บาร์อีก */
+.dt-host table.data-table th.dt-colth {
+  width: 1%; min-width: 36px; padding: 0 6px 0 4px; text-align: right; vertical-align: middle;
+  position: sticky; right: 0; z-index: 4;   /* ตารางกว้างเลื่อนแนวนอน → ปุ่มค้างขอบขวาที่มองเห็นเสมอ */
+}
+.dt-host .table-wrap.tall-scroll table.data-table th.dt-colth { z-index: 5; }   /* sticky ทั้งบน+ขวา อยู่เหนือหัวคอลัมน์อื่น */
+.dt-host table.data-table td.dt-colpad { width: 1%; padding: 0; }
 .dt-colbtn {
-  position: absolute; top: 3px; right: 4px; z-index: 6;
+  position: relative; vertical-align: middle;
   width: 25px; height: 25px; border-radius: 8px; padding: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--muted-2);
   cursor: pointer; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
 }
@@ -340,8 +347,11 @@ table.data-table tbody tr:hover { background: var(--surface-2); }
 .dt-colbtn:hover { opacity: 1; color: var(--accent-dk); border-color: var(--accent); background: var(--surface); }
 .dt-colbtn.on { opacity: 1; color: var(--accent-dk); border-color: var(--accent); }
 .dt-colbtn-dot { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--surface); }
-@media (max-width: 820px) { .dt-colbtn { display: none; } }
-.dt-host table.data-table thead th:last-child { padding-right: 34px; }   /* เว้นที่ให้ปุ่มเลือกคอลัมน์ ไม่ทับหัวคอลัมน์สุดท้าย */
+@media (max-width: 820px) {
+  .dt-colbtn { display: none; }
+  .dt-host table.data-table th.dt-colth, .dt-host table.data-table td.dt-colpad { padding: 0; min-width: 0; width: 0; }
+  .dt-host table.data-table.responsive-cards td.dt-colpad { display: none; }   /* โหมดการ์ด: ไม่ต้องมีแถวเปล่า */
+}
 
 .dt-menu {
   position: fixed; z-index: 100001; min-width: 218px; max-width: 320px; max-height: 72vh; overflow: auto;
