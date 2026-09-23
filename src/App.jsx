@@ -4838,40 +4838,117 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 3) FINISHED PART
 // ══════════════════════════════════════════════════════════════════════════
-// เนื้อหา Finished Part (สถิติ + ตาราง) — ใช้ซ้ำได้ทั้งหน้าเดี่ยวและฝังใน Report
-function FinishedPartSection() {
-  const [units, setUnits] = useState([]);
+// เนื้อหา Finished Part (สถิติ + ตาราง) — ฝังในหน้า Report
+// ★ เดิมดึง part_units ที่ status = 'finished' — แต่งานจริงบันทึกที่หน้าเครื่อง (machine_records แบบจำนวน)
+//   ซึ่งไม่เคยเปลี่ยน part_units.status → รายงานนี้ขึ้น 0 ตลอด
+//   ตอนนี้คิด "ชิ้นที่เสร็จ" ต่อ Release ด้วยนิยามเดียวกับหน้า Release / Projects (computeGroupProgress):
+//   จำนวน Finished ของขั้นตอนสุดท้ายที่มียอด (รู้จัก co-tick) · รวมชิ้นที่สแกนจากสำนักงานแบบเดิมด้วย · ไม่เกินจำนวนสั่ง
+//   ยอดสะสมทั้งหมด (ไม่ขึ้นกับช่วงเวลา) · กรองตาม โปรเจค / Part / Release Order ของหน้า Report
+function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "" }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [rels, setRels] = useState(relsIn || null);
+  const [prog, setProg] = useState(null);     // { opProg, unitStats } · null = กำลังโหลด
+  const [err, setErr] = useState("");
   const sort = useTableSort();
-  useEffect(() => { getAllUnitsFull("finished").then(setUnits); }, []);
-  const totalWeight = units.reduce((s, u) => s + Number(u.weight || u.part_master?.unit_weight || 0), 0);
+  useEffect(() => { if (relsIn) setRels(relsIn); }, [relsIn]);
+  useEffect(() => { if (!relsIn) getReleasesFull().then(setRels).catch(() => setRels([])); }, [relsIn]);
+  useEffect(() => {
+    if (!rels) return;
+    let alive = true;
+    setProg(null); setErr("");
+    const ids = rels.map((r) => r.id).filter(Boolean);
+    const CH = 400;   // แบ่งก้อน ids กัน body RPC ใหญ่เกิน (ที่ 10 ปี releases หลายพัน)
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += CH) chunks.push(ids.slice(i, i + CH));
+    Promise.all(chunks.map((c) => Promise.all([getReleaseOpProgress(c), getUnitStatsByReleaseIds(c)])))
+      .then((res) => {
+        if (!alive) return;
+        const opProg = {}, unitStats = {};
+        res.forEach(([op, us]) => { Object.assign(opProg, op || {}); Object.assign(unitStats, us || {}); });
+        setProg({ opProg, unitStats });
+      })
+      .catch((e) => { if (alive) { setErr(String(e?.message || e)); setProg({ opProg: {}, unitStats: {} }); } });
+    return () => { alive = false; };
+  }, [rels]);
+
+  const allRows = useMemo(() => {
+    if (!rels || !prog) return [];
+    const out = [];
+    for (const r of rels) {
+      const qty = Number(r.qty) || 0;
+      const g = computeGroupProgress([r], prog.unitStats, prog.opProg, qty);
+      if (!(g.finished > 0)) continue;
+      const w = Number(r.unit_weight) || 0;
+      out.push({
+        id: r.id, r, qty, finished: g.finished,
+        pct: qty > 0 ? (g.finished / qty) * 100 : 0,
+        weight: g.finished * w, unitWeight: w,
+        lastOp: g.lastOp?.op || "",
+        projectId: r.part_master?.project_id || null,
+        projectName: r.part_master?.projects?.name || r.part_master?.projects?.code || "-",
+        partNo: r.part_master?.part_no || "-", partName: r.part_master?.part_name || "",
+        ro: r.release_order || "-", date: r.release_date || null,
+        len: r.length_mm != null ? Number(r.length_mm) : null,
+      });
+    }
+    out.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));   // ล่าสุดก่อน
+    return out;
+  }, [rels, prog]);
+  const rows = allRows.filter((x) =>
+    (!projectFilter || x.projectId === projectFilter) &&
+    (!partFilter || x.partNo === partFilter) &&
+    (!releaseFilter || String(x.ro) === releaseFilter));
+  const totalPcs = rows.reduce((s, x) => s + x.finished, 0);
+  const totalWeight = rows.reduce((s, x) => s + x.weight, 0);
+  const fullRel = rows.filter((x) => x.qty > 0 && x.finished >= x.qty).length;
+  const loading = !rels || !prog;
+
   return (
     <>
       <div className="stat-row">
-        <StatCard label="ชิ้นที่เสร็จทั้งหมด" value={units.length.toLocaleString()} icon="check" />
-        <StatCard label="น้ำหนักวัสดุ (กก.)" value={fmtNum(totalWeight)} icon="weight" />
+        <StatCard label={L("ชิ้นที่เสร็จทั้งหมด", "Total finished")} value={loading ? "…" : fmtNum(totalPcs)} icon="check" />
+        <StatCard label={L("น้ำหนักวัสดุ (กก.)", "Material weight (kg)")} value={loading ? "…" : fmtNum(totalWeight)} icon="weight" />
+        <StatCard label={L("Release ที่ทำครบแล้ว", "Releases complete")} value={loading ? "…" : `${fmtNum(fullRel)} / ${fmtNum(rows.length)}`} icon="check" />
       </div>
-      <Card title="รายการชิ้นงานที่เสร็จสมบูรณ์">
-        {units.length === 0 ? (
+      <Card title={L("รายการชิ้นงานที่เสร็จ (ต่อ Release)", "Finished pieces (per Release)")}>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          {L(<>ยอด<b>สะสมทั้งหมด</b> (ไม่ขึ้นกับช่วงเวลาด้านบน) · กรองตามโปรเจค / Part / Release ที่เลือก · <b>เสร็จ</b> = จำนวนที่กด Finished ที่ขั้นตอนสุดท้ายที่มีงาน (ตรงกับหน้า Release) ไม่เกินจำนวนสั่ง · น้ำหนัก = เสร็จ × น้ำหนัก/ชิ้นของ Release</>,
+             <><b>Cumulative</b> totals (not limited to the period above) · filtered by the selected project / Part / Release · <b>Finished</b> = pieces marked Finished at the last step with work (same as the Release page), capped at the ordered qty · Weight = finished × the release’s unit weight</>)}
+        </div>
+        {err && <div style={{ color: "var(--danger)", fontSize: 12.5, marginBottom: 10 }}>{L("โหลดข้อมูลไม่สำเร็จ: ", "Couldn't load: ")}{err}</div>}
+        {loading ? (
+          <div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div>
+        ) : rows.length === 0 ? (
           <div className="empty-state">
             <Icon name="check" size={32} />
-            <div className="empty-state-title">ยังไม่มีชิ้นงานที่เสร็จสมบูรณ์</div>
-            <div className="empty-state-sub">รายการจะปรากฏที่นี่เมื่อชิ้นงานผ่านครบทุกขั้นตอนตาม Routing</div>
+            <div className="empty-state-title">{L("ยังไม่มีชิ้นงานที่เสร็จ", "No finished pieces yet")}</div>
+            <div className="empty-state-sub">{(projectFilter || partFilter || releaseFilter)
+              ? L("ไม่มีชิ้นที่เสร็จตามตัวกรองที่เลือก — ลองเลือก \"ทุกโปรเจค\"", "No finished pieces match the selected filters — try \"All projects\"")
+              : L("รายการจะขึ้นเมื่อหน้าเครื่องบันทึกสถานะ Finished", "Rows appear once the machine terminal records Finished")}</div>
           </div>
         ) : (
-          <DataTable id="finished-parts" wrapClass="table-wrap" tableClass="data-table"
-            rows={units} rowKey={(u) => u.id} sort={sort}
+          <DataTable id="finished-parts" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+            rows={rows} rowKey={(x) => x.id} sort={sort}
             sortAccessors={{
-              qr: (u) => u.qr_code || "", part: (u) => u.part_master?.part_no || "",
-              proj: (u) => u.part_master?.projects?.name || "",
-              weight: (u) => Number(u.weight || u.part_master?.unit_weight || 0),
-              len: (u) => Number(u.length_mm || u.part_master?.default_length_mm || 0),
+              ro: (x) => x.ro, part: (x) => x.partNo, name: (x) => x.partName, proj: (x) => x.projectName,
+              ordered: (x) => x.qty, finished: (x) => x.finished, pct: (x) => x.pct,
+              weight: (x) => x.weight, len: (x) => x.len, last: (x) => x.lastOp, date: (x) => x.date || "",
             }}
             columns={[
-              { key: "qr", header: "QR", sortKey: "qr", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (u) => u.qr_code },
-              { key: "part", header: "Part", sortKey: "part", tdStyle: { whiteSpace: "nowrap" }, cell: (u) => <>{u.part_master?.part_no} — {u.part_master?.part_name}</> },
-              { key: "proj", header: "โปรเจค", sortKey: "proj", cell: (u) => u.part_master?.projects?.name || "-" },
-              { key: "weight", header: "น้ำหนัก", sortKey: "weight", align: "right", cell: (u) => fmtNum(u.weight || u.part_master?.unit_weight) },
-              { key: "len", header: "ความยาว", sortKey: "len", align: "right", cell: (u) => u.length_mm || u.part_master?.default_length_mm ? `${fmtNum(u.length_mm || u.part_master?.default_length_mm)} มม.` : "-" },
+              { key: "ro", header: "Release", sortKey: "ro", dataLabel: "Release", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (x) => x.ro },
+              { key: "part", header: "Part No.", sortKey: "part", dataLabel: "Part No.", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" },
+                cell: (x) => <>{x.partNo}{x.r.mod_cancelled_at && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "rgba(239,68,68,.11)", color: "var(--danger)" }}>{x.r.mod_cancel_keep === "moved" ? L("ย้ายหมดแล้ว", "all moved") : L("ยกเลิก", "cancelled")}</span>}</> },
+              { key: "name", header: L("ชื่อ Part", "Part name"), sortKey: "name", tdStyle: { color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }, cell: (x) => x.partName || "-" },
+              { key: "proj", header: L("โปรเจค", "Project"), sortKey: "proj", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.projectName },
+              { key: "ordered", header: L("สั่ง", "Ordered"), sortKey: "ordered", align: "right", cell: (x) => fmtNum(x.qty) },
+              { key: "finished", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "finished", align: "right",
+                tdProps: (x) => ({ style: { fontWeight: 700, color: x.finished >= x.qty ? "var(--success)" : "var(--text)", whiteSpace: "nowrap" } }),
+                cell: (x) => <>{fmtNum(x.finished)}<span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{pctLabel(x.pct, x.finished >= x.qty)}</span></> },
+              { key: "weight", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (x) => x.unitWeight ? fmtNum(x.weight) : "—" },
+              { key: "len", header: L("ความยาว (มม.)", "Length (mm)"), sortKey: "len", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.len != null ? fmtNum(x.len) : "-" },
+              { key: "last", header: L("ขั้นตอนสุดท้าย", "Last step"), sortKey: "last", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.lastOp ? opLabel(x.lastOp, lang) : L("สแกนสำนักงาน", "Office scan") },
+              { key: "date", header: L("วันที่ปล่อยงาน", "Released"), sortKey: "date", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12.5 }, cell: (x) => fmtD(x.date) },
             ]} />
         )}
       </Card>
@@ -5868,6 +5945,7 @@ function ReportPage({ goTo }) {
   const [releaseFilter, setReleaseFilter] = useState("");    // กรองตามเลข Release Order (ดรอปดาวน์)
   const [projects, setProjects] = useState([]);              // รายชื่อโปรเจค (dedupe จาก releases)
   const [relProj, setRelProj] = useState({});                // release_id → project_id (แม่นยำ ไม่ติดปัญหา part_no ซ้ำข้ามโปรเจค)
+  const [allRels, setAllRels] = useState(null);             // releases ทั้งหมด (ส่งให้ Finished Part)
 
   const [logs, setLogs] = useState([]);
   const [deptFilter, setDeptFilter] = useState("machine");   // "machine"/"assembly"/"packing" — แต่ละแผนกดูคนละแบบ
@@ -5887,6 +5965,7 @@ function ReportPage({ goTo }) {
   // ใช้ release_id เพราะ 1 release ผูกโปรเจคเดียวชัดเจน — เลี่ยงปัญหา part_no ซ้ำข้ามโปรเจค (K)
   useEffect(() => {
     getReleasesFull().then((rels) => {
+      setAllRels(rels || []);   // ใช้ซ้ำใน Finished Part (ไม่ต้องโหลด releases ซ้ำ)
       const rp = {};
       const pmap = new Map();
       for (const r of rels || []) {
@@ -6309,9 +6388,9 @@ function ReportPage({ goTo }) {
 
       {/* ── Finished Part (รวมมาไว้ในหน้า Report) ──────────────────────────── */}
       <div className="section-heading" style={{ margin: "26px 2px 12px", fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-        Finished Part — ชิ้นงานที่เสร็จสมบูรณ์
+        {lang === "en" ? "Finished Parts — completed pieces" : "Finished Part — ชิ้นงานที่เสร็จสมบูรณ์"}
       </div>
-      <FinishedPartSection />
+      <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} />
       </>
       ) : (
         <AssemblyReportView from={curRange.from} to={curRange.to} parentKind={deptFilter === "packing" ? "package" : deptFilter === "panel" ? "panel" : "subassembly"} projectFilter={projectFilter} partFilter={partFilter} goTo={goTo} />
