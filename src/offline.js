@@ -77,6 +77,24 @@ export function cacheUnitsBulk(units) {
     } catch { resolve(); }
   }));
 }
+// ลบชิ้นออกจากแคช (QR ถูกยกเลิก/ลบในออฟฟิศ) — กันเครื่องออฟไลน์สแกนผ่าน QR ที่ไม่มีแล้ว
+export function uncacheUnit(qr) {
+  if (!qr) return Promise.resolve();
+  return tx(ST_UNITS, "readwrite", (s) => s.delete(String(qr).trim()));
+}
+export function uncacheUnitsBulk(qrs) {
+  return db().then((d) => new Promise((resolve) => {
+    if (!d || !Array.isArray(qrs) || !qrs.length) return resolve();
+    try {
+      const t = d.transaction(ST_UNITS, "readwrite");
+      const s = t.objectStore(ST_UNITS);
+      for (const q of qrs) { if (q) s.delete(String(q).trim()); }
+      t.oncomplete = () => resolve();
+      t.onerror = () => resolve();
+      t.onabort = () => resolve();
+    } catch { resolve(); }
+  }));
+}
 export function getCachedUnit(qr) {
   if (!qr) return Promise.resolve(null);
   return tx(ST_UNITS, "readonly", (s) => s.get(String(qr).trim()));
