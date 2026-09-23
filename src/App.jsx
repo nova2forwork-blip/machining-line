@@ -810,6 +810,7 @@ function LoginSplash({ text = "กำลังเข้าสู่ระบบ�
 }
 
 function Login({ onLogin }) {
+  const [lang] = useLang();
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -850,6 +851,13 @@ function Login({ onLogin }) {
         <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24, marginTop: 3 }}>
           ระบบบันทึกการทำงานเครื่องจักร
         </div>
+        {BOOT_GO.go === "setup-employees" && (
+          <div style={{ background: "rgba(16,185,129,.10)", border: "1px solid rgba(16,185,129,.35)", color: "var(--text)", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, lineHeight: 1.55 }}>
+            {lang === "en"
+              ? <>🔑 Sign in with an <b>Admin</b> account to set a home machine/station{BOOT_GO.forCode ? <> for <b>{BOOT_GO.forCode}</b></> : null} — Setup → Employees opens right after</>
+              : <>🔑 เข้าสู่ระบบด้วย<b>บัญชี Admin</b> เพื่อตั้งเครื่อง/สถานีประจำ{BOOT_GO.forCode ? <> ให้บัญชี <b>{BOOT_GO.forCode}</b></> : null} — ระบบจะเปิดหน้า ตั้งค่า → พนักงาน ให้เลย</>}
+          </div>
+        )}
         <Field label="รหัสพนักงาน">
           <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น admin" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} />
         </Field>
@@ -961,8 +969,25 @@ function ChangePasswordModal({ onClose }) {
   );
 }
 
+// ── ลิงก์ตรงจากหน้าเครื่อง: /?go=setup-employees[&for=รหัส] → เปิด ตั้งค่า → พนักงาน (เฉพาะแอดมิน) ──
+//   อ่านครั้งเดียวตอนโหลด (ก่อนล้าง URL) · ใช้ทั้งหน้าล็อกอิน (โชว์คำแนะนำ) และ Shell (เปิดแท็บ)
+const BOOT_GO = (() => {
+  try { const q = new URLSearchParams(window.location.search); return { go: q.get("go") || "", forCode: q.get("for") || "", used: false }; }
+  catch { return { go: "", forCode: "", used: false }; }
+})();
 function Shell({ user, onLogout }) {
-  const [tab, setTab] = useState("projects");
+  const [shellLang] = useLang();
+  const [tab, setTab] = useState(() => (BOOT_GO.go === "setup-employees" && isAdmin(user)) ? "setup" : "projects");
+  useEffect(() => {
+    if (!BOOT_GO.go) return;
+    try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }   // ล้าง ?go= ออกจาก URL (รีโหลดแล้วไม่เด้งซ้ำ)
+    if (BOOT_GO.go === "setup-employees" && isAdmin(user) && BOOT_GO.forCode) {
+      const msg = shellLang === "en" ? `Setup → Employees: press “Edit” on ${BOOT_GO.forCode} and choose a home machine/station`
+                                     : `ตั้งค่า → พนักงาน: กด “แก้ไข” ที่ ${BOOT_GO.forCode} แล้วเลือกเครื่อง/สถานีประจำ`;
+      setTimeout(() => mlsToast(msg, "info"), 400);   // รอ Toaster พร้อม (mount ทีหลัง Shell)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);   // หน้าต่างเปลี่ยนรหัสผ่านตัวเอง
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
@@ -7990,7 +8015,10 @@ function ClearScansCard() {
 }
 
 function SetupPage() {
-  const [tab, setTab] = useState("machines");
+  const [tab, setTab] = useState(() => {
+    if (BOOT_GO.go === "setup-employees" && !BOOT_GO.used) { BOOT_GO.used = true; return "employees"; }   // มาจากหน้าเครื่อง → เปิดแท็บพนักงาน
+    return "machines";
+  });
   const TABS = [
     { key: "machines", label: "เครื่อง/สถานี" },
     { key: "operations", label: "ขั้นตอน" },
