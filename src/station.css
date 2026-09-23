@@ -318,6 +318,12 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-hint b { color: #33383e; }
 .stn-hint .big { font-size: 15px; color: var(--st-red); font-weight: 600; margin-bottom: 8px; }
 
+/* สแกน 2 รอบ: ป้ายบอกรอบ (① เริ่ม · ② จบงาน) เหนือกล้อง */
+.stn-scan-stack { display: flex; flex-direction: column; align-items: center; max-width: 100%; }
+.stn-scan-phase { max-width: 560px; width: 100%; margin: 0 auto 8px; padding: 7px 12px; border-radius: 10px; text-align: center;
+  font-size: 15px; font-weight: 800; line-height: 1.35; background: var(--st-tint); color: var(--st-red-dk); border: 1px solid rgba(67,97,238,.25); }
+.stn-scan-phase.fin { background: rgba(34,197,94,.12); color: #0e7a4a; border-color: rgba(34,197,94,.35); }
+@media (max-height: 560px) and (orientation: landscape) { .stn-scan-phase { font-size: 12.5px; padding: 4px 10px; margin-bottom: 4px; } }
 .stn-cam { width: min(96%, 560px); max-height: 74vh; aspect-ratio: 1; position: relative; margin: 0 auto; background: #0d1512; border-radius: 12px; overflow: hidden; touch-action: none; }
 /* แถบซูมต้องลากได้ตามปกติ (ไม่ให้ touch-action:none ของกรอบกล้องมาบล็อก) */
 .stn-cam-zoom, .stn-cam-zoom input[type="range"] { touch-action: auto; }
