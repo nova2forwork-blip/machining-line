@@ -386,11 +386,24 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
         <thead>
           <tr onContextMenu={openMenuAt}>
             {cols.map((c) => <ReorderTh key={c.key} col={c} sort={sort} drag={drag} setDrag={setDrag} onMove={move} />)}
+            {/* ★ ปุ่มเลือกคอลัมน์ = คอลัมน์ของตัวเองท้ายหัวตาราง (ไม่ลอยทับหัวคอลัมน์สุดท้าย/สกอร์บาร์) · sticky ขวา = เห็นเสมอแม้ตารางเลื่อนแนวนอน */}
+            <th className="dt-colth">
+              <button type="button" className={"dt-colbtn" + (nHidden ? " on" : "")} onClick={openMenuBtn}
+                aria-label={lang === "en" ? "Choose columns" : "เลือกคอลัมน์"}
+                title={nHidden
+                  ? (lang === "en" ? `${nHidden} column(s) hidden — click to choose` : `ซ่อนอยู่ ${nHidden} คอลัมน์ — กดเพื่อเลือก`)
+                  : (lang === "en" ? "Choose columns (or right-click the header)" : "เลือกคอลัมน์ที่จะแสดง (คลิกขวาที่หัวตารางก็ได้)")}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="5.2" height="16" rx="1" /><rect x="9.4" y="4" width="5.2" height="16" rx="1" /><rect x="15.8" y="4" width="5.2" height="16" rx="1" />
+                </svg>
+                {nHidden ? <span className="dt-colbtn-dot" /> : null}
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
           {(!data || data.length === 0) ? (
-            <tr><td colSpan={cols.length || 1} style={{ color: "var(--muted)", textAlign: "center", padding: "16px 8px" }}>{empty || "—"}</td></tr>
+            <tr><td colSpan={(cols.length || 1) + 1} style={{ color: "var(--muted)", textAlign: "center", padding: "16px 8px" }}>{empty || "—"}</td></tr>
           ) : data.map((row, i) => {
             const ctx = rowCtx ? rowCtx(row, i) : undefined;
             const rp = rowProps ? rowProps(row, i, ctx) : null;
@@ -408,22 +421,13 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
                     </td>
                   );
                 })}
+                <td className="dt-colpad" data-label="" aria-hidden="true" />
               </tr>
             );
           })}
         </tbody>
       </table>
       </div>
-      <button type="button" className={"dt-colbtn" + (nHidden ? " on" : "")} onClick={openMenuBtn}
-        aria-label={lang === "en" ? "Choose columns" : "เลือกคอลัมน์"}
-        title={nHidden
-          ? (lang === "en" ? `${nHidden} column(s) hidden — click to choose` : `ซ่อนอยู่ ${nHidden} คอลัมน์ — กดเพื่อเลือก`)
-          : (lang === "en" ? "Choose columns (or right-click the header)" : "เลือกคอลัมน์ที่จะแสดง (คลิกขวาที่หัวตารางก็ได้)")}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="4" width="5.2" height="16" rx="1" /><rect x="9.4" y="4" width="5.2" height="16" rx="1" /><rect x="15.8" y="4" width="5.2" height="16" rx="1" />
-        </svg>
-        {nHidden ? <span className="dt-colbtn-dot" /> : null}
-      </button>
       {menu && (
         <ColumnMenu at={menu} cols={allCols} hidden={hidden} canHide={canHide} lang={lang}
           onToggle={toggleHide} onShowAll={showAll}
