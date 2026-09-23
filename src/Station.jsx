@@ -756,7 +756,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
   const cancelledQrMsg = (cq) => t(
     `⛔ QR นี้ถูกยกเลิกใน ${cq.version || "Modify"} (${cq.why || "ยกเลิก"}${cq.part_no ? " · " + cq.part_no : ""}) — ไม่ต้องทำชิ้นนี้ · แยกออก · แจ้งออฟฟิศถ้าทำไปแล้ว`,
-    `⛔ This QR was cancelled in ${cq.version || "Modify"}${cq.part_no ? " · " + cq.part_no : ""} — don't make it · tell the office if already made`);
+    `⛔ This QR was cancelled in ${cq.version || "Modify"} (${cq.why === "ลดจำนวน" ? "qty reduced" : "part cancelled"}${cq.part_no ? " · " + cq.part_no : ""}) — don't make it · set it aside · tell the office if already made`);
   // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจค → ให้เลือก "โปรเจค" (ไม่ต้องเลือก release)
   // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจค · { ok:false } เมื่อไม่พบ
   async function onManualEntry(text) {
@@ -2285,6 +2285,21 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
   );
 }
 
+// ── Modify: ข้อความที่ DB เขียนไว้ (ภาษาไทย รูปแบบตายตัว) → อังกฤษ ตอนเลือก EN ──
+function modNoteText(note, lang) {
+  if (!note || lang !== "en") return note;
+  return String(note)
+    .replace(/QR ใหม่ (\d+) ใบ/g, "$1 new QR")
+    .replace(/ยกเลิก QR ที่ยังไม่ใช้ (\d+) ใบ/g, "cancelled $1 unused QR")
+    .replace(/ยกเลิก QR (\d+) ใบ/g, "cancelled $1 QR")
+    .replace(/ทำแล้ว (\d+) ชิ้น → สแปร์/g, "$1 made → spare")
+    .replace(/ทำแล้ว (\d+) ชิ้น → scrap/g, "$1 made → scrap")
+    .replace(/รับย้าย (\d+) ชิ้นจาก/g, "received $1 pcs from")
+    .replace(/ย้ายจาก/g, "moved from")
+    .replace(/ย้าย (\d+) ชิ้น →/g, "moved $1 pcs →")
+    .replace(/\(QR เดิม\)/g, "(same QR)")
+    .replace(/เพิ่มจำนวน/g, "Qty increased").replace(/ลดจำนวน/g, "Qty reduced").replace(/ยกเลิก Part/g, "Part cancelled");
+}
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
   asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
@@ -2428,9 +2443,9 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
         </div>
         {/* ★ Modify: บอกว่าเบอร์นี้ถูกแก้อะไร (ชิ้นที่ถูกย้าย = โชว์ตลอด · การแก้ของ Release = 30 วันล่าสุด) */}
         {(() => {
-          if (unit?.mod_note) return <div className="stn-mod-note moved">🔀 {t("ชิ้นนี้", "This piece")}: {unit.mod_note} — {t("ทำตามเบอร์บนจอ (ป้ายอาจยังเป็นเบอร์เดิม)", "follow the number on screen")}</div>;
+          if (unit?.mod_note) return <div className="stn-mod-note moved">🔀 {t("ชิ้นนี้", "This piece")}: {modNoteText(unit.mod_note, lang)} — {t("ทำตามเบอร์บนจอ (ป้ายอาจยังเป็นเบอร์เดิม)", "follow the number on screen (the label may still show the old one)")}</div>;
           const at = rel.mod_at ? new Date(rel.mod_at).getTime() : 0;
-          if (rel.mod_note && at && (Date.now() - at) < 30 * 86400000) return <div className="stn-mod-note">ℹ️ {rel.mod_note}</div>;
+          if (rel.mod_note && at && (Date.now() - at) < 30 * 86400000) return <div className="stn-mod-note">ℹ️ {modNoteText(rel.mod_note, lang)}</div>;
           return null;
         })()}
         <div className="stn-qty-lbl">{t("จำนวน", "QUANTITY")}</div>
