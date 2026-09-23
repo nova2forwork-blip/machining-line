@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import {
-  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit,
+  newClientId, cacheUnit, cacheUnitsBulk, getCachedUnit, uncacheUnit, uncacheUnitsBulk,
   setCachedProgress, getCachedProgress, setDaySnapshot, getDaySnapshot,
   setCachedAsmState, getCachedAsmState,
 } from "./offline.js";
@@ -258,7 +258,43 @@ export async function findUnitByQr(qrCode) {
     return (await getCachedUnit(qr)) || null;             // เน็ตสะดุด → ลองแคช
   }
   if (data) cacheUnit(data);                              // เก็บไว้ใช้ตอนเน็ตหลุด
+  else uncacheUnit(qr);                                   // ★ Modify: QR ถูกยกเลิก/ลบแล้ว → เอาออกจากแคช (ออฟไลน์จะไม่สแกนผ่าน)
   return data;
+}
+
+// ── Release Modify (M-01, M-02 …) · migration-release-modify.sql ─────────────────
+// ประวัติ M + ต้นฉบับ M-00 + ขีดจำกัดต่อ Part (ทำแล้ว / QR ที่ยังไม่ใช้) ของ Release Order
+export async function getReleaseModifyInfo(projectId, releaseOrder) {
+  const { data, error } = await supabase.rpc("get_release_modify_info", { p_project_id: projectId, p_release_order: releaseOrder });
+  if (error) {
+    console.warn("get_release_modify_info error", error);
+    return { ok: false, reason: isMissingFnErr(error) ? "not_installed" : "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+// บันทึก Modify ทั้งชุด (admin) — ทุกรายการใน transaction เดียว (พังรายการไหน = ไม่บันทึกเลยสักรายการ)
+export async function applyReleaseModify({ projectId, releaseOrder, versionNo, reason, items }) {
+  const { data, error } = await supabase.rpc("apply_release_modify", {
+    p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder,
+    p_version_no: versionNo == null ? null : Number(versionNo), p_reason: reason, p_items: items || [],
+  });
+  if (error) {
+    console.warn("apply_release_modify error", error);
+    flagAuth(error);
+    return { ok: false, reason: isMissingFnErr(error) ? "not_installed" : "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+// หน้าเครื่อง: QR นี้เคยถูกยกเลิกใน Modify ไหม (ออนไลน์เท่านั้น · ไม่มี migration = คืน null เงียบๆ)
+export async function lookupCancelledQr(qr) {
+  const q = String(qr || "").trim();
+  if (!q) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
+  try {
+    const { data, error } = await supabase.rpc("lookup_cancelled_qr", { p_qr: q });
+    if (error) return null;
+    return data && data.found ? data : null;
+  } catch { return null; }
 }
 
 // หาชิ้นงานจาก "เบอร์พาร์ท" (แทนการสแกน QR — เผื่อ QR เสีย/พิมพ์เอง)
@@ -388,6 +424,11 @@ export async function prefetchUnitsForOffline(limit = 4000) {
       if (data.length < pageSize) break;
       from += pageSize;
     }
+    // ★ Modify: QR ที่ถูกยกเลิก (ลดจำนวน/ยกเลิก Part) → ลบออกจากแคช กันเครื่องออฟไลน์สแกนผ่าน
+    try {
+      const { data: gone, error: gErr } = await supabase.rpc("list_cancelled_qr", { p_limit: 5000 });
+      if (!gErr && Array.isArray(gone) && gone.length) await uncacheUnitsBulk(gone);
+    } catch { /* ยังไม่ได้รัน migration → ข้าม */ }
     return total;
   } finally { _prefetchingUnits = false; }
 }
@@ -457,18 +498,24 @@ export async function countUnitOpRecords(partUnitId, operationId) {
 //   finishedExists  = เคยกด Finished ไปแล้ว → บังคับให้เลือกได้เฉพาะ Finished (กันย้อนกลับเป็น In Process)
 //   inProcessExists = เคยกด In Process ไปแล้ว → เลือก Finished ได้เมื่อ "ครบตามจำนวน" เท่านั้น
 // fail-open: ออฟไลน์ / พารามิเตอร์ไม่ครบ / error → { false, false } (ไม่ล็อก ไม่บล็อกการบันทึกงาน)
-export async function getScanStatusLock(releaseId, operationId, machineId) {
+// sinceIso = เวลาที่ "เพิ่มจำนวน" ล่าสุด (releases.mod_qty_at) → นับเฉพาะบันทึกหลังจากนั้น
+//   (เคยกด Finished ไปแล้ว แต่ออฟฟิศเพิ่มจำนวน → ปลดล็อกให้เลือก In Process ได้อีก)
+export async function getScanStatusLock(releaseId, operationId, machineId, sinceIso = null) {
   const none = { finishedExists: false, inProcessExists: false };
   if (!releaseId || !operationId || !machineId) return none;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return none;
   try {
-    const q = (st) => supabase
-      .from("machine_records")
-      .select("id", { count: "exact", head: true })
-      .eq("release_id", releaseId)
-      .eq("operation_id", operationId)
-      .eq("machine_id", machineId)
-      .eq("status", st);
+    const q = (st) => {
+      let b = supabase
+        .from("machine_records")
+        .select("id", { count: "exact", head: true })
+        .eq("release_id", releaseId)
+        .eq("operation_id", operationId)
+        .eq("machine_id", machineId)
+        .eq("status", st);
+      if (sinceIso && st === "finished") b = b.gte("recorded_at", sinceIso);   // เฉพาะล็อก Finished (In Process ยังนับทั้งหมด)
+      return b;
+    };
     const [fin, inp] = await Promise.all([q("finished"), q("inprocess")]);
     if (fin.error || inp.error) { console.warn("getScanStatusLock error", fin.error || inp.error); return none; }
     return { finishedExists: (fin.count || 0) > 0, inProcessExists: (inp.count || 0) > 0 };
