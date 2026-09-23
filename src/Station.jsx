@@ -342,8 +342,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(null);
   const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
+  // ★ สแกน 2 รอบ (2026-09-23): กรอกความยาว → START (เปิดกล้อง) → สแกนรอบ 1 = เริ่มจับเวลา → ยกขึ้นเครื่อง
+  //   → ทำเสร็จ กด SCAN สแกนรอบ 2 (QR ไหนก็ได้ของเบอร์เดียวกัน) → ใส่จำนวน + สถานะ → OK
+  //   ★ เวลาไม่หยุดตอนสแกนรอบ 2 — เดินต่อจนกด OK (เหมือนเดิม) · process_seconds = สแกนรอบ 1 → กด OK
 
-  const [unit, setUnit] = useState(null);   // resolved part_unit (from QR)
+  const [unit, setUnit] = useState(null);   // resolved part_unit (from QR) — สแกนรอบ 1 = "งานที่เริ่มไว้" (บันทึกเข้าชิ้นนี้)
+  const unitRef = useRef(null);             // สำเนาล่าสุดของ unit (กัน closure ค้างในตัวสแกนกล้อง)
+  useEffect(() => { unitRef.current = unit; }, [unit]);
   // ── โหมดประกอบ/แพ็ก (assembly) — เมื่อ op.is_assembly ────────────────────────
   const [asmParent, setAsmParent] = useState(null);     // { unit, bom:[{child_pm_id, qty, part_no, part_name}] }
   const [asmParentQty, setAsmParentQty] = useState(1);  // "จำนวนที่จะทำ" ของเบอร์แม่ (ซับ) — เข้ายอดผลิต + ใช้เทียบ BOM×จำนวน (ปิดงานอัตโนมัติ)
@@ -558,7 +563,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         v: 1, step, materialLen, qty, status,
         unit, op, progress, dupCount,
         opSel: [...opSel],                  // ★ ขั้นตอนที่เลือกไว้ (หลายอัน) — กันรีโหลดแล้วกลับไปเลือกทุกอันเอง
-        startTs: startTsRef.current,        // เวลาเริ่มจริง → คำนวณเวลาเดินเครื่องต่อได้
+        startTs: startTsRef.current,        // เวลาเริ่มจริง (สแกนรอบ 1) → คำนวณเวลาเดินเครื่องต่อได้
         clientIdMap: clientIdMapRef.current || null,   // ★ client_id ต่อขั้นตอน — กู้กลับได้ ถ้ารีโหลดหลังกด OK แล้วตอบกลับหาย (กัน DB บันทึกซ้ำ)
         savedAt: Date.now(),
       }));
@@ -584,10 +589,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           if (Array.isArray(d.opSel)) setOpSel(new Set(d.opSel));   // ★ กู้ "ขั้นตอนที่เลือกไว้" (หลายอัน) ให้ตรงกับตอนก่อนรีโหลด
           clientIdRef.current = d.clientId ?? null;
           if (d.clientIdMap && typeof d.clientIdMap === "object") clientIdMapRef.current = d.clientIdMap;   // ★ กู้ client_id ต่อขั้นตอน → กด OK ซ้ำหลังรีโหลด = ตัวเดิม → DB dedup ไม่บันทึกซ้ำ
+          unitRef.current = d.unit ?? null;
           if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
-          setStep(d.step);
-          startTimer();   // เดินเวลาต่อทันที
-          flash(t("กู้งานที่ค้างอยู่กลับมาแล้ว — ตรวจแล้วกด OK ได้เลย", "Restored your in-progress job — review and press OK"), "ok");
+          // กล้องไม่เปิดเองตอนกู้ (SCAN → REC)
+          const st = d.step === STEP.SCAN ? STEP.REC : d.step;
+          if (d.unit && d.startTs) {
+            startTimer();   // งานเริ่มแล้ว (สแกนรอบ 1 แล้ว) → เวลาเดินต่อทันที (รวมหน้าจำนวน/สถานะ)
+          } else {
+            startTsRef.current = null;   // ยังไม่ได้สแกนรอบ 1 → ยังไม่จับเวลา
+          }
+          setStep(st);
+          flash(d.unit
+            ? t("กู้งานที่ค้างอยู่กลับมาแล้ว — ทำเสร็จแล้วสแกนอีกครั้ง / ตรวจแล้วกด OK", "Restored your in-progress job — scan again when done / review and press OK")
+            : t("กู้งานที่ค้างอยู่กลับมาแล้ว — กด SCAN สแกนชิ้นงานเพื่อเริ่ม", "Restored — press SCAN to scan the piece and start"), "ok");
         } else if (tooOld) {
           localStorage.removeItem(DRAFT_KEY);   // เก่าเกิน → ทิ้ง
         }
@@ -603,6 +617,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     setStatus(null); setStatusLock({ finishedExists: false, inProcessExists: false }); setStep(STEP.IDLE);
     clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
     clientIdMapRef.current = null;       // ★ ล้าง client_id ต่อขั้นตอนด้วย (ชิ้นใหม่ = ชุดใหม่)
+    unitRef.current = null;              // จบงาน → รอบหน้าสแกนรอบ 1 ใหม่
   }
 
   // ── รายงานปัญหา: เดินเครื่องอยู่ = "รายงานการทำงาน" · ยังไม่เริ่ม = "แจ้งเครื่องหยุด" ──
@@ -640,9 +655,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function onRecord() {
     if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
     if (step === STEP.IDLE) {
-      if (!matReady) { flash("กรอกความยาววัสดุ (Material Length) ก่อน", "warn"); return; }
-      startTimer();
-      setStep(STEP.REC);
+      if (!matReady) { flash(t("กรอกความยาววัสดุ (Material Length) ก่อน", "Enter the Material Length first"), "warn"); return; }
+      if (machineOps.length > 1 && !op) { flash(t("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน", "Pick the operation first"), "warn"); return; }
+      warmAudio();
+      // ★ START = เปิดกล้องให้สแกน (ยังไม่จับเวลา) · เวลาเริ่มนับตอนสแกนรอบ 1
+      clientIdRef.current = null; clientIdMapRef.current = null;
+      stopTimer(); setElapsed(0);
+      setUnit(null); unitRef.current = null; setProgress(null); setDupCount(0); setQty(0); setStatus(null);
+      setStep(STEP.SCAN);
     } else if (step !== STEP.CANCEL) {
       // pressing RECORD again while active → ask to cancel (จำ step เดิมไว้กลับ)
       prevStepRef.current = step;
@@ -662,40 +682,31 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   async function onScan() {
     if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
-    if (step === STEP.IDLE) { flash("กด START ก่อนเริ่มสแกน", "warn"); return; }
-    // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง กลับไปหน้าจับเวลา (toggle)
+    if (step === STEP.IDLE) { flash(t("กรอกความยาว แล้วกด START ก่อน", "Enter the length, then press START"), "warn"); return; }
+    // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง (toggle) · งาน/เวลาที่เริ่มไว้ยังอยู่
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
+    if (step === STEP.CANCEL) return;
+    // หน้าจำนวน/สถานะ (สแกนรอบ 2 แล้ว) → ให้กด OK หรือ ยกเลิก (กันงานที่เริ่มไว้หาย)
+    if (step === STEP.PART) {
+      flash(t("กด OK เพื่อบันทึก หรือกด ยกเลิก เพื่อกลับไปหน้ากำลังทำงาน", "Press OK to save, or Cancel to go back"), "warn"); return;
+    }
     // เครื่องทำได้หลายขั้นตอน แต่ยังไม่เลือก → ต้องเลือกก่อน (กันบันทึกผิดขั้นตอน)
     if (machineOps.length > 1 && !op) { flash("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อนสแกน", "warn"); return; }
-    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture) — เรียกก่อน await กันเสียงเงียบหลังการ์ดยืนยัน
-    // มีชิ้นที่สแกนไว้แล้วแต่ยังไม่กด OK (เลือกสถานะ/จำนวนแล้ว) → เตือนก่อนทิ้ง กันนับขาด
-    if (step === STEP.PART && unit && (status || qty > 1)) {
-      if (!(await askConfirm({
-        message: t("ยังไม่ได้กด OK บันทึกชิ้นที่สแกนไว้ — สแกนใหม่จะทิ้งค่าเดิม ยืนยันหรือไม่?",
-                   "This scanned piece isn't saved yet — scanning again will discard it. Continue?"),
-        tone: "warn",
-        confirmText: t("สแกนใหม่", "Scan again"),
-        cancelText: t("ยกเลิก", "Cancel"),
-      }))) return;
-    }
-    // ล้างค่าสแกนเดิมก่อนเสมอ — กันสถานะ/จำนวนของชิ้นก่อนหน้าติดมากับชิ้นใหม่
-    // (เช่นเลือก Finished/qty 5 ที่ชิ้น A แล้วกด SCAN ต่อชิ้น B โดยไม่กด Cancel)
-    // ★ ล้าง client_id ด้วย — สแกนชิ้นใหม่ = การบันทึกครั้งใหม่ ถ้าไม่ล้างจะ reuse ตัวเดิม
-    //   (เคส: บันทึกชิ้น A พลาดแบบไม่ใช่เน็ต แต่ DB commit แล้ว → กด SCAN ชิ้น B → B โดน dedup หาย)
-    clientIdRef.current = null;
-    clientIdMapRef.current = null;
-    setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null);
+    warmAudio(); // ปลดล็อกเสียงบนมือถือ (ต้องมาจาก user gesture)
+    // ยังไม่มีงาน = สแกนรอบ 1 (เริ่มจับเวลา) · มีงานแล้ว = สแกนรอบ 2 (ทำเสร็จ) — แยกกันใน showScannedUnit
     setStep(STEP.SCAN);
   }
-  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังจับเวลา
-  // Cancel หลังสแกน → กลับไปสแกนใหม่ (เวลาเดินต่อเนื่องอยู่แล้ว ไม่ต้อง start ใหม่)
-  function rescan() { clientIdRef.current = null; clientIdMapRef.current = null; setUnit(null); setProgress(null); setDupCount(0); setQty(0); setStatus(null); setStep(STEP.SCAN); }
+  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังทำงาน (ถ้ายังไม่ได้สแกนรอบ 1 = ยังไม่จับเวลา)
+  // หน้าจำนวน/สถานะ กด ยกเลิก → กลับไปหน้ากำลังทำงาน (งาน + เวลายังเดินอยู่ ไม่ได้หยุด) · สแกนรอบ 2 ใหม่ได้
+  function backToRun() { clientIdRef.current = null; clientIdMapRef.current = null; setStep(STEP.REC); }
   // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
   //   ★ H1: ต้องรู้ "ขั้นตอน (operation)" ถึงจะนับเลขวิ่งถูก — ถ้าไม่รู้ โชว์เป็นไม่ทราบ
   // คืน true=แสดงชิ้นเข้าหน้าเลือกจำนวน · false=ถูกบล็อก (เช่นโปรเจคปิดแล้ว)
-  async function showScannedUnit(u) {
+  // ตรวจ + โหลดข้อมูลชิ้นที่สแกน (โปรเจคปิด / Modify · เลขวิ่ง · rework · ล็อกสถานะ) — ขั้นตอนสแกนเดิม
+  //   ใช้ทั้งสแกนรอบ 1 (เริ่มงาน) และรอบ 2 · คืน false = ถูกบล็อก (กล้องยังเปิด สแกนใหม่ได้)
+  async function loadScannedUnit(u) {
     // ★ กันไว้ตั้งแต่ต้น: โปรเจคปิดแล้ว → เตือนทันที ไม่ให้เข้าหน้าทำงาน (ไม่ต้องเสียเวลาแล้วโดนเด้งตอนกด OK)
     if (u?.part_master?.projects?.status === "closed") {
       errorBeep();
@@ -727,10 +738,53 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // เลือกสถานะเริ่มต้นให้เมื่อมีทางเดียว: เคย Finished → Finished · เคย In Process → In Process (Finished ปลดล็อกเมื่อครบ)
     if (lock.finishedExists) setStatus("finished");
     else if (lock.inProcessExists) setStatus("inprocess");
-    setUnit(u);
-    if (qty === 0) setQty(1);
-    setStep(STEP.PART);
+    else setStatus(null);
+    setUnit(u); unitRef.current = u;          // ชิ้นที่สแกนล่าสุด = ชิ้นที่บันทึก (เหมือนเดิม)
     return true;
+  }
+  // ★ สแกน 2 รอบ: เพิ่ม "สแกนรอบแรก" ตอนเริ่มงานเท่านั้น — ที่เหลือเหมือนเดิมทุกอย่าง
+  //   รอบ 1 = เริ่มจับเวลา · รอบ 2 = ขั้นตอนสแกนเดิม (ใส่จำนวน · สถานะ · OK) เวลาเดินจนกด OK
+  async function showScannedUnit(u) {
+    const job = unitRef.current;
+    if (job) {
+      // รอบ 2: QR ไหนก็ได้ ขอแค่เป็นเบอร์พาร์ทเดียวกัน (โปรเจคเดียวกัน) กับที่เริ่มไว้
+      if (!samePartAsJob(u, job)) return false;
+      if (!(await loadScannedUnit(u))) return false;
+      setQty((q) => (q > 0 ? q : 1));       // ค่าเริ่ม 1 (เหมือนเดิม) — แก้เป็นจำนวนจริงที่ทำได้
+      clearTimeout(toastRef.current); setToast(null);   // ล้างข้อความเตือน "ไม่ตรง" ของรอบก่อน (สแกนถูกแล้ว)
+      setStep(STEP.PART);
+      return true;
+    }
+    const t0 = Date.now();   // เวลาเริ่มจริง = ตอนสแกนรอบ 1 (ก่อนรอถามข้อมูลจาก DB)
+    if (!(await loadScannedUnit(u))) return false;
+    setQty(0);                                // จำนวนใส่ตอนสแกนรอบ 2
+    startTsRef.current = t0; startTimer();   // ★ เริ่มจับเวลาตอนสแกนรอบ 1
+    setStep(STEP.REC);
+    flash(t("เริ่มจับเวลาแล้ว — ยกชิ้นงานขึ้นเครื่อง · ทำเสร็จแล้วกด SCAN สแกนอีกครั้ง",
+            "Timer started — load the piece · when done press SCAN and scan again"), "ok");
+    return true;
+  }
+  // รอบ 2 ต้องตรงกับงานที่เริ่มไว้ทั้ง เบอร์พาร์ท + โปรเจค + Release (QR ไหนก็ได้) · ไม่ตรง = เตือน บอกว่าไม่ตรงตรงไหน
+  function samePartAsJob(u, job) {
+    const norm = (x) => String(x || "").trim().toUpperCase();
+    const jp = job.part_master || {}, up = u?.part_master || {};
+    const jr = job.release || {}, ur = u?.release || {};
+    const jPn = jp.part_no || "?", jProj = jp.projects?.code || "?", jRo = jr.release_order || "?";
+    const samePn = !!(u?.part_master_id && job.part_master_id && u.part_master_id === job.part_master_id)
+      || (norm(up.part_no) !== "" && norm(up.part_no) === norm(jp.part_no));
+    const sameProj = (up.project_id && jp.project_id) ? up.project_id === jp.project_id
+      : norm(up.projects?.code) === norm(jp.projects?.code);
+    const sameRel = (u?.release_id && job.release_id && u.release_id === job.release_id)
+      || (norm(ur.release_order) !== "" && norm(ur.release_order) === norm(jr.release_order));
+    if (samePn && sameProj && sameRel) return true;
+    errorBeep();
+    const need = t(`สแกนป้ายของ ${jPn} · โปรเจค ${jProj} · Release ${jRo}`, `scan a label of ${jPn} · project ${jProj} · Release ${jRo}`);
+    flash(!samePn
+      ? t(`⛔ เบอร์ไม่ตรงกับงานที่เริ่มไว้ (สแกนได้ ${up.part_no || "?"}) — ${need}`, `⛔ Not the part you started (scanned ${up.part_no || "?"}) — ${need}`)
+      : !sameProj
+        ? t(`⛔ เบอร์ถูก แต่คนละโปรเจค (${up.projects?.code || "?"}) — ${need}`, `⛔ Right part, other project (${up.projects?.code || "?"}) — ${need}`)
+        : t(`⛔ เบอร์ถูก แต่คนละ Release (${ur.release_order || "?"}) — ${need}`, `⛔ Right part, other Release (${ur.release_order || "?"}) — ${need}`), "warn");
+    return false;
   }
   // สแกน QR (จากกล้อง) — ถ้าอ่านได้เป็นเบอร์พาร์ท ลอง fallback หา 1 ตัว (กล้องเดี่ยวไม่มี UI ให้เลือก)
   // คืน true=พบ, false=ไม่พบ
@@ -1326,7 +1380,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
 
   const recording = step !== STEP.IDLE;
-  const scanArmed = qty > 0 && !!unit;
+  const scanArmed = step === STEP.REC;                     // รอสแกน (รอบ 1 = เริ่ม · รอบ 2 = จบงาน) → ปุ่ม SCAN เด่น
+  const timerLive = !!unit && recording;   // เวลาเดินจริง (สแกนรอบ 1 แล้ว จนกด OK)
 
   // WorkArea ตัวเดียว ใช้ได้ทั้งหน้า machine (โหมดเครื่อง) และ assembly/packing (โหมดประกอบ/แพ็ก)
   const workAreaEl = (
@@ -1335,7 +1390,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       status={status} setStatus={setStatus} statusLock={statusLock} busy={busy}
       onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
       confirmCancel={confirmCancel} confirmPart={confirmPart}
-      closeScan={closeScan} rescan={rescan} dupCount={dupCount}
+      closeScan={closeScan} rescan={backToRun} dupCount={dupCount}
       isAsm={isAsm} asmType={dept} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
       asmParentQty={asmParentQty} setAsmParentQty={setAsmParentQty} asmAutoIn={asmAutoIn}
       asmQtyLocked={asmQtyLocked} setAsmQtyLocked={setAsmQtyLocked}
@@ -1617,7 +1672,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
           <div className="stn-control">
             <div className="stn-ctl-main">
-              <div className={`stn-clock${recording ? " live" : ""}`}>{hms(elapsed)}</div>
+              <div className={`stn-clock${timerLive ? " live" : ""}`}>{hms(elapsed)}</div>
               <div className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
                 <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· กรอกก่อน", "· fill first") : ""}</div>
@@ -1637,7 +1692,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                   <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
                 </div>
-                <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close") : <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>}</div>
+                <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close")
+                  : step === STEP.REC ? (unit ? t("② สแกนเมื่อทำเสร็จ", "② scan when done") : t("① สแกนเพื่อเริ่ม", "① scan to start"))
+                  : step === STEP.PART ? <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>
+                  : t("กด START ก่อน", "press START first")}</div>
               </button>
               {/* ปุ่มรายงานปัญหา — เดินเครื่องอยู่ = รายงานการทำงาน · ยังไม่เริ่ม = แจ้งเครื่องหยุด */}
               <button className={`stn-ctl-btn stn-scan-cell stn-report${slowArmed ? " armed" : ""}`} onClick={openReport} disabled={busy || !!downStop}>
@@ -2353,18 +2411,61 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
         <div style={{ marginBottom: 8 }}>
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
         </div>
-        {t(<>พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b><br />แล้วกด <b>START</b> เพื่อเริ่มจับเวลา</>,
-           <>Ready — enter <b>MATERIAL LENGTH</b><br />then press <b>START</b> to begin timing</>)}
+        {t(<>พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b> แล้วกด <b>START</b> เพื่อเปิดสแกน<br />
+             <span style={{ fontSize: "0.85em", opacity: 0.8 }}>สแกนชิ้นงาน = เริ่มจับเวลา · ทำเสร็จแล้วสแกนอีกครั้ง = จบงาน</span></>,
+           <>Ready — enter <b>MATERIAL LENGTH</b>, then press <b>START</b> to open the scanner<br />
+             <span style={{ fontSize: "0.85em", opacity: 0.8 }}>scan the piece = timer starts · scan again when done = finish</span></>)}
       </div>
     );
   }
   if (step === STEP.REC) {
+    // ยังไม่ได้สแกนรอบ 1 → ยังไม่จับเวลา
+    if (!unit) {
+      return (
+        <div className="stn-hint">
+          <div className="big" style={{ color: "#4361ee" }}>{t("① สแกนชิ้นงานเพื่อเริ่ม", "① Scan the piece to start")}</div>
+          {t(<>กด <b>SCAN</b> แล้วสแกน QR ของชิ้นงาน — เวลาเริ่มนับตอนสแกน</>, <>Press <b>SCAN</b> and scan the piece’s QR — the timer starts on scan</>)}
+        </div>
+      );
+    }
+    // สแกนรอบ 1 แล้ว → กำลังทำ (เวลาเดิน) · ทำเสร็จสแกนอีกครั้ง
+    const p = unit.part_master || {};
+    const proj = p.projects || {};
+    const rel = unit.release || {};
+    const total = progress?.total ?? rel.qty ?? null;
+    const done = progress?.done ?? 0;
     return (
       <div>
+        <div className="stn-part-label" style={{ marginBottom: 8 }}>
+          <div className="stn-lbl-qr" />
+          <div className="stn-lbl-body">
+            <div className="stn-lbl-col left">
+              <div className="stn-lbl-num">{proj.code || "-"}</div>
+              <div className="stn-lbl-name">{proj.name || "-"}</div>
+              <div className="stn-lbl-part">{p.part_no || "-"}</div>
+              {p.material ? <div className="stn-lbl-mat">{p.material}</div> : null}
+            </div>
+            <div className="stn-lbl-vline" />
+            <div className="stn-lbl-col right">
+              <div className="stn-lbl-kv">
+                <span className="k">MDF NO.</span><span className="v">{p.mdf_no || "-"}</span>
+                <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
+                {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
+              </div>
+              {!progress?.noOp && total != null ? (
+                <div className="stn-lbl-of">
+                  <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ทำแล้ว", "Done")} </span>
+                  {progress?.offline ? "~" : ""}{fmt(done)} of {fmt(total)}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
         <StationAnim />
         <div className="stn-hint">
-          <div className="big">{t("● กำลังบันทึกเวลา", "● Recording time")}</div>
-          {t(<>กด <b>SCAN</b> เพื่อสแกนชิ้นงาน</>, <>Press <b>SCAN</b> to scan a piece</>)}
+          <div className="big">{t("● กำลังทำงาน — จับเวลาอยู่", "● Working — timer running")}</div>
+          {t(<>ยกชิ้นงานขึ้นเครื่อง · ทำเสร็จแล้วกด <b>SCAN</b> สแกนอีกครั้ง<br /><span style={{ fontSize: "0.85em", opacity: 0.8 }}>(ป้ายไหนก็ได้ของเบอร์ {p.part_no || "นี้"} · โปรเจค {proj.code || "-"} · Release {rel.release_order || "-"})</span></>,
+             <>Load the piece · when done press <b>SCAN</b> and scan again<br /><span style={{ fontSize: "0.85em", opacity: 0.8 }}>(any label of {p.part_no || "this number"} · project {proj.code || "-"} · Release {rel.release_order || "-"})</span></>)}
         </div>
       </div>
     );
@@ -2383,7 +2484,20 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     );
   }
   if (step === STEP.SCAN) {
-    return <CameraScan onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit} busy={busy} onClose={closeScan} />;
+    // ป้ายบอกว่ากำลังสแกนรอบไหน: ① เริ่มงาน (เริ่มจับเวลา) · ② จบงาน (ต้องเป็นเบอร์เดียวกับที่เริ่มไว้)
+    const pn = unit?.part_master?.part_no || "";
+    const ro = unit?.release?.release_order || "";
+    const pj = unit?.part_master?.projects?.code || "";
+    return (
+      <div className="stn-scan-stack">
+        <div className={"stn-scan-phase" + (unit ? " fin" : "")}>
+          {unit
+            ? t(<>② สแกนจบงาน — ป้ายไหนก็ได้ของ <b>{pn}</b> · {pj} · Release <b>{ro}</b> · เวลา {hms(elapsed)}</>, <>② Finish scan — any label of <b>{pn}</b> · {pj} · Release <b>{ro}</b> · {hms(elapsed)}</>)
+            : t("① สแกนชิ้นงานเพื่อเริ่มจับเวลา", "① Scan the piece to start the timer")}
+        </div>
+        <CameraScan onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit} busy={busy} onClose={closeScan} />
+      </div>
+    );
   }
   if (step === STEP.PART) {
     const p = unit?.part_master || {};
@@ -2477,7 +2591,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           </div>
         ) : null}
         <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={rescan} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
+          <button className="stn-pill no" onClick={rescan} disabled={busy} title={t("กลับไปหน้ากำลังทำงาน (เวลายังเดินอยู่)", "Back to the running job (timer keeps running)")}>{t("ยกเลิก", "Cancel")}</button>
           <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
