@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component } from "react";
+import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
@@ -6,6 +7,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
+  getReleaseModifyInfo, applyReleaseModify,
   machineReportSummary, listScanSlow,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -152,6 +154,12 @@ async function loadColPrefs() {
   COL_PREFS.loaded = true; _cpMirror(); _cpNotify();
 }
 function colOrderFor(id) { return COL_PREFS.user[id] || COL_PREFS.company[id] || null; }
+// ซ่อน/แสดงคอลัมน์: เก็บในระบบเดียวกับลำดับคอลัมน์ (table_id เดิม + "::hidden") → ไม่ต้องแก้ DB/SQL เพิ่ม
+const COL_HIDE_SUF = "::hidden";
+function colHiddenFor(id) {
+  const u = COL_PREFS.user[id + COL_HIDE_SUF], c = COL_PREFS.company[id + COL_HIDE_SUF];
+  return Array.isArray(u) ? u : (Array.isArray(c) ? c : null);   // ของฉัน (รวมกรณี [] = โชว์ครบ) > ค่ากลาง > ไม่ตั้ง
+}
 // แอดมินลาก = บันทึกเป็น "ค่ากลาง" (ทุกเครื่องเห็น) · คนอื่นลาก = บันทึกเป็น "ของฉัน"
 async function saveColOrderScoped(id, order, admin) {
   if (admin) {
@@ -206,7 +214,84 @@ function useColOrder(id, keys) {
     saveColOrderScoped(id, arr, isAdmin(getSession()));   // แอดมิน → ค่ากลาง · คนอื่น → ของฉัน
   };
   const reset = () => { clearColOrderScoped(id, isAdmin(getSession())); };
-  return { order, move, reset, drag, setDrag };
+  // ── ซ่อน/แสดงคอลัมน์ (บันทึกที่เดียวกับลำดับ: แอดมิน→ค่ากลาง · คนอื่น→ของฉัน) ──
+  const savedHide = colHiddenFor(id);
+  const hiddenArr = useMemo(() => {
+    const set = new Set(keys);
+    return (savedHide || []).filter((k) => set.has(k));     // ตัดคอลัมน์ที่ไม่มีแล้วออก
+  }, [savedHide ? savedHide.join("|") : "-", keySig]);
+  const hidden = useMemo(() => new Set(hiddenArr), [hiddenArr.join("|")]);
+  const setHidden = (arr) => { saveColOrderScoped(id + COL_HIDE_SUF, arr, isAdmin(getSession())); };
+  const toggleHide = (k) => { setHidden(hidden.has(k) ? hiddenArr.filter((x) => x !== k) : [...hiddenArr, k]); };
+  const showAll = () => { setHidden([]); };
+  const resetAll = () => {                                   // คืนค่าเริ่มต้นทั้งลำดับ + คอลัมน์ที่ซ่อน
+    const admin = isAdmin(getSession());
+    clearColOrderScoped(id, admin); clearColOrderScoped(id + COL_HIDE_SUF, admin);
+  };
+  return { order, move, reset, drag, setDrag, hidden, hiddenArr, toggleHide, showAll, resetAll };
+}
+// ป้ายชื่อคอลัมน์ที่ใช้ในเมนูเลือกคอลัมน์ (หัวตารางบางอันเป็น element → ใช้ dataLabel/key แทน)
+function colLabel(c) {
+  if (typeof c.header === "string" && c.header.trim()) return c.header;
+  if (typeof c.dataLabel === "string" && c.dataLabel.trim()) return c.dataLabel;
+  return c.key;
+}
+// ── เมนูคลิกขวาที่หัวตาราง: ติ๊กเปิด-ปิดคอลัมน์ (แบบ Windows Explorer) ────────────
+function ColumnMenu({ at, cols, hidden, canHide, onToggle, onShowAll, onReset, onClose, lang }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: at.x, top: at.y, ready: false });
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(6, Math.min(at.x, window.innerWidth - r.width - 8)),
+      top: Math.max(6, Math.min(at.y, window.innerHeight - r.height - 8)),
+      ready: true,
+    });
+  }, [at.x, at.y, cols.length]);
+  useEffect(() => {
+    const down = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const key = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("mousedown", down, true);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("scroll", onClose, true);
+    return () => {
+      window.removeEventListener("mousedown", down, true);
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("scroll", onClose, true);
+    };
+  }, [onClose]);
+  const nHidden = cols.filter((c) => hidden.has(c.key)).length;
+  const body = (
+    <div ref={ref} className="dt-menu" role="menu" onContextMenu={(e) => e.preventDefault()}
+         style={{ left: pos.left, top: pos.top, visibility: pos.ready ? "visible" : "hidden" }}>
+      <div className="hd">{lang === "en" ? "Show columns" : "เลือกคอลัมน์ที่จะแสดง"}</div>
+      {cols.map((c) => {
+        const on = !hidden.has(c.key);
+        const lock = on && !canHide(c.key);
+        return (
+          <div key={c.key} role="menuitemcheckbox" aria-checked={on} className={"mi" + (lock ? " dis" : "")}
+               title={lock ? (lang === "en" ? "Must keep at least one column" : "ต้องเหลืออย่างน้อย 1 คอลัมน์") : ""}
+               onClick={() => { if (!lock) onToggle(c.key); }}>
+            <span className="ck">{on ? "✓" : ""}</span><span className="lb">{colLabel(c)}</span>
+          </div>
+        );
+      })}
+      <div className="sep" />
+      <div className={"mi" + (nHidden ? "" : " dis")} onClick={() => { if (nHidden) onShowAll(); }}>
+        <span className="ck" /><span className="lb">{lang === "en" ? "Show all columns" : "แสดงทุกคอลัมน์"}</span>
+      </div>
+      <div className="mi" onClick={onReset}>
+        <span className="ck" /><span className="lb">{lang === "en" ? "Reset to default" : "คืนค่าเริ่มต้น (ลำดับ + คอลัมน์)"}</span>
+      </div>
+      <div className="ft">{isAdmin(getSession())
+        ? (lang === "en" ? "Admin: saved as the shared default for everyone" : "แอดมิน: บันทึกเป็นค่ากลาง ทุกเครื่องเห็นเหมือนกัน")
+        : (lang === "en" ? "Saved for your account only" : "บันทึกเฉพาะบัญชีของคุณ")}</div>
+    </div>
+  );
+  try { return createPortal(body, document.body); } catch { return body; }
 }
 // หัวคอลัมน์: คลิก = เรียงลำดับ (ถ้ามี sortKey) · ลากที่จับ ⠿ = ย้ายตำแหน่งคอลัมน์ (เมาส์/สัมผัส)
 function ReorderTh({ col, sort, drag, setDrag, onMove }) {
@@ -214,6 +299,7 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
   const isFrom = drag && drag.from === col.key;
   const isOver = drag && drag.over === col.key && drag.from !== col.key;
   const grab = (e) => {
+    if (e.button != null && e.button !== 0) return;   // คลิกขวา/กลาง = ไม่ลาก (ปล่อยให้เมนูเลือกคอลัมน์ทำงาน)
     e.stopPropagation();
     e.preventDefault();
     const grip = e.currentTarget;
@@ -255,7 +341,7 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
   return (
     <th data-colkey={col.key} style={thStyle}
         onClick={col.sortKey ? () => sort.toggle(col.sortKey) : undefined}
-        title={col.sortKey ? "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์" : "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์"}>
+        title={(col.sortKey ? "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์" : "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์") + " · คลิกขวา = เลือกคอลัมน์"}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
         <span onPointerDown={grab} onClick={(e) => e.stopPropagation()} title="ลากเพื่อย้ายคอลัมน์"
               style={{ cursor: "grab", opacity: 0.4, touchAction: "none", padding: "0 2px", fontSize: 12, lineHeight: 1, letterSpacing: -2 }}>⠿</span>
@@ -270,11 +356,17 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
 function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef }) {
   const cols0 = (columns || []).filter(Boolean);
   const keys = cols0.map((c) => c.key);
-  const { order, move, reset, drag, setDrag } = useColOrder(id, keys);
-  if (orderApiRef) orderApiRef.current = { reset };
+  const { order, move, reset, drag, setDrag, hidden, toggleHide, showAll, resetAll } = useColOrder(id, keys);
+  if (orderApiRef) orderApiRef.current = { reset, showAll, resetAll };
   const byKey = {};
   cols0.forEach((c) => { byKey[c.key] = c; });
-  const cols = order.map((k) => byKey[k]).filter(Boolean);
+  const allCols = order.map((k) => byKey[k]).filter(Boolean);
+  const cols = allCols.filter((c) => c.lockCol || !hidden.has(c.key));   // lockCol = ปิดไม่ได้ (คอลัมน์หลัก)
+  const nHidden = allCols.length - cols.length;
+  const [menu, setMenu] = useState(null);                                 // { x, y } = เมนูเลือกคอลัมน์
+  const canHide = (k) => { const c = byKey[k]; return !(c && c.lockCol) && cols.length > 1; };
+  const openMenuAt = (e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); };
+  const openMenuBtn = (e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right - 210, y: r.bottom + 4 }); };
   const data = (sort && sortAccessors) ? sort.sortRows(rows, sortAccessors) : (rows || []);
   const [lang] = useLang();
   const wrapRef = useRef(null);
@@ -289,7 +381,7 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
       <div ref={wrapRef} onScroll={onWrapScroll} className={wrapClass || "table-wrap"} style={wrapStyle}>
       <table className={tableClass || "data-table"} style={tableStyle}>
         <thead>
-          <tr>
+          <tr onContextMenu={openMenuAt}>
             {cols.map((c) => <ReorderTh key={c.key} col={c} sort={sort} drag={drag} setDrag={setDrag} onMove={move} />)}
           </tr>
         </thead>
@@ -319,6 +411,21 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
         </tbody>
       </table>
       </div>
+      <button type="button" className={"dt-colbtn" + (nHidden ? " on" : "")} onClick={openMenuBtn}
+        aria-label={lang === "en" ? "Choose columns" : "เลือกคอลัมน์"}
+        title={nHidden
+          ? (lang === "en" ? `${nHidden} column(s) hidden — click to choose` : `ซ่อนอยู่ ${nHidden} คอลัมน์ — กดเพื่อเลือก`)
+          : (lang === "en" ? "Choose columns (or right-click the header)" : "เลือกคอลัมน์ที่จะแสดง (คลิกขวาที่หัวตารางก็ได้)")}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="5.2" height="16" rx="1" /><rect x="9.4" y="4" width="5.2" height="16" rx="1" /><rect x="15.8" y="4" width="5.2" height="16" rx="1" />
+        </svg>
+        {nHidden ? <span className="dt-colbtn-dot" /> : null}
+      </button>
+      {menu && (
+        <ColumnMenu at={menu} cols={allCols} hidden={hidden} canHide={canHide} lang={lang}
+          onToggle={toggleHide} onShowAll={showAll}
+          onReset={() => { resetAll(); setMenu(null); }} onClose={() => setMenu(null)} />
+      )}
       {showTableTop && (
         <button type="button" onClick={tableToTop}
           aria-label={lang === "en" ? "Scroll this table to top" : "เลื่อนตารางนี้ขึ้นบนสุด"}
@@ -2781,6 +2888,471 @@ function PartProgressModal({ release, user, goTo, onClose }) {
   );
 }
 
+// ─── Release Modify (M-01, M-02 …) — แก้รายการใน Release Order แบบเก็บของเดิมเป็นหลักฐาน ───────────
+//   แต่ละ Part เลือกการแก้ไขของตัวเองอิสระ · ทั้งหมดบันทึกรวมเป็น M เดียว (migration-release-modify.sql)
+const MOD_ACTS = [
+  ["qty+", "เพิ่มจำนวน (+)"], ["qty-", "ลดจำนวน (−)"], ["inv", "แก้ INV Code"],
+  ["cancel", "ยกเลิก Part"], ["transfer", "Transfer เป็นเบอร์อื่น"],
+];
+const MOD_TL = { qty: "แก้จำนวน", inv: "แก้ INV Code", cancel: "ยกเลิก Part", transfer: "Transfer" };
+const MOD_TONE = {
+  qty: { c: "#2563eb", bg: "rgba(37,99,235,.11)" }, inv: { c: "#c2410c", bg: "rgba(245,158,11,.14)" },
+  cancel: { c: "#dc2626", bg: "rgba(239,68,68,.11)" }, transfer: { c: "#6d4aff", bg: "rgba(109,74,255,.12)" },
+};
+const MOD_PURPLE = "#6d4aff";
+const modVer = (n) => "M-" + String(n).padStart(2, "0");
+const modTypeOf = (k) => (k === "qty+" || k === "qty-") ? "qty" : (k || "");
+function ModChip({ type }) {
+  const t = MOD_TONE[type] || { c: "var(--muted)", bg: "var(--surface-2)" };
+  return <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 99, color: t.c, background: t.bg, marginRight: 4, whiteSpace: "nowrap" }}>{MOD_TL[type] || type}</span>;
+}
+function ModVerPill({ v, gray, onClick, title }) {
+  return (
+    <span onClick={onClick} title={title}
+      style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 7, whiteSpace: "nowrap",
+        background: gray ? "var(--muted-2)" : MOD_PURPLE, color: "#fff", cursor: onClick ? "pointer" : "default", flexShrink: 0 }}>{v}</span>
+  );
+}
+// ข้อความผิดพลาดจากเซิร์ฟเวอร์ → ภาษาคน
+function modErrText(res) {
+  const d = String(res?.detail || "");
+  const [, a, b] = d.split(":");
+  switch (res?.reason) {
+    case "not_installed": return "ยังไม่ได้ติดตั้งฐานข้อมูลส่วน Modify — รัน migration-release-modify.sql ใน Supabase ก่อน";
+    case "forbidden": return "เฉพาะแอดมินเท่านั้นที่ Modify ได้";
+    case "unauthorized": return "เซสชันหมดอายุ — เข้าสู่ระบบใหม่";
+    case "no_reason": return "ใส่เหตุผลก่อนบันทึก";
+    case "no_items": return "ยังไม่มีรายการแก้ไข";
+    case "project_closed": return "โปรเจคนี้ปิดแล้ว — เปิดโปรเจคก่อนถึงแก้ได้";
+    case "version_used": return `เลข ${modVer(a)} มีอยู่แล้ว — ใช้เลขอื่น`;
+    case "bad_version": return "เลข M ไม่ถูกต้อง";
+    case "below_produced": return `${a}: ลดต่ำกว่าจำนวนที่ทำไปแล้ว (${b} ชิ้น) ไม่ได้`;
+    case "use_cancel": return `${a}: ลดจนเหลือ 0 ไม่ได้ — ใช้ “ยกเลิก Part” แทน`;
+    case "not_enough_free": return `${a}: QR ที่ยังไม่ถูกใช้มีแค่ ${b} ใบ (ใบที่สแกนแล้วยกเลิก/ย้ายไม่ได้)`;
+    case "transfer_produced": return `${a}: ย้ายได้เฉพาะชิ้นที่ยังไม่ทำ (สูงสุด ${b} ชิ้น)`;
+    case "release_cancelled": return `${a}: Part นี้ถูกยกเลิกไปแล้ว`;
+    case "target_cancelled": return `${a}: เบอร์ปลายทางถูกยกเลิกไปแล้ว`;
+    case "same_target": return `${a}: ปลายทางต้องต่างจากเบอร์เดิม`;
+    case "same_inv": return `${a}: INV ใหม่ต้องต่างจากเดิม`;
+    case "check_violation": return "ฐานข้อมูลไม่รับค่านี้ (เช่น จำนวน 0) — " + d;
+    default: return (res?.message || d || res?.reason || "บันทึกไม่สำเร็จ");
+  }
+}
+
+function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, onSaved }) {
+  const limits = info?.limits || {};
+  const usedNos = useMemo(() => new Set((info?.mods || []).map((m) => Number(m.version_no))), [info]);
+  const autoNo = Number(info?.next_no) || 1;
+  const [verRaw, setVerRaw] = useState(String(autoNo).padStart(2, "0"));
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState([]);          // release id ตามลำดับที่เลือก
+  const [lines, setLines] = useState([]);      // { id, rid, key, n, inv, keep, tn, tro }
+  const [qk, setQk] = useState("");
+  const [qv, setQv] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const lidRef = useRef(0);
+  const byId = useMemo(() => Object.fromEntries(releases.map((r) => [r.id, r])), [releases]);
+  const pnOf = (rid) => byId[rid]?.part_master?.part_no || "-";
+  const isCancelled = (r) => !!(r?.mod_cancelled_at || limits[r?.id]?.cancelled);
+
+  // ── เลข M ──
+  const verN = parseInt(verRaw, 10);
+  const verBlank = !String(verRaw).trim();
+  const verErr = verBlank ? "" : !(verN >= 1) ? "ใส่เลข M มากกว่า 0" : usedNos.has(verN) ? `${modVer(verN)} มีอยู่แล้ว — ใช้เลขอื่น` : "";
+  const chosenNo = verBlank || !(verN >= 1) ? autoNo : verN;
+  const chosen = modVer(chosenNo);
+  const verInfo = verErr ? "" : chosenNo > autoNo ? `ข้ามเลข (ปกติคือ ${modVer(autoNo)})` : chosenNo < autoNo ? "แทรกก่อน M ล่าสุด — จะเรียงตามเลข" : "อัตโนมัติ (เรียงต่อกัน)";
+
+  // ── จำลองผลตามลำดับ (กติกาเดียวกับฝั่ง DB) ──
+  const freshState = () => {
+    const st = {};
+    releases.forEach((r) => {
+      const L = limits[r.id] || {};
+      st[r.id] = { qty: Number(r.qty) || 0, produced: Number(L.produced) || 0,
+        free: L.free_qr != null ? Number(L.free_qr) : (Number(r.qty) || 0),
+        inv: r.part_master?.material || "", cancelled: isCancelled(r) };
+    });
+    return st;
+  };
+  const num = (l) => parseInt(l.n, 10) || 0;
+  const troOf = (l) => normalizeReleaseOrder(l.tro || "") || releaseOrder;
+  function lineState(l, b) {
+    const n = num(l);
+    const pn = pnOf(l.rid);
+    if (!l.key) return { inc: "เลือกการแก้ไข" };
+    if (b.cancelled) return { err: "Part นี้ถูกยกเลิกแล้ว" };
+    if (l.key === "qty+") { if (n <= 0) return { inc: "ใส่จำนวน" }; return { ok: `→ ใหม่ ${fmtNum(b.qty + n)} ชิ้น` }; }
+    if (l.key === "qty-") {
+      if (n <= 0) return { inc: "ใส่จำนวน" };
+      if (b.qty - n < 1) return { err: "ลดจนเหลือ 0 ไม่ได้ — ใช้ “ยกเลิก Part”" };
+      if (b.qty - n < b.produced) return { err: `ทำไปแล้ว ${fmtNum(b.produced)} ชิ้น — ลดได้ถึง ${fmtNum(b.produced)}` };
+      if (n > b.free) return { err: `QR ที่ยังไม่ใช้มี ${fmtNum(b.free)} ใบ` };
+      return { ok: `→ ใหม่ ${fmtNum(b.qty - n)} ชิ้น` };
+    }
+    if (l.key === "inv") {
+      const iv = String(l.inv || "").trim();
+      if (!iv) return { inc: "ใส่ INV ใหม่" };
+      if (iv === b.inv) return { err: "ต้องต่างจาก INV เดิม" };
+      return { ok: `→ ${iv}` };
+    }
+    if (l.key === "cancel") return { ok: b.produced > 0 ? `→ เหลือ ${fmtNum(b.produced)} (ทำแล้ว · ${l.keep === "scrap" ? "scrap" : "สแปร์"})` : `→ ยกเลิกทั้ง Part` };
+    if (l.key === "transfer") {
+      if (n <= 0) return { inc: "ใส่จำนวน" };
+      const max = Math.max(0, Math.min(b.qty - b.produced, b.free));
+      if (n > max) return { err: `ย้ายได้เฉพาะชิ้นที่ยังไม่ทำ (สูงสุด ${fmtNum(max)})` };
+      const tn = String(l.tn || "").trim();
+      if (!tn) return { inc: "ใส่เบอร์ปลายทาง" };
+      const tro = troOf(l);
+      if (l.tro && !RELEASE_ORDER_RE.test(tro)) return { err: "Release Order ต้องเป็นรูปแบบ P-ตัวเลข" };
+      if (tn === pn && tro === releaseOrder) return { err: "ปลายทางต้องต่างจากเดิม" };
+      return { ok: `→ เหลือ ${fmtNum(b.qty - n)}` };
+    }
+    return { inc: "" };
+  }
+  function applyLine(l, st) {
+    const s = st[l.rid]; const n = num(l);
+    if (l.key === "qty+") { s.qty += n; s.free += n; }
+    if (l.key === "qty-") { s.qty -= n; s.free -= n; }
+    if (l.key === "inv") s.inv = String(l.inv || "").trim();
+    if (l.key === "cancel") { s.qty = s.produced; s.free = 0; s.cancelled = true; }
+    if (l.key === "transfer") {
+      s.qty -= n; s.free -= n;
+      if (troOf(l) === releaseOrder) {
+        const t = releases.find((x) => x.part_master?.part_no === String(l.tn || "").trim());
+        if (t && st[t.id]) { st[t.id].qty += n; st[t.id].free += n; }
+      }
+    }
+  }
+  const ordered = sel.flatMap((rid) => lines.filter((l) => l.rid === rid));
+  const sim = (() => { const st = freshState(); return ordered.map((l) => { const b = { ...st[l.rid] }; const s = lineState(l, b); if (s.ok) applyLine(l, st); return { l, b, a: { ...st[l.rid] }, s }; }); })();
+  const stateBefore = (l) => sim.find((x) => x.l.id === l.id)?.b || freshState()[l.rid];
+  function descLine(l, b, a) {
+    const n = num(l);
+    if (l.key === "qty+") return `${fmtNum(b.qty)} → ${fmtNum(a.qty)} ชิ้น (+${n}) · สร้าง QR ใหม่ ${n} ใบ`;
+    if (l.key === "qty-") return `${fmtNum(b.qty)} → ${fmtNum(a.qty)} ชิ้น (−${n}) · ยกเลิก QR ที่ยังไม่ใช้ ${n} ใบ (เก็บเป็นหลักฐาน)`;
+    if (l.key === "inv") return `INV ${b.inv || "-"} → ${String(l.inv || "").trim()} · จำนวน/QR ไม่เปลี่ยน (มีผลทุก Release ของเบอร์นี้)`;
+    if (l.key === "cancel") return `ยกเลิก QR ที่ยังไม่ใช้ ${fmtNum(b.free)} ใบ` + (b.produced > 0 ? ` · ทำแล้ว ${fmtNum(b.produced)} ชิ้น → ${l.keep === "scrap" ? "ทิ้ง (scrap)" : "เก็บเป็นสแปร์"}` : " · ยกเลิกทั้ง Part");
+    if (l.key === "transfer") { const tro = troOf(l); return `ย้าย ${n} ชิ้น → ${String(l.tn || "").trim()} · ${tro === releaseOrder ? "Release Order นี้" : tro} · เหลือ ${fmtNum(a.qty)} · QR เดิม`; }
+    return "";
+  }
+
+  // ── เลือก Part ──
+  const qq = q.trim().toLowerCase();
+  const pickList = releases.filter((r) => !isCancelled(r) && (!qq
+    || String(r.part_master?.part_no || "").toLowerCase().includes(qq)
+    || String(r.part_master?.material || "").toLowerCase().includes(qq)));
+  function toggle(rid) {
+    if (sel.includes(rid)) { setSel((s) => s.filter((x) => x !== rid)); setLines((ls) => ls.filter((l) => l.rid !== rid)); }
+    else { setSel((s) => [...s, rid]); setLines((ls) => [...ls, { id: ++lidRef.current, rid, key: "", n: "", inv: "", keep: "spare", tn: "", tro: "" }]); }
+  }
+  const setL = (id, patch) => setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const addMore = (rid) => setLines((ls) => [...ls, { id: ++lidRef.current, rid, key: "", n: "", inv: "", keep: "spare", tn: "", tro: "" }]);
+  const rmLine = (id) => setLines((ls) => ls.filter((l) => l.id !== id));
+  function quickApply() {
+    if (!qk) return;
+    let done = 0, skip = 0;
+    const next = lines.slice();
+    sel.forEach((rid) => {
+      const pl = next.filter((l) => l.rid === rid);
+      const first = pl[0]; if (!first) return;
+      const clash = pl.some((x) => x !== first && modTypeOf(x.key) === modTypeOf(qk)) || (qk === "cancel" && pl.length > 1);
+      if (clash) { skip++; return; }
+      const i = next.indexOf(first);
+      next[i] = { ...first, key: qk, ...(qk === "inv" ? { inv: qv } : qk !== "cancel" ? { n: qv } : {}) };
+      done++;
+    });
+    setLines(next);
+    mlsToast(`ตั้ง “${(MOD_ACTS.find((a) => a[0] === qk) || [])[1]}” ให้ ${done} Part` + (skip ? ` · ข้าม ${skip} Part (ชนกับการแก้อื่น)` : ""), "info");
+  }
+
+  // ── สรุป / ปุ่มบันทึก ──
+  const good = sim.filter((x) => x.s.ok);
+  const nInc = sim.filter((x) => x.s.inc).length;
+  const nErr = sim.filter((x) => x.s.err).length;
+  const reasonOk = !!reason.trim();
+  const canSave = !busy && sim.length > 0 && !nInc && !nErr && reasonOk && !verErr;
+  const footHint = !sel.length ? "เลือก Part อย่างน้อย 1 เบอร์"
+    : nErr ? `มี ${nErr} รายการไม่ถูกต้อง (แดง) — แก้ก่อนบันทึก`
+    : nInc ? `ยังกรอกไม่ครบ ${nInc} แถว — กรอกให้ครบ หรือกด ✕ เอาเบอร์ที่ไม่แก้ออก`
+    : !reasonOk ? "ใส่เหตุผลก่อนบันทึก"
+    : verErr ? "เลข M ใช้ไม่ได้" : "";
+
+  async function submit() {
+    if (!canSave) return;
+    const items = good.map(({ l }) => {
+      const base = { release_id: l.rid };
+      if (l.key === "qty+") return { ...base, type: "qty", dir: "add", n: num(l) };
+      if (l.key === "qty-") return { ...base, type: "qty", dir: "sub", n: num(l) };
+      if (l.key === "inv") return { ...base, type: "inv", inv: String(l.inv).trim() };
+      if (l.key === "cancel") return { ...base, type: "cancel", keep: l.keep === "scrap" ? "scrap" : "spare" };
+      return { ...base, type: "transfer", n: num(l), to_release_order: troOf(l), to_part_no: String(l.tn).trim() };
+    });
+    const qrOut = good.reduce((s, x) => s + (x.l.key === "qty-" ? num(x.l) : x.l.key === "cancel" ? x.b.free : 0), 0);
+    const moved = good.filter((x) => x.l.key === "transfer").reduce((s, x) => s + num(x.l), 0);
+    const ok = await askConfirm({
+      message: `บันทึก ${chosen} · ${good.length} รายการ (${new Set(good.map((x) => x.l.rid)).size} Part)`
+        + (qrOut ? `\n• ยกเลิก QR ที่ยังไม่ใช้ ${fmtNum(qrOut)} ใบ (เก็บเป็นหลักฐาน · หน้าเครื่องสแกนแล้วจะแจ้งว่ายกเลิก)` : "")
+        + (moved ? `\n• ย้าย ${fmtNum(moved)} ชิ้นไปเบอร์ใหม่ (QR เดิม)` : "")
+        + `\n\nค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า · ย้อนกลับด้วยการ Modify ครั้งถัดไป`,
+      tone: qrOut || moved ? "danger" : "warn", confirmText: `บันทึก ${chosen}`, cancelText: "กลับไปแก้",
+    });
+    if (!ok) return;
+    setBusy(true); setErr("");
+    const res = await applyReleaseModify({
+      projectId, releaseOrder, reason: reason.trim(), items,
+      versionNo: (verBlank || chosenNo === autoNo) ? null : chosenNo,   // อัตโนมัติ = ให้ DB เลือกเลขถัดไป (กันชนกันถ้ามีคนแก้พร้อมกัน)
+    });
+    setBusy(false);
+    if (!res || !res.ok) { setErr(modErrText(res)); return; }
+    auditRecord("release_modify", "release_order", releaseOrder, { version: res.version, items, project_id: projectId });
+    mlsToast(`บันทึก ${res.version} แล้ว (${items.length} รายการ) · ของเดิมเก็บเป็นหลักฐาน`, "ok");
+    onSaved(res);
+  }
+
+  const secH = (n, text, right) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, margin: "16px 0 8px" }}>
+      <span style={{ width: 22, height: 22, borderRadius: 99, background: MOD_PURPLE, color: "#fff", fontSize: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{n}</span>
+      {text}<span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, color: MOD_PURPLE }}>{right}</span>
+    </div>
+  );
+  const resStyle = (s) => ({ fontSize: 12.5, fontWeight: 700, color: s.ok ? "var(--accent-dk)" : s.err ? "var(--danger)" : "var(--muted)" });
+  const lx = { border: 0, background: "transparent", color: "var(--muted-2)", cursor: "pointer", fontSize: 13, padding: "2px 6px", borderRadius: 6 };
+
+  return (
+    <Modal wide title="Modify รายการใน Release" locked={busy} closeOnBackdrop={false}
+      sub={`${releaseOrder} · เลือก Part → เลือกการแก้ไขท้ายแต่ละเบอร์ (แยกกันอิสระ) → บันทึกทีเดียวเป็น M ใหม่ · ของเดิมเก็บเป็นหลักฐาน`}
+      onClose={onClose}>
+      {/* เลข M */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: -4 }}>
+        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>บันทึกเป็น</span>
+        <span style={{ display: "inline-flex", alignItems: "center", border: `1.5px solid ${MOD_PURPLE}`, borderRadius: 9, overflow: "hidden", background: "rgba(109,74,255,.07)" }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, color: MOD_PURPLE, padding: "0 0 0 9px" }}>M-</span>
+          <input type="number" min="1" value={verRaw} onChange={(e) => setVerRaw(e.target.value)}
+            onBlur={() => { const n = parseInt(verRaw, 10); if (n > 0) setVerRaw(String(n).padStart(2, "0")); }}
+            style={{ width: 58, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 700, color: MOD_PURPLE, background: "transparent", border: 0, padding: "7px 8px 7px 2px", outline: "none" }} />
+        </span>
+        <Btn size="sm" variant="ghost" onClick={() => setVerRaw(String(autoNo).padStart(2, "0"))} title="ใช้เลขถัดไปอัตโนมัติ">↺ อัตโนมัติ</Btn>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: verErr ? "var(--danger)" : chosenNo !== autoNo ? MOD_PURPLE : "var(--muted)", flexBasis: "100%", textAlign: "right" }}>{verErr ? "⚠ " + verErr : verInfo}</span>
+      </div>
+
+      {secH(1, "เลือก Part (เลือกได้หลาย Part)", sel.length ? `เลือกแล้ว ${sel.length} Part` : "")}
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 พิมพ์ค้นหาเบอร์ Part / INV Code…" />
+      <div style={{ border: "1px solid var(--border)", borderRadius: 12, maxHeight: 220, overflow: "auto", marginTop: 8 }}>
+        {pickList.length === 0 && <div style={{ padding: "10px 12px", color: "var(--muted)", fontSize: 13 }}>ไม่พบ Part ที่ค้นหา</div>}
+        {pickList.map((r, i) => {
+          const L = limits[r.id] || {}; const on = sel.includes(r.id);
+          return (
+            <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: i ? "1px solid var(--border)" : "none", cursor: "pointer", fontSize: 13, background: on ? "rgba(109,74,255,.07)" : undefined }}>
+              <input type="checkbox" checked={on} onChange={() => toggle(r.id)} style={{ width: 16, height: 16, accentColor: MOD_PURPLE }} />
+              <b style={{ minWidth: 120 }}>{r.part_master?.part_no || "-"}</b>
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>qty {fmtNum(r.qty)} · ทำแล้ว {fmtNum(L.produced || 0)} · QR ยังไม่ใช้ {fmtNum(L.free_qr ?? r.qty)} · {r.part_master?.material || "-"}</span>
+              {r.mod_version && <ModVerPill v={r.mod_version} />}
+            </label>
+          );
+        })}
+      </div>
+
+      {secH(2, <>แต่ละเบอร์แก้อะไร <span style={{ fontWeight: 500, color: "var(--muted)", fontSize: 12 }}>(เลือกแยกกันอิสระ)</span></>, sel.length ? `${sel.length} Part` : "")}
+      {!sel.length ? (
+        <div style={{ fontSize: 12.5, color: "var(--muted)", padding: 12, border: "1px dashed var(--border)", borderRadius: 11, textAlign: "center" }}>เลือก Part ในข้อ 1 ก่อน — แล้วเลือกการแก้ไขท้ายแต่ละเบอร์ (เบอร์ไหนแก้อะไรก็ได้)</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "var(--surface-2)", borderRadius: 10, padding: "8px 10px", fontSize: 12.5, marginBottom: 6 }}>
+            ตั้งทุก Part พร้อมกัน (ไม่บังคับ):
+            <select className="select" value={qk} onChange={(e) => { setQk(e.target.value); setQv(""); }} style={{ width: "auto" }}>
+              <option value="">— การแก้ไข —</option>
+              {MOD_ACTS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+            </select>
+            {(qk === "qty+" || qk === "qty-" || qk === "transfer") && <Input type="number" min="1" value={qv} onChange={(e) => setQv(e.target.value)} placeholder="0" style={{ width: 80 }} />}
+            {qk === "inv" && <Input value={qv} onChange={(e) => setQv(e.target.value)} placeholder="INV Code ใหม่" style={{ width: 160 }} />}
+            <Btn size="sm" variant="ghost" onClick={quickApply} disabled={!qk}>ใช้กับทุก Part</Btn>
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>แล้วค่อยแก้เบอร์ที่ต่างออกไปทีละแถว</span>
+          </div>
+          {sel.map((rid) => {
+            const r = byId[rid]; const pl = lines.filter((l) => l.rid === rid); const L = limits[rid] || {};
+            const used = new Set(pl.map((x) => modTypeOf(x.key)).filter(Boolean));
+            const more = !pl.some((x) => x.key === "cancel") && pl.every((x) => x.key) && ["qty", "inv", "transfer"].some((g) => !used.has(g));
+            return (
+              <div key={rid} style={{ display: "grid", gridTemplateColumns: "minmax(150px, 190px) minmax(0, 1fr)", gap: 12, alignItems: "start", padding: "10px 0", borderTop: "1px solid var(--border)" }}>
+                <div style={{ paddingTop: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 13 }}>
+                    {r?.part_master?.part_no || "-"}
+                    <button type="button" style={lx} onClick={() => toggle(rid)} title="ไม่แก้เบอร์นี้ (เอาออก)">✕</button>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>qty {fmtNum(r?.qty)} · ทำแล้ว {fmtNum(L.produced || 0)} · QR ยังไม่ใช้ {fmtNum(L.free_qr ?? r?.qty)}</div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
+                  {pl.map((l) => {
+                    const others = pl.filter((x) => x !== l).map((x) => modTypeOf(x.key)).filter(Boolean);
+                    const b = stateBefore(l);
+                    const s = sim.find((x) => x.l.id === l.id)?.s || {};
+                    const tone = MOD_TONE[modTypeOf(l.key)];
+                    return (
+                      <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
+                        <select className="select" value={l.key} onChange={(e) => setL(l.id, { key: e.target.value })}
+                          style={{ width: 190, fontWeight: 600, ...(tone ? { borderColor: tone.c, color: tone.c } : { borderStyle: "dashed", color: "var(--muted)" }) }}>
+                          <option value="">— เลือกการแก้ไข —</option>
+                          {MOD_ACTS.map(([v, t]) => {
+                            const dis = others.includes(modTypeOf(v)) || (v === "cancel" && pl.length > 1);
+                            return <option key={v} value={v} disabled={dis}>{t}{v === "cancel" && pl.length > 1 ? " (มีการแก้อื่นอยู่)" : ""}</option>;
+                          })}
+                        </select>
+                        {(l.key === "qty+" || l.key === "qty-") && <><Input type="number" min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> ชิ้น</>}
+                        {l.key === "inv" && <>
+                          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>เดิม</span>
+                          <b style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{b?.inv || "-"}</b>
+                          <span style={{ color: "var(--muted-2)" }}>→</span>
+                          <Input value={l.inv} onChange={(e) => setL(l.id, { inv: e.target.value })} placeholder="INV Code ใหม่" style={{ width: 160 }} />
+                        </>}
+                        {l.key === "cancel" && <>
+                          <span>ยกเลิก QR ที่ยังไม่ใช้</span>
+                          {(b?.produced || 0) > 0 && <>· ทำแล้ว {fmtNum(b.produced)} ชิ้น:
+                            <select className="select" value={l.keep} onChange={(e) => setL(l.id, { keep: e.target.value })} style={{ width: "auto" }}>
+                              <option value="spare">เก็บเป็นสแปร์</option><option value="scrap">ทิ้ง (scrap)</option>
+                            </select></>}
+                        </>}
+                        {l.key === "transfer" && <>
+                          <Input type="number" min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> ชิ้น →
+                          <Input value={l.tro} onChange={(e) => setL(l.id, { tro: e.target.value })} placeholder={releaseOrder} title="Release Order ปลายทาง (ว่าง = ใบนี้)" style={{ width: 120 }} />
+                          <Input value={l.tn} onChange={(e) => setL(l.id, { tn: e.target.value })} list={`relmod-dl-${l.id}`} placeholder="เบอร์ปลายทาง" style={{ width: 150 }} />
+                          <datalist id={`relmod-dl-${l.id}`}>{releases.filter((x) => x.id !== rid && !isCancelled(x)).map((x) => <option key={x.id} value={x.part_master?.part_no || ""} />)}</datalist>
+                        </>}
+                        <span style={resStyle(s)}>{s.ok || s.err || s.inc || ""}</span>
+                        {pl.length > 1 && <button type="button" style={lx} onClick={() => rmLine(l.id)} title="เอาการแก้ไขนี้ออก">✕</button>}
+                      </div>
+                    );
+                  })}
+                  {more && <button type="button" onClick={() => addMore(rid)}
+                    style={{ alignSelf: "flex-start", font: "inherit", fontSize: 12, color: MOD_PURPLE, fontWeight: 700, cursor: "pointer", background: "none", border: "1px dashed rgba(109,74,255,.45)", borderRadius: 8, padding: "3px 10px" }}>+ แก้อย่างอื่นกับเบอร์นี้ด้วย</button>}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {secH(3, `สรุปก่อนบันทึก — ${chosen}`, good.length ? `${good.length} รายการ · ${new Set(good.map((x) => x.l.rid)).size} Part` : "")}
+      {!sel.length ? (
+        <div style={{ fontSize: 12.5, color: "var(--muted)", padding: 12, border: "1px dashed var(--border)", borderRadius: 11, textAlign: "center" }}>1 M แก้ได้หลายอย่าง: เบอร์หนึ่งเพิ่มจำนวน อีกเบอร์ยกเลิก อีกเบอร์แก้ INV ก็ได้ แล้วบันทึกทีเดียว</div>
+      ) : (
+        <div style={{ border: "1px solid rgba(109,74,255,.35)", borderRadius: 12, overflow: "hidden" }}>
+          {sel.map((rid, gi) => {
+            const rows = sim.filter((x) => x.l.rid === rid);
+            if (!rows.length) return null;
+            const b0 = rows[0].b, aN = rows[rows.length - 1].a;
+            const net = [];
+            if (aN.qty !== b0.qty) net.push(`qty ${fmtNum(b0.qty)}→${fmtNum(aN.qty)}`);
+            if (aN.inv !== b0.inv) net.push(`INV→${aN.inv}`);
+            if (aN.cancelled && !b0.cancelled) net.push("ยกเลิก");
+            return (
+              <div key={rid} style={{ borderTop: gi ? "1px solid var(--border)" : "none", padding: "8px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                  {pnOf(rid)}<span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 600, color: "var(--muted)" }}>{net.length ? "สุทธิ: " + net.join(" · ") : ""}</span>
+                </div>
+                {rows.map(({ l, b, a, s }) => (
+                  <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0 3px 10px", fontSize: 12.5 }}>
+                    {s.ok ? <ModChip type={modTypeOf(l.key)} /> : <span style={{ fontSize: 11, color: "var(--muted)" }}>{l.key ? MOD_TL[modTypeOf(l.key)] : "ยังไม่เลือก"}</span>}
+                    <span style={{ color: s.ok ? "var(--text)" : s.err ? "var(--danger)" : "var(--muted)" }}>{s.ok ? descLine(l, b, a) : s.err ? "⚠ " + s.err : "ยังไม่ครบ — " + s.inc}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>🔒 ค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า (ย้อนดูได้) · ทุกรายการบันทึกรวมเป็น <b>{chosen}</b> ครั้งเดียว · บันทึกงานที่ทำไปแล้วไม่ถูกลบ · QR ชิ้นเดิมไม่เปลี่ยน</div>
+
+      {secH(4, "เหตุผล (จำเป็น · ใช้กับทั้ง M)")}
+      <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+        placeholder="เช่น แก้ตาม drawing rev ใหม่ / ลูกค้าเปลี่ยนจำนวน + INV / ย้ายไป release ใหม่" style={{ width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+
+      {err && <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 10, background: "rgba(239,68,68,.1)", color: "var(--danger)", fontSize: 13, fontWeight: 600 }}>⚠ {err}</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 12, fontWeight: footHint ? 700 : 400, color: footHint ? (nErr ? "var(--danger)" : "var(--warning, #b45309)") : "var(--muted)" }}>{footHint || "🔒 ของเดิม (ก่อนแก้) เก็บไว้ใน M ก่อนหน้า · QR ชิ้นเดิมไม่เปลี่ยน"}</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+          <Btn variant="danger" onClick={submit} disabled={!canSave}>{busy ? "กำลังบันทึก…" : `ยืนยัน · บันทึก ${chosen}${good.length ? ` (${good.length} รายการ)` : ""}`}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── ดูรายละเอียดของ M (หรือ M-00 ต้นฉบับ) ──
+function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) {
+  if (!mod) {
+    // M-00 = ต้นฉบับล้วน (ไม่มีคอลัมน์ "ตอนนี้/เปลี่ยนแปลง")
+    const rows = origin?.rows || releases.map((r) => ({
+      part_no: r.part_master?.part_no, qty: r.qty, length_mm: r.length_mm ?? r.part_master?.default_length_mm,
+      unit_weight: r.unit_weight ?? r.part_master?.unit_weight, inv: r.part_master?.material || r.material,
+    }));
+    const tq = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    const tw = rows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.unit_weight) || 0), 0);
+    return (
+      <Modal wide onClose={onClose}
+        title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><ModVerPill v="M-00" gray /> ต้นฉบับ — ก่อนการแก้ไข</span>}
+        sub={origin ? "ค่าของทุก Part ก่อนการ Modify ครั้งแรก · ล็อกไว้เป็นหลักฐาน แก้ไม่ได้" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ (จะถูกล็อกเป็น M-00 ตอน Modify ครั้งแรก)"}>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 12px" }}>
+          {origin && <span>บันทึกเมื่อ: <b style={{ color: "var(--text)" }}>{fmtDT(origin.created_at)}</b></span>}
+          <span>จำนวนรวม: <b style={{ color: "var(--text)" }}>{fmtNum(tq)} ชิ้น</b></span>
+          <span>น้ำหนักรวม: <b style={{ color: "var(--text)" }}>{fmtNum(tw)} กก.</b></span>
+          <span>สถานะ: <b style={{ color: "var(--text)" }}>🔒 ล็อกเป็นหลักฐาน</b></span>
+        </div>
+        <div className="table-wrap" style={{ maxHeight: "55vh", overflow: "auto" }}>
+          <table className="data-table">
+            <thead><tr><th>Part No.</th><th style={{ textAlign: "right" }}>จำนวน</th><th style={{ textAlign: "right" }}>ความยาว/ชิ้น (มม.)</th><th style={{ textAlign: "right" }}>น้ำหนัก/ชิ้น</th><th style={{ textAlign: "right" }}>น้ำหนักรวม</th><th>INV Code</th></tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={i}><td style={{ fontWeight: 600 }}>{r.part_no || "-"}</td><td style={{ textAlign: "right" }}>{fmtNum(r.qty)}</td>
+                <td style={{ textAlign: "right" }}>{r.length_mm ? fmtNum(r.length_mm) : "-"}</td>
+                <td style={{ textAlign: "right" }}>{r.unit_weight ? Number(r.unit_weight).toFixed(2) : "-"}</td>
+                <td style={{ textAlign: "right" }}>{r.unit_weight ? fmtNum((Number(r.qty) || 0) * Number(r.unit_weight)) : "-"}</td>
+                <td>{r.inv || "-"}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </Modal>
+    );
+  }
+  const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (mod.items || []).some((i) => i.type === t));
+  const partOrder = [...new Set((mod.items || []).map((i) => i.part_no))];
+  const items = (mod.items || []).slice().sort((a, b) => partOrder.indexOf(a.part_no) - partOrder.indexOf(b.part_no) || a.seq - b.seq);
+  const ba = (it) => it.type === "inv"
+    ? <><span style={{ color: "var(--muted)", textDecoration: "line-through", fontFamily: "var(--font-mono)", fontSize: 12 }}>{it.before?.inv || "-"}</span><span style={{ color: "var(--muted-2)", margin: "0 4px" }}>→</span><b style={{ color: "var(--accent-dk)" }}>{it.after?.inv || "-"}</b></>
+    : <><span style={{ color: "var(--muted)", textDecoration: "line-through" }}>{fmtNum(it.before?.qty)}</span><span style={{ color: "var(--muted-2)", margin: "0 4px" }}>→</span><b style={{ color: "var(--accent-dk)" }}>{fmtNum(it.after?.qty)}</b> <span style={{ fontSize: 11, color: "var(--muted)" }}>ชิ้น</span></>;
+  const qrText = (it) => {
+    const a = Array.isArray(it.after?.qr) ? it.after.qr : [];
+    if (!a.length) return null;
+    return <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, fontFamily: "var(--font-mono)" }} title={a.join("\n")}>QR: {a.slice(0, 3).join(", ")}{a.length > 3 ? ` … (+${a.length - 3})` : ""}</div>;
+  };
+  return (
+    <Modal wide onClose={onClose}
+      title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><ModVerPill v={mod.version} />{types.map((t) => <ModChip key={t} type={t} />)}</span>}
+      sub={`${(mod.items || []).length} รายการ · ${partOrder.length} Part · เทียบกับ ${prevVersion} (ค่าก่อนแก้)`}>
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 10px" }}>
+        <span>ผู้แก้: <b style={{ color: "var(--text)" }}>{mod.actor_name || "-"}</b></span>
+        <span>เมื่อ: <b style={{ color: "var(--text)" }}>{fmtDT(mod.created_at)}</b></span>
+      </div>
+      <div style={{ background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 12 }}>📝 เหตุผล: {mod.reason || "-"}</div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr><th>Part No.</th><th>การแก้ไข</th><th>ก่อน → หลัง</th><th>รายละเอียด</th></tr></thead>
+          <tbody>{items.map((it, k) => (
+            <tr key={k}>
+              <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{k > 0 && items[k - 1].part_no === it.part_no ? <span style={{ color: "var(--muted)" }}>〃</span> : it.part_no}</td>
+              <td><ModChip type={it.type} /></td>
+              <td style={{ whiteSpace: "nowrap" }}>{ba(it)}</td>
+              <td style={{ whiteSpace: "normal" }}>{it.note}{qrText(it)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12 }}>🔒 {prevVersion} (ค่าก่อนแก้) ยังเก็บอยู่ ลบทับไม่ได้ · บันทึกงานหน้าเครื่องที่ทำไปแล้วจำค่าตอนที่ทำ · QR ของชิ้นเดิมไม่เปลี่ยน</div>
+    </Modal>
+  );
+}
+
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const canEdit = isAdmin(user);   // เฉพาะ Admin เท่านั้นที่แก้ไข/ลบ Release ได้ (office เพิ่ม/นำเข้า/ดูได้ แต่แก้/ลบไม่ได้)
   const [lang] = useLang();        // แปลหัวคอลัมน์ที่เพิ่มเอง (ลำดับ/Item) ตามภาษา
@@ -2798,6 +3370,39 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
   const sort = useTableSort();
   const colApi = useRef(null);   // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มาให้)
+  // ── Modify (M-01, M-02 …) ──
+  const projectId = releases[0]?.part_master?.project_id || null;
+  const [modInfo, setModInfo] = useState(null);     // { origin, mods, limits, next_no } | { ok:false, reason }
+  const [modOpen, setModOpen] = useState(false);
+  const [modView, setModView] = useState(null);     // null | "M-00" | "M-03"
+  const loadModInfo = useCallback(async () => {
+    if (!projectId || !hdr.ro) { setModInfo(null); return; }
+    const d = await getReleaseModifyInfo(projectId, hdr.ro);
+    setModInfo(d);
+  }, [projectId, hdr.ro]);
+  useEffect(() => { loadModInfo(); }, [loadModInfo]);
+  const modReady = !!(modInfo && modInfo.ok);
+  const modList = modReady ? (modInfo.mods || []) : [];
+  const curVersion = modList.length ? modVer(Math.max(...modList.map((m) => Number(m.version_no) || 0))) : "M-00";
+  const modByVersion = (v) => modList.find((m) => m.version === v) || null;
+  const prevOf = (v) => { const i = modList.findIndex((m) => m.version === v); return (i >= 0 && modList[i + 1]) ? modList[i + 1].version : "M-00"; };
+  function openModify() {
+    if (!hdr.ro) { mlsToast("ต้องมีเลขที่ Release Order ก่อน (แก้ที่ “แก้ไขหัวเอกสาร”)", "warn"); return; }
+    if (modInfo && modInfo.reason === "not_installed") { mlsToast("ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase ก่อน", "error"); return; }
+    if (!modReady) { mlsToast("กำลังโหลดข้อมูล Modify… ลองอีกครั้ง", "warn"); loadModInfo(); return; }
+    setModOpen(true);
+  }
+  // หลัง Modify: โหลด Release ของใบนี้ใหม่ทั้งชุด (Transfer อาจสร้าง Part/Release ใหม่ในใบเดียวกัน)
+  async function afterModify() {
+    setModOpen(false);
+    onChanged && onChanged();
+    try {
+      const all = await getReleasesFull();
+      const next = all.filter((r) => r.release_order === hdr.ro && r.part_master?.project_id === projectId);
+      if (next.length) { setReleases(next); loadStats(next); } else loadStats();
+    } catch { loadStats(); }
+    loadModInfo();
+  }
 
   // ยอดรวมคิดจาก releases ปัจจุบัน (อัปเดตเมื่อแก้ไข/ลบ)
   const totalQty = releases.reduce((s, r) => s + (r.qty || 0), 0);
@@ -2966,11 +3571,21 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               หน้าแรก
             </Btn>
           </div>
-          <div className="page-title">{hdr.ro ? `Release Order: ${hdr.ro}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}</div>
+          <div className="page-title">{hdr.ro ? `Release Order: ${hdr.ro}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}
+            {modReady && modList.length > 0 && (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 7, marginLeft: 10, verticalAlign: "middle",
+                background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)" }}>ตอนนี้ {curVersion}</span>
+            )}
+          </div>
           <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtD(hdr.date)}</div>
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn onClick={openModify} disabled={!hdr.ro}
+              title={hdr.ro ? "แก้รายการใน Release: เพิ่ม/ลดจำนวน · แก้ INV · ยกเลิก Part · Transfer — บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน" : "ต้องมีเลขที่ Release Order ก่อน"}
+              style={{ background: "rgba(109,74,255,.10)", border: `1.5px solid ${MOD_PURPLE}`, color: MOD_PURPLE, fontWeight: 700 }}>
+              ✎ Modify
+            </Btn>
             <Btn variant="accent" onClick={() => setEditHeader(true)}
               title="แก้เลขที่ Release Order / วันที่ / Modify ของทั้งใบ">
               <Icon name="settings" size={15} /> แก้ไขหัวเอกสาร
@@ -3024,6 +3639,44 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             </>
           )}
         </Card>
+        {hdr.ro && (
+          <Card className="span-2"
+            title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>ประวัติการแก้ไข (Modify)
+              {modReady && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 700, padding: "1px 8px", borderRadius: 7, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)" }}>ตอนนี้ {curVersion}</span>}</span>}
+            right={modReady ? <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>{modList.length} ครั้ง</span> : null}>
+            {!modInfo ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>กำลังโหลด...</div>
+              : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase" : "โหลดประวัติไม่สำเร็จ"}</div>
+              : (
+                <>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 236, overflow: "auto" }}>
+                    {modList.map((m) => {
+                      const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));
+                      const pns = [...new Set((m.items || []).map((i) => i.part_no))];
+                      return (
+                        <div key={m.id} className="relmod-hrow" onClick={() => setModView(m.version)}>
+                          <ModVerPill v={m.version} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{types.map((t) => <ModChip key={t} type={t} />)}{pns.join(", ")}</div>
+                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{(m.items || []).length} รายการ · {pns.length} Part · {fmtDT(m.created_at)} · {m.actor_name || "-"} · {m.reason}</div>
+                          </div>
+                          <span style={{ color: "var(--muted-2)" }}>›</span>
+                        </div>
+                      );
+                    })}
+                    <div className="relmod-hrow" onClick={() => setModView("M-00")}>
+                      <ModVerPill v="M-00" gray />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>ต้นฉบับ — ก่อนการแก้ไข</div>
+                        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{modInfo.origin ? `${fmtDT(modInfo.origin.created_at)} · 🔒 เก็บเป็นหลักฐาน` : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ"} · กดดูค่าต้นฉบับ</div>
+                      </div>
+                      <span style={{ color: "var(--muted-2)" }}>›</span>
+                    </div>
+                  </div>
+                </>
+              )}
+          </Card>
+        )}
       </div>
 
       {!statsLoading && opAgg.length > 0 && (
@@ -3068,8 +3721,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.reset()}
-              title={lang === "en" ? "Reset column order" : "รีเซ็ตลำดับคอลัมน์กลับค่าเริ่มต้น"}>
+            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.resetAll()}
+              title={lang === "en" ? "Reset column order + show all columns" : "คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อนไว้ทั้งหมด"}>
               ↺ {lang === "en" ? "Columns" : "คอลัมน์"}
             </Btn>
             <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || releases.length === 0}
@@ -3091,7 +3744,18 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               tdStyle: { color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" },
               cell: (r, i) => i + 1 },
             { key: "part_no", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part_no",
-              tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.part_master?.part_no || "-" },
+              tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, dataLabel: lang === "en" ? "Part No." : "เบอร์พาร์ท",
+              cell: (r) => (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={r.mod_cancelled_at ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>{r.part_master?.part_no || "-"}</span>
+                  {r.mod_version && (
+                    <span onClick={(e) => { e.stopPropagation(); if (modByVersion(r.mod_version)) setModView(r.mod_version); }}
+                      title={r.mod_note || "ดูว่าแก้อะไร"}
+                      style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)", cursor: "pointer" }}>{r.mod_version}</span>
+                  )}
+                  {r.mod_cancelled_at && <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "rgba(239,68,68,.11)", color: "var(--danger)" }}>{r.mod_cancel_keep === "moved" ? "ย้ายหมดแล้ว" : "ยกเลิก"}</span>}
+                </span>
+              ) },
             { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", cell: (r) => fmtNum(r.qty) },
             { key: "finished", header: lang === "en" ? "Finished" : "เสร็จแล้ว", sortKey: "finished",
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : (
@@ -3155,6 +3819,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           onSaved={afterEdit}
           onDelete={() => { const r = editing; setEditing(null); handleDelete(r); }}
         />
+      )}
+      {modOpen && modReady && (
+        <ReleaseModifyModal releases={releases} projectId={projectId} releaseOrder={hdr.ro} info={modInfo}
+          onClose={() => setModOpen(false)} onSaved={afterModify} />
+      )}
+      {modView && (
+        <ReleaseModDetailModal releases={releases} origin={modReady ? modInfo.origin : null}
+          mod={modView === "M-00" ? null : modByVersion(modView)} prevVersion={modView === "M-00" ? "" : prevOf(modView)}
+          onClose={() => setModView(null)} />
       )}
       {editHeader && (
         <ReleaseHeaderEditModal
@@ -4814,7 +5487,9 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           </Field>
           <div className="grid-2">
             <Field label="จำนวน (ชิ้น)">
-              <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+              {/* ★ แก้จำนวนย้ายไปที่ปุ่ม Modify (เก็บของเดิมเป็นหลักฐาน M-xx + QR ที่ยกเลิก) — ที่นี่ล็อกไว้ ไม่ให้ลบ QR เงียบๆ */}
+              <Input type="number" value={qty} readOnly disabled title="แก้จำนวนที่ปุ่ม ✎ Modify หน้า Release Order" />
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>แก้จำนวนที่ปุ่ม <b style={{ color: "#6d4aff" }}>✎ Modify</b> (บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน)</div>
             </Field>
             <Field label="เลขที่ Release Order">
               <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)}
@@ -5962,8 +6637,8 @@ function MachineScanDetail({ machine, onBack }) {
       <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.reset()}
-              title={lang === "en" ? "Reset column order" : "รีเซ็ตลำดับคอลัมน์กลับค่าเริ่มต้น"}>
+            <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.resetAll()}
+              title={lang === "en" ? "Reset column order + show all columns" : "คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อนไว้ทั้งหมด"}>
               ↺ {lang === "en" ? "Columns" : "คอลัมน์"}
             </Btn>
             <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || sorted.length === 0}
@@ -7296,7 +7971,7 @@ function SetupPage() {
     { key: "sessions", label: "ผู้ใช้ออนไลน์" },
     { key: "audit", label: "ประวัติการแก้ไข" },
     { key: "backup", label: "สำรองข้อมูล" },
-    { key: "display", label: "ลำดับคอลัมน์" },
+    { key: "display", label: "คอลัมน์ตาราง" },
   ];
   return (
     <div>
@@ -7325,16 +8000,20 @@ function ColumnLayoutCard() {
   const [busy, setBusy] = useState("");
   const [, force] = useState(0);
   useEffect(() => { const fn = () => force((n) => n + 1); _cpSubs.add(fn); return () => { _cpSubs.delete(fn); }; }, []);
-  const nMine = Object.keys(COL_PREFS.user || {}).length;
-  const nCompany = Object.keys(COL_PREFS.company || {}).length;
+  const _cnt = (o) => Object.keys(o || {}).filter((k) => !k.endsWith(COL_HIDE_SUF)).length;
+  const _cntHide = (o) => Object.entries(o || {}).filter(([k, v]) => k.endsWith(COL_HIDE_SUF) && Array.isArray(v) && v.length).length;
+  const nMine = _cnt(COL_PREFS.user);
+  const nCompany = _cnt(COL_PREFS.company);
+  const nHideMine = _cntHide(COL_PREFS.user);
+  const nHideCompany = _cntHide(COL_PREFS.company);
   async function run(kind) {
     if (busy) return;
     setBusy(kind);
     try {
-      if (kind === "clearMine") { await clearAllMyColPrefs(); mlsToast("ล้างลำดับคอลัมน์ของฉันแล้ว", "ok"); }
-      else if (kind === "publish") { await publishCompanyColPrefs(); mlsToast("ตั้งลำดับปัจจุบันเป็นค่ากลางแล้ว — ทุกเครื่องจะเห็นเหมือนกัน", "ok"); }
+      if (kind === "clearMine") { await clearAllMyColPrefs(); mlsToast("ล้างการตั้งค่าคอลัมน์ของฉันแล้ว (ลำดับ + ที่ซ่อนไว้)", "ok"); }
+      else if (kind === "publish") { await publishCompanyColPrefs(); mlsToast("ตั้งลำดับ + คอลัมน์ที่แสดงปัจจุบันเป็นค่ากลางแล้ว — ทุกเครื่องจะเห็นเหมือนกัน", "ok"); }
       else if (kind === "clearCompany") {
-        const ok = await askConfirm({ message: "ล้างลำดับคอลัมน์ค่ากลางทั้งหมด?\nทุกเครื่องที่ไม่ได้ตั้งเอง จะกลับไปใช้ลำดับเริ่มต้น", tone: "danger", confirmText: "ล้างค่ากลาง", cancelText: "ยกเลิก" });
+        const ok = await askConfirm({ message: "ล้างค่ากลางของคอลัมน์ทั้งหมด?\n(ทั้งลำดับ และคอลัมน์ที่ซ่อนไว้)\nทุกเครื่องที่ไม่ได้ตั้งเอง จะกลับไปใช้ค่าเริ่มต้น", tone: "danger", confirmText: "ล้างค่ากลาง", cancelText: "ยกเลิก" });
         if (!ok) { setBusy(""); return; }
         await clearCompanyColPrefs(); mlsToast("ล้างค่ากลางแล้ว", "ok");
       }
@@ -7342,17 +8021,17 @@ function ColumnLayoutCard() {
     finally { setBusy(""); }
   }
   return (
-    <Card title="ลำดับคอลัมน์ในตาราง">
+    <Card title="คอลัมน์ในตาราง (ลำดับ + ซ่อน/แสดง)">
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.75 }}>
-        ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อจัดลำดับ<br />
+        ลากที่จับ ⠿ บนหัวคอลัมน์เพื่อจัดลำดับ · <b>คลิกขวาที่หัวตาราง</b> (หรือปุ่ม ▥ มุมขวาบนของตาราง) เพื่อ <b>ติ๊กเปิด-ปิดคอลัมน์</b><br />
         {admin
           ? <>• คุณเป็น <b>แอดมิน</b> — ลากที่ตารางไหน จะกลายเป็น <b>ค่ากลาง</b> ให้ทุกเครื่องเห็นเหมือนกันทันที</>
           : <>• คุณลากเอง = จำเป็น <b>ของคุณเอง</b> (ตามติดทุกเครื่องที่ล็อกอินบัญชีนี้)</>}<br />
         ลำดับที่ใช้จริง: <b>ของฉัน</b> ก่อน · ถ้าไม่ได้ตั้งเองใช้ <b>ค่ากลาง</b> (ที่แอดมินจัด) · ถ้าไม่มีใช้ <b>ค่าเริ่มต้น</b><br />
-        ตอนนี้: ตั้งเอง <b>{nMine}</b> ตาราง · ค่ากลาง <b>{nCompany}</b> ตาราง
+        ตอนนี้: ตั้งลำดับเอง <b>{nMine}</b> ตาราง · ค่ากลาง <b>{nCompany}</b> ตาราง · ซ่อนคอลัมน์ไว้: ของฉัน <b>{nHideMine}</b> ตาราง · ค่ากลาง <b>{nHideCompany}</b> ตาราง
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Btn variant="ghost" onClick={() => run("clearMine")} disabled={!!busy}>{busy === "clearMine" ? "กำลังล้าง..." : "ล้างลำดับของฉัน (กลับไปใช้ค่ากลาง)"}</Btn>
+        <Btn variant="ghost" onClick={() => run("clearMine")} disabled={!!busy}>{busy === "clearMine" ? "กำลังล้าง..." : "ล้างการตั้งค่าคอลัมน์ของฉัน (ลำดับ + ที่ซ่อนไว้)"}</Btn>
         {admin && <Btn variant="ghost" onClick={() => run("clearCompany")} disabled={!!busy} style={{ color: "var(--danger-hi)" }}>{busy === "clearCompany" ? "กำลังล้าง..." : "ล้างค่ากลางทั้งหมด (รีเซ็ตทุกตาราง)"}</Btn>}
       </div>
     </Card>
