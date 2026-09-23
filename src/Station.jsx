@@ -5,7 +5,7 @@ import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress, getScanStatusLock,
+  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress, getScanStatusLock, lookupCancelledQr,
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
@@ -703,6 +703,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               "This project is closed — can't add work · ask admin to reopen for rework"), "warn");
       return false;
     }
+    // ★ Modify: Part นี้ถูกยกเลิกในออฟฟิศ (M-xx) → จอแดงบล็อก ไม่ให้เข้าหน้าทำงาน
+    if (u?.release?.mod_cancelled_at) {
+      errorBeep();
+      const pn = u.part_master?.part_no || "";
+      const ver = u.release.mod_version || "Modify";
+      const moved = u.release.mod_cancel_keep === "moved";
+      flash(moved
+        ? t(`⛔ ${pn} ถูกย้ายไปเบอร์อื่นหมดแล้วใน ${ver} — สแกนชิ้นที่ติดป้ายใหม่ หรือแจ้งออฟฟิศ`, `⛔ ${pn} was fully moved to another number in ${ver} — ask the office`)
+        : t(`⛔ ${pn} ถูกยกเลิกใน ${ver} — หยุดทำ · ชิ้นที่ทำแล้วแยกเก็บตามที่ออฟฟิศกำหนด`, `⛔ ${pn} was cancelled in ${ver} — stop · set finished pieces aside`), "warn");
+      return false;
+    }
     tickBeep();   // เสียงเบายืนยันว่าเจอชิ้นงาน
     const opId = op?.id || user.operation?.id || null;
     const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
@@ -711,7 +722,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     setDupCount(dup);
     setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
     // กฎเลือกสถานะ: ดึงสถานะที่เครื่องนี้เคยบันทึกไว้กับ (รีลีส+ขั้นตอน) นี้ (fail-open ถ้าออฟไลน์/พลาด)
-    const lock = opId ? await getScanStatusLock(u.release_id, opId, machine?.id) : { finishedExists: false, inProcessExists: false };
+    const lock = opId ? await getScanStatusLock(u.release_id, opId, machine?.id, u.release?.mod_qty_at || null) : { finishedExists: false, inProcessExists: false };   // ★ เพิ่มจำนวนแล้ว → นับ Finished เฉพาะหลังจากนั้น (ปลดล็อก)
     setStatusLock(lock);
     // เลือกสถานะเริ่มต้นให้เมื่อมีทางเดียว: เคย Finished → Finished · เคย In Process → In Process (Finished ปลดล็อกเมื่อครบ)
     if (lock.finishedExists) setStatus("finished");
@@ -729,6 +740,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     setBusy(true);
     const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจค/ใบเจาะจงเสมอ
     if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจคปิด → คืน false ให้สแกนต่อได้
+    // ★ Modify: QR ที่ถูกยกเลิก (ลดจำนวน/ยกเลิก Part) → บอกให้ชัดว่ายกเลิกใน M ไหน (ไม่ใช่แค่ "ไม่พบ")
+    { const cq = await lookupCancelledQr(qr); if (cq) { setBusy(false); errorBeep(); flash(cancelledQrMsg(cq), "warn"); return false; } }
     // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจคเดียวใช้เลย · หลายโปรเจค → อย่าเดา ให้พิมพ์เลือก
     const opts = await findManualPartOptions(qr, curOpId());
     setBusy(false);
@@ -741,6 +754,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     }
     errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false;
   }
+  const cancelledQrMsg = (cq) => t(
+    `⛔ QR นี้ถูกยกเลิกใน ${cq.version || "Modify"} (${cq.why || "ยกเลิก"}${cq.part_no ? " · " + cq.part_no : ""}) — ไม่ต้องทำชิ้นนี้ · แยกออก · แจ้งออฟฟิศถ้าทำไปแล้ว`,
+    `⛔ This QR was cancelled in ${cq.version || "Modify"}${cq.part_no ? " · " + cq.part_no : ""} — don't make it · tell the office if already made`);
   // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจค → ให้เลือก "โปรเจค" (ไม่ต้องเลือก release)
   // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจค · { ok:false } เมื่อไม่พบ
   async function onManualEntry(text) {
@@ -750,6 +766,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
     const u = await findUnitByQr(s);
     if (u) { setBusy(false); return { ok: await showScannedUnit(u) }; }
+    { const cq = await lookupCancelledQr(s); if (cq) { setBusy(false); errorBeep(); flash(cancelledQrMsg(cq), "warn"); return { ok: false }; } }
     // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจค (findManualPartOptions ตัดโปรเจคปิดออกให้แล้ว)
     const opts = await findManualPartOptions(s, curOpId());
     setBusy(false);
@@ -832,7 +849,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         errorBeep();        // บันทึกผิดพลาด = เตือนครั้งเดียว
         const msg = res?.reason === "project_closed"
           ? t("โปรเจคนี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
-          : (res?.message || "บันทึกไม่สำเร็จ");
+          : (res?.reason === "qr_cancelled" || res?.reason === "release_cancelled")
+            ? t(`⛔ ${res.message || "ถูกยกเลิกใน Modify"} — ออฟฟิศเพิ่งแก้ Release นี้ · สแกนใหม่`, `⛔ Cancelled in ${res.version || "Modify"} — the office just changed this release · rescan`)
+            : (res?.message || "บันทึกไม่สำเร็จ");
         flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
         return;
@@ -2407,6 +2426,13 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             </div>
           </div>
         </div>
+        {/* ★ Modify: บอกว่าเบอร์นี้ถูกแก้อะไร (ชิ้นที่ถูกย้าย = โชว์ตลอด · การแก้ของ Release = 30 วันล่าสุด) */}
+        {(() => {
+          if (unit?.mod_note) return <div className="stn-mod-note moved">🔀 {t("ชิ้นนี้", "This piece")}: {unit.mod_note} — {t("ทำตามเบอร์บนจอ (ป้ายอาจยังเป็นเบอร์เดิม)", "follow the number on screen")}</div>;
+          const at = rel.mod_at ? new Date(rel.mod_at).getTime() : 0;
+          if (rel.mod_note && at && (Date.now() - at) < 30 * 86400000) return <div className="stn-mod-note">ℹ️ {rel.mod_note}</div>;
+          return null;
+        })()}
         <div className="stn-qty-lbl">{t("จำนวน", "QUANTITY")}</div>
         <div className="stn-qty-stepper">
           <button onClick={() => setQty(Math.max(0, qty - 1))}>−</button>
@@ -2774,6 +2800,8 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
   const [confirmClear, setConfirmClear] = useState(false);
   const reasonText = (r) => {
     if (r === "not_found" || r === "unit_not_found") return t("ไม่พบ QR/ล็อตในระบบ (อาจถูกลบ)", "QR/lot not found (may be deleted)");
+    if (r === "qr_cancelled") return t("QR ถูกยกเลิกใน Modify (ออฟฟิศลดจำนวน/ยกเลิก Part)", "QR cancelled by an office Modify");
+    if (r === "release_cancelled") return t("Part ถูกยกเลิกใน Modify — ออฟฟิศต้องตัดสิน (สแปร์/คืนงาน)", "Part cancelled by an office Modify");
     if (r === "retry_exhausted") return t("ลองซิงค์หลายครั้งไม่สำเร็จ", "Failed after several retries");
     if (r === "forbidden" || r === "unauthorized") return t("สิทธิ์/เซสชันมีปัญหา", "Permission/session issue");
     return r || t("ไม่ทราบสาเหตุ", "unknown");
