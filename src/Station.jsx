@@ -2946,7 +2946,10 @@ class StationErrorBoundary extends Component {
 
 export default function StationApp({ dept = "machine" } = {}) {
   const meta = DEPT_META[dept] || DEPT_META.machine;
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
   const [user, setUser] = useState(getSession());
+  const [leaving, setLeaving] = useState(false);   // กำลังออกไปหน้าแอดมิน (กันกดซ้ำ)
   const [notice, setNotice] = useState("");
   async function logout() {
     // เตือนถ้ายังมีงานค้างซิงค์ (ไม่หาย — เก็บใน localStorage รอดข้ามล็อกอิน จะซิงค์เองรอบหน้า)
@@ -2979,32 +2982,92 @@ export default function StationApp({ dept = "machine" } = {}) {
   useEffect(() => armFullscreenOnFirstTap(), []);
   // ล็อกอินรวมหน้าเดียว: ยังไม่ล็อกอิน + ออนไลน์ → ส่งไปหน้าเข้าสู่ระบบรวม (/) · ออฟไลน์ = ใช้หน้าล็อกอินสถานีเดิม (มี cache)
   const stnOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+  // ★ ยามกันไฟล์วางสลับ: main.jsx ส่งมาที่ StationApp เฉพาะ path ของสถานี (/station, /assembly, …)
+  //   ถ้า StationApp ขึ้นที่ path อื่น (เช่น "/") = src/App.jsx บน GitHub ถูกวางเป็นโค้ด Station.jsx
+  //   → หน้าสำนักงาน/แอดมินหายไป + ปุ่ม "ไปหน้าแอดมิน" วนกลับมาจอนี้ + ไม่มี session = รีโหลดวนไม่หยุด
+  //   จึงหยุด redirect แล้วบอกวิธีแก้ตรง ๆ แทน
+  const onStationPath = (() => {
+    try {
+      const p = window.location.pathname.replace(/\/+$/, "").toLowerCase();
+      return Object.values(DEPT_META).some((m) => p === m.path || p.startsWith(m.path + "/"));
+    } catch { return true; }
+  })();
   useEffect(() => {
+    if (!onStationPath) return;
     if (!user && stnOnline) { try { window.location.replace("/"); } catch { /* ignore */ } }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   let content;
-  if (!user) {
+  if (!onStationPath) {
+    content = (
+      <div className="stn-login-wrap">
+        <div className="stn-login">
+          <h1>{t("ไฟล์ App.jsx ถูกวางผิด", "App.jsx was replaced by the wrong file")}</h1>
+          <p>
+            {t("หน้านี้ (", "This page (")}<b>{window.location.pathname}</b>
+            {t(") ต้องเป็นหน้าสำนักงาน/แอดมิน แต่ไฟล์ ", ") should be the office/admin app, but ")}<b>src/App.jsx</b>
+            {t(" บน GitHub ตอนนี้เป็นโค้ดของหน้าเครื่อง (Station.jsx)", " on GitHub currently holds the station code (Station.jsx)")}<br /><br />
+            {t("วิธีแก้: วางไฟล์ App.jsx ตัวจริง (บรรทัดที่ 3 = import { QRCodeSVG } from \"qrcode.react\") ทับ src/App.jsx แล้วรอ Vercel deploy เสร็จ",
+               "Fix: upload the real App.jsx (line 3 = import { QRCodeSVG } from \"qrcode.react\") over src/App.jsx, then wait for Vercel to finish deploying")}
+          </p>
+          <button className="stn-btn" onClick={() => { window.location.href = "/station"; }}>
+            {t("ไปหน้าเครื่อง (/station)", "Open the station (/station)")}
+          </button>
+        </div>
+      </div>
+    );
+  } else if (!user) {
     content = stnOnline
       ? <LoginSplash text="กำลังไปหน้าเข้าสู่ระบบ…" />
       : <div className="stn-body" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}><StationLogin onLogin={(u) => { setNotice(""); setUser(u); }} notice={notice} dept={dept} /></div>;
   } else if (!user.machine) {
+    // ★ บัญชีไม่มีเครื่อง/สถานีประจำ → ไปหน้าแอดมิน (ตั้งค่า → พนักงาน) ได้เสมอ
+    //   · แอดมิน: ไปได้เลย (session เดิม) เปิดหน้า ตั้งค่า → พนักงาน ให้ทันที
+    //   · บัญชีอื่น (operator/office/…): ต้อง "ออกจากระบบจริง" (ฝั่ง server ด้วย) ก่อน แล้วล็อกอินใหม่ด้วยบัญชีแอดมิน
+    //     เดิมล้างแค่ในเครื่อง + เฉพาะ operator → บัญชี office ไปถึงหน้าสำนักงานแต่ไม่มีเมนูตั้งค่า (ไปหน้าแอดมินไม่ได้)
+    //     และ operator ค้าง "ใช้งานอยู่" ฝั่ง server ~3 นาที (ล็อกอินกลับบัญชีเดิมไม่ได้ชั่วคราว)
+    const isAdm = user.role === "admin";
+    const goAdmin = async () => {
+      if (leaving) return;
+      setLeaving(true);
+      if (!isAdm) {
+        try { await logoutSession(); } catch { /* ignore — ล้างในเครื่องต่อ */ }
+        clearSession();
+      }
+      const q = "go=setup-employees" + (!isAdm && user.code ? "&for=" + encodeURIComponent(user.code) : "");
+      window.location.href = "/?" + q;
+    };
     content = (
       <div className="stn-login-wrap">
         <div className="stn-login">
-          <h1>บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี</h1>
-          <p>{meta.th}ต้องใช้บัญชีที่กำหนด "เครื่อง/สถานีประจำ" ไว้ที่ Setup → พนักงาน<br />
-            แจ้ง Admin ให้ตั้งค่า machine ให้บัญชีนี้ก่อน</p>
-          <button className="stn-btn" onClick={logout}>ออกจากระบบ</button>
-          <div className="stn-login-foot">
-            {/* บัญชี operator จะถูกหน้าออฟฟิศเด้งกลับมา /station เสมอ → ต้องออกจากระบบก่อน
-                ไม่งั้นกด "ไปหน้าสำนักงาน" จะวนลูป · บัญชี admin/supervisor ไปได้เลย */}
-            <span className="stn-link-normal" style={{ cursor: "pointer" }}
-              onClick={() => { if (user.role === "operator") clearSession(); window.location.href = "/"; }}>
-              ไปหน้าสำนักงาน (ล็อกอินใหม่ด้วยบัญชี Admin) →
-            </span>
-          </div>
+          <h1>{t("บัญชีนี้ยังไม่ได้ผูกเครื่อง/สถานี", "This account isn't bound to a machine/station")}</h1>
+          <p>
+            {t(`${meta.th}ต้องใช้บัญชีที่ตั้ง "เครื่อง/สถานีประจำ" ไว้ที่ ตั้งค่า → พนักงาน`,
+               `The ${meta.en} terminal needs an account with a home machine/station set in Setup → Employees`)}<br />
+            {isAdm
+              ? t("คุณเป็นแอดมิน — กดปุ่มด้านล่างเพื่อไปตั้งเครื่องให้พนักงาน", "You're an admin — use the button below to set machines for employees")
+              : t(`บัญชี ${user.code || ""} ยังไม่มีเครื่อง — ให้แอดมินตั้งค่าให้ก่อน`, `Account ${user.code || ""} has no machine yet — ask an admin to set one`)}
+          </p>
+          {isAdm ? (
+            <>
+              <button className="stn-btn" onClick={goAdmin} disabled={leaving}>
+                {leaving ? t("กำลังไป…", "Opening…") : t("ไปหน้าแอดมิน (ตั้งค่า → พนักงาน)", "Go to admin (Setup → Employees)")}
+              </button>
+              <div className="stn-login-foot">
+                <span className="stn-link-normal" style={{ cursor: "pointer" }} onClick={logout}>{t("ออกจากระบบ", "Log out")}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <button className="stn-btn" onClick={logout}>{t("ออกจากระบบ", "Log out")}</button>
+              <div className="stn-login-foot">
+                <span className="stn-link-normal" style={{ cursor: leaving ? "wait" : "pointer" }} onClick={goAdmin}>
+                  {leaving ? t("กำลังออกจากระบบ…", "Signing out…") : t("ไปหน้าแอดมิน (ออกจากบัญชีนี้ แล้วเข้าด้วยบัญชี Admin) →", "Go to admin (sign out, then sign in as Admin) →")}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
