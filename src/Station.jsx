@@ -2347,6 +2347,15 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
 function modNoteText(note, lang) {
   if (!note || lang !== "en") return note;
   return String(note)
+    .replace(/(M-\d+) ถูกยกเลิก/g, "$1 cancelled")                       // ★ ยกเลิก M / ย้อนกลับ
+    .replace(/คืนจำนวน/g, "Qty restored")
+    .replace(/ยกเลิก QR ที่เพิ่ม (\d+) ใบ/g, "cancelled $1 added QR")
+    .replace(/คืน QR (\d+) ใบ/g, "$1 QR restored")
+    .replace(/\(คืนค่าเดิม\)/g, "(restored)")
+    .replace(/เปิด Part กลับมา/g, "Part reopened")
+    .replace(/ย้ายกลับ (\d+) ชิ้น จาก/g, "moved back $1 pcs from")
+    .replace(/ย้าย (\d+) ชิ้นกลับไป/g, "moved $1 pcs back to")
+    .replace(/· จำนวน (\d+)/g, "· qty $1")
     .replace(/QR ใหม่ (\d+) ใบ/g, "$1 new QR")
     .replace(/ยกเลิก QR ที่ยังไม่ใช้ (\d+) ใบ/g, "cancelled $1 unused QR")
     .replace(/ยกเลิก QR (\d+) ใบ/g, "cancelled $1 QR")
