@@ -1483,11 +1483,10 @@ function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
 // ── เพิ่ม / แก้ไขหลายรายการ (ตารางกรอก · ก็อปจาก Excel มาวางได้) ─────────────────────────────
 //   mode "add"  : แถวว่าง 5 แถว · INV ที่มีอยู่แล้วติดป้าย "มีแล้ว" → ข้าม (หรือติ๊กอัปเดตทับ)
 //   mode "edit" : แสดงทุกรายการของขอบเขตนี้ให้แก้ในตาราง (+ แถวว่างท้ายตาราง) · ช่องที่แก้ = สีเหลือง
-//   วาง (Ctrl+V) ได้ทุกที่ในหน้าต่าง — คลิกช่องไหนก็เริ่มวางที่ช่องนั้น · ไม่ได้คลิกช่อง = เริ่มที่แถวว่างแรก คอลัมน์ INV
-//   ถ้าที่วางมามีคอลัมน์ INV → จับคู่ตาม INV: INV ที่มีในตารางแล้ว = อัปเดตแถวนั้น (ช่องว่างที่วางมาไม่ลบค่าเดิม)
-//                                           INV ใหม่ = ลงแถวว่างถัดไป · มีหัวตาราง = จับคอลัมน์ตามชื่อหัว
+//   วาง (Ctrl+V) ได้ทุกที่ในหน้าต่าง · ก็อปมาหลายคอลัมน์ → จับคอลัมน์จากหัวตาราง หรือเดาจากข้อมูล (INV/ความยาว/Weight/M/จำนวน/หมายเหตุ)
+//     แล้วขึ้นแถบให้เปลี่ยนได้ว่าแต่ละคอลัมน์ลงช่องไหน · คอลัมน์เดียว = ลงช่องที่คลิก ไล่ลงไป
+//   INV ที่มีในตารางอยู่ก่อนแล้ว = อัปเดตแถวนั้น (ช่องว่างที่วางมาไม่ลบค่าเดิม) · นอกนั้นลงแถวว่างถัดไป (ซ้ำกันเอง = แยกแถว ขึ้นป้าย "ซ้ำ")
 const MAT_COLS = ["inv", "wpm", "len", "qty", "note"];
-const MAT_HEADER = { inv: [/inv/i, /material/i, /code/i, /รหัส/i, /วัสดุ/i], wpm: [/weight\s*\/?\s*m/i, /\bw\/?m\b/i, /กก\.?\s*\/\s*ม/i, /น้ำหนัก/i], len: [/length/i, /ยาว/i], qty: [/qty/i, /จำนวน/i], note: [/remark/i, /note/i, /หมายเหตุ/i] };
 const matRid = () => Math.random().toString(36).slice(2);
 const MAT_BLANK = () => ({ key: matRid(), id: null, inv: "", wpm: "", len: "", qty: "", note: "", orig: null });
 const matStr = (v) => (v == null ? "" : String(v));
@@ -1500,43 +1499,103 @@ const matNormNum = (v) => { const t = String(v ?? "").trim(); if (!t) return "";
 const matCellChanged = (r, k) => !!r.orig && (k === "inv" || k === "note" ? String(r[k] ?? "").trim() !== String(r.orig[k] ?? "").trim() : matNormNum(r[k]) !== matNormNum(r.orig[k]));
 const matRowChanged = (r) => !!r.orig && MAT_COLS.some((k) => matCellChanged(r, k));
 const matBadNum = (v, int) => { const t = String(v ?? "").trim(); if (!t) return false; const n = gnum(t); return n == null || n < 0 || (int && !Number.isInteger(n)); };
-// แปลงข้อความที่ก็อปจาก Excel → { map: [col|null...] | null (ไม่มีหัว), grid: [[cell...]] }
-function matParseClip(text) {
-  const lines = String(text || "").replace(/\r/g, "").split("\n");
-  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
-  let grid = lines.filter((l) => l.trim() !== "").map((l) => l.split("\t").map((c) => c.trim()));
-  if (!grid.length) return null;
-  const hdr = grid[0].map((c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null);
-  if (hdr.filter(Boolean).length >= 2) return { map: hdr, grid: grid.slice(1) };
-  return { map: null, grid };
+// ข้อความที่ก็อปจาก Excel → ตาราง [[cell]] — รองรับเซลล์ในเครื่องหมายคำพูด (มีขึ้นบรรทัด/แท็บในเซลล์) · CRLF / CR / LF
+function matParseTsv(text) {
+  const src = String(text || "").replace(/\r\n?/g, "\n");
+  const out = []; let row = []; let cell = ""; let q = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (q) {
+      if (ch === '"') { if (src[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"' && cell === "") q = true;
+    else if (ch === "\t") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); out.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); out.push(row); }
+  return out.map((r) => r.map((c) => c.replace(/\s+/g, " ").trim())).filter((r) => r.some((c) => c !== ""));
 }
-// วางลงตาราง rows (คืน rows ใหม่) · startRow/startCol = ตำแหน่งที่คลิก (หรือค่าเริ่มต้น)
-function matApplyPaste(rows, clip, startRow, startCol) {
-  const next = rows.map((r) => ({ ...r }));
-  const colsFor = (cells) => (clip.map ? clip.map : cells.map((_, j) => MAT_COLS[MAT_COLS.indexOf(startCol) + j] || null));
-  const hasInv = clip.map ? clip.map.includes("inv") : startCol === "inv";
+const MAT_HEADER = {
+  inv: [/\binv/i, /inventory/i, /material/i, /\bcode\b/i, /item\s*no/i, /รหัส/i, /วัสดุ/i],
+  wpm: [/weight\s*\/?\s*m\b/i, /\bw\s*\/\s*m\b/i, /kg\s*\/\s*m/i, /กก\.?\s*\/\s*ม/i, /น้ำหนัก.*(เมตร|ม\.)/i, /unit\s*weight/i],
+  len: [/length/i, /\blen\b/i, /ยาว/i],
+  qty: [/q'?ty/i, /quantity/i, /จำนวน/i, /\bpcs\b/i, /^bars?$/i, /เส้น$/],
+  note: [/remark/i, /note/i, /หมายเหตุ/i, /desc/i, /รายละเอียด/i],
+};
+const matIsNumTxt = (v) => /^-?[\d,]*\.?\d+$/.test(String(v).replace(/\s/g, ""));
+const matHeaderOf = (c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null;
+// เดาว่าคอลัมน์ไหนคืออะไรจาก "ข้อมูล" (ไม่มีหัวตาราง): INV = รหัส (ไม่ใช่ตัวเลขล้วน/ไม่ใช่ภาษาไทย) · ความยาว = ตัวเลข ≥300
+//   · Weight/M = ทศนิยม <100 · จำนวน = จำนวนเต็ม · หมายเหตุ = ข้อความที่เหลือ · เลขลำดับ 1,2,3… = ไม่ใช้
+function matGuessMap(grid) {
+  const n = Math.max(0, ...grid.map((r) => r.length));
+  const st = [];
+  for (let j = 0; j < n; j++) {
+    const vals = grid.map((r) => String(r[j] ?? "").trim()).filter(Boolean);
+    const nums = vals.filter(matIsNumTxt).map((v) => gnum(v)).filter((x) => x != null);
+    const sorted = [...nums].sort((x, y) => x - y);
+    const med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+    const codeish = vals.filter((v) => !matIsNumTxt(v) && !/[฀-๿]/.test(v) && v.length <= 40).length;
+    st.push({
+      j, empty: !vals.length, numRatio: vals.length ? nums.length / vals.length : 0, codeRatio: vals.length ? codeish / vals.length : 0,
+      allInt: nums.length > 0 && nums.every(Number.isInteger), hasDec: nums.some((x) => !Number.isInteger(x)), med,
+      seq: nums.length === grid.length && grid.length > 1 && grid.every((r, i) => gnum(r[j]) === i + 1),
+    });
+  }
+  const map = Array(n).fill(null); const used = new Set();
+  const free = () => st.filter((x) => map[x.j] == null && !x.empty && !x.seq);
+  const take = (k, c) => { if (c && !used.has(k)) { map[c.j] = k; used.add(k); } };
+  take("inv", free().find((x) => x.numRatio < 0.5 && x.codeRatio >= 0.6));
+  const numCols = () => free().filter((x) => x.numRatio >= 0.8);
+  take("len", numCols().find((x) => x.med != null && x.med >= 300));
+  take("wpm", numCols().find((x) => x.hasDec && x.med != null && x.med < 100));
+  take("qty", numCols().find((x) => x.allInt));
+  take("wpm", numCols().find((x) => x.med != null && x.med < 100));
+  take("note", free().find((x) => x.numRatio < 0.5));
+  return map;
+}
+// อ่านคลิปบอร์ด → { grid, headers|null, map, how: "header"|"guess"|"single" }
+function matParseClip(text, startCol) {
+  const all = matParseTsv(text);
+  if (!all.length) return null;
+  const n = Math.max(...all.map((r) => r.length));
+  if (n <= 1) return { grid: all, headers: null, map: [startCol || "inv"], how: "single" };
+  const hdr = all[0].map(matHeaderOf);
+  const firstRowText = all[0].every((c) => !c || !matIsNumTxt(c));
+  const laterNums = all.slice(1).some((r) => r.some((c) => c && matIsNumTxt(c)));
+  if (hdr.filter(Boolean).length >= 2 || (hdr.filter(Boolean).length >= 1 && firstRowText && laterNums && all.length > 1)) {
+    const seen = new Set();
+    const map = hdr.map((k) => (k && !seen.has(k) ? (seen.add(k), k) : null));
+    return { grid: all.slice(1), headers: all[0], map, how: "header" };
+  }
+  return { grid: all, headers: null, map: matGuessMap(all), how: "guess" };
+}
+// วางลงตาราง (คืน rows ใหม่) · base = ตารางก่อนวาง
+//   มีคอลัมน์ INV → INV ที่ "มีในตารางก่อนวาง" = อัปเดตแถวนั้น (ช่องว่างที่วางมาไม่ลบค่าเดิม) · นอกนั้นลงแถวว่างถัดไปทีละแถว
+//     (INV ซ้ำกันเองในสิ่งที่วาง = แยกแถว → ขึ้นป้าย "ซ้ำ" ให้เห็น ไม่รวมเงียบๆ · แถวที่ไม่มี INV ก็ลงให้เห็น)
+//   ไม่มีคอลัมน์ INV → ตามตำแหน่ง ลงไปทีละแถวจากแถวที่คลิก
+function matApplyPaste(base, clip, startRow) {
+  const next = base.map((r) => ({ ...r }));
+  const known = new Map();
+  base.forEach((r, i) => { const k = matKey(r.inv); if (k && !known.has(k)) known.set(k, i); });
+  const hasInv = clip.map.includes("inv");
   let cursor = Math.max(0, startRow);
-  const nextFree = () => {                       // แถวว่างถัดไป (ตั้งแต่ cursor) — ไม่มีก็เพิ่มแถว
+  const nextFree = () => {
     while (cursor < next.length && !matBlank(next[cursor])) cursor++;
     if (cursor >= next.length) next.push(MAT_BLANK());
     return cursor;
   };
   clip.grid.forEach((cells, i) => {
-    const cols = colsFor(cells);
     const data = {};
-    cols.forEach((k, j) => { if (k && cells[j] !== undefined) data[k] = cells[j]; });
+    clip.map.forEach((k, j) => { if (k && cells[j] !== undefined && String(cells[j]).trim() !== "") data[k] = cells[j]; });
+    if (!Object.keys(data).length) return;
     if (hasInv) {
-      const inv = String(data.inv || "").trim();
-      if (!inv) return;
-      const hit = next.findIndex((r) => matKey(r.inv) === matKey(inv));
-      if (hit >= 0) {                            // INV มีในตารางแล้ว → อัปเดตเฉพาะช่องที่วางมามีค่า
-        Object.entries(data).forEach(([k, v]) => { if (k !== "inv" && String(v).trim() !== "") next[hit][k] = v; });
-        return;
-      }
+      const hit = data.inv ? known.get(matKey(data.inv)) : undefined;
+      if (hit !== undefined) { Object.entries(data).forEach(([k, v]) => { if (k !== "inv") next[hit][k] = v; }); return; }
       const idx = nextFree();
-      next[idx] = { ...next[idx], ...data, inv };
+      next[idx] = { ...next[idx], ...data };
       cursor = idx + 1;
-    } else {                                     // ไม่มี INV → วางตามตำแหน่ง (ลงไปทีละแถวจากช่องที่คลิก)
+    } else {
       const idx = startRow + i;
       while (next.length <= idx) next.push(MAT_BLANK());
       next[idx] = { ...next[idx], ...data };
@@ -1544,6 +1603,7 @@ function matApplyPaste(rows, clip, startRow, startCol) {
   });
   return next;
 }
+const MAT_FIELD_LABEL = (k, L) => ({ inv: "INV Code", wpm: "Weight/M", len: L("ความยาว/เส้น", "Length/bar"), qty: L("จำนวน", "Qty"), note: L("หมายเหตุ", "Note") }[k] || k);
 
 function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existing = [], onClose, onSaved }) {
   const [lang] = useLang();
@@ -1554,20 +1614,34 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [flash, setFlash] = useState("");
+  const [pinfo, setPinfo] = useState(null);      // การวางล่าสุด (ไว้เปลี่ยนคอลัมน์): { base, clip, startRow }
   const wrapRef = useRef(null);
   const firstRef = useRef(null);
   const inScope = (inv) => { const e = index && index.get(matKey(inv)); return !!(e && (projectId ? e.proj : e.center)); };
-  const setCell = (key, k, v) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [k]: v } : r)));
+  const setCell = (key, k, v) => { setPinfo(null); setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [k]: v } : r))); };
   // โฟกัสช่อง INV ของแถวว่างแรก → เปิดหน้าต่างแล้วกด Ctrl+V ได้ทันที
   useEffect(() => { const t = setTimeout(() => { try { firstRef.current && firstRef.current.focus(); } catch { /* ignore */ } }, 60); return () => clearTimeout(t); }, []);
   const firstBlank = (rs) => { const i = rs.findIndex(matBlank); return i >= 0 ? i : rs.length; };
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   function pasteText(text, startRow, startCol) {
-    const clip = matParseClip(text);
+    const clip = matParseClip(text, startCol || "inv");
     if (!clip || !clip.grid.length) return false;
-    setRows((rs) => matApplyPaste(rs, clip, startRow == null ? firstBlank(rs) : startRow, startCol || "inv"));
+    const base = rowsRef.current;
+    const sr = startRow == null ? firstBlank(base) : startRow;
+    setRows(matApplyPaste(base, clip, sr));
+    setPinfo(clip.how === "single" ? null : { base, clip, startRow: sr });
     setFlash(L(`วางแล้ว ${clip.grid.length} แถว`, `Pasted ${clip.grid.length} row(s)`));
-    setTimeout(() => setFlash(""), 2200);
+    setTimeout(() => setFlash(""), 2600);
     return true;
+  }
+  // เปลี่ยนว่าคอลัมน์ที่วางมาไปลงช่องไหน → วางใหม่จากตารางก่อนวาง
+  function remap(j, k) {
+    if (!pinfo) return;
+    const map = pinfo.clip.map.map((x, i) => (i === j ? (k || null) : (k && x === k ? null : x)));
+    const clip = { ...pinfo.clip, map };
+    setPinfo({ ...pinfo, clip });
+    setRows(matApplyPaste(pinfo.base, clip, pinfo.startRow));
   }
   // จับการวางทั้งหน้าต่าง: ในช่องตาราง = เริ่มที่ช่องนั้น · นอกช่อง = แถวว่างแรก คอลัมน์ INV
   useEffect(() => {
@@ -1591,15 +1665,6 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
     return () => window.removeEventListener("paste", onPaste);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang]);
-  async function pasteFromButton() {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!pasteText(text, null, "inv")) mlsToast(L("คลิปบอร์ดว่าง — ก็อปจาก Excel ก่อน", "Clipboard is empty — copy from Excel first"), "warn");
-    } catch {
-      mlsToast(L("เบราว์เซอร์ไม่ให้อ่านคลิปบอร์ด — คลิกช่อง INV แล้วกด Ctrl+V แทน", "The browser blocked clipboard access — click an INV cell and press Ctrl+V"), "warn");
-    }
-  }
-
   const filled = rows.filter((r) => !matBlank(r));
   const newRows = filled.filter((r) => !r.id);
   const changedRows = rows.filter((r) => r.id && matRowChanged(r));
@@ -1657,21 +1722,35 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
     onSaved && onSaved({});
   }
 
-  const cellCls = (r, k) => [r.id && matCellChanged(r, k) ? "mat-cell-changed" : "", (k === "wpm" || k === "len" || k === "qty") && matBadNum(r[k], k === "qty") ? "mat-cell-bad" : "", k === "inv" && ((!edit && !r.id && r.inv.trim() && inScope(r.inv)) || (r.inv.trim() && dupInGrid(r))) ? "mat-cell-dup" : ""].filter(Boolean).join(" ") || undefined;
+  const cellCls = (r, k) => [r.id && matCellChanged(r, k) ? "mat-cell-changed" : "", k === "inv" && !matBlank(r) && !String(r.inv).trim() ? "mat-cell-bad" : "", (k === "wpm" || k === "len" || k === "qty") && matBadNum(r[k], k === "qty") ? "mat-cell-bad" : "", k === "inv" && ((!edit && !r.id && r.inv.trim() && inScope(r.inv)) || (r.inv.trim() && dupInGrid(r))) ? "mat-cell-dup" : ""].filter(Boolean).join(" ") || undefined;
   const title = edit ? L("แก้ไข Material (ทั้งตาราง)", "Edit materials (whole table)") : L("เพิ่ม Material", "Add materials");
   let firstAssigned = false;
   return (
     <Modal title={title} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide>
-      <div className="mat-pastebar">
-        <div>
-          <b>{L("ก็อปจาก Excel มาวางได้เลย (Ctrl+V)", "Copy from Excel and paste (Ctrl+V)")}</b>
-          <span>{L(" — คอลัมน์ INV Code · Weight/M · ความยาว/เส้น · จำนวน · หมายเหตุ (มีหัวตารางก็ได้ จับตามชื่อหัว) · คลิกช่องไหน เริ่มวางที่ช่องนั้น · ",
-                   " — columns INV Code · Weight/M · Length/bar · Qty · Note (a header row is fine, matched by name) · paste starts at the clicked cell · ")}</span>
-          <span>{edit ? L("INV ที่มีอยู่แล้วจะอัปเดตแถวเดิม (ช่องว่างที่วางมาไม่ลบค่าเดิม)", "an INV already in the table updates that row (blank pasted cells keep the old value)")
-                      : L("เว้นว่างได้ มาแก้ทีหลังได้", "blanks are fine — edit later")}</span>
+      {pinfo && (
+        <div className="mat-mapbar">
+          <div className="mat-mapbar-h">
+            <b>{L(`วางแล้ว ${pinfo.clip.grid.length} แถว — ตรวจว่าแต่ละคอลัมน์ลงช่องถูก`, `Pasted ${pinfo.clip.grid.length} row(s) — check where each column goes`)}</b>
+            <span>{pinfo.clip.how === "header" ? L("(จับจากหัวตาราง)", "(matched by header)") : L("(เดาจากข้อมูล — เปลี่ยนได้)", "(guessed from the data — change if needed)")}</span>
+            <button type="button" className="mat-link" onClick={() => setPinfo(null)}>{L("ตกลง", "OK")}</button>
+          </div>
+          <div className="mat-mapcols">
+            {pinfo.clip.map.map((k, j) => {
+              const sample = pinfo.clip.grid.map((r) => r[j]).filter(Boolean).slice(0, 2).join(" · ");
+              return (
+                <label key={j} className={"mat-mapcol" + (k ? " on" : "")}>
+                  <span className="h">{(pinfo.clip.headers && pinfo.clip.headers[j]) || L(`คอลัมน์ ${j + 1}`, `Column ${j + 1}`)}</span>
+                  <span className="s" title={sample}>{sample || "—"}</span>
+                  <select value={k || ""} onChange={(e) => remap(j, e.target.value)} aria-label={L(`คอลัมน์ ${j + 1} ไปที่`, `Column ${j + 1} goes to`)}>
+                    <option value="">{L("— ไม่ใช้ —", "— skip —")}</option>
+                    {MAT_COLS.map((f) => <option key={f} value={f}>{MAT_FIELD_LABEL(f, L)}</option>)}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
         </div>
-        <Btn type="button" variant="ghost" size="sm" onClick={pasteFromButton} disabled={busy}>📋 {L("วางจากคลิปบอร์ด", "Paste clipboard")}</Btn>
-      </div>
+      )}
       <div className="pgrid-wrap" style={{ maxHeight: "48vh" }} ref={wrapRef}>
         <table className="pgrid" style={{ minWidth: 660 }}>
           <thead><tr>
