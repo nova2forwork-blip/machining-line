@@ -1265,8 +1265,16 @@ table.pgrid td.mat-cell-scrap input::placeholder { color: var(--muted); font-siz
   .mat-seg { width: 100%; } .mat-seg button { flex: 1; justify-content: center; }
 }
 /* ตารางกรอก Material: แถบบอกว่าก็อปจาก Excel วางได้ · ช่องที่แก้ · ช่องผิด */
-.mat-pastebar { display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 10px; border: 1px dashed rgba(16,185,129,.55); background: var(--accent-tint); border-radius: 11px; font-size: 12px; color: var(--muted); line-height: 1.55; }
-.mat-pastebar b { color: var(--accent-dk); font-size: 12.5px; }
+.mat-mapbar { border: 1px solid var(--border); background: var(--surface-2); border-radius: 11px; padding: 8px 10px; margin-bottom: 10px; }
+.mat-mapbar-h { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 7px; }
+.mat-mapbar-h b { color: var(--accent-dk); }
+.mat-mapbar-h .mat-link { margin-left: auto; }
+.mat-mapcols { display: flex; gap: 8px; flex-wrap: wrap; }
+.mat-mapcol { display: flex; flex-direction: column; gap: 3px; min-width: 120px; max-width: 190px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mat-mapcol.on { border-color: rgba(16,185,129,.55); }
+.mat-mapcol .h { font-size: 11.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mat-mapcol .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mat-mapcol select { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--text); }
 table.pgrid td.mat-cell-changed { background: #fffbe6; box-shadow: inset 0 -2px 0 #f3c77a; }
 table.pgrid td.mat-cell-bad { background: #fdecec; }
 table.pgrid td.mat-cell-bad input { color: var(--danger-hi); font-weight: 700; }
