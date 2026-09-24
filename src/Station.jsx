@@ -11,6 +11,7 @@ import {
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
   reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason, listMachineReports,
+  reportActiveJob, clearActiveJobNow,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -610,6 +611,21 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     draftLoadedRef.current = true;   // เปิดให้ effect เขียน draft ทำงานได้หลังจากนี้
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ★ แจ้งออฟฟิศว่า "กำลังทำงาน" (สแกนรอบแรกแล้ว ยังไม่กด OK) → หน้า Release ขึ้น In Process ที่เครื่องนี้
+  //   สแกนรอบแรก / กู้งานค้าง = ตั้งงาน · กด OK / ยกเลิก / จบงาน = ล้าง · เปิดหน้าใหม่ไม่มีงานค้าง = ล้างของเก่า
+  //   ส่งแบบ best-effort (ออฟไลน์เก็บไว้ส่งทีหลัง) — ไม่กระทบการสแกน/บันทึกงานเลย
+  const ajUnitRef = useRef({ ts: null, id: null });   // ป้ายที่สแกนรอบแรกของงานนี้ (รอบ 2 เปลี่ยน unit แต่ไม่ต้องแจ้งใหม่)
+  useEffect(() => {
+    if (dept !== "machine") return;
+    if (!draftLoadedRef.current) return;
+    const ts = startTsRef.current;
+    if (step === STEP.IDLE || !unit || !unit.release_id || !ts) { ajUnitRef.current = { ts: null, id: null }; reportActiveJob(null); return; }
+    if (ajUnitRef.current.ts !== ts) ajUnitRef.current = { ts, id: unit.id || null };
+    const opIds = opSel.size ? [...opSel] : (op?.id ? [op.id] : (user.operation?.id ? [user.operation.id] : []));
+    reportActiveJob({ releaseId: unit.release_id, partUnitId: ajUnitRef.current.id, operationIds: opIds, startedAt: ts });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, unit, opSel, op]);
 
   function resetAll(keepLen = false) {
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
@@ -3085,6 +3101,7 @@ export default function StationApp({ dept = "machine" } = {}) {
       ? `ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อล็อกอินอีกครั้ง (ข้อมูลไม่หาย)\n\nออกจากระบบและปิดแอป?`
       : "ออกจากระบบและปิดแอป?";
     if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
+    try { await clearActiveJobNow(); } catch { /* ignore */ }   // ★ ล้าง "กำลังทำงาน" ฝั่งออฟฟิศก่อน token หมด
     try { await logoutSession(); } catch { /* ignore */ }
     clearSession();
     try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch { /* ignore */ }
