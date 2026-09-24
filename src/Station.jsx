@@ -718,7 +718,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (u?.release?.mod_cancelled_at) {
       errorBeep();
       const pn = u.part_master?.part_no || "";
-      const ver = u.release.mod_version || "Modify";
+      const ver = fmtM(u.release.mod_version) || "Modify";
       const moved = u.release.mod_cancel_keep === "moved";
       flash(moved
         ? t(`⛔ ${pn} ถูกย้ายไปเบอร์อื่นหมดแล้วใน ${ver} — สแกนชิ้นที่ติดป้ายใหม่ หรือแจ้งออฟฟิศ`, `⛔ ${pn} was fully moved to another number in ${ver} — ask the office`)
@@ -809,8 +809,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     errorBeep(); flash("ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return false;
   }
   const cancelledQrMsg = (cq) => t(
-    `⛔ QR นี้ถูกยกเลิกใน ${cq.version || "Modify"} (${cq.why || "ยกเลิก"}${cq.part_no ? " · " + cq.part_no : ""}) — ไม่ต้องทำชิ้นนี้ · แยกออก · แจ้งออฟฟิศถ้าทำไปแล้ว`,
-    `⛔ This QR was cancelled in ${cq.version || "Modify"} (${cq.why === "ลดจำนวน" ? "qty reduced" : "part cancelled"}${cq.part_no ? " · " + cq.part_no : ""}) — don't make it · set it aside · tell the office if already made`);
+    `⛔ QR นี้ถูกยกเลิกใน ${fmtM(cq.version) || "Modify"} (${cq.why || "ยกเลิก"}${cq.part_no ? " · " + cq.part_no : ""}) — ไม่ต้องทำชิ้นนี้ · แยกออก · แจ้งออฟฟิศถ้าทำไปแล้ว`,
+    `⛔ This QR was cancelled in ${fmtM(cq.version) || "Modify"} (${cq.why === "ลดจำนวน" ? "qty reduced" : "part cancelled"}${cq.part_no ? " · " + cq.part_no : ""}) — don't make it · set it aside · tell the office if already made`);
   // พิมพ์เบอร์พาร์ท/QR ในช่องกรอก — เบอร์พาร์ทอยู่หลายโปรเจค → ให้เลือก "โปรเจค" (ไม่ต้องเลือก release)
   // คืน { ok:true } เมื่อระบุได้เลย · { ok:false, choose:[options] } เมื่อต้องเลือกโปรเจค · { ok:false } เมื่อไม่พบ
   async function onManualEntry(text) {
@@ -904,7 +904,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         const msg = res?.reason === "project_closed"
           ? t("โปรเจคนี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
           : (res?.reason === "qr_cancelled" || res?.reason === "release_cancelled")
-            ? t(`⛔ ${res.message || "ถูกยกเลิกใน Modify"} — ออฟฟิศเพิ่งแก้ Release นี้ · สแกนใหม่`, `⛔ Cancelled in ${res.version || "Modify"} — the office just changed this release · rescan`)
+            ? t(`⛔ ${fmtMText(res.message) || "ถูกยกเลิกใน Modify"} — ออฟฟิศเพิ่งแก้ Release นี้ · สแกนใหม่`, `⛔ Cancelled in ${fmtM(res.version) || "Modify"} — the office just changed this release · rescan`)
             : (res?.message || "บันทึกไม่สำเร็จ");
         flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
@@ -1561,7 +1561,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                   <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
                     title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
                     <td className="stn-mono">{r.day || todayMD()}</td>
-                    <td className="stn-hide-sm">{r.mdf_no || "-"}</td>
+                    <td className="stn-hide-sm">{fmtM(r.mdf_no) || "-"}</td>
                     <td className="stn-hide-sm">{r.rel_no || "-"}</td>
                     <td className="l">{r.part_no || "-"}</td>
                     <td className="stn-hide-sm">{r.rev || "-"}</td>
@@ -2343,8 +2343,12 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
   );
 }
 
+// ── เลข M 3 หลัก: บันทึกเก่า "M-01" → แสดง "M-001" (บันทึกงานเก่าเก็บค่าตอนนั้นไว้ ไม่แก้ในฐานข้อมูล) ──
+function fmtM(v) { if (v == null) return v; const s = String(v); const m = s.match(/^M-(\d+)$/); return m ? "M-" + String(Number(m[1])).padStart(3, "0") : s; }
+function fmtMText(t) { return t == null ? t : String(t).replace(/(^|[^A-Za-z0-9])M-(\d{2})(?!\d)/g, "$1M-0$2"); }
 // ── Modify: ข้อความที่ DB เขียนไว้ (ภาษาไทย รูปแบบตายตัว) → อังกฤษ ตอนเลือก EN ──
 function modNoteText(note, lang) {
+  note = fmtMText(note);
   if (!note || lang !== "en") return note;
   return String(note)
     .replace(/(M-\d+) ถูกยกเลิก/g, "$1 cancelled")                       // ★ ยกเลิก M / ย้อนกลับ
@@ -2457,7 +2461,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             <div className="stn-lbl-vline" />
             <div className="stn-lbl-col right">
               <div className="stn-lbl-kv">
-                <span className="k">MDF NO.</span><span className="v">{p.mdf_no || "-"}</span>
+                <span className="k">MDF NO.</span><span className="v">{fmtM(p.mdf_no) || "-"}</span>
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
@@ -2550,7 +2554,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             <div className="stn-lbl-vline" />
             <div className="stn-lbl-col right">
               <div className="stn-lbl-kv">
-                <span className="k">MDF NO.</span><span className="v">{p.mdf_no || "-"}</span>
+                <span className="k">MDF NO.</span><span className="v">{fmtM(p.mdf_no) || "-"}</span>
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
