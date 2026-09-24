@@ -1286,6 +1286,127 @@ if (typeof window !== "undefined") {
   setInterval(() => { if (qRead().length) flushScanQueue(); }, 15000);
 }
 
+// ── "งานที่กำลังทำ" หน้าเครื่อง (สแกนรอบแรกแล้ว ยังไม่กด OK) → ออฟฟิศเห็นสถานะ In Process ──
+//   หน้าเครื่องบอก "สถานะที่ต้องการ" (มีงาน / ไม่มีงาน) → เก็บลงเครื่องก่อน แล้วค่อยส่ง (ทีละคำสั่ง ตามลำดับ)
+//   ออฟไลน์ = เก็บไว้ ส่งตอนเน็ตกลับ (ส่งเฉพาะ "สถานะล่าสุด" — ไม่ต้องส่งย้อนทุกครั้ง)
+//   ส่งไม่ได้ ไม่กระทบงานหน้าเครื่องเลย (best-effort) · ยังไม่ได้รัน SQL = เงียบ ไม่ลองซ้ำ
+//   job = null (ไม่มีงาน) | { releaseId, partUnitId, operationIds:[...], startedAt (ms/ISO) }
+//   ดู station_job_set (migration-part-machine-status.sql)
+const AJ_KEY = "mls-active-job";
+let _ajMem = null;             // สำรองเมื่อ localStorage ใช้ไม่ได้
+let _ajBusy = false, _ajAgain = false, _ajTimer = null, _ajMissing = false;
+function ajRead() {
+  try { const raw = localStorage.getItem(AJ_KEY); if (raw) return JSON.parse(raw); } catch { /* ignore */ }
+  return _ajMem;
+}
+function ajWrite(v) { _ajMem = v; try { localStorage.setItem(AJ_KEY, JSON.stringify(v)); } catch { /* ignore */ } }
+function ajKey(job) {
+  if (!job || !job.releaseId) return "";
+  const t = job.startedAt ? new Date(job.startedAt).getTime() : 0;
+  // ไม่รวมป้าย (partUnitId) — รอบ 2 / กู้งานหลังรีโหลด ป้ายอาจเปลี่ยน แต่ยังเป็นงานเดิม (release + ขั้นตอน + เวลาเริ่ม)
+  return [job.releaseId, (job.operationIds || []).filter(Boolean).join(","), t].join("|");
+}
+export function reportActiveJob(job) {
+  const key = ajKey(job);
+  const cur = ajRead();
+  if (cur && cur.key === key) { if (!cur.sent) scheduleActiveJobFlush(); return; }
+  // sentKey = สถานะล่าสุดที่เซิร์ฟเวอร์รู้แล้ว → เปลี่ยนไปแล้วเปลี่ยนกลับ (เช่นรีโหลด: ล้าง → กู้งานเดิม) ไม่ต้องส่งซ้ำ
+  const sentKey = cur ? (cur.sent ? cur.key : cur.sentKey) : undefined;
+  const same = sentKey !== undefined && sentKey === key;
+  ajWrite({ key, job: key ? {
+    releaseId: job.releaseId, partUnitId: job.partUnitId || null,
+    operationIds: (job.operationIds || []).filter(Boolean),
+    startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : null,
+  } : null, sent: same, sentKey, ts: Date.now() });
+  if (!same) scheduleActiveJobFlush();
+}
+// หน่วงสั้นๆ รวมการเปลี่ยนที่เกิดติดกัน (เช่นตอนเปิดหน้า: ล้าง → กู้งานค้าง) ให้เหลือคำสั่งเดียว
+function scheduleActiveJobFlush(delay = 400) {
+  clearTimeout(_ajTimer);
+  _ajTimer = setTimeout(() => { flushActiveJob(); }, delay);
+}
+export async function flushActiveJob() {
+  if (_ajMissing) return;
+  if (_ajBusy) { _ajAgain = true; return; }
+  const cur = ajRead();
+  if (!cur || cur.sent) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  const tok = authToken();
+  if (!tok) return;
+  _ajBusy = true;
+  try {
+    const j = cur.job;
+    const { data, error } = await supabase.rpc("station_job_set", j ? {
+      p_token: tok, p_release_id: j.releaseId, p_part_unit_id: j.partUnitId || null,
+      p_operation_ids: j.operationIds && j.operationIds.length ? j.operationIds : null,
+      p_started_at: j.startedAt || null,
+    } : { p_token: tok, p_release_id: null });
+    let done = true;
+    if (error) {
+      if (isMissingFnErr(error)) { _ajMissing = true; console.info("station_job_set ยังไม่มีใน DB (รัน migration-part-machine-status.sql) — ข้ามการแจ้งงานที่กำลังทำ"); }
+      else if (isNetworkErr(error) || isAuthError(error)) done = false;   // เน็ต/ token → ลองใหม่ภายหลัง
+      else console.warn("station_job_set error", error);
+    } else if (data && data.ok === false && data.reason !== "unauthorized") {
+      console.warn("station_job_set rejected", data.reason);
+    } else if (data && data.ok === false) done = false;                     // token หมด → รอล็อกอินใหม่
+    if (done) {
+      const now = ajRead();
+      if (now && now.key === cur.key) ajWrite({ ...now, sent: true, sentKey: cur.key });
+      else { if (now) ajWrite({ ...now, sentKey: cur.key }); _ajAgain = true; }   // ระหว่างส่งมีการเปลี่ยน → ส่งรอบใหม่ (ด้านล่าง)
+    }
+  } catch (e) {
+    console.warn("station_job_set exception", e);
+  } finally {
+    _ajBusy = false;
+    if (_ajAgain) { _ajAgain = false; scheduleActiveJobFlush(50); }
+  }
+}
+// ออกจากระบบ: ล้างงานที่กำลังทำก่อน token หมด (รอไม่เกิน ~2.5 วิ · พลาด = ช่างอื่นสแกน/หมดอายุ 12 ชม. เอง)
+export async function clearActiveJobNow(timeoutMs = 2500) {
+  const cur = ajRead();
+  if (!cur || (!cur.job && cur.sent)) return;   // ไม่เคยแจ้งงาน / ล้างไปแล้ว → ไม่ต้องยิง
+  reportActiveJob(null);
+  clearTimeout(_ajTimer);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < until) {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (_ajMissing) return;
+      const c = ajRead();
+      if (!c || c.sent) return;
+      await Promise.race([flushActiveJob(), sleep(Math.max(0, until - Date.now()))]);
+      const c2 = ajRead();
+      if (!c2 || c2.sent) return;
+      await sleep(150);   // กำลังส่งคำสั่งก่อนหน้าอยู่ / เน็ตสะดุด → รอแล้วลองอีก (ภายในเวลาที่กำหนด)
+    }
+  } catch { /* ignore */ }
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { scheduleActiveJobFlush(1500); });
+  setInterval(() => { const c = ajRead(); if (c && !c.sent && !_ajMissing) flushActiveJob(); }, 20000);
+}
+
+// สถานะเครื่องจักรต่อ Release (หน้า Release → ตาราง Part: ชิปเครื่อง + ตารางเครื่องใต้แถว)
+//   คืน { ok:true, data:{ <release_id>: [ {machine_id, code, name, done, finished, run_seconds, first_at,
+//         last_at, batches, ops:[{name,seq,done}], employees:[...], last_employee, active:{...}|null} ] } }
+//   ยังไม่ได้รัน migration-part-machine-status.sql → { ok:false, reason:"not_installed" }
+export async function getReleaseMachineStatus(releaseIds) {
+  const ids = [...new Set((releaseIds || []).filter(Boolean))];
+  if (ids.length === 0) return { ok: true, data: {} };
+  const out = {};
+  for (let i = 0; i < ids.length; i += 200) {   // แบ่งชุด กัน URL/payload ใหญ่เกิน
+    const { data, error } = await supabase.rpc("release_machine_status", { p_release_ids: ids.slice(i, i + 200) });
+    if (error) {
+      if (isMissingFnErr(error)) return { ok: false, reason: "not_installed" };
+      console.warn("release_machine_status error", error);
+      return { ok: false, reason: "error", message: error.message };
+    }
+    Object.assign(out, data || {});
+  }
+  return { ok: true, data: out };
+}
+
 // สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
 // rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
 // คืน { releasesCreated, partsCreated, unitsCreated }
