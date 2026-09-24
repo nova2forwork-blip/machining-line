@@ -8,6 +8,7 @@ import {
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
   getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate, getReleaseMachineStatus,
+  getMaterials, saveMaterial, upsertMaterials, deleteMaterial, addMaterialsFromRelease, backfillMaterials,
   machineReportSummary, listScanSlow,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -345,9 +346,9 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
   return (
     <th data-colkey={col.key} style={thStyle}
         onClick={col.sortKey ? () => sort.toggle(col.sortKey) : undefined}
-        title={lang === "en"
+        title={col.title || (lang === "en"
           ? (col.sortKey ? "Click to sort · drag ⠿ to move the column" : "Drag ⠿ to move the column") + " · right-click = choose columns"
-          : (col.sortKey ? "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์" : "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์") + " · คลิกขวา = เลือกคอลัมน์"}>
+          : (col.sortKey ? "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์" : "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์") + " · คลิกขวา = เลือกคอลัมน์")}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
         <span onPointerDown={grab} onClick={(e) => e.stopPropagation()} title={lang === "en" ? "Drag to move the column" : "ลากเพื่อย้ายคอลัมน์"}
               style={{ cursor: "grab", opacity: 0.4, touchAction: "none", padding: "0 2px", fontSize: 12, lineHeight: 1, letterSpacing: -2 }}>⠿</span>
@@ -906,6 +907,7 @@ function Login({ onLogin }) {
 const MENU = [
   { group: "ขั้นตอนงาน", items: [
     { key: "projects", label: "โปรเจค", icon: "folder" },
+    { key: "materials", label: "บันทึก Material", en: "Materials", icon: "scale" },
     { key: "release", label: "ปล่อยงาน (Release)", icon: "box" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
     { key: "report", label: "รายงานข้อมูลสแกน", icon: "chart" },
@@ -1128,6 +1130,7 @@ function Shell({ user, onLogout }) {
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "machinereports" && canManage(user) && <MachineReportsPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
+          {tab === "materials" && <MaterialsPage user={user} />}
           {tab === "parts" && <PartsSummaryPage />}
           {tab === "setup" && isAdmin(user) && <SetupPage />}
         </div>
@@ -1204,7 +1207,7 @@ const HEADER_ALIASES = {
   qty: [/qty/i, /q'?ty/i, /จำนวน/i],
   length_mm: [/length/i, /ยาว/i, /ความยาว/i],
   weight_per_m: [/weight\s*\/?\s*m/i, /\bw\/?m\b/i, /น้ำหนัก\s*\/?\s*เมตร/i, /weight\s*per/i],
-  material: [/material/i, /วัสดุ/i, /วัตถุดิบ/i],
+  material: [/material/i, /วัสดุ/i, /วัตถุดิบ/i, /\binv/i],
   remark: [/remark/i, /หมายเหตุ/i],
 };
 function matchHeaderCell(cell) {
@@ -1379,6 +1382,404 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
   );
 }
 
+// ══ บันทึก Material (INV Code) — แยกตามโปรเจค + Center Stock ════════════════════════════
+//   ข้อมูล: materials_list / material_save / materials_upsert_many / material_delete / materials_backfill
+//   ตอนสร้าง Release: Weight/M ที่เว้นว่าง → หา INV ของโปรเจคก่อน → ไม่มี (หรือว่าง) ค่อยใช้ Center Stock
+//   INV ใหม่ที่ไม่มีทั้ง 2 ที่ → บันทึกเข้าโปรเจคหลังสร้าง Release (materials_add_from_release)
+const matKey = (s) => String(s ?? "").trim().toUpperCase();
+// ★ OFF CUT (เศษ) = ไม่บันทึกน้ำหนัก — กรอก Weight/M เองทุกครั้ง (ตรงกับ _mat_is_scrap ใน SQL)
+//   INV ที่ขึ้นต้น OFF CUT / OFFCUT / OFF-CUT (ไม่สนช่องว่าง . - _) หรือมีคำว่า "เศษ"
+const isScrapInv = (s) => { const t = String(s ?? ""); return t.toUpperCase().replace(/[\s._-]+/g, "").startsWith("OFFCUT") || t.includes("เศษ"); };
+const matNum = (v) => (v == null || v === "" ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+// ตัวเลขทศนิยมละเอียดกว่า fmtNum (Weight/M มักมี 3 ตำแหน่ง เช่น 1.845)
+const fmtDec = (n, d = 4) => (n == null || n === "" || !Number.isFinite(Number(n)) ? "" : Number(n).toLocaleString("en-US", { maximumFractionDigits: d }));
+const matBarKg = (m) => { const l = matNum(m.length_mm), w = matNum(m.weight_per_m); return l && w ? (l / 1000) * w : null; };
+const matTotKg = (m) => { const b = matBarKg(m), q = matNum(m.qty); return b != null && q != null ? b * q : null; };
+const matMissing = (m) => [m.weight_per_m == null && !isScrapInv(m.inv_code) ? "wpm" : null, m.length_mm == null ? "len" : null, m.qty == null ? "qty" : null].filter(Boolean);
+// ดัชนีค้นหา INV → { proj, center } จากผล getMaterials
+function buildMatIndex(res) {
+  const byKey = new Map();
+  if (res && res.ok) {
+    for (const m of res.project || []) { const k = matKey(m.inv_code); const e = byKey.get(k) || {}; e.proj = m; byKey.set(k, e); }
+    for (const m of res.center || []) { const k = matKey(m.inv_code); const e = byKey.get(k) || {}; e.center = m; byKey.set(k, e); }
+  }
+  return byKey;
+}
+// Weight/M ของ INV: โปรเจคก่อน · โปรเจคไม่มีค่า/ไม่มี INV → Center Stock
+//   คืน { scope: "project"|"center"|null, wpm, row, inProject, inCenter, scrap }
+//   เศษ (OFF CUT) → wpm = null เสมอ (ไม่เติมอัตโนมัติ · กรอกเอง)
+function matLookup(idx, inv) {
+  const k = matKey(inv);
+  if (!k || !idx) return { scope: null, wpm: null, row: null, inProject: false, inCenter: false, scrap: false };
+  if (isScrapInv(inv)) { const e = idx.get(k) || {}; return { scope: null, wpm: null, row: e.proj || e.center || null, inProject: !!e.proj, inCenter: !!e.center, scrap: true }; }
+  const e = idx.get(k) || {};
+  const pw = e.proj ? matNum(e.proj.weight_per_m) : null;
+  const cw = e.center ? matNum(e.center.weight_per_m) : null;
+  if (pw != null) return { scope: "project", wpm: pw, row: e.proj, inProject: true, inCenter: !!e.center };
+  if (cw != null) return { scope: "center", wpm: cw, row: e.center, inProject: !!e.proj, inCenter: true };
+  return { scope: e.proj ? "project" : e.center ? "center" : null, wpm: null, row: e.proj || e.center || null, inProject: !!e.proj, inCenter: !!e.center };
+}
+const matReasonText = (r, L) => ({
+  duplicate: L("INV นี้มีอยู่แล้วในรายการนี้", "This INV already exists in this list"),
+  bad_inv: L("ต้องกรอก INV Code", "INV Code is required"),
+  bad_number: L("ตัวเลขไม่ถูกต้อง (ติดลบไม่ได้ · จำนวนต้องเป็นจำนวนเต็ม)", "Invalid number (no negatives · qty must be a whole number)"),
+  forbidden: L("ไม่มีสิทธิ์แก้ไข (เฉพาะแอดมิน/ออฟฟิศ)", "No permission (admin/office only)"),
+  unauthorized: L("หมดเวลาเข้าสู่ระบบ — ล็อกอินใหม่", "Session expired — log in again"),
+  not_installed: L("ยังไม่ได้ติดตั้ง — รัน migration-materials.sql ใน Supabase ก่อน", "Not installed — run migration-materials.sql in Supabase first"),
+  not_found: L("ไม่พบรายการนี้ (อาจถูกลบไปแล้ว)", "Not found (maybe deleted)"),
+  no_project: L("ไม่พบโปรเจค", "Project not found"),
+  network: L("เน็ตสะดุด ลองใหม่อีกครั้ง", "Network problem, try again"),
+}[r] || L("บันทึกไม่สำเร็จ", "Save failed") + (r ? ` (${r})` : ""));
+
+// ── แก้ 1 รายการ ──
+function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [f, setF] = useState(() => ({
+    inv: row?.inv_code || "", wpm: row?.weight_per_m ?? "", len: row?.length_mm ?? "", qty: row?.qty ?? "", note: row?.note || "",
+  }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+  const prev = { weight_per_m: isScrapInv(f.inv) ? null : gnum(f.wpm), length_mm: gnum(f.len), qty: gnum(f.qty) };
+  async function save(e) {
+    e && e.preventDefault();
+    if (!f.inv.trim()) { setErr(matReasonText("bad_inv", L)); return; }
+    setBusy(true); setErr("");
+    const r = await saveMaterial({ id: row.id, inv: f.inv, wpm: String(f.wpm ?? "").replace(/,/g, ""), len: String(f.len ?? "").replace(/,/g, ""), qty: String(f.qty ?? "").replace(/,/g, ""), note: f.note });
+    setBusy(false);
+    if (!r || !r.ok) { setErr(matReasonText(r?.reason, L)); return; }
+    auditRecord("material_update", "material", row.id, { inv: f.inv.trim(), scope: scopeLabel, before: { inv: row.inv_code, wpm: row.weight_per_m, len: row.length_mm, qty: row.qty }, after: { wpm: f.wpm, len: f.len, qty: f.qty } });
+    onSaved && onSaved(r.row);
+  }
+  return (
+    <Modal title={L("แก้ไข Material", "Edit material")} sub={scopeLabel} onClose={onClose} locked={busy}>
+      <form onSubmit={save}>
+        <div className="grid-2">
+          <Field label="INV Code *"><Input autoFocus value={f.inv} onChange={set("inv")} /></Field>
+          <Field label={L("น้ำหนักต่อเมตร (กก./ม.)", "Weight/M (kg/m)")}>
+            {isScrapInv(f.inv)
+              ? <Input value="" disabled placeholder={L("เศษ — ไม่บันทึก (กรอกเองตอนสร้าง Release)", "Scrap — not stored (type it when creating a release)")} />
+              : <Input value={f.wpm} onChange={set("wpm")} inputMode="decimal" placeholder="เช่น 1.845" />}
+          </Field>
+          <Field label={L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}><Input value={f.len} onChange={set("len")} inputMode="decimal" placeholder="เช่น 6000" /></Field>
+          <Field label={L("จำนวน (เส้น)", "Qty (bars)")}><Input value={f.qty} onChange={set("qty")} inputMode="numeric" /></Field>
+        </div>
+        <Field label={L("หมายเหตุ", "Note")}><Input value={f.note} onChange={set("note")} /></Field>
+        <div className="mat-preview">
+          {L("น้ำหนัก/เส้น", "Weight/bar")} <b>{matBarKg(prev) != null ? fmtDec(matBarKg(prev), 3) : "-"}</b> {L("กก.", "kg")}
+          <span> · </span>{L("น้ำหนักรวม", "Total")} <b>{matTotKg(prev) != null ? fmtDec(matTotKg(prev), 2) : "-"}</b> {L("กก.", "kg")}
+        </div>
+        {err && <div className="mat-err">{err}</div>}
+        <div className="modal-actions">
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
+          <Btn type="submit" variant="accent" disabled={busy}>{busy ? L("กำลังบันทึก...", "Saving...") : L("บันทึก", "Save")}</Btn>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── เพิ่มหลายรายการ (พิมพ์เอง หรือวางจาก Excel: INV · Weight/M · ความยาว · จำนวน · หมายเหตุ) ──
+const MAT_COLS = ["inv", "wpm", "len", "qty", "note"];
+const MAT_HEADER = { inv: [/inv/i, /material/i, /code/i, /รหัส/i, /วัสดุ/i], wpm: [/weight\s*\/?\s*m/i, /\bw\/?m\b/i, /กก\.?\s*\/\s*ม/i, /น้ำหนัก/i], len: [/length/i, /ยาว/i], qty: [/qty/i, /จำนวน/i], note: [/remark/i, /note/i, /หมายเหตุ/i] };
+const MAT_BLANK = () => ({ id: Math.random().toString(36).slice(2), inv: "", wpm: "", len: "", qty: "", note: "" });
+function MaterialAddModal({ projectId, scopeLabel, index, onClose, onSaved }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [rows, setRows] = useState(() => Array.from({ length: 5 }, MAT_BLANK));
+  const [updateDup, setUpdateDup] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const inScope = (inv) => { const e = index.get(matKey(inv)); return !!(e && (projectId ? e.proj : e.center)); };
+  const setCell = (id, k, v) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [k]: v } : r)));
+  function onPaste(e, rowIndex, colKey) {
+    const text = e.clipboardData.getData("text");
+    if (!text || (!text.includes("\t") && !text.includes("\n"))) return;
+    e.preventDefault();
+    const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim() !== "");
+    let grid = lines.map((l) => l.split("\t").map((c) => c.trim()));
+    let map = null;
+    const hdr = grid[0] ? grid[0].map((c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null) : [];
+    if (hdr.filter(Boolean).length >= 2) { map = hdr; grid = grid.slice(1); }
+    const start = MAT_COLS.indexOf(colKey);
+    setRows((rs) => {
+      const next = [...rs];
+      grid.forEach((cells, i) => {
+        const idx = rowIndex + i;
+        while (next.length <= idx) next.push(MAT_BLANK());
+        const r = { ...next[idx] };
+        if (map) map.forEach((k, j) => { if (k && cells[j] !== undefined) r[k] = cells[j]; });
+        else cells.forEach((c, j) => { const k = MAT_COLS[start + j]; if (k) r[k] = c; });
+        next[idx] = r;
+      });
+      return next;
+    });
+  }
+  const valid = rows.filter((r) => r.inv.trim());
+  const dupCount = valid.filter((r) => inScope(r.inv)).length;
+  async function save() {
+    if (!valid.length) { setErr(L("กรอกอย่างน้อย 1 INV", "Enter at least one INV")); return; }
+    setBusy(true); setErr("");
+    const r = await upsertMaterials(projectId, valid.map((x) => ({ inv: x.inv, wpm: isScrapInv(x.inv) ? "" : x.wpm.replace(/,/g, ""), len: x.len.replace(/,/g, ""), qty: x.qty.replace(/,/g, ""), note: x.note })), updateDup ? "update" : "skip");
+    setBusy(false);
+    if (!r || !r.ok) { setErr(matReasonText(r?.reason, L)); return; }
+    auditRecord("material_add", "material", null, { scope: scopeLabel, added: r.added, updated: r.updated, skipped: (r.skipped || []).length });
+    const skipped = (r.skipped || []);
+    const why = { exists: L("มีแล้ว", "exists"), dup_in_list: L("ซ้ำในรายการ", "repeated"), bad_inv: L("ไม่มี INV", "no INV"), bad_number: L("ตัวเลขผิด", "bad number") };
+    mlsToast(L(`เพิ่ม ${r.added} · อัปเดต ${r.updated}`, `Added ${r.added} · updated ${r.updated}`)
+      + (skipped.length ? L(` · ข้าม ${skipped.length} (${skipped.slice(0, 4).map((s) => `${s.inv || "-"}: ${why[s.reason] || s.reason}`).join(", ")}${skipped.length > 4 ? " …" : ""})`, ` · skipped ${skipped.length} (${skipped.slice(0, 4).map((s) => `${s.inv || "-"}: ${why[s.reason] || s.reason}`).join(", ")}${skipped.length > 4 ? " …" : ""})`) : ""),
+      skipped.length ? "warn" : "success");
+    onSaved && onSaved();
+  }
+  return (
+    <Modal title={L("เพิ่ม Material", "Add materials")} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
+        {L(<>พิมพ์เอง หรือวางจาก Excel (Ctrl+V) — คอลัมน์ <b>INV Code · Weight/M · ความยาว/เส้น · จำนวน · หมายเหตุ</b> (มีหัวตารางก็ได้ ระบบจับจากชื่อหัว) · เว้นว่างได้ กรอกทีหลัง</>,
+           <>Type or paste from Excel (Ctrl+V) — columns <b>INV Code · Weight/M · Length/bar · Qty · Note</b> (a header row is fine, it's matched by name) · blanks can be filled later</>)}
+      </div>
+      <div className="pgrid-wrap" style={{ maxHeight: "44vh" }}>
+        <table className="pgrid" style={{ minWidth: 640 }}>
+          <thead><tr>
+            <th style={{ width: 34 }}>#</th><th style={{ minWidth: 150 }}>INV Code *</th>
+            <th style={{ width: 110 }}>{L("Weight/M (กก./ม.)", "Weight/M (kg/m)")}</th><th style={{ width: 110 }}>{L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}</th>
+            <th style={{ width: 90 }}>{L("จำนวน (เส้น)", "Qty (bars)")}</th><th style={{ width: 96, textAlign: "right" }}>{L("น้ำหนักรวม", "Total kg")}</th>
+            <th style={{ minWidth: 120 }}>{L("หมายเหตุ", "Note")}</th><th style={{ width: 30 }}></th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const dup = r.inv.trim() && inScope(r.inv);
+              const scrap = r.inv.trim() && isScrapInv(r.inv);
+              const tot = matTotKg({ length_mm: gnum(r.len), weight_per_m: scrap ? null : gnum(r.wpm), qty: gnum(r.qty) });
+              return (
+                <tr key={r.id}>
+                  <td className="pgrid-idx">{i + 1}</td>
+                  {["inv", "wpm", "len", "qty"].map((k) => (k === "wpm" && scrap ? (
+                    <td key={k} className="mat-cell-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>
+                      <input value="" disabled placeholder={L("เศษ · ไม่บันทึก", "scrap · not stored")} />
+                    </td>
+                  ) : (
+                    <td key={k} className={k === "inv" && dup ? "mat-cell-dup" : undefined} title={k === "inv" && dup ? L("มีแล้วในรายการนี้ — จะข้าม (หรือติ๊ก \"อัปเดตทับ\")", "Already in this list — skipped (or tick \"update\")") : undefined}>
+                      <input value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => onPaste(e, i, k)} inputMode={k === "inv" ? undefined : "decimal"} />
+                      {k === "inv" && dup ? <span className="pg-tag dup">{L("มีแล้ว", "exists")}</span> : null}
+                    </td>
+                  )))}
+                  <td className="pgrid-ro">{tot != null ? fmtDec(tot, 2) : "-"}</td>
+                  <td><input value={r.note} onChange={(e) => setCell(r.id, "note", e.target.value)} onPaste={(e) => onPaste(e, i, "note")} /></td>
+                  <td className="pgrid-del" onClick={() => setRows((rs) => { const n = rs.filter((x) => x.id !== r.id); return n.length ? n : [MAT_BLANK()]; })} title={L("ลบแถว", "Remove row")}>✕</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="pgrid-foot">
+        <Btn variant="ghost" size="sm" onClick={() => setRows((rs) => [...rs, MAT_BLANK()])}><Icon name="plus" size={14} /> {L("เพิ่มแถว", "Add row")}</Btn>
+        <span>{L("รายการ", "Items")} <b>{valid.length}</b>{dupCount ? <span style={{ color: "var(--warning)" }}> · {L(`มีแล้ว ${dupCount}`, `${dupCount} already exist`)}</span> : null}</span>
+        {dupCount > 0 && (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={updateDup} onChange={(e) => setUpdateDup(e.target.checked)} />
+            {L("INV ที่มีแล้ว: อัปเดตค่าที่กรอก (ช่องว่างไม่ทับ)", "Existing INV: update with what's entered (blanks don't overwrite)")}
+          </label>
+        )}
+      </div>
+      {err && <div className="mat-err">{err}</div>}
+      <div className="modal-actions">
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
+        <Btn type="button" variant="accent" onClick={save} disabled={busy || !valid.length}>{busy ? L("กำลังบันทึก...", "Saving...") : L(`บันทึก (${valid.length})`, `Save (${valid.length})`)}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ── หน้า "บันทึก Material" ──
+function MaterialsPage({ user }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const canEdit = canManage(user);
+  const [projects, setProjects] = useState([]);
+  const [scope, setScope] = useState(() => { try { return localStorage.getItem("mls.mat.scope") === "center" ? "center" : "project"; } catch { return "project"; } });
+  const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem("mls.mat.project") || ""; } catch { return ""; } });
+  const [res, setRes] = useState(null);           // ผล getMaterials
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState("");
+  const [chip, setChip] = useState("all");        // all | incomplete | release
+  const [edit, setEdit] = useState(null);         // row ที่กำลังแก้
+  const [adding, setAdding] = useState(false);
+  const [bf, setBf] = useState(null);             // { count, items } จาก materials_backfill (dry run)
+  const [bfBusy, setBfBusy] = useState(false);
+  const sort = useTableSort("inv", "asc");
+  const colApi = useRef(null);
+  useEffect(() => { listRows("projects", { order: "code" }).then((ps) => setProjects(ps || [])); }, []);
+  useEffect(() => { try { localStorage.setItem("mls.mat.scope", scope); if (projectId) localStorage.setItem("mls.mat.project", projectId); } catch { /* ignore */ } }, [scope, projectId]);
+  // โปรเจคที่จำไว้ถูกลบ/ไม่มี → เลือกตัวแรก
+  useEffect(() => { if (projects.length && (!projectId || !projects.some((p) => p.id === projectId))) setProjectId(projects[0].id); }, [projects, projectId]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const r = await getMaterials(scope === "project" ? (projectId || null) : null);
+    setRes(r); setLoading(false);
+    if (scope === "project" && projectId && canEdit && r.ok) {
+      const b = await backfillMaterials(projectId, true);
+      setBf(b && b.ok ? b : null);
+    } else setBf(null);
+  }, [scope, projectId, canEdit]);
+  useEffect(() => { if (scope === "center" || projectId) load(); }, [load, scope, projectId]);
+
+  const project = projects.find((p) => p.id === projectId);
+  const scopeLabel = scope === "center" ? "Center Stock — " + L("ใช้ได้ทุกโปรเจค", "shared by every project") : (project ? `${L("โปรเจค", "Project")} ${project.code} — ${project.name}` : "");
+  const index = useMemo(() => buildMatIndex(res), [res]);
+  const list = res && res.ok ? (scope === "center" ? res.center : res.project) : [];
+  const counts = (res && res.ok && res.counts) || {};
+  const incomplete = (m) => matMissing(m).length > 0;
+  const fromRel = (m) => m.source === "release" || m.source === "backfill";
+  const qq = q.trim().toLowerCase();
+  const shown = list.filter((m) => (!qq || String(m.inv_code).toLowerCase().includes(qq) || String(m.note || "").toLowerCase().includes(qq))
+    && (chip === "all" || (chip === "incomplete" ? incomplete(m) : fromRel(m))));
+  const totalKg = list.reduce((s, m) => s + (matTotKg(m) || 0), 0);
+  const sortAccessors = {
+    inv: (m) => String(m.inv_code || ""), wpm: (m) => matNum(m.weight_per_m), len: (m) => matNum(m.length_mm), qty: (m) => matNum(m.qty),
+    bar: (m) => matBarKg(m), tot: (m) => matTotKg(m), used: (m) => Number(m.used_parts) || 0, upd: (m) => m.updated_at || "",
+  };
+  const miss = <span className="mat-miss">{L("ยังไม่กรอก", "not set")}</span>;
+  async function del(m) {
+    if (!(await askConfirm({ message: L(`ลบ ${m.inv_code} ออกจาก${scope === "center" ? " Center Stock" : "โปรเจคนี้"}?\n\n(ไม่กระทบ Release/Part ที่ใช้ INV นี้อยู่)`, `Delete ${m.inv_code} from ${scope === "center" ? "Center Stock" : "this project"}?\n\n(Releases/parts using this INV are not affected)`), tone: "danger", confirmText: L("ลบ", "Delete"), cancelText: L("ยกเลิก", "Cancel") }))) return;
+    const r = await deleteMaterial(m.id);
+    if (!r || !r.ok) { mlsToast(matReasonText(r?.reason, L), "error"); return; }
+    auditRecord("material_delete", "material", m.id, { inv: m.inv_code, scope: scopeLabel, wpm: m.weight_per_m, len: m.length_mm, qty: m.qty });
+    mlsToast(L(`ลบ ${m.inv_code} แล้ว`, `Deleted ${m.inv_code}`), "success");
+    load();
+  }
+  async function doBackfill() {
+    if (!bf || !bf.count || bfBusy) return;
+    const sample = (bf.items || []).slice(0, 8).map((x) => `${x.inv}${x.wpm != null ? ` (${fmtDec(x.wpm, 3)} กก./ม.)` : ""}`).join("\n");
+    if (!(await askConfirm({ message: L(`ดึง INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ (${bf.count} รายการ)\n\n${sample}${bf.count > 8 ? "\n…" : ""}\n\nWeight/M คิดจาก น้ำหนัก/ชิ้น ÷ ความยาว ของ Release เดิม (ใส่ให้เฉพาะที่ทุก Release ตรงกัน) · ความยาว/จำนวนเส้น กรอกเองต่อ`,
+      `Add the INV codes this project's parts use but aren't listed yet (${bf.count})\n\n${sample}${bf.count > 8 ? "\n…" : ""}\n\nWeight/M is derived from weight/pc ÷ length of past releases (only when they all agree) · fill length/qty yourself`), confirmText: L("ดึงเข้ารายการ", "Add them"), cancelText: L("ยกเลิก", "Cancel") }))) return;
+    setBfBusy(true);
+    const r = await backfillMaterials(projectId, false);
+    setBfBusy(false);
+    if (!r || !r.ok) { mlsToast(matReasonText(r?.reason, L), "error"); return; }
+    auditRecord("material_backfill", "project", projectId, { added: r.added });
+    mlsToast(L(`เพิ่ม ${r.added} INV จาก Release เดิม`, `Added ${r.added} INV from past releases`), "success");
+    load();
+  }
+  const cols = [
+    { key: "inv", header: "INV Code", sortKey: "inv", lockCol: true, tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => {
+        const e = index.get(matKey(m.inv_code)) || {};
+        return (
+          <span className="mat-inv">
+            <b>{m.inv_code}</b>
+            {m.source === "release" && <span className="mat-src rel" title={L("บันทึกอัตโนมัติตอนสร้าง Release", "added automatically when a release was created")}>{L("จาก Release", "from release")} {m.source_ref || ""}</span>}
+            {m.source === "backfill" && <span className="mat-src rel" title={L("ดึงจาก Release เดิม", "pulled from past releases")}>{L("จาก Release เดิม", "from past releases")}</span>}
+            {scope === "project" && e.center && <span className="mat-src ctr" title={L(`มีใน Center Stock ด้วย (W/M ${fmtDec(e.center.weight_per_m, 4) || "-"}) — ตอนสร้าง Release โปรเจคนี้ใช้ค่าของโปรเจคก่อน`, `Also in Center Stock (W/M ${fmtDec(e.center.weight_per_m, 4) || "-"}) — this project's value is used first`)}>Center</span>}
+          </span>
+        );
+      } },
+    { key: "wpm", header: L("Weight/M (กก./ม.)", "Weight/M (kg/m)"), sortKey: "wpm", align: "right",
+      cell: (m) => (isScrapInv(m.inv_code) ? <span className="mat-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>{L("เศษ · กรอกเอง", "scrap · manual")}</span>
+        : m.weight_per_m != null ? fmtDec(m.weight_per_m, 4) : miss) },
+    { key: "len", header: L("ความยาว/เส้น (มม.)", "Length/bar (mm)"), sortKey: "len", align: "right", cell: (m) => (m.length_mm != null ? fmtDec(m.length_mm, 2) : miss) },
+    { key: "qty", header: L("จำนวน (เส้น)", "Qty (bars)"), sortKey: "qty", align: "right", cell: (m) => (m.qty != null ? fmtDec(m.qty, 0) : miss) },
+    { key: "bar", header: L("น้ำหนัก/เส้น (กก.)", "Weight/bar (kg)"), sortKey: "bar", align: "right", tdStyle: { color: "var(--muted)" }, cell: (m) => (matBarKg(m) != null ? fmtDec(matBarKg(m), 3) : "-") },
+    { key: "tot", header: L("น้ำหนักรวม (กก.)", "Total weight (kg)"), sortKey: "tot", align: "right", tdStyle: { fontWeight: 600 }, cell: (m) => (matTotKg(m) != null ? fmtDec(matTotKg(m), 2) : "-") },
+    { key: "used", header: L("ใช้ใน Part", "Used by parts"), sortKey: "used", align: "right", tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => (Number(m.used_parts) > 0 ? <>{fmtNum(m.used_parts)}{scope === "center" && Number(m.used_projects) > 0 ? <span className="mat-sub"> · {L(`${m.used_projects} โปรเจค`, `${m.used_projects} project(s)`)}</span> : null}</> : <span className="mat-sub">0</span>) },
+    { key: "note", header: L("หมายเหตุ", "Note"), cell: (m) => m.note || "-" },
+    { key: "upd", header: L("อัปเดตล่าสุด", "Updated"), sortKey: "upd", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }, cell: (m) => <>{fmtDT(m.updated_at)}{m.by_name ? <span className="mat-sub"> · {m.by_name}</span> : null}</> },
+    ...(canEdit ? [{ key: "manage", header: L("จัดการ", "Manage"), lockCol: true, tdStyle: { whiteSpace: "nowrap" }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
+      cell: (m) => (
+        <span className="mat-actions">
+          <button type="button" className="mat-link" onClick={() => setEdit(m)}>{L("แก้ไข", "Edit")}</button>
+          <button type="button" className="mat-link danger" onClick={() => del(m)}>{L("ลบ", "Delete")}</button>
+        </span>
+      ) }] : []),
+  ];
+  const notInstalled = res && !res.ok && res.reason === "not_installed";
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">{L("บันทึก Material", "Materials")}</div>
+          <div className="page-sub">{L("INV Code · น้ำหนักต่อเมตร · ความยาวต่อเส้น · จำนวนเส้น — แยกตามโปรเจค และ Center Stock (INV ที่ใช้ได้ทุกโปรเจค)",
+            "INV code · weight per metre · bar length · number of bars — per project, plus Center Stock (INV shared by every project)")}</div>
+        </div>
+        {canEdit && !notInstalled && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {scope === "project" && bf && bf.count > 0 && (
+              <Btn variant="ghost" onClick={doBackfill} disabled={bfBusy} title={L("INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ", "INV codes used by this project's parts that aren't listed yet")}>
+                <Icon name="refresh" size={14} /> {L(`ดึง INV จาก Release เดิม (${bf.count})`, `Add INV from past releases (${bf.count})`)}
+              </Btn>
+            )}
+            <Btn variant="accent" onClick={() => setAdding(true)} disabled={scope === "project" && !projectId}>
+              <Icon name="plus" size={15} /> {L("เพิ่ม Material", "Add material")}
+            </Btn>
+          </div>
+        )}
+      </div>
+
+      <div className="mat-scopebar">
+        <div className="mat-seg" role="tablist">
+          <button type="button" role="tab" aria-selected={scope === "project"} className={scope === "project" ? "on" : ""} onClick={() => setScope("project")}>
+            <Icon name="folder" size={14} /> {L("ตามโปรเจค", "By project")}
+          </button>
+          <button type="button" role="tab" aria-selected={scope === "center"} className={scope === "center" ? "on" : ""} onClick={() => setScope("center")}>
+            <Icon name="box" size={14} /> Center Stock{counts.center ? <b>{counts.center}</b> : null}
+          </button>
+        </div>
+        {scope === "project" && (
+          <select className="select mat-projsel" value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label={L("โปรเจค", "Project")}>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}{counts[p.id] ? ` (${counts[p.id]})` : ""}</option>)}
+          </select>
+        )}
+        <div className="mat-search">
+          <Icon name="search" size={14} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา INV / หมายเหตุ", "Search INV / note")} />
+        </div>
+      </div>
+      <div className="mat-hint">
+        {scope === "center"
+          ? L("Center Stock = INV ที่ใช้ได้ทุกโปรเจค (กรอกเอง) · ตอนสร้าง Release ถ้าโปรเจคไม่มี INV นั้น (หรือไม่มี Weight/M) จะใช้ค่าจากที่นี่",
+              "Center Stock = INV shared by every project (entered here) · when a release is created, this is used if the project doesn't list the INV (or has no Weight/M)")
+          : L("ตอนสร้าง Release: Weight/M ที่เว้นว่างจะเติมจาก INV ของโปรเจคก่อน ไม่มีค่อยใช้ Center Stock · INV ใหม่ที่ยังไม่มีทั้ง 2 ที่ จะถูกบันทึกเข้าโปรเจคให้อัตโนมัติ — มากรอกความยาว/จำนวนต่อที่นี่ · OFF CUT (เศษ) ไม่บันทึกน้ำหนัก กรอกเองตอนสร้าง Release",
+              "When a release is created: an empty Weight/M is filled from this project's INV first, then Center Stock · a new INV found in neither is added to the project automatically — fill in length/qty here · OFF CUT (scrap) has no stored weight — type it when creating a release")}
+      </div>
+
+      <Card>
+        {notInstalled ? (
+          <div className="mat-empty">{matReasonText("not_installed", L)}</div>
+        ) : (
+          <>
+            <div className="mat-kpis">
+              <span>{L("รายการ", "Items")} <b>{fmtNum(list.length)}</b></span>
+              <span>{L("น้ำหนักรวมในสต็อก", "Stock weight")} <b>{fmtDec(totalKg, 2) || 0}</b> {L("กก.", "kg")}</span>
+              <span className="mat-chips">
+                {[["all", L("ทั้งหมด", "All"), list.length], ["incomplete", L("ยังกรอกไม่ครบ", "Incomplete"), list.filter(incomplete).length], ["release", L("มาจาก Release", "From releases"), list.filter(fromRel).length]].map(([k, lab, n]) => (
+                  <button key={k} type="button" className={"mat-chip" + (chip === k ? " on" : "") + (k === "incomplete" && n ? " warn" : "")} onClick={() => setChip(k)} aria-pressed={chip === k}>
+                    {lab} <b>{n}</b>
+                  </button>
+                ))}
+              </span>
+              <span style={{ marginLeft: "auto" }}>
+                <Btn variant="ghost" size="sm" onClick={() => colApi.current && colApi.current.resetAll()}>↺ {L("คอลัมน์", "Columns")}</Btn>
+              </span>
+            </div>
+            {res && !res.ok && !notInstalled && <div className="mat-err">{matReasonText(res.reason, L)} · <button type="button" className="mat-link" onClick={load}>{L("ลองใหม่", "retry")}</button></div>}
+            <DataTable id="materials-list" columns={cols} rows={shown} rowKey={(m) => m.id} sort={sort} sortAccessors={sortAccessors} orderApiRef={colApi}
+              wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+              rowProps={(m) => ({ className: "mat-row" + (incomplete(m) ? " incomplete" : ""), onDoubleClick: canEdit ? () => setEdit(m) : undefined })}
+              empty={loading ? L("กำลังโหลด...", "Loading...")
+                : list.length === 0 ? (scope === "center" ? L("ยังไม่มี INV ใน Center Stock — กด \"เพิ่ม Material\"", "No INV in Center Stock yet — press \"Add material\"") : L("ยังไม่มี INV ในโปรเจคนี้ — กด \"เพิ่ม Material\" หรือสร้าง Release แล้วระบบจะบันทึกให้", "No INV in this project yet — press \"Add material\" or create a release and they'll be added"))
+                : L("ไม่พบรายการที่ตรงกับตัวกรอง", "No items match the filter")} />
+          </>
+        )}
+      </Card>
+
+      {edit && <MaterialEditModal row={edit} scopeLabel={scopeLabel} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); mlsToast(L("บันทึกแล้ว", "Saved"), "success"); load(); }} />}
+      {adding && <MaterialAddModal projectId={scope === "center" ? null : projectId} scopeLabel={scopeLabel} index={index} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
+    </div>
+  );
+}
+
 // ─── เพิ่ม Release (ป็อปอัป) — กรอกหัวเอกสาร + วางข้อมูล Part จาก Excel ได้เลย ──
 // หัวเอกสาร: Release Order (P-xxx), วันที่, โปรเจค
 // ตาราง Part: วาง (paste) จาก Excel ได้ทั้งบล็อก — คอลัมน์ตรงตามฟอร์ม Production
@@ -1386,7 +1787,15 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
 // แต่ละแถว = 1 release + สร้าง QR ต่อชิ้นให้ครบตาม Qty (เหมือนการนำเข้า Excel)
 const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", rev: "", qty: "", length_mm: "", weight_per_m: "", material: "", remark: "", routing: [] });
 
+// คอลัมน์ตาราง "เพิ่ม Release" — ลากสลับตำแหน่งได้ (จำต่อบัญชี) · วางจาก Excel แบบไม่มีหัวตาราง = เรียงตามลำดับบนจอ
+//   paste: ฟิลด์ที่รับค่า · "__skip__" = คอลัมน์ที่ระบบคำนวณเอง (รับค่าที่วางมาแล้วทิ้ง)
+//   ค่าเริ่มต้นเรียงตามฟอร์ม Excel จริง (Part No., Qty, Length, Weight/M, Material, Total Kg, Remark) → วางแบบเดิมได้ผลเหมือนเดิม
+const RELEASE_GRID_COLS = ["code", "qty", "length_mm", "weight_per_m", "material", "tkg", "remark", "rev", "wpcs"];
+const RELEASE_GRID_PASTE = { code: "code", qty: "qty", length_mm: "length_mm", weight_per_m: "weight_per_m", material: "material", tkg: "__skip__", remark: "remark", rev: "rev", wpcs: "__skip__" };
+
 function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
   const [modify, setModify] = useState("");   // Modify Release (เช่น M-001) — ระดับทั้งใบ
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
@@ -1428,6 +1837,41 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     return () => window.removeEventListener("keydown", onKeydown);
   }, [busy]);
 
+  // ── บันทึก Material ของโปรเจค (+ Center Stock) → เติม Weight/M ที่เว้นว่าง + รู้ว่า INV ไหนใหม่ ──
+  const [mat, setMat] = useState({ state: "idle", res: null });   // idle | loading | ok | not_installed | error
+  useEffect(() => {
+    if (!projectId) { setMat({ state: "idle", res: null }); return undefined; }
+    let alive = true;
+    setMat((m) => ({ state: "loading", res: m.res }));
+    getMaterials(projectId).then((r) => {
+      if (alive) setMat({ state: r && r.ok ? "ok" : (r && r.reason === "not_installed" ? "not_installed" : "error"), res: r && r.ok ? r : null });
+    }).catch(() => { if (alive) setMat({ state: "error", res: null }); });
+    return () => { alive = false; };
+  }, [projectId]);
+  const matIdx = useMemo(() => buildMatIndex(mat.res), [mat.res]);
+  // Weight/M ของแถว: กรอกเอง = ใช้ค่าที่กรอก (ต่างจากที่บันทึกไว้ = เตือน) · ว่าง = เติมจาก INV (โปรเจค → Center Stock)
+  function wpmInfo(r) {
+    const lk = matLookup(matIdx, r.material);
+    const typed = gnum(r.weight_per_m);
+    if (lk.scrap) return { eff: typed, auto: false, warn: false, lk, scrap: true, need: typed == null };   // ★ เศษ: กรอกเองเสมอ
+    if (typed != null) return { eff: typed, auto: false, warn: lk.wpm != null && Math.abs(lk.wpm - typed) > 1e-9, lk };
+    return { eff: lk.wpm, auto: lk.wpm != null, warn: false, lk };
+  }
+  const effRow = (r) => { const w = wpmInfo(r); return w.auto ? { ...r, weight_per_m: String(w.eff) } : r; };
+  const invState = (r) => {           // scrap | proj | center | new | null
+    if (!String(r.material || "").trim()) return null;
+    if (isScrapInv(r.material)) return "scrap";
+    if (mat.state !== "ok") return null;
+    const lk = matLookup(matIdx, r.material);
+    return lk.inProject ? "proj" : lk.inCenter ? "center" : "new";
+  };
+
+  // ── ลำดับคอลัมน์ (ลากสลับได้ · จำต่อบัญชี · แอดมิน = ค่ากลาง) ──
+  const { order: colOrder, move: moveCol, reset: resetCols, drag, setDrag } = useColOrder("release-add-grid", RELEASE_GRID_COLS);
+  const gridCols = colOrder.filter((k) => RELEASE_GRID_PASTE[k]);
+  const pasteOrder = gridCols.map((k) => RELEASE_GRID_PASTE[k]);
+  const colDefault = gridCols.join("|") === RELEASE_GRID_COLS.join("|");
+
   function setCell(rowId, key, value) {
     setRowsU((rs) => rs.map((r) => (r.id === rowId ? { ...r, [key]: value } : r)));
   }
@@ -1440,7 +1884,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   }
 
   // วางข้อมูลจาก Excel:
-  //  - หลายคอลัมน์ (มี tab) → เติมทั้งแถวตามลำดับคอลัมน์ เริ่มจากแถวที่โฟกัส
+  //  - มีหัวตาราง → จับคอลัมน์จากชื่อหัว (ไม่สนลำดับ)
+  //  - หลายคอลัมน์ ไม่มีหัว → เติมตาม "ลำดับคอลัมน์บนจอ" เริ่มจากคอลัมน์ที่คลิก (ตัดเลข No. นำหน้าให้ถ้าวางที่ Part No.)
   //  - คอลัมน์เดียว (มีแต่ขึ้นบรรทัดใหม่) → เติมลงคอลัมน์ที่โฟกัสไล่ลงไป
   function handlePaste(e, rowIndex, colKey) {
     if (!projectId) {
@@ -1458,12 +1903,25 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       const ensure = (idx) => { while (next.length <= idx) next.push(BLANK_ROW()); };
 
       if (isMultiCol) {
-        const parsed = parsePastedRows(text);
-        parsed.forEach((data, i) => {
-          const idx = rowIndex + i;
-          ensure(idx);
-          next[idx] = { ...next[idx], ...data };
-        });
+        const lines = String(text).replace(/\r/g, "").split("\n");
+        while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+        const grid = lines.map((l) => l.split("\t")).filter((cells) => cells.some((c) => String(c).trim() !== ""));
+        if (grid.length && looksLikeHeader(grid[0])) {
+          parsePastedRows(text).forEach((data, i) => { const idx = rowIndex + i; ensure(idx); next[idx] = { ...next[idx], ...data }; });
+        } else {
+          const start = Math.max(0, gridCols.indexOf(colKey));
+          grid.forEach((cells, i) => {
+            let cs = cells;
+            // เลขลำดับ (No.) นำหน้า: วางที่ Part No. + ช่องแรกเป็นเลขล้วน + ช่องถัดไปไม่ใช่ตัวเลข (= เบอร์พาร์ท) → ตัดทิ้ง
+            if (gridCols[start] === "code" && cs.length > 1 && /^\d+$/.test(String(cs[0]).trim())
+                && String(cs[1]).trim() && !/^[\d.,\s]+$/.test(String(cs[1]).trim())) cs = cs.slice(1);
+            const data = {};
+            cs.forEach((v, j) => { const f = pasteOrder[start + j]; if (f && f !== "__skip__") data[f] = String(v).trim(); });
+            const idx = rowIndex + i;
+            ensure(idx);
+            next[idx] = { ...next[idx], ...data };
+          });
+        }
       } else {
         const values = text.replace(/\r/g, "").split("\n");
         while (values.length && values[values.length - 1].trim() === "") values.pop();
@@ -1481,8 +1939,13 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const qtyOf = (r) => gnum(r.qty) || 1;                       // เว้นว่าง = 1 อัตโนมัติ
   const validRows = rows.filter((r) => r.code.trim());         // ขอแค่มีรหัส Code (จำนวนไม่บังคับ)
   const totalQty = validRows.reduce((s, r) => s + qtyOf(r), 0);
-  const totalKg = validRows.reduce((s, r) => s + (qtyOf(r) * (rowWeightPcs(r) || 0)), 0);
+  const totalKg = validRows.reduce((s, r) => s + (qtyOf(r) * (rowWeightPcs(effRow(r)) || 0)), 0);
   const partsInProject = parts.filter((p) => p.project_id === projectId);
+  const autoCount = validRows.filter((r) => wpmInfo(r).auto).length;
+  const warnRows = validRows.filter((r) => wpmInfo(r).warn);
+  const newInvs = [...new Map(validRows.filter((r) => invState(r) === "new").map((r) => [matKey(r.material), r.material.trim()])).values()];
+  const scrapRows = validRows.filter((r) => invState(r) === "scrap");
+  const scrapNeed = scrapRows.filter((r) => gnum(r.weight_per_m) == null);
 
   // Part เดิมในโปรเจคนี้ (ถ้ามี) — ใช้ตัดสินว่าแถวนี้เป็น Part ใหม่หรือของเดิม
   function existingPartFor(row) {
@@ -1525,7 +1988,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       const rows = validRows.map((r) => ({
         code: r.code.trim(),
         qty: qtyOf(r),                    // เว้นว่าง = 1
-        unit_weight: rowWeightPcs(r),
+        unit_weight: rowWeightPcs(effRow(r)),   // ★ Weight/M ว่าง = เติมจากบันทึก Material (โปรเจค → Center Stock)
         length_mm: gnum(r.length_mm),
         material: r.material?.trim() || null,
         remark: r.remark?.trim() || null,
@@ -1553,12 +2016,88 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
           });
         } catch (_) { /* คอลัมน์อาจยังไม่มี — ไม่ให้ล้มทั้งใบ */ }
       }
+      // ★ INV ที่ยังไม่มี (ทั้งในโปรเจคและ Center Stock) → บันทึกเข้า Material ของโปรเจคนี้ (พลาดไม่กระทบ Release ที่บันทึกแล้ว)
+      if (mat.state !== "not_installed") {
+        try {
+          const mr = await addMaterialsFromRelease(projectId, ro, validRows.filter((r) => !isScrapInv(r.material)).map((r) => ({ inv: r.material, wpm: gnum(r.weight_per_m) })));   // ★ เศษไม่บันทึก
+          if (mr && mr.ok && ((mr.added || []).length || (mr.filled || []).length)) {
+            const a = mr.added || [], f = mr.filled || [];
+            mlsToast(L(`บันทึก Material ของโปรเจค: INV ใหม่ ${a.length}${a.length ? ` (${a.slice(0, 4).join(", ")}${a.length > 4 ? " …" : ""})` : ""}${f.length ? ` · เติม Weight/M ${f.length}` : ""} — ไปกรอกความยาว/จำนวนได้ที่เมนู "บันทึก Material"`,
+              `Project materials: ${a.length} new INV${a.length ? ` (${a.slice(0, 4).join(", ")}${a.length > 4 ? " …" : ""})` : ""}${f.length ? ` · ${f.length} Weight/M filled` : ""} — fill length/qty in "Materials"`), "success");
+          } else if (mr && !mr.ok && mr.reason !== "not_installed") {
+            mlsToast(L("บันทึก INV ใหม่เข้า Material ไม่สำเร็จ (Release บันทึกแล้ว) — เพิ่มเองได้ที่เมนู \"บันทึก Material\"", "Couldn't add the new INV to Materials (the release is saved) — add them in \"Materials\""), "warn");
+          }
+        } catch (_) { /* ignore */ }
+      }
       onSaved({ releaseOrder: ro, ...res });
     } catch (e2) {
       setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ถ้าเน็ตหลุดหลังกดบันทึก อาจบันทึกไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนกดซ้ำ (กันซ้ำ)");
     }
     setBusy(false); setProgress("");
   }
+
+  // ── หัวคอลัมน์ + เซลล์ต่อคอลัมน์ ──
+  const dragTip = L("ลากที่จับ ⠿ เพื่อย้ายคอลัมน์ — วางจาก Excel (ไม่มีหัวตาราง) จะเรียงตามลำดับนี้", "Drag ⠿ to move the column — pasting from Excel (no header row) follows this order");
+  const COLDEF = {
+    code: { header: "Part No. *", thStyle: { minWidth: 130 } },
+    qty: { header: L("จำนวน", "Qty"), thStyle: { width: 78 } },
+    length_mm: { header: L("Length (มม.)", "Length (mm)"), thStyle: { width: 90 } },
+    weight_per_m: { header: "Weight/M", thStyle: { width: 96 } },
+    material: { header: L("Material (INV)", "Material (INV)"), thStyle: { minWidth: 170 } },
+    tkg: { header: "Total Kg", thStyle: { width: 92, textAlign: "right" } },
+    remark: { header: "Remark", thStyle: { minWidth: 90 } },
+    rev: { header: "REV.", thStyle: { width: 64 } },
+    wpcs: { header: L("น้ำหนัก/ชิ้น", "Weight/pc"), thStyle: { width: 92, textAlign: "right" } },
+  };
+  const inp = (r, i, k, extra = {}) => (
+    <input value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => handlePaste(e, i, k)} {...extra} />
+  );
+  function cellFor(k, r, i) {
+    if (k === "code") return <td key={k}>{inp(r, i, "code", { placeholder: "AN04-001-01" })}</td>;
+    if (k === "qty") return <td key={k}>{inp(r, i, "qty", { inputMode: "numeric" })}</td>;
+    if (k === "length_mm") return <td key={k}>{inp(r, i, "length_mm", { inputMode: "decimal" })}</td>;
+    if (k === "rev") return <td key={k}>{inp(r, i, "rev", { placeholder: "0" })}</td>;
+    if (k === "remark") return <td key={k}>{inp(r, i, "remark")}</td>;
+    if (k === "weight_per_m") {
+      const w = wpmInfo(r);
+      const src = w.lk.scope === "center" ? "Center Stock" : L("โปรเจคนี้", "this project");
+      const tip = w.scrap ? L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองทุกครั้ง", "Scrap (OFF CUT) — weight isn't stored · type Weight/M every time")
+        : w.auto ? L(`เติมอัตโนมัติจาก ${w.lk.row?.inv_code || r.material} (${src}) — พิมพ์ทับได้`, `Auto-filled from ${w.lk.row?.inv_code || r.material} (${src}) — type to override`)
+        : w.warn ? L(`ไม่ตรงกับที่บันทึกไว้ของ ${w.lk.row?.inv_code || r.material}: ${fmtDec(w.lk.wpm, 4)} (${src}) — ใช้ค่าในแถวนี้`, `Differs from the saved value of ${w.lk.row?.inv_code || r.material}: ${fmtDec(w.lk.wpm, 4)} (${src}) — this row's value is used`) : undefined;
+      return (
+        <td key={k} className={"pg-wpm" + (w.auto ? " auto" : "") + (w.warn ? " warn" : "") + (w.scrap && w.need ? " need" : "")} title={tip}>
+          {inp(r, i, "weight_per_m", { inputMode: "decimal", placeholder: w.auto ? fmtDec(w.eff, 4) : w.scrap && w.need ? L("กรอกเอง", "type it") : "" })}
+          {w.auto || w.warn ? <span className="pg-corner" aria-hidden="true" /> : null}
+        </td>
+      );
+    }
+    if (k === "material") {
+      const st = invState(r);
+      const lk = st ? matLookup(matIdx, r.material) : null;
+      const tip = st === "scrap" ? L("เศษ (OFF CUT) — ไม่บันทึกเข้า Material · กรอก Weight/M เอง", "Scrap (OFF CUT) — not added to Materials · type Weight/M yourself")
+        : st === "proj" ? L(`มีในบันทึก Material ของโปรเจคนี้${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · ยังไม่มี W/M"}`, `In this project's materials${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · no W/M yet"}`)
+        : st === "center" ? L(`มีใน Center Stock${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`, `In Center Stock${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`)
+        : st === "new" ? L("INV ใหม่ — จะบันทึกเข้า Material ของโปรเจคนี้หลังบันทึก Release", "New INV — will be added to this project's materials when the release is saved") : undefined;
+      return (
+        <td key={k} className={st ? "pg-inv has-tag" : undefined} title={tip}>
+          {inp(r, i, "material", { list: "mls-inv-dl", autoComplete: "off" })}
+          {st === "scrap" ? <span className="pg-tag scrap">{L("เศษ", "scrap")}</span> : st === "proj" ? <span className="pg-tag proj">✓</span> : st === "center" ? <span className="pg-tag ctr">Center</span> : st === "new" ? <span className="pg-tag new">{L("ใหม่", "new")}</span> : null}
+        </td>
+      );
+    }
+    if (k === "wpcs") { const v = rowWeightPcs(effRow(r)); return <td key={k} className="pgrid-ro">{v != null ? fmtNum(v) : "-"}</td>; }
+    if (k === "tkg") { const v = rowTotalKg(effRow(r)); return <td key={k} className="pgrid-ro">{v != null ? fmtNum(v) : "-"}</td>; }
+    return <td key={k} />;
+  }
+  const dlOptions = useMemo(() => {
+    const out = [];
+    for (const [, e] of matIdx) {
+      const m = e.proj || e.center;
+      const w = matLookup(matIdx, m.inv_code).wpm;
+      out.push({ v: m.inv_code, label: `${e.proj ? L("โปรเจค", "project") : "Center"}${w != null ? ` · ${fmtDec(w, 4)} ${L("กก./ม.", "kg/m")}` : ""}` });
+    }
+    return out;
+  }, [matIdx, lang]);
 
   return (
     <Modal
@@ -1615,11 +2154,29 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       {busy && progress && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{progress}</div>}
+      {projectId && (mat.state === "ok" || mat.state === "not_installed") && (autoCount > 0 || warnRows.length > 0 || newInvs.length > 0 || scrapRows.length > 0 || mat.state === "not_installed") && (
+        <div className="pg-matbar">
+          {mat.state === "not_installed" ? (
+            <span className="pg-mb muted">{L("ยังไม่ได้ติดตั้ง \"บันทึก Material\" (รัน migration-materials.sql) — Weight/M ไม่เติมอัตโนมัติ", "\"Materials\" isn't installed (run migration-materials.sql) — Weight/M isn't auto-filled")}</span>
+          ) : (
+            <>
+              {autoCount > 0 && <span className="pg-mb auto">{L(`Weight/M เติมอัตโนมัติ ${autoCount} แถว`, `Weight/M auto-filled on ${autoCount} row(s)`)}</span>}
+              {warnRows.length > 0 && <span className="pg-mb warn" title={warnRows.slice(0, 8).map((r) => `${r.code}: ${r.weight_per_m} ≠ ${fmtDec(wpmInfo(r).lk.wpm, 4)} (${r.material})`).join("\n")}>{L(`Weight/M ไม่ตรงกับที่บันทึกไว้ ${warnRows.length} แถว — ใช้ค่าในแถว`, `Weight/M differs from the saved value on ${warnRows.length} row(s) — the row's value is used`)}</span>}
+              {scrapRows.length > 0 && <span className={"pg-mb " + (scrapNeed.length ? "warn" : "muted")} title={scrapNeed.map((r) => r.code).join(", ") || undefined}>
+                {scrapNeed.length ? L(`OFF CUT (เศษ) ${scrapRows.length} แถว — ยังไม่กรอก Weight/M ${scrapNeed.length} แถว (กรอกเอง ไม่บันทึกเข้า Material)`, `OFF CUT (scrap) ${scrapRows.length} row(s) — ${scrapNeed.length} without Weight/M (type it · not stored in Materials)`)
+                  : L(`OFF CUT (เศษ) ${scrapRows.length} แถว — กรอก Weight/M เอง ไม่บันทึกเข้า Material`, `OFF CUT (scrap) ${scrapRows.length} row(s) — Weight/M typed · not stored in Materials`)}
+              </span>}
+              {newInvs.length > 0 && <span className="pg-mb new" title={newInvs.join(", ")}>{L(`INV ใหม่ ${newInvs.length} รายการ — จะบันทึกเข้า Material ของโปรเจคนี้`, `${newInvs.length} new INV — will be added to this project's materials`)}</span>}
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
-        วางจาก Excel ได้ทั้งบล็อก — คอลัมน์: <b>Part No. · จำนวน · Length · Weight/M · Material · Total Kg · Remark</b>{" "}
-        (คอลัมน์ No. และ Total Kg ระบบจัดการ/คำนวณให้เอง) · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M
-        <br />จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ (ไม่ต้องตั้ง Routing ต่อ Part แล้ว)
+        {L(<>วางจาก Excel ได้ทั้งบล็อก — <b>เรียงตามคอลัมน์บนจอ</b> เริ่มจากช่องที่คลิก (ลากหัวคอลัมน์ ⠿ ให้ตรงกับไฟล์ Excel ได้ · มีหัวตาราง = จับจากชื่อหัว) · คอลัมน์ที่ระบบคำนวณ (Total Kg · น้ำหนัก/ชิ้น) ข้ามค่าที่วางมา · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M</>,
+           <>Paste a whole block from Excel — <b>it follows the column order on screen</b>, starting at the clicked cell (drag ⠿ headers to match your Excel file · with a header row, columns are matched by name) · calculated columns (Total Kg · Weight/pc) ignore pasted values · Weight/pc = (Length ÷ 1000) × Weight/M</>)}
+        <br />{L(<>Weight/M เว้นว่าง = เติมจาก <b>บันทึก Material</b> ตาม INV (โปรเจคนี้ก่อน → Center Stock) · <b>OFF CUT (เศษ) กรอก Weight/M เอง</b> ไม่เติม/ไม่บันทึก · จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ</>,
+           <>Empty Weight/M = filled from <b>Materials</b> by INV (this project first → Center Stock) · <b>OFF CUT (scrap): type Weight/M yourself</b> — never filled or stored · empty Qty = 1 · steps depend on the machine that does the work</>)}
       </div>
 
       {!projectId && (
@@ -1635,40 +2192,23 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
           <thead>
             <tr>
               <th style={{ width: 34 }}>#</th>
-              <th style={{ minWidth: 130 }}>Part No. *</th>
-              <th style={{ width: 64 }}>REV.</th>
-              <th style={{ width: 78 }}>จำนวน</th>
-              <th style={{ width: 90 }}>Length (มม.)</th>
-              <th style={{ width: 90 }}>Weight/M</th>
-              <th style={{ minWidth: 110 }}>Material</th>
-              <th style={{ width: 92, textAlign: "right" }}>น้ำหนัก/ชิ้น</th>
-              <th style={{ width: 92, textAlign: "right" }}>Total Kg</th>
-              <th style={{ minWidth: 110 }}>Remark</th>
+              {gridCols.map((k) => <ReorderTh key={k} col={{ key: k, header: COLDEF[k].header, thStyle: COLDEF[k].thStyle, title: dragTip }} drag={drag} setDrag={setDrag} onMove={moveCol} />)}
               <th style={{ width: 30 }}></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => {
-              const wpcs = rowWeightPcs(r);
-              const tkg = rowTotalKg(r);
-              return (
-                <tr key={r.id}>
-                  <td className="pgrid-idx">{i + 1}</td>
-                  <td><input value={r.code} onChange={(e) => setCell(r.id, "code", e.target.value)} onPaste={(e) => handlePaste(e, i, "code")} placeholder="AN04-001-01" /></td>
-                  <td><input value={r.rev} onChange={(e) => setCell(r.id, "rev", e.target.value)} onPaste={(e) => handlePaste(e, i, "rev")} placeholder="0" /></td>
-                  <td><input value={r.qty} onChange={(e) => setCell(r.id, "qty", e.target.value)} onPaste={(e) => handlePaste(e, i, "qty")} inputMode="numeric" /></td>
-                  <td><input value={r.length_mm} onChange={(e) => setCell(r.id, "length_mm", e.target.value)} onPaste={(e) => handlePaste(e, i, "length_mm")} inputMode="decimal" /></td>
-                  <td><input value={r.weight_per_m} onChange={(e) => setCell(r.id, "weight_per_m", e.target.value)} onPaste={(e) => handlePaste(e, i, "weight_per_m")} inputMode="decimal" /></td>
-                  <td><input value={r.material} onChange={(e) => setCell(r.id, "material", e.target.value)} onPaste={(e) => handlePaste(e, i, "material")} /></td>
-                  <td className="pgrid-ro">{wpcs != null ? fmtNum(wpcs) : "-"}</td>
-                  <td className="pgrid-ro">{tkg != null ? fmtNum(tkg) : "-"}</td>
-                  <td><input value={r.remark} onChange={(e) => setCell(r.id, "remark", e.target.value)} onPaste={(e) => handlePaste(e, i, "remark")} /></td>
-                  <td className="pgrid-del" onClick={() => removeRow(r.id)} title="ลบแถว">✕</td>
-                </tr>
-              );
-            })}
+            {rows.map((r, i) => (
+              <tr key={r.id}>
+                <td className="pgrid-idx">{i + 1}</td>
+                {gridCols.map((k) => cellFor(k, r, i))}
+                <td className="pgrid-del" onClick={() => removeRow(r.id)} title="ลบแถว">✕</td>
+              </tr>
+            ))}
           </tbody>
         </table>
+        <datalist id="mls-inv-dl">
+          {dlOptions.map((o) => <option key={o.v} value={o.v} label={o.label} />)}
+        </datalist>
       </div>
 
       <div className="pgrid-foot">
@@ -1684,6 +2224,11 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
           {makeQr ? "เปิดสร้าง QR — จะได้ป้ายทุกชิ้นอัตโนมัติ" : "ปิดสร้าง QR — บันทึกแค่ยอด Release"}
         </span>
+        {!colDefault && (
+          <Btn variant="ghost" size="sm" onClick={resetCols} title={L("คืนลำดับคอลัมน์เริ่มต้น (ตามฟอร์ม Excel: Part No., จำนวน, Length, Weight/M, Material, Total Kg, Remark)", "Reset the column order (Excel form: Part No., Qty, Length, Weight/M, Material, Total Kg, Remark)")}>
+            ↺ {L("ลำดับคอลัมน์", "Column order")}
+          </Btn>
+        )}
         <Btn variant="ghost" size="sm" style={{ marginLeft: "auto" }}
           onClick={() => rowsScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px" }}><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -1725,11 +2270,34 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
     }
   }
 
+  // ★ บันทึก Material: น้ำหนัก/ชิ้นว่างในไฟล์ → คิดจาก Weight/M ของ INV (โปรเจค → Center Stock) · INV ใหม่ → บันทึกเข้าโปรเจคหลังนำเข้า
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [mat, setMat] = useState({ state: "idle", res: null });
+  useEffect(() => {
+    if (!projectId) { setMat({ state: "idle", res: null }); return undefined; }
+    let alive = true;
+    getMaterials(projectId).then((r) => { if (alive) setMat({ state: r && r.ok ? "ok" : (r && r.reason === "not_installed" ? "not_installed" : "error"), res: r && r.ok ? r : null }); })
+      .catch(() => { if (alive) setMat({ state: "error", res: null }); });
+    return () => { alive = false; };
+  }, [projectId]);
+  const matIdx = useMemo(() => buildMatIndex(mat.res), [mat.res]);
   const partsInProject = parts.filter((p) => p.project_id === projectId);
-  const rowsPreview = (parsed?.items || []).map((it) => ({
-    ...it,
-    existingPart: partsInProject.find((p) => p.part_no.trim().toLowerCase() === it.code.trim().toLowerCase()),
-  }));
+  const rowsPreview = (parsed?.items || []).map((it) => {
+    const lk = matLookup(matIdx, it.material);
+    const hasW = Number(it.unit_weight) > 0;
+    const len = gnum(it.length_mm);
+    const autoW = !hasW && len && lk.wpm != null ? Number(((len / 1000) * lk.wpm).toFixed(4)) : null;
+    const inv = !String(it.material || "").trim() ? null : lk.scrap ? "scrap" : mat.state === "ok" ? (lk.inProject ? "proj" : lk.inCenter ? "center" : "new") : null;
+    return {
+      ...it,
+      unit_weight: hasW ? it.unit_weight : (autoW ?? it.unit_weight),
+      autoW: autoW != null, invState: inv,
+      fileWpm: gnum(it.weight_per_m) ?? (hasW && len ? Number((Number(it.unit_weight) / (len / 1000)).toFixed(4)) : null),
+      existingPart: partsInProject.find((p) => p.part_no.trim().toLowerCase() === it.code.trim().toLowerCase()),
+    };
+  });
+  const newInvCount = new Set(rowsPreview.filter((r) => r.invState === "new").map((r) => matKey(r.material))).size;
   const newPartCount = rowsPreview.filter((r) => !r.existingPart).length;
   const totalUnits = rowsPreview.reduce((sum, r) => sum + r.qty, 0);
 
@@ -1757,6 +2325,13 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
         projectId, releaseOrder: parsed.releaseOrder, releaseDate: null,
         releasedBy: user.id, makeQr: true, rows,
       });
+      // ★ INV ที่ยังไม่มี → บันทึกเข้า Material ของโปรเจค (พลาดไม่กระทบ Release ที่นำเข้าแล้ว)
+      if (mat.state !== "not_installed") {
+        try {
+          const mr = await addMaterialsFromRelease(projectId, parsed.releaseOrder, rowsPreview.filter((r) => r.invState !== "scrap").map((r) => ({ inv: r.material, wpm: r.fileWpm })));   // ★ เศษไม่บันทึก
+          if (mr && mr.ok && (mr.added || []).length) mlsToast(L(`บันทึก INV ใหม่ ${mr.added.length} รายการเข้า Material ของโปรเจค — กรอกความยาว/จำนวนได้ที่เมนู "บันทึก Material"`, `${mr.added.length} new INV added to the project's materials — fill length/qty in "Materials"`), "success");
+        } catch (_) { /* ignore */ }
+      }
       onImported({ releaseOrder: parsed.releaseOrder, ...res });
       onClose();
     } catch (e2) {
@@ -1805,6 +2380,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
             พบ {rowsPreview.length} รายการ Part · รวม {fmtNum(totalUnits)} ชิ้น
             {newPartCount > 0 && <> · <b style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</b></>}
+            {newInvCount > 0 && <> · <b style={{ color: "#6d4aff" }}>{L(`INV ใหม่ ${newInvCount} รายการ → บันทึกเข้า Material ของโปรเจค`, `${newInvCount} new INV → added to the project's materials`)}</b></>}
           </div>
           {newPartCount > 0 && (
             <div style={{ fontSize: 11.5, color: "var(--warning)", marginBottom: 10, lineHeight: 1.5, display: "flex", gap: 6 }}>
@@ -1824,8 +2400,8 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
                     <td>{r.code}</td>
                     <td>{r.qty}</td>
                     <td>{r.length_mm ? fmtNum(r.length_mm) : "-"}</td>
-                    <td>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}</td>
-                    <td>{r.material || "-"}</td>
+                    <td title={r.autoW ? L("คิดจาก Weight/M ในบันทึก Material", "from the Weight/M in Materials") : undefined}>{r.unit_weight ? `${fmtNum(r.unit_weight)} กก.` : "-"}{r.autoW ? <span className="pg-tag auto inline">{L("อัตโนมัติ", "auto")}</span> : null}</td>
+                    <td>{r.material || "-"}{r.invState === "new" ? <span className="pg-tag new inline" title={L("INV ใหม่ — จะบันทึกเข้า Material ของโปรเจค", "New INV — will be added to the project's materials")}>{L("ใหม่", "new")}</span> : r.invState === "center" ? <span className="pg-tag ctr inline">Center</span> : r.invState === "scrap" ? <span className="pg-tag scrap inline" title={L("เศษ — ไม่บันทึกเข้า Material · น้ำหนักตามไฟล์", "Scrap — not stored in Materials · weight as in the file")}>{L("เศษ", "scrap")}</span> : null}</td>
                     <td>{r.existingPart ? <Badge tone="steel">มีอยู่แล้ว</Badge> : <Badge tone="warning">สร้างใหม่</Badge>}</td>
                   </tr>
                 ))}
