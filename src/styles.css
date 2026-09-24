@@ -1196,8 +1196,8 @@ table.data-table table.pm-sub td.pm-nowc { white-space: normal; min-width: 220px
 .mat-seg button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); padding: 7px 13px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .mat-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .mat-seg button b { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 99px; background: var(--surface-3); color: var(--text); }
-.mat-scopebar select.mat-projsel { width: auto; min-width: 240px; max-width: 420px; flex: 0 1 auto; height: 38px; }
-.mat-search { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); flex: 1 1 200px; max-width: 320px; }
+.mat-scopebar select.mat-projsel { width: auto; min-width: 240px; max-width: 420px; flex: 0 1 auto; height: 40px; padding: 0 12px; line-height: 1.4; }   /* ไม่ให้ตัวหนังสือจม (padding บน-ล่างเดิม + สูงคงที่ = ตัวอักษรไทยโดนตัด) */
+.mat-search { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); flex: 1 1 200px; max-width: 320px; }
 .mat-search input { border: 0; outline: none; background: transparent; font: inherit; font-size: 13px; color: var(--text); width: 100%; }
 .mat-hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.55; }
 .mat-kpis { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
@@ -1264,3 +1264,11 @@ table.pgrid td.mat-cell-scrap input::placeholder { color: var(--muted); font-siz
   .mat-search { max-width: none; flex: 1 1 100%; }
   .mat-seg { width: 100%; } .mat-seg button { flex: 1; justify-content: center; }
 }
+/* ตารางกรอก Material: แถบบอกว่าก็อปจาก Excel วางได้ · ช่องที่แก้ · ช่องผิด */
+.mat-pastebar { display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 10px; border: 1px dashed rgba(16,185,129,.55); background: var(--accent-tint); border-radius: 11px; font-size: 12px; color: var(--muted); line-height: 1.55; }
+.mat-pastebar b { color: var(--accent-dk); font-size: 12.5px; }
+table.pgrid td.mat-cell-changed { background: #fffbe6; box-shadow: inset 0 -2px 0 #f3c77a; }
+table.pgrid td.mat-cell-bad { background: #fdecec; }
+table.pgrid td.mat-cell-bad input { color: var(--danger-hi); font-weight: 700; }
+table.pgrid tr.mat-row-existing td.pgrid-idx { color: var(--muted); }
+.mat-flash { font-size: 12px; font-weight: 700; color: var(--accent-dk); }
