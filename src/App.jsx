@@ -197,7 +197,7 @@ function mergeColOrder(saved, keys) {
   keys.forEach((k) => { if (!out.includes(k)) out.push(k); });
   return out;
 }
-function useColOrder(id, keys) {
+function useColOrder(id, keys, defaultHidden = null) {
   const keySig = keys.join("|");
   const [, force] = useState(0);
   useEffect(() => { const fn = () => force((n) => n + 1); _cpSubs.add(fn); return () => { _cpSubs.delete(fn); }; }, []);
@@ -216,10 +216,13 @@ function useColOrder(id, keys) {
   const reset = () => { clearColOrderScoped(id, isAdmin(getSession())); };
   // ── ซ่อน/แสดงคอลัมน์ (บันทึกที่เดียวกับลำดับ: แอดมิน→ค่ากลาง · คนอื่น→ของฉัน) ──
   const savedHide = colHiddenFor(id);
+  const defHideSig = Array.isArray(defaultHidden) ? defaultHidden.join("|") : "";
   const hiddenArr = useMemo(() => {
     const set = new Set(keys);
-    return (savedHide || []).filter((k) => set.has(k));     // ตัดคอลัมน์ที่ไม่มีแล้วออก
-  }, [savedHide ? savedHide.join("|") : "-", keySig]);
+    // ยังไม่เคยตั้ง (null) → ใช้ค่าเริ่มต้นของตาราง (defaultHidden) · ตั้งแล้ว (รวม [] = แสดงครบ) → ตามที่ตั้ง
+    const base = savedHide || (Array.isArray(defaultHidden) ? defaultHidden : []);
+    return base.filter((k) => set.has(k));                    // ตัดคอลัมน์ที่ไม่มีแล้วออก
+  }, [savedHide ? savedHide.join("|") : "-", keySig, defHideSig]);
   const hidden = useMemo(() => new Set(hiddenArr), [hiddenArr.join("|")]);
   const setHidden = (arr) => { saveColOrderScoped(id + COL_HIDE_SUF, arr, isAdmin(getSession())); };
   const toggleHide = (k) => { setHidden(hidden.has(k) ? hiddenArr.filter((x) => x !== k) : [...hiddenArr, k]); };
@@ -356,15 +359,16 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
 }
 // ตารางข้อมูลที่คอลัมน์ลากสลับได้ (ขับด้วย config: หัว+ค่าอยู่ด้วยกัน จึงไม่มีทางสลับผิดคู่)
 // columns: [{ key, header, sortKey?, thStyle?, tdStyle?, tdProps?(row,i,ctx), cell(row,i,ctx), dataLabel? }]
-function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef }) {
+function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef, defaultHidden }) {
   const cols0 = (columns || []).filter(Boolean);
   const keys = cols0.map((c) => c.key);
-  const { order, move, reset, drag, setDrag, hidden, toggleHide, showAll, resetAll } = useColOrder(id, keys);
-  if (orderApiRef) orderApiRef.current = { reset, showAll, resetAll };
+  const { order, move, reset, drag, setDrag, hidden, toggleHide, showAll, resetAll } = useColOrder(id, keys, defaultHidden);
   const byKey = {};
   cols0.forEach((c) => { byKey[c.key] = c; });
   const allCols = order.map((k) => byKey[k]).filter(Boolean);
   const cols = allCols.filter((c) => c.lockCol || !hidden.has(c.key));   // lockCol = ปิดไม่ได้ (คอลัมน์หลัก)
+  // visibleKeys = คอลัมน์ที่เห็นอยู่ตามลำดับบนจอ (ให้ Export Excel ออกตามที่ผู้ใช้จัดไว้)
+  if (orderApiRef) orderApiRef.current = { reset, showAll, resetAll, visibleKeys: cols.map((c) => c.key) };
   const nHidden = allCols.length - cols.length;
   const [menu, setMenu] = useState(null);                                 // { x, y } = เมนูเลือกคอลัมน์
   const canHide = (k) => { const c = byKey[k]; return !(c && c.lockCol) && cols.length > 1; };
@@ -893,6 +897,7 @@ const MENU = [
     { key: "verify", label: "ตรวจงานประกอบ", icon: "check" },
   ] },
   { group: "สรุปภาพรวม", items: [
+    { key: "daily", label: "รายงานประจำวัน", en: "Daily Report", icon: "chart" },
     { key: "machines", label: "สรุปเครื่องจักร", icon: "machine" },
     { key: "parts", label: "สรุป Part", icon: "grid" },
     { key: "machinereports", label: "รายงานปัญหาเครื่อง", icon: "warn", can: canManage },
@@ -1030,7 +1035,7 @@ function Shell({ user, onLogout }) {
             <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
               <div key={it.key} className={`nav-item ${tab === it.key ? "active" : ""}`} onClick={() => go(it.key)}>
-                <Icon name={it.icon} size={17} />{it.label}
+                <Icon name={it.icon} size={17} />{(shellLang === "en" && it.en) || it.label}
               </div>
             ))}
           </div>
@@ -1079,7 +1084,7 @@ function Shell({ user, onLogout }) {
             <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
               <div key={it.key} className={`nav-item ${tab === it.key ? "active" : ""}`} onClick={() => go(it.key)}>
-                <Icon name={it.icon} size={17} />{it.label}
+                <Icon name={it.icon} size={17} />{(shellLang === "en" && it.en) || it.label}
               </div>
             ))}
           </div>
@@ -1104,6 +1109,7 @@ function Shell({ user, onLogout }) {
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "verify" && <AssemblyVerifyPage key={"vf" + verifyNonce} initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
+          {tab === "daily" && <DailyReportPage />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "machinereports" && canManage(user) && <MachineReportsPage />}
           {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
@@ -2648,12 +2654,62 @@ function groupReleases(list) {
   return Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
-// ── ตัวช่วยกลาง: คำนวณ "จำนวนเสร็จ" ของกลุ่ม Release ให้ทุกหน้าตรงกัน ──────────
-//   นิยามเดียว (ใช้เหมือนกันทั้ง Projects, รายการ Release, รายละเอียด Release):
-//   เสร็จ = max( เสร็จจากสแกนสำนักงาน (part_units.status),
-//                เสร็จจากขั้นตอนสุดท้ายของงานหน้าเครื่อง (machine_records) )  ไม่เกินจำนวนสั่ง
-//   → เลิกขัดกันเอง (เดิมพอมีงานหน้าเครื่องแม้แถวเดียว จะทิ้งยอดสำนักงานทันที = 400/400 กลายเป็น 0%)
+// ── ตัวช่วยกลาง: คำนวณ "จำนวนเสร็จ" ของ Release / กลุ่ม Release ให้ทุกหน้าตรงกัน ──────────
+//   ★ กติกา (ผู้ใช้กำหนด 2026-09-23): Part ไม่ได้ตั้ง Routing แล้ว — "รูท" ของชิ้น = ขั้นตอนที่เครื่องที่สแกนเข้ามาติ๊กไว้
+//     สะสมไปเรื่อย ๆ จนกว่าหน้าเครื่องจะกด Finished → กด Finished = เสร็จ (ไม่ว่าจะผ่านกี่ขั้นตอน/กี่เครื่อง)
+//   ใช้เหมือนกันทั้ง Projects · รายการ Release · รายละเอียด Release · ป็อปอัปความคืบหน้า · Report
+//   เสร็จ = max( สแกนสำนักงานแบบเดิม (part_units.status), ชิ้นที่หน้าเครื่องกด Finished ) ไม่เกินจำนวนสั่ง (เกิน = สแปร์)
+//   ต่อชิ้น/QR นับ max(จำนวน) กันนับซ้ำ (co-tick 0 · สแกนซ้ำ · หลายเครื่องกด Finished ชิ้นเดียวกัน) — RPC release_finished_pieces
+//   ยังไม่ได้รัน migration-finished-pieces.sql → ค่าประมาณจาก release_op_progress (ขั้นตอนที่มีชิ้นมากสุด)
+async function fetchReleaseFinishedPieces(ids) {
+  const { data, error } = await supabase.rpc("release_finished_pieces", { p_release_ids: ids });
+  if (error) throw error;
+  return data || {};
+}
+let _finRpcWarned = false;
+// release_op_progress (ราย op — ใช้โชว์ชิปขั้นตอน) + release_finished_pieces (ราย release — ใช้นับเสร็จ)
+//   ผลลัพธ์รูปเดิม { <release_id>: [ops] } + แนบ __fin (non-enumerable ไม่โผล่ใน Object.keys/entries)
+async function getReleaseOpProgressFin(ids) {
+  if (!ids || ids.length === 0) return {};
+  const [op, fin] = await Promise.all([
+    getReleaseOpProgress(ids),
+    fetchReleaseFinishedPieces(ids).catch((e) => {
+      if (!_finRpcWarned) { _finRpcWarned = true; console.warn("release_finished_pieces ยังไม่มีใน DB (รัน migration-finished-pieces.sql) — ใช้ค่าประมาณ", e); }
+      return null;
+    }),
+  ]);
+  const out = op || {};
+  try { Object.defineProperty(out, "__fin", { value: fin, enumerable: false, configurable: true }); } catch { /* ignore */ }
+  return out;
+}
+// ยอดหน้าเครื่องของ 1 release: fin = ชิ้นที่กด Finished · done = ชิ้นที่ถูกสแกน (ทุกสถานะ) · has = มีงานหน้าเครื่อง
+function stationRelProg(opProg, rid) {
+  const f = opProg && opProg.__fin ? opProg.__fin[rid] : undefined;
+  if (f) return { fin: Number(f.finished) || 0, done: Math.max(Number(f.done) || 0, Number(f.finished) || 0), has: true };
+  const ops = (opProg && opProg[rid]) || [];
+  if (opProg && opProg.__fin && !ops.length) return { fin: 0, done: 0, has: false };
+  if (!ops.length) return { fin: 0, done: 0, has: false };
+  // ค่าประมาณ (ยังไม่มี RPC): ขั้นตอนที่มีชิ้นมากสุด — ต่อ op นับชิ้นที่ผ่าน op นั้น ด้วยจำนวนเสร็จของชิ้น (ข้ามขั้นตอน/เครื่อง)
+  const fin = ops.reduce((m, o) => Math.max(m, Number(o.finished) || 0), 0);
+  const done = ops.reduce((m, o) => Math.max(m, Number(o.done) || 0), 0);
+  return { fin, done: Math.max(done, fin), has: done > 0 || fin > 0 };
+}
+// ความคืบหน้าของ 1 release (ใช้ทั้งแถวตาราง การ์ดรวม และป็อปอัป)
+function relProgress(r, unitStats, opProg) {
+  const office = (unitStats && unitStats[r.id]) || null;
+  const total = Number(office?.total ?? r.qty) || 0;
+  const st = stationRelProg(opProg, r.id);
+  const officeFin = Number(office?.finished ?? 0) || 0;
+  const raw = Math.max(officeFin, st.fin);
+  const finished = total > 0 ? Math.min(raw, total) : raw;   // เพดานที่จำนวนสั่ง (ใช้คิด % + กำลังทำ)
+  const over = total > 0 ? Math.max(0, raw - total) : 0;     // เกินจำนวนสั่ง = สแปร์
+  // "กำลังทำ" = สแกนแล้วแต่ยังไม่กด Finished (งานหน้าเครื่องเป็นหลักถ้ามี)
+  const inProgRaw = st.has ? Math.max(0, st.done - st.fin) : (Number(office?.inProgress ?? 0) || 0);
+  const inProgress = total > 0 ? Math.min(inProgRaw, Math.max(0, total - finished)) : inProgRaw;
+  return { finished, total, inProgress, over, done: raw, stationFin: st.fin, stationDone: st.done, officeFin, hasStation: st.has };
+}
 function computeGroupProgress(releases, unitStats, opProg, totalQty) {
+  // ชิปขั้นตอน (รูทที่เครื่องติ๊กไว้) — รวมทุก release ในกลุ่ม เรียงตาม seq
   const by = new Map();
   for (const r of releases) {
     for (const o of (opProg?.[r.id] || [])) {
@@ -2664,15 +2720,19 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
     }
   }
   const opAgg = Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
-  // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
   const aggWithDone = opAgg.filter((o) => (Number(o.done) || 0) > 0);
-  const lastOp = aggWithDone.length ? aggWithDone[aggWithDone.length - 1] : (opAgg.length ? opAgg[opAgg.length - 1] : null);
-  const stationFinished = lastOp ? Math.min(lastOp.finished, totalQty) : 0;
-  const officeFinished = releases.reduce((s, r) => s + (unitStats?.[r.id]?.finished || 0), 0);
-  const finished = Math.min(Math.max(officeFinished, stationFinished), totalQty);
+  const lastOp = aggWithDone.length ? aggWithDone[aggWithDone.length - 1] : (opAgg.length ? opAgg[opAgg.length - 1] : null);   // ใช้แสดงผลเท่านั้น (ไม่ใช้นับเสร็จแล้ว)
+  let finished = 0, inProgress = 0, officeFinished = 0, stationFinished = 0, stationDone = 0, anyStation = false;
+  for (const r of releases) {
+    const p = relProgress(r, unitStats, opProg);
+    finished += p.finished; inProgress += p.inProgress;
+    officeFinished += p.officeFin; stationFinished += p.stationFin; stationDone += p.stationDone;
+    if (p.hasStation) anyStation = true;
+  }
+  if (totalQty > 0) finished = Math.min(finished, totalQty);
   // งานหน้าเครื่องเป็น "ตัวหลัก" เมื่อยอดหน้าเครื่อง ≥ ยอดสำนักงาน และมากกว่า 0
   const stationDrove = stationFinished > 0 && stationFinished >= officeFinished;
-  return { finished, officeFinished, stationFinished, opAgg, lastOp, stationDrove };
+  return { finished, inProgress, officeFinished, stationFinished, stationDone, anyStation, opAgg, lastOp, stationDrove };
 }
 
 // ── Mini progress bar (inline, no extra deps) ───────────────────────────────
@@ -2742,30 +2802,17 @@ function PartProgressModal({ release, user, goTo, onClose }) {
         // ใช้แหล่งเดียวกับการ์ดรวมในหน้ารายละเอียด Release เพื่อให้ตัวเลขตรงกัน
         const [stats, prog, mprog] = await Promise.all([
           getUnitStatsByReleaseIds([release.id]),
-          getReleaseOpProgress([release.id]),
+          getReleaseOpProgressFin([release.id]),
           getReleaseMachineProgress(release.id),
         ]);
         if (!alive) return;
         setMachineProg(Array.isArray(mprog) ? mprog : []);
-        const s = stats[release.id] || { total: release.qty || 0, finished: 0, inProgress: 0 };
         const ops = Array.isArray(prog[release.id]) ? prog[release.id] : [];
-        const total = Number(s.total ?? release.qty ?? 0) || 0;
-        // ── นิยาม "เสร็จ / กำลังทำ" เดียวกับการ์ดรวมและตารางแต่ละ Part (rowProg/computeGroupProgress) ──
-        // งานหน้าเครื่อง (terminal) ไม่ได้อัปเดต part_units.status → ยอดสำนักงานอ่านได้ 0
-        // จึงต้องใช้ MAX(ยอดสำนักงาน, ยอดขั้นตอนสุดท้ายหน้าเครื่อง) มิฉะนั้นการ์ดบนสุดโชว์ 0 ไม่ตรงกับตาราง
-        const sorted = ops.slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
-        // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
-        const sWithDone = sorted.filter((o) => (Number(o.done) || 0) > 0);
-        const last = sWithDone.length ? sWithDone[sWithDone.length - 1] : (sorted.length ? sorted[sorted.length - 1] : null);
-        const stationFin = last ? Number(last.finished) || 0 : 0;
-        const stationDone = last ? Number(last.done) || 0 : 0;           // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
-        const officeFin = Number(s.finished ?? 0) || 0;
-        const fin = total > 0 ? Math.min(Math.max(officeFin, stationFin), total) : Math.max(officeFin, stationFin);
-        const overFin = total > 0 ? Math.max(0, Math.max(officeFin, stationFin) - total) : 0;   // เกินจำนวนสั่ง = สแปร์
-        // "กำลังทำ" = เริ่มแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
-        const stationInProg = Math.max(0, stationDone - stationFin);
-        const inProgRaw = last ? stationInProg : (Number(s.inProgress ?? 0) || 0);
-        const inProg = total > 0 ? Math.min(inProgRaw, Math.max(0, total - fin)) : inProgRaw;
+        // ── นิยาม "เสร็จ / กำลังทำ" เดียวกับการ์ดรวมและตารางแต่ละ Part (relProgress) ──
+        //    เสร็จ = ชิ้นที่หน้าเครื่องกด Finished (ตามรูทของเครื่อง) หรือสแกนสำนักงานแบบเดิม — ค่าที่มากกว่า
+        const p = relProgress(release, stats, prog);
+        const total = p.total;
+        const fin = p.finished, overFin = p.over, inProg = p.inProgress;
         setTotalUnits(total || release.qty || 0);
         setFinished(fin);
         setOver(overFin);
@@ -3474,7 +3521,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const ids = list.map((r) => r.id);
     if (ids.length === 0) { setUnitStats({}); setOpProg({}); setMatLens({}); setStatsLoading(false); return; }
     setStatsLoading(true);
-    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids), getReleaseMaterialLengths(ids)])
+    Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids), getReleaseMaterialLengths(ids)])
       .then(([s, op, ml]) => { setUnitStats(s); setOpProg(op || {}); setMatLens(ml || {}); setStatsLoading(false); });
   }, [releases]);
   useEffect(() => { loadStats(); }, [loadStats]);
@@ -3518,39 +3565,16 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   // ★ ใช้ตัวช่วยกลาง computeGroupProgress → นิยาม "เสร็จ" เดียวกับหน้า Projects และ
   //   รายการ Release (max ระหว่างสแกนสำนักงาน กับขั้นตอนสุดท้ายหน้าเครื่อง) — เลิกขัดกันเอง
   const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
-  const { finished: totalFinished, opAgg, lastOp, stationDrove } =
+  const { finished: totalFinished, inProgress: totalInProgress, opAgg, stationDrove, stationFinished: stFinSum, stationDone: stDoneSum } =
     computeGroupProgress(releases, unitStats, opProg, totalQty);
-  const totalInProgress = stationDrove
-    ? Math.max(0, Math.min(lastOp.done, totalQty) - totalFinished)
-    : releases.reduce((sum, r) => sum + (unitStats[r.id]?.inProgress || 0), 0);
   const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
-  const avgW = totalQty > 0 ? totalWeight / totalQty : 0;
-  const finishedWeight = stationDrove
-    ? totalFinished * avgW
-    : releases.reduce((sum, r) => sum + (unitStats[r.id]?.finished || 0) * wPer(r), 0);
+  // น้ำหนักที่ทำแล้ว = Σ (เสร็จของแต่ละ Part × น้ำหนัก/ชิ้นของ Part นั้น)
+  const finishedWeight = releases.reduce((sum, r) => sum + relProgress(r, unitStats, opProg).finished * wPer(r), 0);
 
   // ── ความคืบหน้าต่อ Part (แต่ละแถว) = MAX(สแกนออฟฟิศ, งานหน้าเครื่องขั้นตอนสุดท้าย) ──
   //    ให้ตรงกับการ์ด "เสร็จแล้ว (ภาพรวม)" ด้านบน · เดิมแถวอ่านเฉพาะ unitStats (สแกนออฟฟิศ)
   //    งานที่บันทึกจากหน้าเครื่อง (machine_records) จึงไม่ขึ้นในตาราง — โชว์ 0 ทั้งที่ยอดรวมเห็นแล้ว
-  const rowProg = (r) => {
-    const office = unitStats[r.id] || null;
-    const total = Number(office?.total ?? r.qty) || 0;
-    const ops = (opProg?.[r.id] || []).slice().sort((a, b) => (Number(a.seq ?? 999)) - (Number(b.seq ?? 999)));
-    // ขั้นตอนสุดท้ายที่มียอดจริง — ข้ามขั้นตอนที่ติ๊กร่วม (co-tick) จำนวน 0 ที่ seq สูงกว่า มิฉะนั้นจะอ่านยอดเป็น 0
-    const oWithDone = ops.filter((o) => (Number(o.done) || 0) > 0);
-    const last = oWithDone.length ? oWithDone[oWithDone.length - 1] : (ops.length ? ops[ops.length - 1] : null);   // นิยาม "เสร็จ" เดียวกับการ์ดรวม
-    const stationFin = last ? Number(last.finished) || 0 : 0;
-    const stationDone = last ? Number(last.done) || 0 : 0;   // ทำแล้วทุกสถานะ (รวมที่ยังไม่กด Finished)
-    const officeFin = Number(office?.finished ?? 0) || 0;
-    const raw = Math.max(officeFin, stationFin);
-    const finished = total > 0 ? Math.min(raw, total) : raw;   // เพดานที่จำนวนสั่ง (ใช้คิด % + กำลังทำ)
-    const over = total > 0 ? Math.max(0, raw - total) : 0;     // เกินจำนวนสั่ง = สแปร์
-    // "กำลังทำ" = เริ่มทำแล้วแต่ยังไม่กด Finished = ทำแล้วทุกสถานะ − เสร็จ (งานหน้าเครื่องเป็นหลักถ้ามี)
-    const stationInProg = Math.max(0, stationDone - stationFin);
-    const inProgRaw = last ? stationInProg : (Number(office?.inProgress ?? 0) || 0);
-    const inProgress = total > 0 ? Math.min(inProgRaw, Math.max(0, total - finished)) : inProgRaw;
-    return { finished, total, inProgress, over, done: raw };   // done = จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
-  };
+  const rowProg = (r) => relProgress(r, unitStats, opProg);   // done = จำนวนจริงที่เสร็จ (รวมสแปร์)
 
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
   // ความยาว material (หน้าเครื่อง) ต่อ release — รวมค่าที่ใช้จริง (ไม่ซ้ำ) เป็นข้อความ
@@ -3684,9 +3708,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                   น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
                 </div>
               )}
-              {stationDrove && lastOp && (
+              {stationDrove && (
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                  * นับจากขั้นตอนสุดท้าย ({lastOp.op}) ของงานหน้าเครื่อง
+                  {lang === "en" ? "* Counts pieces the machine terminal marked Finished (each machine’s own route)" : "* นับชิ้นที่หน้าเครื่องกด Finished (ตามรูทของเครื่อง)"}
                 </div>
               )}
               {totalInProgress > 0 && (
@@ -3740,13 +3764,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       {!statsLoading && opAgg.length > 0 && (
         <Card title="ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)">
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-            นับจากงานที่บันทึกหน้าเครื่องจริง แยกแต่ละขั้นตอน (ตัด/เจาะ/บาก) — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalQty)} ชิ้น
+            {lang === "en"
+              ? <>From work recorded at the machine terminals · the route of each piece = the steps ticked by the machines that scanned it, until Finished is pressed · <b>Scanned</b> = any status · <b>Finished</b> = marked Finished · vs ordered {fmtNum(totalQty)} pcs</>
+              : <>นับจากงานที่บันทึกหน้าเครื่องจริง · รูทของชิ้น = ขั้นตอนที่เครื่องที่สแกนติ๊กไว้ สะสมจนกด Finished — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalQty)} ชิ้น</>}
           </div>
           {/* ★ ยุบเป็นแถวเดียว: ชิปทุกขั้นตอน (Cut·Notch·Milling·Drill) + แถบรวม (ยึดขั้นตอนสุดท้ายจริง) */}
           {(() => {
-            const rep = lastOp || opAgg[opAgg.length - 1];
-            const repDone = Number(rep?.done) || 0;
-            const repFin = Number(rep?.finished) || 0;
+            // ★ ยอดรวม = ตามรูทของเครื่อง: ทำแล้ว = ชิ้นที่ถูกสแกน (ทุกสถานะ) · เสร็จ = ชิ้นที่กด Finished (ไม่ยึดขั้นตอนสุดท้าย)
+            const repDone = Number(stDoneSum) || 0;
+            const repFin = Number(stFinSum) || 0;
             const pct = totalQty > 0 ? Math.round((repDone / totalQty) * 100) : 0;
             const over = repDone > totalQty;
             // ★ ถ้าบางชิ้นทำไม่ครบทุกขั้นตอน (จำนวนแต่ละขั้นตอนไม่เท่ากัน) → โชว์จำนวนบนชิปแต่ละอัน
@@ -3764,8 +3790,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     ))}
                   </span>
                   <span style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>
-                    {uniform ? (lang === "en" ? "Done" : "ทำแล้ว") : (lang === "en" ? "All steps done" : "ทำครบทุกขั้นตอน")} {fmtNum(repDone)} / {fmtNum(totalQty)} {lang === "en" ? "pcs" : "ชิ้น"}
-                    {repFin > 0 ? <span style={{ color: "var(--success)" }}> · เสร็จ {fmtNum(repFin)}</span> : null}
+                    {lang === "en" ? "Scanned" : "ทำแล้ว"} {fmtNum(repDone)} / {fmtNum(totalQty)} {lang === "en" ? "pcs" : "ชิ้น"}
+                    {repFin > 0 ? <span style={{ color: "var(--success)" }}> · {lang === "en" ? "finished" : "เสร็จ"} {fmtNum(repFin)}</span> : null}
                     {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
                   </span>
                 </div>
@@ -3980,7 +4006,7 @@ function ReleasePage({ user, goTo }) {
     if (releases.length > 0) {
       const ids = releases.map((r) => r.id);
       // โหลดทั้งสแกนออฟฟิศ + งานหน้าเครื่อง พร้อมกัน → คิด "เสร็จ" แบบ MAX(ออฟฟิศ, หน้าเครื่อง) ให้ตรงกับหน้ารายละเอียด
-      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids)])
         .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); });
     }
   }, []);
@@ -4841,14 +4867,17 @@ function ScanStation({ user, machine, operation, mode = "station", onExit }) {
 // เนื้อหา Finished Part (สถิติ + ตาราง) — ฝังในหน้า Report
 // ★ เดิมดึง part_units ที่ status = 'finished' — แต่งานจริงบันทึกที่หน้าเครื่อง (machine_records แบบจำนวน)
 //   ซึ่งไม่เคยเปลี่ยน part_units.status → รายงานนี้ขึ้น 0 ตลอด
-//   ตอนนี้คิด "ชิ้นที่เสร็จ" ต่อ Release ด้วยนิยามเดียวกับหน้า Release / Projects (computeGroupProgress):
-//   จำนวน Finished ของขั้นตอนสุดท้ายที่มียอด (รู้จัก co-tick) · รวมชิ้นที่สแกนจากสำนักงานแบบเดิมด้วย · ไม่เกินจำนวนสั่ง
+// ★ กติกา "ชิ้นที่เสร็จ" (ผู้ใช้กำหนด): ตามรูทของเครื่อง — หน้าเครื่องกด Finished = เสร็จ
+//   เครื่องทำ/ติ๊กขั้นตอนไหนไว้ก็ตามนั้น (ไม่ใช้ part_master.routing ซึ่งปล่อยงาน/นำเข้า Excel บันทึกว่างอยู่แล้ว)
+//   · ต่อชิ้น/QR นับ max(จำนวนที่กด Finished) กันนับซ้ำ (co-tick 0 / สแกนซ้ำ / หลายเครื่อง) — RPC release_finished_pieces
+//   · รวมชิ้นสแกนสำนักงานแบบเดิม (part_units.status) · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์)
+//   · ยังไม่ได้รัน migration-finished-pieces.sql → ใช้ค่าประมาณจาก release_op_progress (ขั้นตอนที่มีชิ้นเสร็จมากสุด)
 //   ยอดสะสมทั้งหมด (ไม่ขึ้นกับช่วงเวลา) · กรองตาม โปรเจค / Part / Release Order ของหน้า Report
 function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "" }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const [rels, setRels] = useState(relsIn || null);
-  const [prog, setProg] = useState(null);     // { opProg, unitStats } · null = กำลังโหลด
+  const [prog, setProg] = useState(null);     // { fin, opProg, unitStats, needSql } · null = กำลังโหลด
   const [err, setErr] = useState("");
   const sort = useTableSort();
   useEffect(() => { if (relsIn) setRels(relsIn); }, [relsIn]);
@@ -4861,14 +4890,24 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
     const CH = 400;   // แบ่งก้อน ids กัน body RPC ใหญ่เกิน (ที่ 10 ปี releases หลายพัน)
     const chunks = [];
     for (let i = 0; i < ids.length; i += CH) chunks.push(ids.slice(i, i + CH));
-    Promise.all(chunks.map((c) => Promise.all([getReleaseOpProgress(c), getUnitStatsByReleaseIds(c)])))
-      .then((res) => {
-        if (!alive) return;
-        const opProg = {}, unitStats = {};
-        res.forEach(([op, us]) => { Object.assign(opProg, op || {}); Object.assign(unitStats, us || {}); });
-        setProg({ opProg, unitStats });
-      })
-      .catch((e) => { if (alive) { setErr(String(e?.message || e)); setProg({ opProg: {}, unitStats: {} }); } });
+    (async () => {
+      const fin = {}, opProg = {}, unitStats = {};
+      let needSql = false;
+      // 1) ชิ้นที่กด Finished ต่อ Release (RPC ใหม่) — ถ้ายังไม่ได้รัน SQL → ตกไปใช้ค่าประมาณ
+      try {
+        const res = await Promise.all(chunks.map((c) => fetchReleaseFinishedPieces(c)));
+        res.forEach((x) => Object.assign(fin, x || {}));
+      } catch (e) {
+        needSql = true;
+        console.warn("release_finished_pieces ยังไม่มีใน DB — ใช้ค่าประมาณจาก release_op_progress", e);
+        const res = await Promise.all(chunks.map((c) => getReleaseOpProgress(c)));
+        res.forEach((x) => Object.assign(opProg, x || {}));
+      }
+      // 2) ชิ้นที่สแกนจากสำนักงานแบบเดิม
+      const us = await Promise.all(chunks.map((c) => getUnitStatsByReleaseIds(c)));
+      us.forEach((x) => Object.assign(unitStats, x || {}));
+      if (alive) setProg({ fin, opProg, unitStats, needSql });
+    })().catch((e) => { if (alive) { setErr(String(e?.message || e)); setProg({ fin: {}, opProg: {}, unitStats: {}, needSql: false }); } });
     return () => { alive = false; };
   }, [rels]);
 
@@ -4877,14 +4916,27 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
     const out = [];
     for (const r of rels) {
       const qty = Number(r.qty) || 0;
-      const g = computeGroupProgress([r], prog.unitStats, prog.opProg, qty);
-      if (!(g.finished > 0)) continue;
+      const f = prog.fin[r.id];
+      let station = 0, machines = [], ops = [], lastAt = null;
+      if (f) {
+        station = Number(f.finished) || 0;
+        machines = Array.isArray(f.machines) ? f.machines : [];
+        lastAt = f.last_at || null;
+      } else if (prog.needSql) {
+        const po = prog.opProg[r.id] || [];
+        station = po.reduce((m, o) => Math.max(m, Number(o.finished) || 0), 0);   // ค่าประมาณ: ขั้นตอนที่มีชิ้นเสร็จมากสุด
+        ops = po.filter((o) => (Number(o.done) || 0) > 0).sort((a, b) => (a.seq ?? 999) - (b.seq ?? 999)).map((o) => o.op);
+      }
+      const office = Number(prog.unitStats[r.id]?.finished) || 0;
+      const raw = Math.max(office, station);
+      const finished = qty > 0 ? Math.min(raw, qty) : raw;
+      if (!(finished > 0)) continue;
       const w = Number(r.unit_weight) || 0;
       out.push({
-        id: r.id, r, qty, finished: g.finished,
-        pct: qty > 0 ? (g.finished / qty) * 100 : 0,
-        weight: g.finished * w, unitWeight: w,
-        lastOp: g.lastOp?.op || "",
+        id: r.id, r, qty, finished, spare: qty > 0 ? Math.max(0, raw - qty) : 0,
+        pct: qty > 0 ? (finished / qty) * 100 : 0,
+        weight: finished * w, unitWeight: w,
+        machines, ops, lastAt, officeOnly: station === 0 && office > 0,
         projectId: r.part_master?.project_id || null,
         projectName: r.part_master?.projects?.name || r.part_master?.projects?.code || "-",
         partNo: r.part_master?.part_no || "-", partName: r.part_master?.part_name || "",
@@ -4892,7 +4944,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
         len: r.length_mm != null ? Number(r.length_mm) : null,
       });
     }
-    out.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));   // ล่าสุดก่อน
+    out.sort((a, b) => String(b.lastAt || b.date || "").localeCompare(String(a.lastAt || a.date || "")));   // เสร็จล่าสุดก่อน
     return out;
   }, [rels, prog]);
   const rows = allRows.filter((x) =>
@@ -4903,6 +4955,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
   const totalWeight = rows.reduce((s, x) => s + x.weight, 0);
   const fullRel = rows.filter((x) => x.qty > 0 && x.finished >= x.qty).length;
   const loading = !rels || !prog;
+  const chip = { fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 99, whiteSpace: "nowrap", color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.35)" };
 
   return (
     <>
@@ -4913,9 +4966,15 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
       </div>
       <Card title={L("รายการชิ้นงานที่เสร็จ (ต่อ Release)", "Finished pieces (per Release)")}>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-          {L(<>ยอด<b>สะสมทั้งหมด</b> (ไม่ขึ้นกับช่วงเวลาด้านบน) · กรองตามโปรเจค / Part / Release ที่เลือก · <b>เสร็จ</b> = จำนวนที่กด Finished ที่ขั้นตอนสุดท้ายที่มีงาน (ตรงกับหน้า Release) ไม่เกินจำนวนสั่ง · น้ำหนัก = เสร็จ × น้ำหนัก/ชิ้นของ Release</>,
-             <><b>Cumulative</b> totals (not limited to the period above) · filtered by the selected project / Part / Release · <b>Finished</b> = pieces marked Finished at the last step with work (same as the Release page), capped at the ordered qty · Weight = finished × the release’s unit weight</>)}
+          {L(<><b>เสร็จ</b> = ชิ้นที่หน้าเครื่องกด <b>Finished</b> ตามรูทของเครื่อง (เครื่องติ๊กขั้นตอนไหนไว้ก็ตามนั้น) · ชิ้นเดียวกันกด Finished หลายเครื่อง/หลายครั้ง นับครั้งเดียว · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์) · ยอด<b>สะสมทั้งหมด</b> ไม่ขึ้นกับช่วงเวลาด้านบน · กรองตามโปรเจค / Part / Release ที่เลือก</>,
+             <><b>Finished</b> = pieces the machine terminal marked <b>Finished</b>, following each machine’s own route (whatever steps it ticked) · a piece finished on several machines/scans counts once · capped at the ordered qty (extra = spare) · <b>cumulative</b>, not limited to the period above · filtered by the selected project / Part / Release</>)}
         </div>
+        {!loading && prog.needSql && (
+          <div style={{ fontSize: 12, lineHeight: 1.55, marginBottom: 12, padding: "8px 11px", borderRadius: 9, background: "rgba(217,122,0,.10)", border: "1px solid rgba(217,122,0,.35)", color: "var(--text)" }}>
+            {L(<>⚠ ยังไม่ได้รัน <b>migration-finished-pieces.sql</b> ใน Supabase — ตอนนี้เป็นค่าประมาณ (ขั้นตอนที่มีชิ้นเสร็จมากสุด) และยังไม่แสดงเครื่อง</>,
+               <>⚠ <b>migration-finished-pieces.sql</b> hasn’t been run in Supabase yet — numbers are an estimate (the step with the most finished pieces) and machines aren’t shown</>)}
+          </div>
+        )}
         {err && <div style={{ color: "var(--danger)", fontSize: 12.5, marginBottom: 10 }}>{L("โหลดข้อมูลไม่สำเร็จ: ", "Couldn't load: ")}{err}</div>}
         {loading ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div>
@@ -4925,15 +4984,15 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
             <div className="empty-state-title">{L("ยังไม่มีชิ้นงานที่เสร็จ", "No finished pieces yet")}</div>
             <div className="empty-state-sub">{(projectFilter || partFilter || releaseFilter)
               ? L("ไม่มีชิ้นที่เสร็จตามตัวกรองที่เลือก — ลองเลือก \"ทุกโปรเจค\"", "No finished pieces match the selected filters — try \"All projects\"")
-              : L("รายการจะขึ้นเมื่อหน้าเครื่องบันทึกสถานะ Finished", "Rows appear once the machine terminal records Finished")}</div>
+              : L("รายการจะขึ้นเมื่อหน้าเครื่องกด Finished", "Rows appear once a machine terminal marks pieces Finished")}</div>
           </div>
         ) : (
           <DataTable id="finished-parts" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
             rows={rows} rowKey={(x) => x.id} sort={sort}
             sortAccessors={{
               ro: (x) => x.ro, part: (x) => x.partNo, name: (x) => x.partName, proj: (x) => x.projectName,
-              ordered: (x) => x.qty, finished: (x) => x.finished, pct: (x) => x.pct,
-              weight: (x) => x.weight, len: (x) => x.len, last: (x) => x.lastOp, date: (x) => x.date || "",
+              ordered: (x) => x.qty, finished: (x) => x.finished, weight: (x) => x.weight, len: (x) => x.len,
+              mach: (x) => (x.machines[0]?.code || x.ops[0] || ""), last: (x) => x.lastAt || "", date: (x) => x.date || "",
             }}
             columns={[
               { key: "ro", header: "Release", sortKey: "ro", dataLabel: "Release", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (x) => x.ro },
@@ -4944,10 +5003,25 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
               { key: "ordered", header: L("สั่ง", "Ordered"), sortKey: "ordered", align: "right", cell: (x) => fmtNum(x.qty) },
               { key: "finished", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "finished", align: "right",
                 tdProps: (x) => ({ style: { fontWeight: 700, color: x.finished >= x.qty ? "var(--success)" : "var(--text)", whiteSpace: "nowrap" } }),
-                cell: (x) => <>{fmtNum(x.finished)}<span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{pctLabel(x.pct, x.finished >= x.qty)}</span></> },
+                cell: (x) => <>{fmtNum(x.finished)}<span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{pctLabel(x.pct, x.finished >= x.qty)}</span>
+                  {x.spare > 0 && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{L(`สแปร์ ${fmtNum(x.spare)}`, `spare ${fmtNum(x.spare)}`)}</span>}</> },
               { key: "weight", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (x) => x.unitWeight ? fmtNum(x.weight) : "—" },
               { key: "len", header: L("ความยาว (มม.)", "Length (mm)"), sortKey: "len", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.len != null ? fmtNum(x.len) : "-" },
-              { key: "last", header: L("ขั้นตอนสุดท้าย", "Last step"), sortKey: "last", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.lastOp ? opLabel(x.lastOp, lang) : L("สแกนสำนักงาน", "Office scan") },
+              { key: "mach", header: L("เครื่อง · ขั้นตอนที่ติ๊ก", "Machine · steps ticked"), sortKey: "mach", dataLabel: L("เครื่อง", "Machine"),
+                cell: (x) => x.machines.length ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {x.machines.map((m, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", opacity: (Number(m.finished) || 0) > 0 ? 1 : 0.6 }}>
+                        <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }} title={m.name || ""}>{m.code || m.name || "?"}</span>
+                        {(m.ops || []).map((o, oi) => <span key={oi} style={chip}>{opLabel(o, lang)}</span>)}
+                        <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>{L(`เสร็จ ${fmtNum(m.finished || 0)}`, `${fmtNum(m.finished || 0)} finished`)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : x.ops.length ? (
+                  <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>{x.ops.map((o, oi) => <span key={oi} style={chip}>{opLabel(o, lang)}</span>)}</span>
+                ) : x.officeOnly ? <span style={{ color: "var(--muted)" }}>{L("สแกนสำนักงาน", "Office scan")}</span> : "—" },
+              { key: "last", header: L("เสร็จล่าสุด", "Last finished"), sortKey: "last", tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (x) => x.lastAt ? fmtDT(x.lastAt) : "—" },
               { key: "date", header: L("วันที่ปล่อยงาน", "Released"), sortKey: "date", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12.5 }, cell: (x) => fmtD(x.date) },
             ]} />
         )}
@@ -7083,6 +7157,438 @@ function MachineReportsPage() {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// DAILY REPORT — สรุปภาพรวม → รายงานประจำวัน
+//   ภาพรวมของวัน (ตัวเลขหลัก · ชิ้นงานรายชั่วโมง · สรุปรายเครื่อง) + ตาราง "ทุกอย่าง" (1 สแกน = 1 แถว)
+//   ทุกตาราง เปิด-ปิดคอลัมน์ / ลากย้ายคอลัมน์ได้ (DataTable) · Export Excel ออกตามคอลัมน์ + ลำดับที่เห็นบนจอ
+//   ข้อมูล: report_logs (สแกนทั้งวัน) + list_scan_slow (รายงานการทำงาน) + releases (สั่ง/INV/MDF/REV/ความยาว)
+//           + machine_report_summary (เครื่องหยุด — เฉพาะ admin/office/supervisor)
+// ══════════════════════════════════════════════════════════════════════════
+// วันที่ "ตามเวลาเครื่อง" (ไม่ใช่ UTC) — กันช่วงเช้ามืด (00:00–07:00 ไทย) กลายเป็นเมื่อวาน
+const localDayStr = (d = new Date()) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+const shiftDayStr = (ds, n) => { const d = new Date(`${ds}T12:00:00`); d.setDate(d.getDate() + n); return localDayStr(d); };
+const fmtClock = (iso) => (iso ? new Date(iso).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-");
+const drDeptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : (ty === "packing" || ty === "pack_panel" || ty === "pack_site") ? "packing" : "machine");
+
+function DailyReportPage() {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const manage = canManage(getSession());
+  const today = localDayStr();
+  const [day, setDay] = useState(today);
+  const [machineF, setMachineF] = useState("");
+  const [projF, setProjF] = useState("");
+  const [deptF, setDeptF] = useState("");
+  const [statusF, setStatusF] = useState("");
+  const [q, setQ] = useState("");
+  const [logs, setLogs] = useState(null);          // null = กำลังโหลด
+  const [slowRows, setSlowRows] = useState([]);
+  const [stops, setStops] = useState(null);        // เครื่องหยุดของวันนั้น (null = ไม่มีสิทธิ์ดู/โหลดไม่ได้)
+  const [relInfo, setRelInfo] = useState({});      // release_id → releases.* + part_master(*, projects)
+  const [ops, setOps] = useState([]);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const sortM = useTableSort("pcs", "desc");
+  const sortS = useTableSort("time", "desc");
+  const colApiM = useRef(null);
+  const colApiS = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  useEffect(() => {
+    let alive = true;
+    const { from, to } = customRangeFor(day, day);
+    setLogs(null);
+    getScanLogsBetween(from, to).then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setLogs([]); });
+    listScanSlow(from, to).then((d) => { if (alive) setSlowRows(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setSlowRows([]); });
+    if (manage) {
+      const endT = new Date(to).getTime();
+      machineReportSummary(from)
+        .then((r) => { if (alive) setStops((r?.downtime || []).filter((x) => new Date(x.started_at).getTime() <= endT)); })
+        .catch(() => { if (alive) setStops(null); });
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, reloadTick]);
+  // ข้อมูลระดับ Release/Part (จำนวนสั่ง · INV · MDF · REV · ความยาว · M-xx) — แบ่งก้อนกัน URL ยาวเกิน
+  useEffect(() => {
+    const ids = [...new Set((logs || []).map((l) => l.release_id).filter(Boolean))];
+    if (!ids.length) { setRelInfo({}); return; }
+    let alive = true;
+    (async () => {
+      const out = {};
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data } = await supabase.from("releases").select("*, part_master(*, projects(code, name))").in("id", ids.slice(i, i + 150));
+        (data || []).forEach((r) => { out[r.id] = r; });
+      }
+      if (alive) setRelInfo(out);
+    })().catch(() => {});
+    return () => { alive = false; };
+  }, [logs]);
+
+  const opType = useMemo(() => { const m = {}; ops.forEach((o) => { if (o && o.name) m[o.name] = o.op_type; }); return m; }, [ops]);
+
+  // ── 1 สแกน = 1 แถว: ยุบแถว co-tick (จำนวน 0) เข้ากับแถวหลักของ "เครื่องเดียวกัน" ──
+  const grouped = useMemo(() => {
+    const asc = [...(logs || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+    const out = [];
+    const cur = new Map();
+    let n = 0;
+    const mk = (l, qty) => {
+      const pm = l.part_unit?.part_master || {};
+      const mkey = l.machine?.code || l.machine?.name || "—";
+      const op = l.operation?.name || null;
+      return {
+        key: `${l.part_unit_id || "u"}-${l.scanned_at}-${mkey}-${n++}`,
+        time: l.scanned_at, mkey, machine_name: l.machine?.name || "",
+        employee: l.employee?.name || "",
+        project_id: pm.project_id || null, project_name: pm.projects?.name || "",
+        release_id: l.release_id || null, release_order: l.release_order || "—",
+        part_no: pm.part_no || "—", part_name: pm.part_name || "",
+        ops: op ? [op] : [], dept: drDeptOfOpType(op ? opType[op] : null),
+        status: l.status, office: l.status == null,
+        qty, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+        matlen: l.material_length_mm != null ? Number(l.material_length_mm) : null,
+        part_unit_id: l.part_unit_id, unit_len: l.part_unit?.length_mm ?? null, def_len: pm.default_length_mm ?? null,
+      };
+    };
+    for (const l of asc) {
+      const mkey = l.machine?.code || l.machine?.name || "—";
+      const qv = Number(l.quantity) || 0;
+      const op = l.operation?.name || null;
+      const c = cur.get(mkey);
+      if (qv > 0) { const g = mk(l, qv); cur.set(mkey, g); out.push(g); }
+      else if (c && c.part_unit_id === l.part_unit_id && String(c.status).toLowerCase() === String(l.status).toLowerCase()) {
+        if (op && !c.ops.includes(op)) c.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → รวมในแถวเดียว
+        c.weight += logWeight(l); c.secs += Number(l.process_seconds) || 0;
+      } else { out.push(mk(l, 0)); }
+    }
+    // รายงานการทำงาน (รอบช้า) → จับคู่ด้วย part_unit + เวลาใกล้สุด (±3 วิ)
+    if (slowRows && slowRows.length) {
+      const used = new Set();
+      for (const g of out) {
+        let best = null, bestDt = 3000, bi = -1;
+        for (let i = 0; i < slowRows.length; i++) {
+          if (used.has(i)) continue;
+          const s = slowRows[i];
+          if (s.part_unit_id !== g.part_unit_id) continue;
+          const dt = Math.abs(new Date(s.at) - new Date(g.time));
+          if (dt < bestDt) { best = s; bestDt = dt; bi = i; }
+        }
+        if (best) { used.add(bi); g.slow_reason = best.reason || ""; g.slow_note = best.note || ""; }
+      }
+    }
+    return out;
+  }, [logs, slowRows, opType]);
+
+  // เติมข้อมูลระดับ Release/Part
+  const rowsAll = grouped.map((g) => {
+    const r = relInfo[g.release_id] || null;
+    const pm = r?.part_master || {};
+    return {
+      ...g,
+      ordered: r ? Number(r.qty) || 0 : null,
+      part_len: r?.length_mm ?? pm.default_length_mm ?? g.unit_len ?? g.def_len ?? null,
+      inv: pm.material || pm.inventory_code || "",
+      mdf: pm.mdf_no || "", rev: pm.rev || "",
+      project_code: pm.projects?.code || "",
+      project_name: g.project_name || pm.projects?.name || "",
+      mod: r?.mod_version || "",
+    };
+  });
+  const text = (x) => String(x || "").toLowerCase();
+  const qq = text(q).trim();
+  const rows = rowsAll.filter((g) =>
+    (!machineF || g.mkey === machineF) &&
+    (!projF || g.project_id === projF) &&
+    (!deptF || g.dept === deptF) &&
+    (!statusF || (statusF === "office" ? g.office : String(g.status).toLowerCase() === statusF)) &&
+    (!qq || [g.part_no, g.part_name, g.release_order, g.employee, g.mkey, g.machine_name, g.project_name, g.project_code, g.inv].some((v) => text(v).includes(qq))));
+
+  // ตัวเลือกตัวกรอง (จากข้อมูลของวันนั้น)
+  const machineOpts = [...new Map(rowsAll.map((g) => [g.mkey, g.machine_name])).entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
+  const projOpts = [...new Map(rowsAll.filter((g) => g.project_id).map((g) => [g.project_id, `${g.project_code ? g.project_code + " — " : ""}${g.project_name}`])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  const deptOpts = [["machine", L("เครื่องจักร", "Machining")], ["sub", L("ประกอบ (ซับ)", "Sub-assembly")], ["panel", L("แผง", "Panel")], ["packing", L("แพ็ก", "Packing")]]
+    .filter(([k]) => rowsAll.some((g) => g.dept === k));
+
+  // ── ภาพรวม ──
+  const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const totPcs = sum(rows, (g) => g.qty);
+  const totKg = sum(rows, (g) => g.weight);
+  const totSec = sum(rows, (g) => g.secs);
+  const finRows = rows.filter((g) => String(g.status).toLowerCase() === "finished");
+  const inpRows = rows.filter((g) => String(g.status).toLowerCase() === "inprocess");
+  const nMachines = new Set(rows.map((g) => g.mkey)).size;
+  const nEmp = new Set(rows.map((g) => g.employee).filter(Boolean)).size;
+  const nParts = new Set(rows.map((g) => `${g.project_id}|${g.part_no}`)).size;
+  const nRel = new Set(rows.map((g) => g.release_order).filter((x) => x && x !== "—")).size;
+  const nSlow = rows.filter((g) => g.slow_reason).length;
+  const stopsF = (stops || []).filter((s) => !machineF || s.machine === machineF);
+  const stopMin = sum(stopsF, (s) => s.minutes);
+  const firstT = rows.length ? rows.reduce((m, g) => (g.time < m ? g.time : m), rows[0].time) : null;
+  const lastT = rows.length ? rows.reduce((m, g) => (g.time > m ? g.time : m), rows[0].time) : null;
+
+  // ชิ้นงานรายชั่วโมง (ช่วงชั่วโมงแรก → ชั่วโมงสุดท้ายที่มีงาน)
+  const hourly = (() => {
+    if (!rows.length) return [];
+    const by = {};
+    rows.forEach((g) => { const h = new Date(g.time).getHours(); by[h] = (by[h] || 0) + (Number(g.qty) || 0); });
+    const hs = Object.keys(by).map(Number);
+    const h0 = Math.min(...hs), h1 = Math.max(...hs);
+    const out = [];
+    for (let h = h0; h <= h1; h++) out.push({ name: `${String(h).padStart(2, "0")}:00`, count: by[h] || 0 });
+    return out;
+  })();
+
+  // สรุปรายเครื่อง
+  const machineRows = (() => {
+    const m = new Map();
+    for (const g of rows) {
+      const e = m.get(g.mkey) || { mkey: g.mkey, name: g.machine_name, emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: g.time, last: g.time };
+      e.scans += 1; e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0;
+      if (g.employee) e.emps.add(g.employee);
+      e.parts.add(`${g.project_id}|${g.part_no}`);
+      if (String(g.status).toLowerCase() === "finished") e.fin += 1; else if (String(g.status).toLowerCase() === "inprocess") e.inp += 1;
+      if (g.slow_reason) e.slow += 1;
+      if (g.time < e.first) e.first = g.time;
+      if (g.time > e.last) e.last = g.time;
+      m.set(g.mkey, e);
+    }
+    for (const s of stopsF) {   // เครื่องที่หยุดแต่ไม่มีสแกน ก็ให้โชว์
+      if (!m.has(s.machine) && (!machineF || s.machine === machineF) && !statusF && !qq && !projF && !deptF) {
+        m.set(s.machine, { mkey: s.machine, name: s.machine_name || "", emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: null, last: null });
+      }
+    }
+    return [...m.values()].map((e) => {
+      const st = (stops || []).filter((s) => s.machine === e.mkey);
+      return { ...e, empText: [...e.emps].join(", "), nParts: e.parts.size, secPer: e.pcs > 0 ? e.secs / e.pcs : 0, stops: st.length, stopMin: sum(st, (s) => s.minutes) };
+    });
+  })();
+
+  const loading = logs === null;
+  const statusPill = (g) => {
+    if (g.office) return <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("สแกนสำนักงาน", "office scan")}</span>;
+    const fin = String(g.status).toLowerCase() === "finished";
+    return (
+      <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
+        color: fin ? "var(--success)" : "var(--accent-dk)", background: fin ? "rgba(16,157,99,.12)" : "rgba(37,99,235,.10)",
+        border: `1px solid ${fin ? "var(--success)" : "var(--accent-dk)"}` }}>
+        {fin ? L("เสร็จ", "finished") : L("กำลังทำ", "in process")}
+      </span>
+    );
+  };
+  const chip = { fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap", color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" };
+  const nf = (v) => (v != null && v !== "" ? fmtNum(v) : "-");
+  const statusText = (g) => (g.office ? L("สแกนสำนักงาน", "office scan") : String(g.status).toLowerCase() === "finished" ? L("เสร็จ", "finished") : L("กำลังทำ", "in process"));
+
+  // ── คอลัมน์ตารางสรุปรายเครื่อง (exp = ค่าตอน Export) ──
+  const mCols = [
+    { key: "mkey", header: L("เครื่อง", "Machine"), sortKey: "mkey", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }, cell: (m) => m.mkey, exp: (m) => m.mkey },
+    { key: "name", header: L("ชื่อเครื่อง", "Machine name"), sortKey: "name", tdStyle: { color: "var(--muted)", whiteSpace: "nowrap" }, cell: (m) => m.name || "-", exp: (m) => m.name || "" },
+    { key: "emp", header: L("พนักงาน", "Operator"), sortKey: "emp", tdStyle: { whiteSpace: "nowrap" }, cell: (m) => m.empText || "-", exp: (m) => m.empText },
+    { key: "scans", header: L("สแกน (ครั้ง)", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
+    { key: "pcs", header: L("ชิ้นงาน", "Pieces"), sortKey: "pcs", align: "right", tdStyle: { fontWeight: 700 }, cell: (m) => fmtNum(m.pcs), exp: (m) => m.pcs },
+    { key: "kg", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "kg", align: "right", tdStyle: { color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => fmtNum(m.kg), exp: (m) => Number((m.kg || 0).toFixed(2)) },
+    { key: "secs", header: L("เวลาเดินเครื่อง", "Run time"), sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.secs ? fmtHrs(m.secs) : "—"), exp: (m) => (m.secs ? fmtHrs(m.secs) : "") },
+    { key: "secPer", header: L("วินาที/ชิ้น", "Sec/pc"), sortKey: "secPer", align: "right", cell: (m) => (m.secPer ? fmtNum(Math.round(m.secPer)) : "—"), exp: (m) => (m.secPer ? Math.round(m.secPer) : "") },
+    { key: "parts", header: L("จำนวน Part", "Parts"), sortKey: "parts", align: "right", cell: (m) => fmtNum(m.nParts), exp: (m) => m.nParts },
+    { key: "fin", header: L("เสร็จ (สแกน)", "Finished scans"), sortKey: "fin", align: "right", tdStyle: { color: "var(--success)" }, cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
+    { key: "inp", header: L("กำลังทำ (สแกน)", "In-process scans"), sortKey: "inp", align: "right", cell: (m) => fmtNum(m.inp), exp: (m) => m.inp },
+    { key: "first", header: L("สแกนแรก", "First scan"), sortKey: "first", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.first ? fmtClock(m.first) : "—"), exp: (m) => (m.first ? fmtClock(m.first) : "") },
+    { key: "last", header: L("สแกนล่าสุด", "Last scan"), sortKey: "last", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.last ? fmtClock(m.last) : "—"), exp: (m) => (m.last ? fmtClock(m.last) : "") },
+    { key: "slow", header: L("รายงานการทำงาน", "Work reports"), sortKey: "slow", align: "right", tdStyle: { color: "#b45309" }, cell: (m) => (m.slow ? fmtNum(m.slow) : "—"), exp: (m) => m.slow || "" },
+    ...(manage ? [{ key: "stops", header: L("เครื่องหยุด", "Stops"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--danger)" },
+      cell: (m) => (m.stops ? `${fmtNum(m.stops)} · ${fmtNum(m.stopMin)} ${L("นาที", "min")}` : "—"), exp: (m) => (m.stops ? `${m.stops} · ${m.stopMin} min` : "") }] : []),
+  ];
+  const mAcc = { mkey: (m) => m.mkey, name: (m) => m.name, emp: (m) => m.empText, scans: (m) => m.scans, pcs: (m) => m.pcs, kg: (m) => m.kg, secs: (m) => m.secs, secPer: (m) => m.secPer,
+    parts: (m) => m.nParts, fin: (m) => m.fin, inp: (m) => m.inp, first: (m) => m.first || "", last: (m) => m.last || "", slow: (m) => m.slow, stops: (m) => m.stopMin };
+
+  // ── คอลัมน์ตาราง "ทุกอย่าง" ──
+  const sCols = [
+    { key: "time", header: L("เวลา", "Time"), sortKey: "time", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => fmtClock(g.time), exp: (g) => fmtClock(g.time) },
+    { key: "machine", header: L("เครื่อง", "Machine"), sortKey: "machine", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }, cell: (g) => g.mkey, exp: (g) => g.mkey },
+    { key: "emp", header: L("พนักงาน", "Operator"), sortKey: "emp", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.employee || "-", exp: (g) => g.employee },
+    { key: "project", header: L("โปรเจค", "Project"), sortKey: "project", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => (g.project_code ? <><b>{g.project_code}</b> <span style={{ color: "var(--muted)" }}>{g.project_name}</span></> : g.project_name || "-"), exp: (g) => [g.project_code, g.project_name].filter(Boolean).join(" — ") },
+    { key: "ro", header: "Release", dataLabel: "Release", sortKey: "ro", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => g.release_order, exp: (g) => g.release_order },
+    { key: "part", header: "Part No.", dataLabel: "Part No.", sortKey: "part", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, whiteSpace: "nowrap" }, cell: (g) => g.part_no, exp: (g) => g.part_no },
+    { key: "pname", header: L("ชื่อ Part", "Part name"), sortKey: "pname", tdStyle: { color: "var(--muted)", whiteSpace: "nowrap" }, cell: (g) => g.part_name || "-", exp: (g) => g.part_name },
+    { key: "mdf", header: "MDF NO.", dataLabel: "MDF NO.", sortKey: "mdf", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.mdf || "-", exp: (g) => g.mdf },
+    { key: "rev", header: "REV.", dataLabel: "REV.", sortKey: "rev", cell: (g) => g.rev || "-", exp: (g) => g.rev },
+    { key: "op", header: L("ขั้นตอน", "Step"), sortKey: "op", tdStyle: { whiteSpace: "nowrap" },
+      cell: (g) => (g.ops.length ? <span style={{ display: "inline-flex", gap: 5 }}>{g.ops.map((o, i) => <span key={i} style={chip}>{opLabel(o, lang)}</span>)}</span> : "—"),
+      exp: (g) => g.ops.map((o) => opLabel(o, lang)).join(" · ") },
+    { key: "status", header: L("สถานะ", "Status"), sortKey: "status", tdStyle: { whiteSpace: "nowrap" },
+      cell: (g) => <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{statusPill(g)}{g.slow_reason ? <span title={g.slow_reason + (g.slow_note ? " — " + g.slow_note : "")} style={{ cursor: "help" }}>⚠️</span> : null}</span>,
+      exp: (g) => statusText(g) },
+    { key: "qty", header: L("จำนวน", "Qty"), sortKey: "qty", align: "right", tdStyle: { fontWeight: 700 }, cell: (g) => fmtNum(g.qty), exp: (g) => Number(g.qty) || 0 },
+    { key: "ordered", header: L("สั่ง", "Ordered"), sortKey: "ordered", align: "right", cell: (g) => nf(g.ordered), exp: (g) => (g.ordered != null ? g.ordered : "") },
+    { key: "weight", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "weight", align: "right", tdStyle: { color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (g) => (g.weight ? fmtNum(g.weight) : "—"), exp: (g) => (g.weight ? Number((Number(g.weight) || 0).toFixed(2)) : "") },
+    { key: "partlen", header: L("ความยาวพาร์ท (มม.)", "Part length (mm)"), sortKey: "partlen", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => nf(g.part_len), exp: (g) => (g.part_len != null ? Number(g.part_len) : "") },
+    { key: "matlen", header: L("Mat. Length (มม.)", "Mat. Length (mm)"), sortKey: "matlen", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => nf(g.matlen), exp: (g) => (g.matlen != null ? g.matlen : "") },
+    { key: "inv", header: "INV Code", dataLabel: "INV Code", sortKey: "inv", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.inv || "-", exp: (g) => g.inv },
+    { key: "secs", header: L("เวลาเดินเครื่อง", "Run time"), sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => (g.secs ? fmtHrs(g.secs) : "—"), exp: (g) => (g.secs ? fmtHrs(g.secs) : "") },
+    { key: "secPer", header: L("วินาที/ชิ้น", "Sec/pc"), sortKey: "secPer", align: "right", cell: (g) => (g.qty > 0 && g.secs ? fmtNum(Math.round(g.secs / g.qty)) : "—"), exp: (g) => (g.qty > 0 && g.secs ? Math.round(g.secs / g.qty) : "") },
+    { key: "slow", header: L("รายงานการทำงาน", "Work report"), sortKey: "slow", tdStyle: { color: "#b45309", whiteSpace: "nowrap" }, cell: (g) => (g.slow_reason ? g.slow_reason + (g.slow_note ? " — " + g.slow_note : "") : "—"), exp: (g) => (g.slow_reason ? g.slow_reason + (g.slow_note ? " — " + g.slow_note : "") : "") },
+    { key: "mod", header: "Modify", dataLabel: "Modify", sortKey: "mod", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.mod || "-", exp: (g) => g.mod },
+  ];
+  const sAcc = {
+    time: (g) => g.time || "", machine: (g) => g.mkey, emp: (g) => g.employee, project: (g) => `${g.project_code} ${g.project_name}`, ro: (g) => g.release_order,
+    part: (g) => g.part_no, pname: (g) => g.part_name, mdf: (g) => g.mdf, rev: (g) => g.rev, op: (g) => g.ops.join(" · "),
+    status: (g) => (g.office ? -1 : String(g.status).toLowerCase() === "finished" ? 1 : 0), qty: (g) => Number(g.qty) || 0, ordered: (g) => g.ordered,
+    weight: (g) => Number(g.weight) || 0, partlen: (g) => (g.part_len != null ? Number(g.part_len) : null), matlen: (g) => g.matlen, inv: (g) => g.inv,
+    secs: (g) => Number(g.secs) || 0, secPer: (g) => (g.qty > 0 ? (Number(g.secs) || 0) / g.qty : null), slow: (g) => g.slow_reason || "", mod: (g) => g.mod,
+  };
+
+  async function doExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const pick = (cols, api, list) => {
+        const vis = (api && api.current && Array.isArray(api.current.visibleKeys)) ? api.current.visibleKeys : cols.map((c) => c.key);
+        const by = Object.fromEntries(cols.map((c) => [c.key, c]));
+        const useCols = vis.map((k) => by[k]).filter(Boolean);
+        return list.map((x) => { const o = {}; useCols.forEach((c) => { o[typeof c.header === "string" ? c.header : c.key] = c.exp ? c.exp(x) : ""; }); return o; });
+      };
+      const kpi = [
+        [L("วันที่", "Date"), day], [L("ชิ้นงาน", "Pieces"), totPcs], [L("น้ำหนัก (กก.)", "Weight (kg)"), Number(totKg.toFixed(2))],
+        [L("เวลาเดินเครื่อง", "Run time"), totSec ? fmtHrs(totSec) : ""], [L("สแกน (ครั้ง)", "Scans"), rows.length],
+        [L("เครื่องที่ทำงาน", "Machines working"), nMachines], [L("พนักงาน", "Operators"), nEmp], ["Part", nParts], ["Release", nRel],
+        [L("สแกนเสร็จ / กำลังทำ", "Finished / in-process scans"), `${finRows.length} / ${inpRows.length}`],
+        [L("รายงานการทำงาน", "Work reports"), nSlow],
+        ...(manage && stops ? [[L("เครื่องหยุด", "Stops"), `${stopsF.length} · ${stopMin} min`]] : []),
+      ].map(([k, v]) => ({ [L("หัวข้อ", "Item")]: k, [L("ค่า", "Value")]: v }));
+      const { downloadSheets } = await import("./excelExport.js");
+      await downloadSheets(`daily-report-${day}.xlsx`, [
+        { name: L("ภาพรวม", "Overview"), rows: kpi },
+        { name: L("สรุปรายเครื่อง", "By machine"), rows: pick(mCols, colApiM, sortM.sortRows(machineRows, mAcc)) },
+        { name: L("รายการทั้งหมด", "All scans"), rows: pick(sCols, colApiS, sortS.sortRows(rows, sAcc)) },
+      ]);
+    } catch (e) {
+      console.warn("daily report export error", e);
+      mlsToast(L("สร้างไฟล์ Excel ไม่สำเร็จ ลองใหม่อีกครั้ง", "Export failed, please try again"), "error");
+    } finally { setExporting(false); }
+  }
+
+  const selStyle = { height: 38, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", padding: "0 10px", fontFamily: "inherit", fontSize: 13.5, minWidth: 150 };
+  const anyFilter = machineF || projF || deptF || statusF || qq;
+  const dayLabel = new Date(`${day}T12:00:00`).toLocaleDateString(lang === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="page-title">{L("รายงานประจำวัน", "Daily Report")}</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>{dayLabel}{day === today ? L(" · วันนี้", " · today") : ""}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn variant="ghost" size="sm" onClick={() => setDay(shiftDayStr(day, -1))} title={L("วันก่อนหน้า", "Previous day")}>◀</Btn>
+          <input type="date" value={day} max={today} onChange={(e) => e.target.value && setDay(e.target.value)} style={{ ...selStyle, minWidth: 0 }} aria-label={L("เลือกวันที่", "Pick a date")} />
+          <Btn variant="ghost" size="sm" onClick={() => setDay(shiftDayStr(day, 1))} disabled={day >= today} title={L("วันถัดไป", "Next day")}>▶</Btn>
+          {day !== today && <Btn variant="ghost" size="sm" onClick={() => setDay(today)}>{L("วันนี้", "Today")}</Btn>}
+          <Btn variant="ghost" size="sm" onClick={() => setReloadTick((n) => n + 1)} title={L("โหลดใหม่", "Reload")}><Icon name="refresh" size={14} /></Btn>
+          <Btn variant="accent" size="sm" onClick={doExport} disabled={exporting || loading}><Icon name="grid" size={14} /> {exporting ? L("กำลังสร้าง…", "Exporting…") : "Export Excel"}</Btn>
+        </div>
+      </div>
+
+      {/* ตัวกรอง — มีผลกับภาพรวมและทุกตาราง */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+        <select value={machineF} onChange={(e) => setMachineF(e.target.value)} style={selStyle} aria-label={L("เครื่อง", "Machine")}>
+          <option value="">{L("ทุกเครื่อง", "All machines")}</option>
+          {machineOpts.map(([k, n]) => <option key={k} value={k}>{k}{n && n !== k ? ` — ${n}` : ""}</option>)}
+        </select>
+        <select value={projF} onChange={(e) => setProjF(e.target.value)} style={selStyle} aria-label={L("โปรเจค", "Project")}>
+          <option value="">{L("ทุกโปรเจค", "All projects")}</option>
+          {projOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+        </select>
+        {deptOpts.length > 1 && (
+          <select value={deptF} onChange={(e) => setDeptF(e.target.value)} style={selStyle} aria-label={L("แผนก", "Department")}>
+            <option value="">{L("ทุกแผนก", "All departments")}</option>
+            {deptOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+          </select>
+        )}
+        <select value={statusF} onChange={(e) => setStatusF(e.target.value)} style={selStyle} aria-label={L("สถานะ", "Status")}>
+          <option value="">{L("ทุกสถานะ", "All statuses")}</option>
+          <option value="finished">{L("เสร็จ", "Finished")}</option>
+          <option value="inprocess">{L("กำลังทำ", "In process")}</option>
+          {rowsAll.some((g) => g.office) && <option value="office">{L("สแกนสำนักงาน", "Office scan")}</option>}
+        </select>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา Part / Release / พนักงาน / INV…", "Search part / release / operator / INV…")} style={{ flex: "1 1 220px", minWidth: 200, height: 38 }} />
+        {anyFilter ? <Btn variant="ghost" size="sm" onClick={() => { setMachineF(""); setProjF(""); setDeptF(""); setStatusF(""); setQ(""); }}>{L("ล้างตัวกรอง", "Clear filters")}</Btn> : null}
+      </div>
+
+      {loading ? (
+        <Card><div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div></Card>
+      ) : (
+        <>
+          {/* ── ภาพรวม ── */}
+          <div className="stat-row">
+            <StatCard label={L("ชิ้นงาน", "Pieces")} value={fmtNum(totPcs)} icon="box" />
+            <StatCard label={L("น้ำหนัก (กก.)", "Weight (kg)")} value={fmtNum(totKg)} icon="weight" />
+            <StatCard label={L("เวลาเดินเครื่อง", "Run time")} value={totSec ? fmtHrs(totSec) : "—"} icon="clock" />
+            <StatCard label={L("สแกน (ครั้ง)", "Scans")} value={fmtNum(rows.length)} icon="scan" />
+          </div>
+          <div className="stat-row">
+            <StatCard label={L("เครื่องที่ทำงาน · พนักงาน", "Machines · operators")} value={`${fmtNum(nMachines)} · ${fmtNum(nEmp)}`} icon="machine" />
+            <StatCard label={L("Part · Release", "Parts · releases")} value={`${fmtNum(nParts)} · ${fmtNum(nRel)}`} icon="grid" />
+            <StatCard label={L("สแกนเสร็จ · กำลังทำ", "Finished · in-process scans")} value={`${fmtNum(finRows.length)} · ${fmtNum(inpRows.length)}`} icon="check" />
+            <StatCard label={manage && stops ? L("รายงานการทำงาน · เครื่องหยุด", "Work reports · stops") : L("รายงานการทำงาน", "Work reports")}
+              value={manage && stops ? `${fmtNum(nSlow)} · ${fmtNum(stopsF.length)}${stopMin ? ` (${fmtNum(stopMin)} ${L("นาที", "min")})` : ""}` : fmtNum(nSlow)} icon="warn" />
+          </div>
+          {rows.length > 0 && (
+            <div style={{ fontSize: 12, color: "var(--muted)", margin: "-4px 2px 14px" }}>
+              {L("สแกนแรก", "First scan")} <b style={{ fontFamily: "var(--font-mono)" }}>{fmtClock(firstT)}</b> · {L("สแกนล่าสุด", "last scan")} <b style={{ fontFamily: "var(--font-mono)" }}>{fmtClock(lastT)}</b>
+              {anyFilter ? <span style={{ color: "#b45309" }}> · {L("ตัวเลขตามตัวกรองที่เลือก", "numbers follow the selected filters")}</span> : null}
+            </div>
+          )}
+
+          {rows.length === 0 ? (
+            <Card>
+              <div className="empty-state">
+                <Icon name="chart" size={32} />
+                <div className="empty-state-title">{anyFilter ? L("ไม่มีงานตามตัวกรองที่เลือก", "No work matches the filters") : L("วันนี้ยังไม่มีการสแกน", "No scans on this day")}</div>
+                <div className="empty-state-sub">{L("เลือกวันอื่นด้วย ◀ ▶ หรือปฏิทินด้านบน", "Pick another day with ◀ ▶ or the calendar above")}</div>
+              </div>
+            </Card>
+          ) : (
+            <>
+              <Card title={L("ชิ้นงานรายชั่วโมง", "Pieces per hour")}>
+                <SimpleBarChart data={hourly} color={CHART.accent} height={220} />
+              </Card>
+
+              <Card title={L("สรุปรายเครื่อง", "By machine")}
+                right={<Btn variant="ghost" size="sm" onClick={() => colApiM.current && colApiM.current.resetAll()} title={L("คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อน", "Reset column order + show hidden columns")}>↺ {L("คอลัมน์", "Columns")}</Btn>}>
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                  {L("แตะแถวเพื่อดูเฉพาะเครื่องนั้นในตารางด้านล่าง · คลิกขวาที่หัวตาราง/ปุ่ม ▥ = เลือกคอลัมน์ · ลาก ⠿ = ย้ายคอลัมน์",
+                     "Tap a row to show only that machine below · right-click the header / ▥ = choose columns · drag ⠿ = move columns")}
+                </div>
+                <DataTable id="daily-machines" wrapClass="table-wrap" tableClass="data-table responsive-cards" orderApiRef={colApiM}
+                  rows={machineRows} rowKey={(m) => m.mkey} sort={sortM} sortAccessors={mAcc} columns={mCols}
+                  defaultHidden={["name", "secPer", "first", "last"]}
+                  rowProps={(m) => ({ className: "release-row", style: { cursor: "pointer", background: machineF === m.mkey ? "var(--accent-soft, rgba(16,185,129,.08))" : undefined },
+                    onClick: () => { setMachineF(machineF === m.mkey ? "" : m.mkey); setTimeout(() => { try { listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* ignore */ } }, 60); },
+                    title: L("แตะเพื่อกรองเฉพาะเครื่องนี้ (แตะซ้ำ = ยกเลิก)", "Tap to filter this machine (tap again to clear)") })} />
+              </Card>
+
+              <div ref={listRef} />
+              <Card title={`${L("รายการทั้งหมด", "All scans")} (${fmtNum(rows.length)})`}
+                right={<Btn variant="ghost" size="sm" onClick={() => colApiS.current && colApiS.current.resetAll()} title={L("คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อน", "Reset column order + show hidden columns")}>↺ {L("คอลัมน์", "Columns")}</Btn>}>
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                  {L("1 แถว = 1 การสแกน (ขั้นตอนที่ติ๊กร่วมรวมในแถวเดียว) · คลิกขวาที่หัวตาราง/ปุ่ม ▥ = เปิด-ปิดคอลัมน์ · ลาก ⠿ = ย้ายคอลัมน์ · Export ออกตามคอลัมน์ที่เห็น",
+                     "1 row = 1 scan (co-ticked steps merged) · right-click the header / ▥ = show/hide columns · drag ⠿ = move columns · Export follows the visible columns")}
+                </div>
+                <DataTable id="daily-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" orderApiRef={colApiS}
+                  rows={rows} rowKey={(g) => g.key} sort={sortS} sortAccessors={sAcc} columns={sCols}
+                  defaultHidden={["pname", "mdf", "rev", "secPer", "mod"]}
+                  empty={L("ไม่มีรายการ", "No rows")} />
+              </Card>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function MachinesSummaryPage() {
   const [lang] = useLang();
   const [preset, setPreset] = useState("week");
@@ -7162,7 +7668,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     setStatsReady(false);
     if (ids.length) {
       // โหลดทั้งสแกนสำนักงาน + งานหน้าเครื่อง เพื่อคำนวณ %เสร็จ ให้ตรงกับหน้าอื่น
-      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgress(ids)])
+      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids)])
         .then(([s, op]) => { setStats(s); setOpProg(op || {}); setStatsReady(true); });
     } else { setStats({}); setOpProg({}); setStatsReady(true); }
   }, [project.id]);
