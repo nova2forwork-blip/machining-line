@@ -7,7 +7,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
-  getReleaseModifyInfo, applyReleaseModify,
+  getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate,
   machineReportSummary, listScanSlow,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -2982,6 +2982,15 @@ const modActLabel = (v, t, lang) => (lang === "en" ? MOD_ACTS_EN[v] || t : t);
 function modNoteText(note, lang) {
   if (!note || lang !== "en") return note;
   return String(note)
+    .replace(/(M-\d+) ถูกยกเลิก/g, "$1 cancelled")                       // ★ ยกเลิก M / ย้อนกลับ
+    .replace(/คืนจำนวน/g, "Qty restored")
+    .replace(/ยกเลิก QR ที่เพิ่ม (\d+) ใบ/g, "cancelled $1 added QR")
+    .replace(/คืน QR (\d+) ใบ/g, "$1 QR restored")
+    .replace(/\(คืนค่าเดิม\)/g, "(restored)")
+    .replace(/เปิด Part กลับมา/g, "Part reopened")
+    .replace(/ย้ายกลับ (\d+) ชิ้น จาก/g, "moved back $1 pcs from")
+    .replace(/ย้าย (\d+) ชิ้นกลับไป/g, "moved $1 pcs back to")
+    .replace(/· จำนวน (\d+)/g, "· qty $1")
     .replace(/QR ใหม่ (\d+) ใบ/g, "$1 new QR")
     .replace(/ยกเลิก QR ที่ยังไม่ใช้ (\d+) ใบ/g, "cancelled $1 unused QR")
     .replace(/ยกเลิก QR (\d+) ใบ/g, "cancelled $1 QR")
@@ -2999,6 +3008,12 @@ const MOD_TONE = {
 };
 const MOD_PURPLE = "#6d4aff";
 const modVer = (n) => "M-" + String(n).padStart(2, "0");
+// ── วันที่ของ M (ตามเอกสาร) แยกจากเวลาที่ลงแอป ──
+const fmtYmd = (s) => (s ? new Date(String(s).slice(0, 10) + "T12:00:00").toLocaleDateString("th-TH", { dateStyle: "short" }) : "-");   // ไม่เลื่อนวันตามโซนเวลา
+const ymdOf = (iso) => { if (!iso) return ""; const d = new Date(iso); if (!Number.isFinite(d.getTime())) return ""; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const todayYmd = () => ymdOf(new Date().toISOString());
+const modDocDate = (m) => (m && (m.doc_date || ymdOf(m.created_at))) || "";        // M เก่า (ก่อนมีช่องวันที่) = วันที่ลงแอป
+const revDocDate = (rv) => (rv && (rv.doc_date || ymdOf(rv.at))) || "";
 const modTypeOf = (k) => (k === "qty+" || k === "qty-") ? "qty" : (k || "");
 function ModChip({ type }) {
   const [lang] = useLang();
@@ -3035,6 +3050,27 @@ function modErrText(res, lang = "th") {
     case "same_target": return E(`${a}: ปลายทางต้องต่างจากเบอร์เดิม`, `${a}: target must differ from the current part`);
     case "same_inv": return E(`${a}: INV ใหม่ต้องต่างจากเดิม`, `${a}: new INV must differ from the current one`);
     case "check_violation": return E("ฐานข้อมูลไม่รับค่านี้ (เช่น จำนวน 0) — ", "The database rejected this value (e.g. qty 0) — ") + d;
+    // ── วันที่ของ M / วันที่ยกเลิก ──
+    case "future_date": return E("วันที่ต้องไม่เกินวันนี้", "The date can't be in the future");
+    case "bad_date": return E("วันที่ไม่ถูกต้อง", "Invalid date");
+    case "same_date": return E("เป็นวันที่นี้อยู่แล้ว", "It already has this date");
+    case "not_reverted": return E("M นี้ยังไม่ถูกยกเลิก", "This M isn't cancelled");
+    case "date_not_installed": return E("ยังไม่ได้รัน migration-release-modify-revert.sql เวอร์ชันล่าสุด (มีวันที่ของ M) ใน Supabase", "Run the latest migration-release-modify-revert.sql (with M dates) in Supabase first");
+    // ── ยกเลิก M / ย้อนกลับ (migration-release-modify-revert.sql) ──
+    case "revert_not_installed": return E("ยังไม่ได้ติดตั้งส่วน “ยกเลิก/ย้อน M” — รัน migration-release-modify-revert.sql ใน Supabase ก่อน", "Cancel/rollback isn't installed yet — run migration-release-modify-revert.sql in Supabase first");
+    case "bad_mode": return E("คำสั่งไม่ถูกต้อง", "Invalid request");
+    case "not_found": return E(`ไม่พบ ${a || "M นี้"}`, `${a || "This M"} not found`);
+    case "already_reverted": return E(`${a} ถูกยกเลิกไปแล้ว`, `${a} is already cancelled`);
+    case "target_reverted": return E(`${a} ถูกยกเลิกแล้ว — ย้อนกลับไปเวอร์ชันที่ถูกยกเลิกไม่ได้ เลือกเวอร์ชันอื่น`, `${a} is cancelled — you can't roll back to a cancelled version`);
+    case "nothing_to_revert": return E(`ไม่มี M ที่ใหม่กว่า ${a} ให้ยกเลิก — ตอนนี้เป็น ${a} อยู่แล้ว`, `Nothing newer than ${a} to cancel — it's already ${a}`);
+    case "revert_conflict": return E(`${a}: M ที่บันทึกหลังจากนี้ (${b}) แก้ Part เดียวกัน — ต้องยกเลิก ${b} ก่อน หรือใช้ “ย้อนกลับ” ทั้งช่วง`, `${a}: a later M (${b}) changed the same part — cancel ${b} first, or roll back the whole range`);
+    case "revert_used": return E(`${a}: ชิ้นงาน ${b} ชิ้นที่มาจาก M นี้ถูกสแกน/ใช้ไปแล้ว — ยกเลิกไม่ได้ เพื่อไม่ให้งานที่ทำไปแล้วหาย (ถ้าจำเป็นให้ Modify ใหม่ เช่น ลดจำนวน)`, `${a}: ${b} piece(s) from this M were already scanned/used — can't cancel, so finished work isn't lost (make a new Modify instead, e.g. reduce qty)`);
+    case "revert_inv_changed": return E(`${a}: INV ถูกแก้ต่อจากที่อื่นแล้ว (ตอนนี้ ${b}) — ยกเลิกไม่ได้`, `${a}: INV was changed elsewhere afterwards (now ${b}) — can't cancel`);
+    case "revert_state_changed": return E(`${a}: Part นี้ถูกแก้หลัง M นี้แล้ว — ยกเลิกไม่ได้`, `${a}: this part changed after this M — can't cancel`);
+    case "revert_missing": return E(`${a}: ไม่พบ Part/Release นี้แล้ว (อาจถูกลบ) — ยกเลิกไม่ได้`, `${a}: this part/release no longer exists — can't cancel`);
+    case "revert_qr_missing": return E(`${a}: QR ${b} ใบไม่อยู่ในระบบแล้ว — ยกเลิกไม่ได้`, `${a}: ${b} QR no longer exist — can't cancel`);
+    case "revert_qr_exists": return E(`${a}: QR ${b} มีอยู่แล้ว — คืนซ้ำไม่ได้`, `${a}: QR ${b} already exists`);
+    case "revert_target_locked": return E(`${a}: Release ปลายทางมีงานผูกอยู่ — ย้ายกลับไม่ได้`, `${a}: the target release has linked work — can't move back`);
     default: return (res?.message || d || res?.reason || E("บันทึกไม่สำเร็จ", "Save failed"));
   }
 }
@@ -3046,6 +3082,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
   const usedNos = useMemo(() => new Set((info?.mods || []).map((m) => Number(m.version_no))), [info]);
   const autoNo = Number(info?.next_no) || 1;
   const [verRaw, setVerRaw] = useState(String(autoNo).padStart(2, "0"));
+  const [docDate, setDocDate] = useState(todayYmd());   // ★ วันที่ของ M ตามเอกสาร (อาจไม่ใช่วันที่ลงแอป)
   const [q, setQ] = useState("");
   const [sel, setSel] = useState([]);          // release id ตามลำดับที่เลือก
   const [lines, setLines] = useState([]);      // { id, rid, key, n, inv, keep, tn, tro }
@@ -3175,12 +3212,16 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
   const nInc = sim.filter((x) => x.s.inc).length;
   const nErr = sim.filter((x) => x.s.err).length;
   const reasonOk = !!reason.trim();
-  const canSave = !busy && sim.length > 0 && !nInc && !nErr && reasonOk && !verErr;
+  const relDay = useMemo(() => (releases || []).map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0] || "", [releases]);
+  const dateErr = !docDate ? L("เลือกวันที่ของ M", "Pick the M date") : docDate > todayYmd() ? L("วันที่ต้องไม่เกินวันนี้", "The date can't be in the future") : "";
+  const dateWarn = !dateErr && relDay && docDate < relDay ? L(`ก่อนวันปล่อยงาน (${fmtYmd(relDay)})`, `before the release date (${fmtYmd(relDay)})`) : "";
+  const canSave = !busy && sim.length > 0 && !nInc && !nErr && reasonOk && !verErr && !dateErr;
   const footHint = !sel.length ? L("เลือก Part อย่างน้อย 1 เบอร์", "Pick at least one part")
     : nErr ? L(`มี ${nErr} รายการไม่ถูกต้อง (แดง) — แก้ก่อนบันทึก`, `${nErr} invalid row(s) (red) — fix before saving`)
     : nInc ? L(`ยังกรอกไม่ครบ ${nInc} แถว — กรอกให้ครบ หรือกด ✕ เอาเบอร์ที่ไม่แก้ออก`, `${nInc} row(s) incomplete — fill them in or press ✕ to remove`)
     : !reasonOk ? L("ใส่เหตุผลก่อนบันทึก", "Enter a reason before saving")
-    : verErr ? L("เลข M ใช้ไม่ได้", "M number not allowed") : "";
+    : verErr ? L("เลข M ใช้ไม่ได้", "M number not allowed")
+    : dateErr ? dateErr : "";
 
   async function submit() {
     if (!canSave) return;
@@ -3195,21 +3236,21 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     const qrOut = good.reduce((s, x) => s + (x.l.key === "qty-" ? num(x.l) : x.l.key === "cancel" ? x.b.free : 0), 0);
     const moved = good.filter((x) => x.l.key === "transfer").reduce((s, x) => s + num(x.l), 0);
     const ok = await askConfirm({
-      message: L(`บันทึก ${chosen} · ${good.length} รายการ (${new Set(good.map((x) => x.l.rid)).size} Part)`, `Save ${chosen} · ${good.length} change(s) (${new Set(good.map((x) => x.l.rid)).size} part(s))`)
+      message: L(`บันทึก ${chosen} · ${good.length} รายการ (${new Set(good.map((x) => x.l.rid)).size} Part) · วันที่ M ${fmtYmd(docDate)}`, `Save ${chosen} · ${good.length} change(s) (${new Set(good.map((x) => x.l.rid)).size} part(s)) · M date ${fmtYmd(docDate)}`)
         + (qrOut ? L(`\n• ยกเลิก QR ที่ยังไม่ใช้ ${fmtNum(qrOut)} ใบ (เก็บเป็นหลักฐาน · หน้าเครื่องสแกนแล้วจะแจ้งว่ายกเลิก)`, `\n• Cancel ${fmtNum(qrOut)} unused QR (kept as evidence · stations will show them as cancelled)`) : "")
         + (moved ? L(`\n• ย้าย ${fmtNum(moved)} ชิ้นไปเบอร์ใหม่ (QR เดิม)`, `\n• Move ${fmtNum(moved)} pcs to a new part no. (same QR)`) : "")
-        + L(`\n\nค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า · ย้อนกลับด้วยการ Modify ครั้งถัดไป`, `\n\nThe previous values stay in the earlier M · undo with another Modify`),
+        + L(`\n\nค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า · ถ้าผิด ยกเลิก ${chosen} ได้ภายหลังจากประวัติการแก้ไข`, `\n\nThe previous values stay in the earlier M · if it's wrong you can cancel ${chosen} later from the history`),
       tone: qrOut || moved ? "danger" : "warn", confirmText: L(`บันทึก ${chosen}`, `Save ${chosen}`), cancelText: L("กลับไปแก้", "Back to edit"),
     });
     if (!ok) return;
     setBusy(true); setErr("");
     const res = await applyReleaseModify({
-      projectId, releaseOrder, reason: reason.trim(), items,
+      projectId, releaseOrder, reason: reason.trim(), items, docDate,
       versionNo: (verBlank || chosenNo === autoNo) ? null : chosenNo,   // อัตโนมัติ = ให้ DB เลือกเลขถัดไป (กันชนกันถ้ามีคนแก้พร้อมกัน)
     });
     setBusy(false);
     if (!res || !res.ok) { setErr(modErrText(res, lang)); return; }
-    auditRecord("release_modify", "release_order", releaseOrder, { version: res.version, items, project_id: projectId });
+    auditRecord("release_modify", "release_order", releaseOrder, { version: res.version, items, project_id: projectId, doc_date: docDate });
     mlsToast(L(`บันทึก ${res.version} แล้ว (${items.length} รายการ) · ของเดิมเก็บเป็นหลักฐาน`, `Saved ${res.version} (${items.length} change(s)) · previous values kept as evidence`), "ok");
     onSaved(res);
   }
@@ -3237,7 +3278,11 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
             style={{ width: 58, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 700, color: MOD_PURPLE, background: "transparent", border: 0, padding: "7px 8px 7px 2px", outline: "none" }} />
         </span>
         <Btn size="sm" variant="ghost" onClick={() => setVerRaw(String(autoNo).padStart(2, "0"))} title={L("ใช้เลขถัดไปอัตโนมัติ", "Use the next number automatically")}>↺ {L("อัตโนมัติ", "Auto")}</Btn>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: verErr ? "var(--danger)" : chosenNo !== autoNo ? MOD_PURPLE : "var(--muted)", flexBasis: "100%", textAlign: "right" }}>{verErr ? "⚠ " + verErr : verInfo}</span>
+        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, marginLeft: 6 }}>{L("วันที่ M", "M date")}</span>
+        <input type="date" className="relmod-date" value={docDate} max={todayYmd()} onChange={(e) => setDocDate(e.target.value)}
+          title={L("วันที่ตามเอกสาร Modify (ไม่ใช่วันที่ลงแอป)", "Date on the Modify document (not the day it's entered)")} style={{ borderColor: dateErr ? "var(--danger)" : undefined }} />
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: verErr ? "var(--danger)" : chosenNo !== autoNo ? MOD_PURPLE : "var(--muted)", flexBasis: "100%", textAlign: "right" }}>{verErr ? "⚠ " + verErr : verInfo}
+          {" · "}<span style={{ color: dateErr ? "var(--danger)" : dateWarn ? "#b45309" : "var(--muted)" }}>{dateErr ? "⚠ " + dateErr : docDate !== todayYmd() ? L(`วันที่ M ${fmtYmd(docDate)} · ลงแอปวันนี้`, `M date ${fmtYmd(docDate)} · entered today`) : L("วันที่ M = วันนี้ (เปลี่ยนได้ถ้าเอกสารลงวันอื่น)", "M date = today (change it if the document has another date)")}{dateWarn ? " · ⚠ " + dateWarn : ""}</span></span>
       </div>
 
       {secH(1, L("เลือก Part (เลือกได้หลาย Part)", "Pick parts (multiple allowed)"), sel.length ? L(`เลือกแล้ว ${sel.length} Part`, `${sel.length} selected`) : "")}
@@ -3384,7 +3429,93 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
 }
 
 // ── ดูรายละเอียดของ M (หรือ M-00 ต้นฉบับ) ──
-function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) {
+// ปุ่มท้ายรายละเอียด M: Export (ทุกคน) · ยกเลิก M / ย้อนกลับ (แอดมิน)
+function ModDetailActions({ version, canRevert, canCancel, canRollback, onRevert, onExport, exporting }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  return (
+    <div className="relmod-actions">
+      <Btn variant="ghost" size="sm" onClick={() => onExport && onExport(version)} disabled={!onExport || exporting}>
+        <Icon name="grid" size={14} /> {exporting ? L("กำลังสร้าง…", "Exporting…") : L(`Export ${version}`, `Export ${version}`)}
+      </Btn>
+      <span style={{ flex: 1 }} />
+      {canRevert && canRollback && (
+        <Btn variant="ghost" size="sm" onClick={() => onRevert("rollback", version)}
+          title={version === "M-00" ? L("ยกเลิกทุก M ให้กลับเป็นค่าต้นฉบับ", "Cancel every M and go back to the original") : L(`ยกเลิกทุก M ที่ใหม่กว่า ${version}`, `Cancel every M newer than ${version}`)}>
+          ↩ {version === "M-00" ? L("ย้อนกลับเป็นต้นฉบับ", "Roll back to original") : L(`ย้อนกลับเป็น ${version}`, `Roll back to ${version}`)}
+        </Btn>
+      )}
+      {canRevert && canCancel && (
+        <Btn variant="danger" size="sm" onClick={() => onRevert("cancel", version)} title={L(`ย้อนเฉพาะการแก้ใน ${version}`, `Undo only the changes in ${version}`)}>
+          ✕ {L(`ยกเลิก ${version}`, `Cancel ${version}`)}
+        </Btn>
+      )}
+    </div>
+  );
+}
+// แก้วันที่ของ M / วันที่ยกเลิก (แอดมิน) — ประวัติการแก้วันที่เก็บไว้ในฐานข้อมูล
+function ModDateEdit({ mod, target = "modify", onSaved }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const cur = target === "revert" ? revDocDate(mod?.reverted) : modDocDate(mod);
+  const [open, setOpen] = useState(false);
+  const [d, setD] = useState(cur);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  if (!open) return <button type="button" className="relmod-datebtn" onClick={() => { setD(cur); setNote(""); setErr(""); setOpen(true); }}>✎ {L("แก้วันที่", "Edit date")}</button>;
+  const bad = !d ? L("เลือกวันที่", "Pick a date") : d > todayYmd() ? L("วันที่ต้องไม่เกินวันนี้", "The date can't be in the future") : d === cur ? L("ยังเป็นวันที่เดิม", "Same date as now") : "";
+  async function save() {
+    if (bad || busy) return;
+    setBusy(true); setErr("");
+    const r = await setReleaseModDate({ modId: mod.id, target, date: d, note: note.trim() });
+    setBusy(false);
+    if (!r || !r.ok) { setErr(modErrText(r, lang)); return; }
+    auditRecord("release_modify_date", "release_modification", mod.id, { version: mod.version, target, old_date: r.old_date, new_date: r.new_date, note: note.trim() });
+    mlsToast(L(`${mod.version}: ${target === "revert" ? "วันที่ยกเลิก" : "วันที่ M"} ${fmtYmd(r.old_date)} → ${fmtYmd(r.new_date)}`, `${mod.version}: ${target === "revert" ? "cancel date" : "M date"} ${fmtYmd(r.old_date)} → ${fmtYmd(r.new_date)}`), "success");
+    setOpen(false);
+    onSaved && onSaved();
+  }
+  return (
+    <span className="relmod-dateedit">
+      <input type="date" className="relmod-date" value={d} max={todayYmd()} onChange={(e) => setD(e.target.value)} disabled={busy} />
+      <input className="relmod-date" style={{ width: 170 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder={L("หมายเหตุ (ไม่บังคับ)", "Note (optional)")} disabled={busy} />
+      <Btn size="sm" variant="accent" onClick={save} disabled={!!bad || busy}>{busy ? "…" : L("บันทึก", "Save")}</Btn>
+      <Btn size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
+      {(err || (bad && d !== cur)) && <span style={{ color: "var(--danger)", fontSize: 11.5, fontWeight: 600, flexBasis: "100%" }}>⚠ {err || bad}</span>}
+    </span>
+  );
+}
+function ModDateLog({ log }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  if (!Array.isArray(log) || !log.length) return null;
+  return (
+    <div className="relmod-datelog">
+      {log.map((x, i) => (
+        <div key={i}>✎ {x.target === "revert" ? L("แก้วันที่ยกเลิก", "Cancel date changed") : L("แก้วันที่ M", "M date changed")} {fmtYmd(x.old_date)} → <b>{fmtYmd(x.new_date)}</b> · {x.actor_name || "-"} · {fmtDT(x.at)}{x.note ? ` · ${x.note}` : ""}</div>
+      ))}
+    </div>
+  );
+}
+// แถบ "ยกเลิกแล้ว" (ใคร · วันที่ยกเลิก · ลงแอปเมื่อ · เหตุผล · วิธี)
+function ModRevertedBanner({ rv, mod, canEditDate, onDateChanged }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  if (!rv) return null;
+  return (
+    <div className="relmod-cancelled-banner">
+      <b>⊘ {L("ยกเลิกแล้ว", "Cancelled")}</b> · {L("วันที่ยกเลิก", "cancel date")} <b>{fmtYmd(revDocDate(rv))}</b>
+      {canEditDate && onDateChanged ? <> <ModDateEdit mod={mod} target="revert" onSaved={onDateChanged} /></> : null}
+      {" · "}{L("ลงแอป", "entered")} {fmtDT(rv.at)} · {rv.actor_name || "-"}
+      {rv.mode === "rollback" ? <> · {L(`ย้อนกลับเป็น ${rv.target_version || "M-00"}`, `rolled back to ${rv.target_version || "M-00"}`)}</> : null}
+      <div style={{ marginTop: 3 }}>📝 {L("เหตุผลที่ยกเลิก:", "Cancel reason:")} {rv.reason || "-"}</div>
+      <div style={{ marginTop: 3, fontSize: 11.5, opacity: .85 }}>{L("การแก้ใน M นี้ถูกย้อนกลับแล้ว · รายละเอียดด้านล่างเก็บไว้เป็นประวัติ", "The changes in this M were undone · the details below are kept as history")}</div>
+    </div>
+  );
+}
+
+function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose, canRevert = false, hasNewer = false, anyActive = false, onRevert, onExport, exporting = false, canEditDate = false, onDateChanged }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   if (!mod) {
@@ -3400,7 +3531,8 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) 
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><ModVerPill v="M-00" gray /> {L("ต้นฉบับ — ก่อนการแก้ไข", "Original — before any change")}</span>}
         sub={origin ? L("ค่าของทุก Part ก่อนการ Modify ครั้งแรก · ล็อกไว้เป็นหลักฐาน แก้ไม่ได้", "Every part before the first Modify · locked as evidence, read-only") : L("ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ (จะถูกล็อกเป็น M-00 ตอน Modify ครั้งแรก)", "Never modified — current values are the original (locked as M-00 at the first Modify)")}>
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 12px" }}>
-          {origin && <span>{L("บันทึกเมื่อ:", "Saved:")} <b style={{ color: "var(--text)" }}>{fmtDT(origin.created_at)}</b></span>}
+          {(() => { const rd = (rows.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]) || (releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]); return rd ? <span>{L("วันที่ปล่อยงาน:", "Release date:")} <b style={{ color: "var(--text)" }}>{fmtYmd(rd)}</b></span> : null; })()}
+          {origin && <span>{L("บันทึกต้นฉบับลงแอป:", "Original saved:")} <b style={{ color: "var(--text)" }}>{fmtDT(origin.created_at)}</b></span>}
           <span>{L("จำนวนรวม:", "Total qty:")} <b style={{ color: "var(--text)" }}>{fmtNum(tq)} {L("ชิ้น", "pcs")}</b></span>
           <span>{L("น้ำหนักรวม:", "Total weight:")} <b style={{ color: "var(--text)" }}>{fmtNum(tw)} {L("กก.", "kg")}</b></span>
           <span>{L("สถานะ:", "Status:")} <b style={{ color: "var(--text)" }}>{L("🔒 ล็อกเป็นหลักฐาน", "🔒 locked as evidence")}</b></span>
@@ -3417,6 +3549,7 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) 
             ))}</tbody>
           </table>
         </div>
+        <ModDetailActions version="M-00" canRevert={canRevert} canCancel={false} canRollback={anyActive} onRevert={onRevert} onExport={onExport} exporting={exporting} />
       </Modal>
     );
   }
@@ -3433,12 +3566,17 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) 
   };
   return (
     <Modal wide onClose={onClose}
-      title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><ModVerPill v={mod.version} />{types.map((t) => <ModChip key={t} type={t} />)}</span>}
+      title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><ModVerPill v={mod.version} gray={!!mod.reverted} />{mod.reverted ? <span className="relmod-xchip">{L("ยกเลิกแล้ว", "Cancelled")}</span> : null}{types.map((t) => <ModChip key={t} type={t} />)}</span>}
       sub={L(`${(mod.items || []).length} รายการ · ${partOrder.length} Part · เทียบกับ ${prevVersion} (ค่าก่อนแก้)`, `${(mod.items || []).length} change(s) · ${partOrder.length} part(s) · compared with ${prevVersion} (before)`)}>
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 10px" }}>
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 10px" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>📅 {L("วันที่ M:", "M date:")} <b style={{ color: "var(--text)" }}>{fmtYmd(modDocDate(mod))}</b>
+          {!mod.doc_date && <span style={{ fontSize: 11.5 }}>{L("(ไม่ได้ระบุ = วันที่ลงแอป)", "(not set = entry date)")}</span>}
+          {canEditDate && onDateChanged ? <ModDateEdit key={"m" + (mod.doc_date || "")} mod={mod} target="modify" onSaved={onDateChanged} /> : null}</span>
+        <span>{L("ลงแอป:", "Entered:")} <b style={{ color: "var(--text)" }}>{fmtDT(mod.created_at)}</b></span>
         <span>{L("ผู้แก้:", "By:")} <b style={{ color: "var(--text)" }}>{mod.actor_name || "-"}</b></span>
-        <span>{L("เมื่อ:", "When:")} <b style={{ color: "var(--text)" }}>{fmtDT(mod.created_at)}</b></span>
       </div>
+      <ModDateLog log={mod.date_log} />
+      <ModRevertedBanner rv={mod.reverted} mod={mod} canEditDate={canEditDate} onDateChanged={onDateChanged} />
       <div style={{ background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 12 }}>📝 {L("เหตุผล:", "Reason:")} {mod.reason || "-"}</div>
       <div className="table-wrap">
         <table className="data-table">
@@ -3454,6 +3592,304 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose }) 
         </table>
       </div>
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12 }}>🔒 {L(`${prevVersion} (ค่าก่อนแก้) ยังเก็บอยู่ ลบทับไม่ได้ · บันทึกงานหน้าเครื่องที่ทำไปแล้วจำค่าตอนที่ทำ · QR ของชิ้นเดิมไม่เปลี่ยน`, `${prevVersion} (before) is still kept and can't be overwritten · station records keep the values from when they were made · existing QR codes don't change`)}</div>
+      <ModDetailActions version={mod.version} canRevert={canRevert && !mod.reverted} canCancel canRollback={hasNewer} onRevert={onRevert} onExport={onExport} exporting={exporting} />
+    </Modal>
+  );
+}
+
+// ── สถานะของทุก Part ในใบ "ณ เวอร์ชัน" ──
+//   เริ่มจากต้นฉบับ M-00 แล้วเล่นเหตุการณ์ตามเวลาจริง (บันทึก M / ยกเลิก M) จนถึงตอนบันทึก M นั้น
+//   (M ที่ถูกยกเลิกก่อนหน้า = ย้อนออกแล้ว · M ที่ถูกยกเลิกทีหลัง = ยังนับ เพราะตอนนั้นยังใช้อยู่)
+function modStateAt(info, releases, ro, stopVersion) {
+  const mods = (info && info.mods) || [];
+  const cur = new Map((releases || []).map((r) => [r.id, r]));
+  const rows = new Map();
+  const base = (info?.origin?.rows && info.origin.rows.length) ? info.origin.rows : (releases || []).map((r) => ({
+    release_id: r.id, part_no: r.part_master?.part_no, qty: r.qty, length_mm: r.length_mm ?? r.part_master?.default_length_mm,
+    unit_weight: r.unit_weight ?? r.part_master?.unit_weight, inv: r.part_master?.material || r.material,
+  }));
+  base.forEach((o) => rows.set(o.release_id, { release_id: o.release_id, part_no: o.part_no, qty: Number(o.qty) || 0, length_mm: o.length_mm, unit_weight: o.unit_weight, inv: o.inv, status: "" }));
+  if (stopVersion === "M-00") return [...rows.values()];
+  const get = (it) => {
+    let r = rows.get(it.release_id);
+    if (!r) {
+      const c = cur.get(it.release_id);
+      r = { release_id: it.release_id, part_no: it.part_no, qty: Number(it.before?.qty) || 0, length_mm: c?.length_mm ?? c?.part_master?.default_length_mm ?? null,
+        unit_weight: c?.unit_weight ?? c?.part_master?.unit_weight ?? null, inv: it.before?.inv, status: "" };
+      rows.set(it.release_id, r);
+    }
+    return r;
+  };
+  const ms = (t) => { const v = new Date(t).getTime(); return Number.isFinite(v) ? v : 0; };
+  const ev = [];
+  mods.forEach((m) => { ev.push({ t: ms(m.created_at), k: 0, m }); if (m.reverted) ev.push({ t: ms(m.reverted.at), k: 1, m }); });
+  ev.sort((a, b) => a.t - b.t || a.k - b.k || (a.k === 1 ? ms(b.m.created_at) - ms(a.m.created_at) : 0));
+  for (const e of ev) {
+    const items = [...(e.m.items || [])].sort((a, b) => a.seq - b.seq);
+    if (e.k === 0) {
+      for (const it of items) {
+        const r = get(it);
+        if (it.after?.qty != null) r.qty = Number(it.after.qty) || 0;
+        if (it.after && "inv" in it.after) r.inv = it.after.inv;
+        if (it.after?.part_no) r.part_no = it.after.part_no;
+        if (it.type === "cancel") r.status = "cancelled";
+        if (it.type === "transfer") {
+          if (r.qty === 0) r.status = "moved";
+          const to = it.after?.to_release_id;
+          if (to && (it.after?.to_release_order || ro) === ro) {
+            let d = rows.get(to);
+            if (!d) {
+              const c = cur.get(to);
+              d = { release_id: to, part_no: it.after.to_part_no, qty: 0, length_mm: c?.length_mm ?? r.length_mm, unit_weight: c?.unit_weight ?? r.unit_weight, inv: r.inv, status: "" };
+              rows.set(to, d);
+            }
+            d.qty += Number(it.after.moved) || 0;
+          }
+        }
+      }
+      if (stopVersion && e.m.version === stopVersion) break;
+    } else {
+      for (const it of items.reverse()) {
+        const r = get(it);
+        if (it.before?.qty != null) r.qty = Number(it.before.qty) || 0;
+        if (it.before && "inv" in it.before) r.inv = it.before.inv;
+        if (it.type === "cancel" || (it.type === "transfer" && r.status === "moved")) r.status = "";
+        const to = it.after?.to_release_id;
+        if (it.type === "transfer" && to && rows.has(to)) {
+          const d = rows.get(to);
+          d.qty -= Number(it.after.moved) || 0;
+          if (d.qty <= 0) rows.delete(to);
+        }
+      }
+    }
+  }
+  return [...rows.values()];
+}
+
+// ── Export Excel ของ M (หรือทุก M) ──
+function modExportSheets({ info, releases, ro, version, lang }) {
+  const L = (th, en) => (lang === "en" ? en : th);
+  const mods = (info && info.mods) || [];
+  const pj = releases[0]?.part_master?.projects || {};
+  const cur = info?.current || "M-00";
+  const w2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const statusOf = (m) => (m.reverted ? L("ยกเลิกแล้ว", "Cancelled") : m.version === cur ? L("ใช้อยู่ (เวอร์ชันปัจจุบัน)", "Active (current)") : L("ใช้อยู่", "Active"));
+  const howOf = (rv) => (!rv ? "" : rv.mode === "rollback" ? L(`ย้อนกลับเป็น ${rv.target_version || "M-00"}`, `Rolled back to ${rv.target_version || "M-00"}`) : L("ยกเลิก M นี้", "Cancelled this M"));
+  const kv = (list) => list.filter(Boolean).map(([k, v]) => ({ [L("หัวข้อ", "Item")]: k, [L("ค่า", "Value")]: v ?? "" }));
+  const typeText = (it) => modTL(it.type, lang) + (it.type === "qty" ? ((Number(it.after?.qty) || 0) > (Number(it.before?.qty) || 0) ? " (+)" : " (−)") : "");
+  const itemRow = (it, extra = {}) => ({
+    ...extra,
+    [L("ลำดับ", "#")]: it.seq, "Part No.": it.part_no || "", [L("การแก้ไข", "Change")]: typeText(it),
+    [L("จำนวนก่อน", "Qty before")]: it.before?.qty ?? "", [L("จำนวนหลัง", "Qty after")]: it.after?.qty ?? "",
+    [L("INV ก่อน", "INV before")]: it.before?.inv || "", [L("INV หลัง", "INV after")]: it.after?.inv || "",
+    [L("ทำแล้วตอนแก้ (ชิ้น)", "Made at the time (pcs)")]: it.before?.produced ?? "",
+    [L("ปลายทาง (Transfer)", "Target (transfer)")]: it.type === "transfer" ? `${it.after?.to_part_no || ""} · ${it.after?.to_release_order || ro}` : "",
+    [L("รายละเอียด", "Details")]: modNoteText(it.note, lang) || "",
+    [L("QR (ใบ)", "QR (count)")]: Array.isArray(it.after?.qr) ? it.after.qr.length : 0,
+  });
+  const partRows = (list, changed) => list.map((r) => ({
+    "Part No.": r.part_no || "", [L("จำนวน", "Qty")]: Number(r.qty) || 0,
+    [L("ความยาว/ชิ้น (มม.)", "Length/pc (mm)")]: r.length_mm != null && r.length_mm !== "" ? Number(r.length_mm) : "",
+    [L("น้ำหนัก/ชิ้น (กก.)", "Weight/pc (kg)")]: r.unit_weight ? w2(r.unit_weight) : "",
+    [L("น้ำหนักรวม (กก.)", "Total weight (kg)")]: r.unit_weight ? w2((Number(r.qty) || 0) * Number(r.unit_weight)) : "",
+    "INV Code": r.inv || "",
+    [L("สถานะ", "Status")]: r.status === "cancelled" ? L("ยกเลิก", "Cancelled") : r.status === "moved" ? L("ย้ายหมดแล้ว", "All moved") : "",
+    ...(changed ? { [L("แก้ใน M นี้", "Changed in this M")]: changed.has(r.release_id) ? "✓" : "" } : {}),
+  }));
+  const qrAct = (it) => (it.type === "qty" ? ((Number(it.after?.qty) || 0) > (Number(it.before?.qty) || 0) ? L("เพิ่มใหม่", "New") : L("ยกเลิก (ลดจำนวน)", "Cancelled (qty reduced)"))
+    : it.type === "cancel" ? L("ยกเลิก (ยกเลิก Part)", "Cancelled (part cancelled)")
+    : it.type === "transfer" ? L(`ย้ายไป ${it.after?.to_part_no || ""} · ${it.after?.to_release_order || ro}`, `Moved to ${it.after?.to_part_no || ""} · ${it.after?.to_release_order || ro}`) : "");
+  const qrUndo = (type, it) => (type === "qty" ? ((Number(it.after?.qty) || 0) > (Number(it.before?.qty) || 0) ? L("ยกเลิก (ยกเลิก M)", "Cancelled (M cancelled)") : L("คืน (ยกเลิก M)", "Restored (M cancelled)"))
+    : type === "cancel" ? L("คืน (ยกเลิก M)", "Restored (M cancelled)") : type === "transfer" ? L("ย้ายกลับ (ยกเลิก M)", "Moved back (M cancelled)") : "");
+  const qrRows = (m) => {
+    const out = [];
+    const bySeq = new Map((m.items || []).map((it) => [it.seq, it]));
+    (m.items || []).forEach((it) => (Array.isArray(it.after?.qr) ? it.after.qr : []).forEach((q) => out.push({ QR: q, "Part No.": it.part_no || "", [L("การกระทำ", "Action")]: qrAct(it), [L("เวอร์ชัน", "Version")]: m.version })));
+    ((m.reverted?.detail?.items) || []).forEach((x) => (Array.isArray(x.qr) ? x.qr : []).forEach((q) => out.push({ QR: q, "Part No.": x.part_no || "", [L("การกระทำ", "Action")]: qrUndo(x.type, bySeq.get(x.seq) || {}), [L("เวอร์ชัน", "Version")]: L(`ยกเลิก ${m.version}`, `${m.version} cancelled`) })));
+    return out;
+  };
+  const tagRO = String(ro || "RO").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 60);
+  const relDay = (releases || []).map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0] || "";
+  const dateLogText = (m) => (m.date_log || []).map((x) => `${x.target === "revert" ? L("วันที่ยกเลิก", "cancel date") : L("วันที่ M", "M date")} ${fmtYmd(x.old_date)} → ${fmtYmd(x.new_date)} (${x.actor_name || "-"} ${fmtDT(x.at)}${x.note ? " · " + x.note : ""})`).join(" | ");
+
+  if (version === "ALL") {
+    const hist = mods.map((m) => ({
+      [L("เวอร์ชัน", "Version")]: m.version, [L("วันที่ M", "M date")]: fmtYmd(modDocDate(m)), [L("สถานะ", "Status")]: statusOf(m), [L("ลงแอปเมื่อ", "Entered")]: fmtDT(m.created_at),
+      [L("ผู้แก้", "By")]: m.actor_name || "", [L("เหตุผล", "Reason")]: m.reason || "", [L("รายการ", "Changes")]: (m.items || []).length,
+      "Part": [...new Set((m.items || []).map((i) => i.part_no))].join(", "),
+      [L("วันที่ยกเลิก", "Cancel date")]: m.reverted ? fmtYmd(revDocDate(m.reverted)) : "", [L("ยกเลิก — ลงแอปเมื่อ", "Cancel entered")]: m.reverted ? fmtDT(m.reverted.at) : "",
+      [L("ผู้ยกเลิก", "Cancelled by")]: m.reverted?.actor_name || "",
+      [L("เหตุผลที่ยกเลิก", "Cancel reason")]: m.reverted?.reason || "", [L("วิธี", "How")]: howOf(m.reverted),
+      [L("ประวัติแก้วันที่", "Date changes")]: dateLogText(m),
+    }));
+    hist.push({ [L("เวอร์ชัน", "Version")]: "M-00", [L("วันที่ M", "M date")]: relDay ? fmtYmd(relDay) + L(" (ปล่อยงาน)", " (release)") : "", [L("สถานะ", "Status")]: L("ต้นฉบับ (ล็อก)", "Original (locked)"), [L("ลงแอปเมื่อ", "Entered")]: info?.origin ? fmtDT(info.origin.created_at) : "",
+      [L("ผู้แก้", "By")]: info?.origin?.actor_name || "", [L("เหตุผล", "Reason")]: L("ค่าก่อนการแก้ไขครั้งแรก", "Values before the first change") });
+    const all = [];
+    mods.forEach((m) => [...(m.items || [])].sort((a, b) => a.seq - b.seq).forEach((it) => all.push(itemRow(it, { [L("เวอร์ชัน", "Version")]: m.version, [L("วันที่ M", "M date")]: fmtYmd(modDocDate(m)), [L("สถานะ M", "M status")]: m.reverted ? L("ยกเลิกแล้ว", "Cancelled") : L("ใช้อยู่", "Active") }))));
+    const nowRows = (releases || []).map((r) => ({
+      release_id: r.id, part_no: r.part_master?.part_no, qty: r.qty, length_mm: r.length_mm ?? r.part_master?.default_length_mm,
+      unit_weight: r.unit_weight ?? r.part_master?.unit_weight, inv: r.part_master?.material || r.material,
+      status: r.mod_cancelled_at ? (r.mod_cancel_keep === "moved" ? "moved" : "cancelled") : "",
+    }));
+    const qrs = mods.flatMap(qrRows);
+    return {
+      name: `modify-${tagRO}-all.xlsx`,
+      sheets: [
+        { name: L("ประวัติ", "History"), rows: hist },
+        ...(all.length ? [{ name: L("รายการแก้ไขทั้งหมด", "All changes"), rows: all }] : []),
+        { name: L(`Part ปัจจุบัน (${cur})`, `Current parts (${cur})`), rows: partRows(nowRows) },
+        ...(qrs.length ? [{ name: "QR", rows: qrs }] : []),
+      ],
+    };
+  }
+  if (version === "M-00") {
+    const rows = modStateAt(info, releases, ro, "M-00");
+    return {
+      name: `modify-${tagRO}-M-00.xlsx`,
+      sheets: [
+        { name: L("สรุป", "Summary"), rows: kv([
+          [L("โปรเจค", "Project"), [pj.code, pj.name].filter(Boolean).join(" — ")], ["Release Order", ro], [L("เวอร์ชัน", "Version"), "M-00"],
+          [L("สถานะ", "Status"), L("ต้นฉบับ — ก่อนการแก้ไข (ล็อกเป็นหลักฐาน)", "Original — before any change (locked)")],
+          [L("วันที่ปล่อยงาน", "Release date"), relDay ? fmtYmd(relDay) : ""],
+          [L("บันทึกต้นฉบับลงแอปเมื่อ", "Original saved"), info?.origin ? fmtDT(info.origin.created_at) : L("ยังไม่เคย Modify (ค่าปัจจุบัน)", "Never modified (current values)")],
+          [L("จำนวน Part", "Parts"), rows.length], [L("จำนวนรวม (ชิ้น)", "Total qty (pcs)"), rows.reduce((a, r) => a + (Number(r.qty) || 0), 0)],
+          [L("เวอร์ชันปัจจุบันของใบ", "Current version of this RO"), cur], [L("Export เมื่อ", "Exported"), fmtDT(new Date().toISOString())],
+        ]) },
+        { name: L("Part ณ M-00", "Parts at M-00"), rows: partRows(rows) },
+      ],
+    };
+  }
+  const m = mods.find((x) => x.version === version);
+  if (!m) return null;
+  const idx = mods.findIndex((x) => x.version === version);
+  const prevV = mods[idx + 1] ? mods[idx + 1].version : "M-00";
+  const items = [...(m.items || [])].sort((a, b) => a.seq - b.seq);
+  const changed = new Set(items.flatMap((i) => [i.release_id, i.after?.to_release_id].filter(Boolean)));
+  const st = modStateAt(info, releases, ro, version);
+  const qrs = qrRows(m);
+  return {
+    name: `modify-${tagRO}-${version}.xlsx`,
+    sheets: [
+      { name: L("สรุป", "Summary"), rows: kv([
+        [L("โปรเจค", "Project"), [pj.code, pj.name].filter(Boolean).join(" — ")], ["Release Order", ro], [L("เวอร์ชัน", "Version"), m.version],
+        [L("วันที่ M (ตามเอกสาร)", "M date (document)"), fmtYmd(modDocDate(m)) + (m.doc_date ? "" : L(" (ไม่ได้ระบุ = วันที่ลงแอป)", " (not set = entry date)"))],
+        [L("สถานะ", "Status"), statusOf(m)], [L("บันทึกลงแอปเมื่อ", "Entered in the app"), fmtDT(m.created_at)], [L("ผู้แก้", "By"), m.actor_name || ""],
+        [L("เหตุผล", "Reason"), m.reason || ""], [L("จำนวนรายการ", "Changes"), items.length],
+        [L("จำนวน Part ที่แก้", "Parts changed"), new Set(items.map((i) => i.part_no)).size], [L("เทียบกับ (ค่าก่อนแก้)", "Compared with (before)"), prevV],
+        m.reverted && [L("วันที่ยกเลิก (ตามเอกสาร)", "Cancel date (document)"), fmtYmd(revDocDate(m.reverted))],
+        m.reverted && [L("ยกเลิก — ลงแอปเมื่อ", "Cancel entered in the app"), fmtDT(m.reverted.at)],
+        m.reverted && [L("ผู้ยกเลิก", "Cancelled by"), m.reverted.actor_name || ""],
+        m.reverted && [L("เหตุผลที่ยกเลิก", "Cancel reason"), m.reverted.reason || ""],
+        m.reverted && [L("วิธียกเลิก", "How"), howOf(m.reverted)],
+        (m.date_log || []).length > 0 && [L("ประวัติแก้วันที่", "Date changes"), dateLogText(m)],
+        [L("เวอร์ชันปัจจุบันของใบ", "Current version of this RO"), cur], [L("Export เมื่อ", "Exported"), fmtDT(new Date().toISOString())],
+      ]) },
+      { name: L("รายการแก้ไข", "Changes"), rows: items.map((it) => itemRow(it)) },
+      { name: L(`Part ณ ${m.version}`, `Parts at ${m.version}`), rows: partRows(st, changed) },
+      ...(qrs.length ? [{ name: "QR", rows: qrs }] : []),
+    ],
+  };
+}
+
+// ── ยืนยันการยกเลิก M / ย้อนกลับ (ตรวจผลก่อนด้วย dry-run → ใส่เหตุผล → ยืนยัน) ──
+function ReleaseRevertModal({ mode, version, projectId, releaseOrder, mods, current, onClose, onDone, onSwitch }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [pv, setPv] = useState(null);        // ผล dry-run
+  const [reason, setReason] = useState("");
+  const [revDate, setRevDate] = useState(todayYmd());   // ★ วันที่ยกเลิกตามเอกสาร
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setPv(null); setErr("");
+    revertReleaseModify({ projectId, releaseOrder, mode, version, dryRun: true })
+      .then((r) => { if (alive) setPv(r || { ok: false, reason: "error" }); })
+      .catch((e) => { if (alive) setPv({ ok: false, reason: "error", message: String(e?.message || e) }); });
+    return () => { alive = false; };
+  }, [projectId, releaseOrder, mode, version]);
+  const m = (mods || []).find((x) => x.version === version);
+  const below = (mods || []).filter((x) => !x.reverted && m && Number(x.version_no) < Number(m.version_no)).sort((a, b) => b.version_no - a.version_no)[0];
+  const suggest = below ? below.version : "M-00";
+  const title = mode === "cancel" ? L(`ยกเลิก ${version}`, `Cancel ${version}`)
+    : version === "M-00" ? L("ย้อนกลับเป็นต้นฉบับ (M-00)", "Roll back to the original (M-00)") : L(`ย้อนกลับเป็น ${version}`, `Roll back to ${version}`);
+  const sub = mode === "cancel"
+    ? L(`ย้อนเฉพาะการแก้ใน ${version} · ${version} ยังอยู่ในประวัติ (ขึ้นว่า “ยกเลิกแล้ว”) · เลข ${version} จะไม่ถูกนำกลับมาใช้ซ้ำ`, `Undo only the changes in ${version} · ${version} stays in the history (marked “cancelled”) · the number ${version} won't be reused`)
+    : L(`ยกเลิกทุก M ที่ใหม่กว่า ${version} ทีเดียว (ไล่จาก M ล่าสุดลงมา) · ทุก M ยังอยู่ในประวัติ`, `Cancel every M newer than ${version} at once (newest first) · all of them stay in the history`);
+  const ok = !!(pv && pv.ok);
+  const revDateErr = !revDate ? L("เลือกวันที่ยกเลิก", "Pick the cancel date") : revDate > todayYmd() ? L("วันที่ต้องไม่เกินวันนี้", "The date can't be in the future") : "";
+  const newestM = (pv?.reverted || []).map((x) => (mods || []).find((mm) => mm.version === x.version)).filter(Boolean).map(modDocDate).sort().slice(-1)[0] || "";
+  const revDateWarn = !revDateErr && newestM && revDate < newestM ? L(`ก่อนวันที่ของ M ที่จะยกเลิก (${fmtYmd(newestM)})`, `before the date of the M being cancelled (${fmtYmd(newestM)})`) : "";
+  const canSave = ok && !!reason.trim() && !busy && !revDateErr;
+  async function submit() {
+    if (!canSave) return;
+    setBusy(true); setErr("");
+    const r = await revertReleaseModify({ projectId, releaseOrder, mode, version, reason: reason.trim(), dryRun: false, docDate: revDate });
+    setBusy(false);
+    if (!r || !r.ok) { setErr(modErrText(r, lang)); return; }
+    auditRecord("release_modify_revert", "release_order", releaseOrder, { mode, version, current: r.current, reverted: (r.reverted || []).map((x) => x.version), project_id: projectId, reason: reason.trim(), doc_date: revDate });
+    mlsToast(L(`${(r.reverted || []).map((x) => x.version).join(", ")} ถูกยกเลิกแล้ว · ตอนนี้ ${r.current}`, `${(r.reverted || []).map((x) => x.version).join(", ")} cancelled · now ${r.current}`), "success");
+    onDone && onDone(r);
+  }
+  return (
+    <Modal wide onClose={onClose} locked={busy} title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>↩ {title}</span>} sub={sub}>
+      {!pv ? (
+        <div style={{ color: "var(--muted)", fontSize: 13, padding: "10px 2px" }}>{L("กำลังตรวจว่าย้อนได้ไหม…", "Checking whether this can be undone…")}</div>
+      ) : !pv.ok ? (
+        <div className="relmod-err">
+          <b>{L("ยกเลิกไม่ได้", "Can't cancel")}</b>
+          <div style={{ marginTop: 4 }}>{modErrText(pv, lang)}</div>
+          {pv.reason === "revert_conflict" && mode === "cancel" && onSwitch && (
+            <div style={{ marginTop: 10 }}>
+              <Btn variant="ghost" size="sm" onClick={() => onSwitch("rollback", suggest)}>↩ {suggest === "M-00" ? L("ย้อนกลับเป็นต้นฉบับแทน", "Roll back to the original instead") : L(`ย้อนกลับเป็น ${suggest} แทน`, `Roll back to ${suggest} instead`)}</Btn>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div style={{ fontWeight: 700, margin: "2px 0 8px" }}>{L("สิ่งที่จะเกิด", "What will happen")}</div>
+          <div className="relmod-rv-list">
+            {(pv.reverted || []).map((x) => (
+              <div key={x.version} className="relmod-rv-m">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><ModVerPill v={x.version} /> <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{L("→ ยกเลิก", "→ cancelled")}</span></div>
+                {(x.items || []).map((it) => (
+                  <div key={it.seq} className="relmod-rv-it"><b style={{ fontFamily: "var(--font-mono)" }}>{it.part_no}</b> <ModChip type={it.type} /> {modNoteText(it.note, lang)}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "10px 0 4px", fontSize: 12.5 }}>
+            {pv.restored_qr > 0 && <span className="relmod-rv-chip">{L(`คืน QR ${pv.restored_qr} ใบ`, `${pv.restored_qr} QR restored`)}</span>}
+            {pv.cancelled_qr > 0 && <span className="relmod-rv-chip bad">{L(`ยกเลิก QR ${pv.cancelled_qr} ใบ`, `${pv.cancelled_qr} QR cancelled`)}</span>}
+            {pv.moved_back > 0 && <span className="relmod-rv-chip">{L(`ย้ายกลับ ${pv.moved_back} ชิ้น`, `${pv.moved_back} pcs moved back`)}</span>}
+            <span className="relmod-rv-chip now">{L("ตอนนี้", "Now")} {current} → <b>{pv.current}</b></span>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 12px", lineHeight: 1.55 }}>
+            {L("QR ที่คืน = ป้ายเดิมสแกนได้ต่อ · QR ที่ถูกยกเลิก = ถ้าพิมพ์ป้ายไปแล้ว ให้แยกป้าย/ชิ้นนั้นออก (หน้าเครื่องจะแจ้งว่าถูกยกเลิก) · งานที่บันทึกไปแล้วไม่ถูกแตะ",
+               "Restored QR = the old labels scan again · Cancelled QR = if labels were printed, set them aside (the station will say they're cancelled) · recorded work is not touched")}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600 }}>📅 {L("วันที่ยกเลิก (ตามเอกสาร)", "Cancel date (per document)")}</label>
+            <input type="date" className="relmod-date" value={revDate} max={todayYmd()} onChange={(e) => setRevDate(e.target.value)} disabled={busy} style={{ borderColor: revDateErr ? "var(--danger)" : undefined }} />
+            <span style={{ fontSize: 11.5, color: revDateErr ? "var(--danger)" : revDateWarn ? "#b45309" : "var(--muted)", fontWeight: revDateErr || revDateWarn ? 600 : 400 }}>
+              {revDateErr ? "⚠ " + revDateErr : revDateWarn ? "⚠ " + revDateWarn : revDate !== todayYmd() ? L("ลงแอปวันนี้ · วันที่ตามเอกสารคือวันที่เลือก", "entered today · the document date is the one picked") : L("ไม่ใช่วันนี้? เลือกวันที่ตามเอกสาร", "Not today? pick the document date")}
+            </span>
+          </div>
+          <label style={{ fontSize: 12.5, fontWeight: 600 }}>{L("เหตุผลที่ยกเลิก (บังคับ)", "Reason (required)")}</label>
+          <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} disabled={busy}
+            placeholder={L("เช่น ลูกค้าแจ้งกลับไปใช้แบบเดิม", "e.g. customer went back to the previous drawing")} style={{ width: "100%", marginTop: 4, resize: "vertical" }} />
+        </>
+      )}
+      {err && <div className="relmod-err" style={{ marginTop: 10 }}>{err}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+        <Btn variant="ghost" onClick={onClose} disabled={busy}>{L("ปิด", "Close")}</Btn>
+        {ok && (
+          <Btn variant="danger" onClick={submit} disabled={!canSave}>
+            {busy ? L("กำลังบันทึก…", "Saving…") : mode === "cancel" ? L(`ยืนยัน · ยกเลิก ${version}`, `Confirm · cancel ${version}`) : L(`ยืนยัน · ย้อนกลับเป็น ${version}`, `Confirm · roll back to ${version}`)}
+          </Btn>
+        )}
+      </div>
+      {ok && !reason.trim() && <div style={{ textAlign: "right", fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>{L("ใส่เหตุผลก่อนยืนยัน", "Enter a reason to confirm")}</div>}
     </Modal>
   );
 }
@@ -3488,7 +3924,25 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   useEffect(() => { loadModInfo(); }, [loadModInfo]);
   const modReady = !!(modInfo && modInfo.ok);
   const modList = modReady ? (modInfo.mods || []) : [];
-  const curVersion = modList.length ? modVer(Math.max(...modList.map((m) => Number(m.version_no) || 0))) : "M-00";
+  const activeMods = modList.filter((m) => !m.reverted);   // ★ M ที่ถูกยกเลิก ไม่นับเป็นเวอร์ชันปัจจุบัน
+  const curVersion = (modReady && modInfo.current) || (activeMods.length ? modVer(Math.max(...activeMods.map((m) => Number(m.version_no) || 0))) : "M-00");
+  const nCancelled = modList.length - activeMods.length;
+  const hasNewerThan = (v) => { const n = Number(String(v).replace(/\D/g, "")) || 0; return activeMods.some((m) => (Number(m.version_no) || 0) > n); };
+  const [revertReq, setRevertReq] = useState(null);   // { mode: "cancel"|"rollback", version }
+  const [modExporting, setModExporting] = useState(false);
+  async function exportMod(version) {
+    if (modExporting || !modReady) return;
+    setModExporting(true);
+    try {
+      const pack = modExportSheets({ info: modInfo, releases, ro: hdr.ro, version, lang });
+      if (!pack) throw new Error("no data");
+      const { downloadSheets } = await import("./excelExport.js");
+      await downloadSheets(pack.name, pack.sheets);
+    } catch (e) {
+      console.warn("export modify excel error", e);
+      mlsToast(lang === "en" ? "Export failed, please try again" : "สร้างไฟล์ Excel ไม่สำเร็จ ลองใหม่อีกครั้ง", "error");
+    } finally { setModExporting(false); }
+  }
   const modByVersion = (v) => modList.find((m) => m.version === v) || null;
   const prevOf = (v) => { const i = modList.findIndex((m) => m.version === v); return (i >= 0 && modList[i + 1]) ? modList[i + 1].version : "M-00"; };
   function openModify() {
@@ -3725,7 +4179,13 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <Card className="span-2"
             title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>{lang === "en" ? "Modify history" : "ประวัติการแก้ไข (Modify)"}
               {modReady && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 700, padding: "1px 8px", borderRadius: 7, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)" }}>{lang === "en" ? "now" : "ตอนนี้"} {curVersion}</span>}</span>}
-            right={modReady ? <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>{modList.length} {lang === "en" ? "time(s)" : "ครั้ง"}</span> : null}>
+            right={modReady ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>{modList.length} {lang === "en" ? "time(s)" : "ครั้ง"}{nCancelled ? (lang === "en" ? ` · ${nCancelled} cancelled` : ` · ยกเลิก ${nCancelled}`) : ""}</span>
+                <Btn variant="ghost" size="sm" onClick={() => exportMod("ALL")} disabled={modExporting} title={lang === "en" ? "One Excel file: every M (incl. cancelled) + all changes + current parts + QR" : "ไฟล์ Excel เดียว: ทุก M (รวมที่ยกเลิก) + รายการแก้ทั้งหมด + Part ปัจจุบัน + QR"}>
+                  <Icon name="grid" size={13} /> {lang === "en" ? "Export all M" : "Export ทุก M"}
+                </Btn>
+              </span>) : null}>
             {!modInfo ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</div>
               : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? (lang === "en" ? "Modify isn't installed — run migration-release-modify.sql in Supabase" : "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase") : (lang === "en" ? "Couldn't load history" : "โหลดประวัติไม่สำเร็จ")}</div>
               : (
@@ -3735,13 +4195,20 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     {modList.map((m) => {
                       const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));
                       const pns = [...new Set((m.items || []).map((i) => i.part_no))];
+                      const rv = m.reverted;
                       return (
-                        <div key={m.id} className="relmod-hrow" onClick={() => setModView(m.version)}>
-                          <ModVerPill v={m.version} />
+                        <div key={m.id} className={"relmod-hrow" + (rv ? " cancelled" : "")} onClick={() => setModView(m.version)}>
+                          <span className={rv ? "relmod-strike" : ""}><ModVerPill v={m.version} gray={!!rv} /></span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{types.map((t) => <ModChip key={t} type={t} />)}{pns.join(", ")}</div>
-                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {pns.length} Part · {fmtDT(m.created_at)} · {m.actor_name || "-"} · {m.reason}</div>
+                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {rv ? <span className="relmod-xchip">{lang === "en" ? "Cancelled" : "ยกเลิกแล้ว"}</span> : (m.version === curVersion ? <span className="relmod-nowchip">{lang === "en" ? "now" : "ตอนนี้"}</span> : null)}
+                              {types.map((t) => <ModChip key={t} type={t} />)}<span className={rv ? "relmod-strike-txt" : ""}>{pns.join(", ")}</span>
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {pns.length} Part · {m.actor_name || "-"} · {m.reason}</div>
+                            {rv && <div style={{ fontSize: 11.5, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⊘ {lang === "en" ? "Cancelled" : "ยกเลิก"} <b>{fmtYmd(revDocDate(rv))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(rv.at)} · {rv.actor_name || "-"}{rv.mode === "rollback" ? (lang === "en" ? ` · rolled back to ${rv.target_version || "M-00"}` : ` · ย้อนกลับเป็น ${rv.target_version || "M-00"}`) : ""} · {rv.reason}</div>}
                           </div>
+                          <button type="button" className="relmod-dl" title={lang === "en" ? `Export ${m.version} (Excel)` : `Export ${m.version} (Excel)`} disabled={modExporting}
+                            onClick={(e) => { e.stopPropagation(); exportMod(m.version); }}><Icon name="grid" size={13} /></button>
                           <span style={{ color: "var(--muted-2)" }}>›</span>
                         </div>
                       );
@@ -3750,8 +4217,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                       <ModVerPill v="M-00" gray />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{lang === "en" ? "Original — before any change" : "ต้นฉบับ — ก่อนการแก้ไข"}</div>
-                        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{modInfo.origin ? `${fmtDT(modInfo.origin.created_at)} · 🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
+                        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{(() => { const rd = releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]; return rd ? <>📅 {lang === "en" ? "released" : "ปล่อยงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(rd)}</b> · </> : null; })()}{modInfo.origin ? `🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
                       </div>
+                      <button type="button" className="relmod-dl" title="Export M-00 (Excel)" disabled={modExporting}
+                        onClick={(e) => { e.stopPropagation(); exportMod("M-00"); }}><Icon name="grid" size={13} /></button>
                       <span style={{ color: "var(--muted-2)" }}>›</span>
                     </div>
                   </div>
@@ -3911,7 +4380,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       {modView && (
         <ReleaseModDetailModal releases={releases} origin={modReady ? modInfo.origin : null}
           mod={modView === "M-00" ? null : modByVersion(modView)} prevVersion={modView === "M-00" ? "" : prevOf(modView)}
+          canRevert={canEdit && modReady && !!hdr.ro} hasNewer={hasNewerThan(modView)} anyActive={activeMods.length > 0}
+          onRevert={(mode, version) => setRevertReq({ mode, version })} onExport={exportMod} exporting={modExporting}
+          canEditDate={canEdit && modReady} onDateChanged={loadModInfo}
           onClose={() => setModView(null)} />
+      )}
+      {revertReq && modReady && (
+        <ReleaseRevertModal mode={revertReq.mode} version={revertReq.version} projectId={projectId} releaseOrder={hdr.ro}
+          mods={modList} current={curVersion}
+          onSwitch={(mode, version) => setRevertReq({ mode, version })}
+          onClose={() => setRevertReq(null)}
+          onDone={() => { setRevertReq(null); setModView(null); afterModify(); }} />
       )}
       {editHeader && (
         <ReleaseHeaderEditModal
