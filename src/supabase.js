@@ -1387,6 +1387,59 @@ if (typeof window !== "undefined") {
   setInterval(() => { const c = ajRead(); if (c && !c.sent && !_ajMissing) flushActiveJob(); }, 20000);
 }
 
+// ── บันทึก Material (INV Code) — แยกตามโปรเจค + Center Stock · ดู migration-materials.sql ──
+//   ยังไม่ได้รัน SQL → { ok:false, reason:"not_installed" } (หน้าเว็บแจ้ง/ข้ามเงียบ ไม่พัง)
+function matRes(data, error, fn) {
+  if (error) {
+    if (isMissingFnErr(error)) return { ok: false, reason: "not_installed" };
+    console.warn(fn + " error", error);
+    flagAuth(error);
+    return { ok: false, reason: isNetworkErr(error) ? "network" : "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+// รายการของโปรเจค (+ Center Stock เสมอ) → { ok, project:[...], center:[...], counts:{...} }
+export async function getMaterials(projectId = null) {
+  const { data, error } = await supabase.rpc("materials_list", { p_project_id: projectId || null });
+  if (error) return matRes(null, error, "materials_list");
+  return { ok: true, project: data?.project || [], center: data?.center || [], counts: data?.counts || {} };
+}
+const matTxt = (v) => (v == null ? null : String(v).trim() === "" ? null : String(v).trim());
+// เพิ่ม (id=null · projectId=null = Center Stock) / แก้ (id) 1 รายการ → { ok, row } | { ok:false, reason }
+export async function saveMaterial({ id = null, projectId = null, inv, wpm, len, qty, note }) {
+  const { data, error } = await supabase.rpc("material_save", {
+    p_token: authToken(), p_id: id || null, p_project_id: projectId || null, p_inv: String(inv || "").trim(),
+    p_wpm: matTxt(wpm), p_len: matTxt(len), p_qty: matTxt(qty), p_note: matTxt(note),
+  });
+  return matRes(data, error, "material_save");
+}
+// เพิ่มหลายรายการ (วางจาก Excel) · onDup: "skip" | "update" → { ok, added, updated, skipped:[{inv, reason}] }
+export async function upsertMaterials(projectId, items, onDup = "skip") {
+  const { data, error } = await supabase.rpc("materials_upsert_many", {
+    p_token: authToken(), p_project_id: projectId || null, p_on_dup: onDup,
+    p_items: (items || []).map((it) => ({ inv: String(it.inv || "").trim(), wpm: matTxt(it.wpm), len: matTxt(it.len), qty: matTxt(it.qty), note: matTxt(it.note) })),
+  });
+  return matRes(data, error, "materials_upsert_many");
+}
+export async function deleteMaterial(id) {
+  const { data, error } = await supabase.rpc("material_delete", { p_token: authToken(), p_id: id });
+  return matRes(data, error, "material_delete");
+}
+// หลังสร้าง Release: INV ที่ยังไม่มี (ทั้งโปรเจค + Center Stock) → เพิ่มเข้าโปรเจค · items: [{inv, wpm}] → { ok, added:[], filled:[] }
+export async function addMaterialsFromRelease(projectId, releaseOrder, items) {
+  const list = (items || []).filter((it) => String(it.inv || "").trim()).map((it) => ({ inv: String(it.inv).trim(), wpm: matTxt(it.wpm) }));
+  if (!projectId || list.length === 0) return { ok: true, added: [], filled: [] };
+  const { data, error } = await supabase.rpc("materials_add_from_release", {
+    p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder || null, p_items: list,
+  });
+  return matRes(data, error, "materials_add_from_release");
+}
+// ดึง INV จาก Release เดิมของโปรเจค · dryRun=true นับอย่างเดียว → { ok, count, items:[{inv, wpm, parts}], added }
+export async function backfillMaterials(projectId, dryRun = true) {
+  const { data, error } = await supabase.rpc("materials_backfill", { p_token: authToken(), p_project_id: projectId, p_dry_run: !!dryRun });
+  return matRes(data, error, "materials_backfill");
+}
+
 // สถานะเครื่องจักรต่อ Release (หน้า Release → ตาราง Part: ชิปเครื่อง + ตารางเครื่องใต้แถว)
 //   คืน { ok:true, data:{ <release_id>: [ {machine_id, code, name, done, finished, run_seconds, first_at,
 //         last_at, batches, ops:[{name,seq,done}], employees:[...], last_employee, active:{...}|null} ] } }
