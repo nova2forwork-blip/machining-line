@@ -273,15 +273,44 @@ export async function getReleaseModifyInfo(projectId, releaseOrder) {
   return data || { ok: false, reason: "error" };
 }
 // บันทึก Modify ทั้งชุด (admin) — ทุกรายการใน transaction เดียว (พังรายการไหน = ไม่บันทึกเลยสักรายการ)
-export async function applyReleaseModify({ projectId, releaseOrder, versionNo, reason, items }) {
-  const { data, error } = await supabase.rpc("apply_release_modify", {
+export async function applyReleaseModify({ projectId, releaseOrder, versionNo, reason, items, docDate }) {
+  const args = {
     p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder,
     p_version_no: versionNo == null ? null : Number(versionNo), p_reason: reason, p_items: items || [],
-  });
+  };
+  if (docDate) args.p_doc_date = docDate;   // วันที่ของ M ตามเอกสาร (YYYY-MM-DD) · migration-release-modify-revert.sql
+  const { data, error } = await supabase.rpc("apply_release_modify", args);
   if (error) {
     console.warn("apply_release_modify error", error);
     flagAuth(error);
-    return { ok: false, reason: isMissingFnErr(error) ? "not_installed" : "error", message: error.message };
+    return { ok: false, reason: isMissingFnErr(error) ? (docDate ? "date_not_installed" : "not_installed") : "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+// ยกเลิก M / ย้อนกลับเวอร์ชัน (admin) · migration-release-modify-revert.sql
+//   mode "cancel" + version "M-03" = ยกเลิกเฉพาะ M-03 · mode "rollback" + version "M-01" = ยกเลิกทุก M ที่เลขสูงกว่า (M-00 = กลับต้นฉบับ)
+//   dryRun = ดูผลก่อน (ไม่บันทึก)
+export async function revertReleaseModify({ projectId, releaseOrder, mode, version, reason, dryRun = false, docDate = null }) {
+  const { data, error } = await supabase.rpc("revert_release_modify", {
+    p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder,
+    p_mode: mode, p_version: version, p_reason: reason || "", p_dry_run: !!dryRun, p_doc_date: docDate || null,
+  });
+  if (error) {
+    console.warn("revert_release_modify error", error);
+    flagAuth(error);
+    return { ok: false, reason: isMissingFnErr(error) ? "revert_not_installed" : "error", message: error.message };
+  }
+  return data || { ok: false, reason: "error" };
+}
+// แก้วันที่ของ M (target "modify") หรือวันที่ยกเลิก (target "revert") — admin · เก็บประวัติ เดิม → ใหม่
+export async function setReleaseModDate({ modId, target = "modify", date, note = "" }) {
+  const { data, error } = await supabase.rpc("set_release_mod_date", {
+    p_token: authToken(), p_mod_id: modId, p_target: target, p_date: date, p_note: note || null,
+  });
+  if (error) {
+    console.warn("set_release_mod_date error", error);
+    flagAuth(error);
+    return { ok: false, reason: isMissingFnErr(error) ? "date_not_installed" : "error", message: error.message };
   }
   return data || { ok: false, reason: "error" };
 }
