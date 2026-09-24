@@ -7158,22 +7158,250 @@ function MachineReportsPage() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// DAILY REPORT — สรุปภาพรวม → รายงานประจำวัน
-//   ภาพรวมของวัน (ตัวเลขหลัก · ชิ้นงานรายชั่วโมง · สรุปรายเครื่อง) + ตาราง "ทุกอย่าง" (1 สแกน = 1 แถว)
-//   ทุกตาราง เปิด-ปิดคอลัมน์ / ลากย้ายคอลัมน์ได้ (DataTable) · Export Excel ออกตามคอลัมน์ + ลำดับที่เห็นบนจอ
-//   ข้อมูล: report_logs (สแกนทั้งวัน) + list_scan_slow (รายงานการทำงาน) + releases (สั่ง/INV/MDF/REV/ความยาว)
-//           + machine_report_summary (เครื่องหยุด — เฉพาะ admin/office/supervisor)
+// DAILY REPORT — สรุปภาพรวม → รายงานประจำวัน  (v2: ออกแบบตามหลัก dashboard มืออาชีพ)
+//   หลักที่ใช้ (ดู claude/daily-report.md):
+//   · Stephen Few — จอแรกตอบคำถามหลักได้ในแวบเดียว · ตัวเลขต้องมี "สิ่งเทียบ" (เป้า / วันทำงานก่อนหน้า / เฉลี่ย 7 วัน)
+//     · 1 ช่อง = 1 ตัวชี้วัด 1 หน่วย · ความละเอียดพอดี (ไม่ใส่ทศนิยม/วินาทีเกินจำเป็น) · เรื่องสำคัญซ้ายบน
+//   · ISA-101 (High-Performance HMI) — จอเงียบตอนปกติ · สี amber/red เฉพาะ "ผิดปกติ" + มีข้อความกำกับเสมอ
+//     · ลำดับชั้น: ภาพรวม → รายเครื่อง → รายการละเอียด
+//   · ISO 22400 / OEE — แยกเวลา: ตามแผน (กะ − พัก) = เดินเครื่อง + หยุด + ว่าง/อื่น ๆ · Utilization = เดินเครื่อง ÷ ตามแผน
+//     · นิยามตัวเลขเขียนไว้ในหน้า (ทุกคนอ่านแบบเดียวกัน) · ยังไม่มีข้อมูลคุณภาพ (ของเสีย) → ไม่คิด OEE เต็ม
+//   · NN/g — ใช้ความยาว/ตำแหน่ง (แท่ง) · ไม่ใช้พาย/เกจ · Pareto เรียงมาก→น้อย
+//   ข้อมูล: report_logs · list_scan_slow · machine_report_summary (หยุด — admin/office/supervisor) · releases
+//           · app_settings 'daily_report' (เวลากะ + เป้าต่อเครื่อง — migration-daily-report-settings.sql)
 // ══════════════════════════════════════════════════════════════════════════
 // วันที่ "ตามเวลาเครื่อง" (ไม่ใช่ UTC) — กันช่วงเช้ามืด (00:00–07:00 ไทย) กลายเป็นเมื่อวาน
 const localDayStr = (d = new Date()) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
 const shiftDayStr = (ds, n) => { const d = new Date(`${ds}T12:00:00`); d.setDate(d.getDate() + n); return localDayStr(d); };
 const fmtClock = (iso) => (iso ? new Date(iso).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-");
 const drDeptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : (ty === "packing" || ty === "pack_panel" || ty === "pack_site") ? "packing" : "machine");
+const DR_KEY = "daily_report";
+const DR_DEFAULT = { start: "08:00", end: "17:00", breakStart: "12:00", breakMin: 60, targets: {} };
+const hmToMin = (s) => { const [h, m] = String(s || "0:0").split(":").map((x) => Number(x) || 0); return h * 60 + m; };
+const minToHm = (n) => `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(Math.round(n % 60)).padStart(2, "0")}`;
+// เวลาทำงานตามแผน (นาที) ของวัน — กะ − พัก · วันนี้ = นับถึงตอนนี้ (planned-to-date)
+function drPlannedMin(cfg, dayStr, nowMs = Date.now()) {
+  const s = hmToMin(cfg.start), e = hmToMin(cfg.end);
+  const bs = hmToMin(cfg.breakStart), be = bs + (Number(cfg.breakMin) || 0);
+  let upTo = e;
+  if (dayStr === localDayStr(new Date(nowMs))) { const d = new Date(nowMs); upTo = Math.min(e, d.getHours() * 60 + d.getMinutes()); }
+  if (upTo <= s) return 0;
+  const brk = Math.max(0, Math.min(upTo, be) - Math.max(s, bs));
+  return Math.max(0, upTo - s - brk);
+}
+// เวลาหยุดของ "วันนั้น" (นาที): ตัดขอบวัน · หยุดค้าง = ถึงตอนนี้ · planned = เฉพาะช่วงกะ (ไม่นับช่วงพัก/นอกกะ)
+function drStopMin(s, cfg, dayStr, nowMs = Date.now()) {
+  const st = new Date(s.started_at).getTime();
+  if (!Number.isFinite(st)) return { day: 0, planned: 0 };
+  const en = s.ended_at ? new Date(s.ended_at).getTime() : s.open ? nowMs : st + (Number(s.minutes) || 0) * 60000;
+  const base = new Date(`${dayStr}T00:00:00`).getTime();
+  const a = Math.max(st, base), b = Math.min(en, base + 86400000);
+  if (!(b > a)) return { day: 0, planned: 0 };
+  const seg = (m0, m1) => Math.max(0, Math.min(b, base + m1 * 60000) - Math.max(a, base + m0 * 60000));
+  const sh = hmToMin(cfg.start), eh = hmToMin(cfg.end), bs = hmToMin(cfg.breakStart), be = bs + (Number(cfg.breakMin) || 0);
+  const inShift = seg(sh, eh) - (be > bs ? seg(Math.max(sh, bs), Math.min(eh, be)) : 0);
+  return { day: (b - a) / 60000, planned: Math.max(0, inShift) / 60000 };
+}
+// ชั่วโมง/นาที อ่านง่าย (ไม่ใส่วินาทีบนการ์ด)
+function fmtDur(min, lang) {
+  const m = Math.max(0, Math.round(Number(min) || 0));
+  const h = Math.floor(m / 60), r = m % 60;
+  if (lang === "en") return h ? `${h}h ${r}m` : `${r}m`;
+  return h ? `${h} ชม. ${r} น.` : `${r} น.`;
+}
+const fmtKpi = (v) => { const n = Number(v) || 0; return Math.abs(n) >= 100 ? Math.round(n).toLocaleString("th-TH") : (Math.round(n * 10) / 10).toLocaleString("th-TH"); };
+async function drLoadSettings() {
+  const { data, error } = await supabase.rpc("get_app_settings", { p_keys: [DR_KEY] });
+  if (error) throw error;
+  const v = (data && data[DR_KEY]) || {};
+  return { ...DR_DEFAULT, ...v, targets: { ...(v.targets || {}) } };
+}
+async function drSaveSettings(v) {
+  const { data, error } = await supabase.rpc("set_app_setting", { p_token: getSession()?.token || null, p_key: DR_KEY, p_value: v });
+  if (error) throw error;
+  if (data && data.ok === false) throw new Error(data.reason || "failed");
+}
+
+// ── การ์ดตัวชี้วัด: ค่าใหญ่ + สิ่งเทียบ (bullet bar กับเป้า · ▲▼ เทียบวันก่อน/เฉลี่ย) ──
+function DrKpi({ label, value, unit, sub, goal, deltas = [], alert, info }) {
+  const pct = goal && goal.target > 0 ? goal.actual / goal.target : null;
+  const pace = goal && goal.target > 0 && goal.pace != null ? goal.pace / goal.target : null;   // วันนี้: เป้า ณ ตอนนี้
+  return (
+    <div className="card dr-kpi" title={info || undefined}>
+      <div className="dr-kpi-lbl">{label}</div>
+      <div className="dr-kpi-val">{value}{unit ? <span className="dr-kpi-unit">{unit}</span> : null}</div>
+      {goal && goal.target > 0 ? (
+        <div className="dr-bullet" aria-label={goal.text}>
+          <div className="dr-bullet-track">
+            <div className={"dr-bullet-fill" + (goal.low ? " low" : "")} style={{ width: `${Math.min(100, (pct || 0) * 100)}%` }} />
+            {pace != null && pace < 1 ? <div className="dr-bullet-pace" style={{ left: `${Math.min(100, pace * 100)}%` }} title={goal.paceText} /> : null}
+          </div>
+          <div className={"dr-bullet-txt" + (goal.low ? " low" : "")}>{goal.text}</div>
+        </div>
+      ) : null}
+      {sub ? <div className="dr-kpi-sub">{sub}</div> : null}
+      {deltas.filter(Boolean).map((d, i) => (
+        <div key={i} className={"dr-delta " + (d.tone || "")}>{d.text}</div>
+      ))}
+      {alert ? <div className="dr-kpi-alert">{alert}</div> : null}
+    </div>
+  );
+}
+
+// ── กราฟแท่งรายชั่วโมง + เส้นเป้า/ชม. + แถบพัก · hover = tooltip ──
+function DrHourlyChart({ data, targetPerHour, breakHours = [], lang, height = 230 }) {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  const [hov, setHov] = useState(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const upd = () => setW(el.clientWidth || 0);
+    upd();
+    if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", upd); return () => window.removeEventListener("resize", upd); }
+    const ro = new ResizeObserver(upd); ro.observe(el); return () => ro.disconnect();
+  }, []);
+  const L = (th, en) => (lang === "en" ? en : th);
+  const padL = 34, padR = 12, padT = 16, padB = 26;
+  const iw = Math.max(0, w - padL - padR), ih = height - padT - padB;
+  const maxV = Math.max(1, ...data.map((d) => d.pcs), targetPerHour || 0);
+  const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
+  const stepN = [1, 2, 5, 10].map((k) => k * mag).find((s) => maxV / s <= 5) || mag * 10;
+  const top = Math.ceil(maxV / stepN) * stepN;
+  const ticks = []; for (let v = 0; v <= top + 1e-9; v += stepN) ticks.push(v);
+  const bw = data.length ? iw / data.length : 0;
+  const barW = Math.max(4, Math.min(38, bw * 0.62));
+  const y = (v) => padT + ih - (v / top) * ih;
+  return (
+    <div ref={ref} style={{ position: "relative", width: "100%" }}>
+      {w > 0 && (
+        <svg width={w} height={height} role="img" aria-label={L("ชิ้นงานรายชั่วโมง", "Pieces per hour")}>
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={padL} x2={w - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft, #e6ece9)" strokeWidth="1" />
+              <text x={padL - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted, #6d7d76)">{t}</text>
+            </g>
+          ))}
+          {data.map((d, i) => {
+            const x0 = padL + i * bw;
+            const isBreak = breakHours.includes(d.h);
+            const bh = Math.max(0, ih - (y(d.pcs) - padT));
+            const bx = x0 + (bw - barW) / 2;
+            const r = Math.min(4, barW / 2, bh);
+            return (
+              <g key={d.h}>
+                {isBreak && <rect x={x0 + 1} y={padT} width={Math.max(0, bw - 2)} height={ih} fill="var(--surface-2, #f1f5f3)" />}
+                {isBreak && <text x={x0 + bw / 2} y={padT + 12} textAnchor="middle" fontSize="10.5" fill="var(--muted, #6d7d76)">{L("พัก", "break")}</text>}
+                {d.pcs > 0 && (
+                  <path d={`M${bx},${y(0)} V${y(d.pcs) + r} Q${bx},${y(d.pcs)} ${bx + r},${y(d.pcs)} H${bx + barW - r} Q${bx + barW},${y(d.pcs)} ${bx + barW},${y(d.pcs) + r} V${y(0)} Z`}
+                    fill={hov === i ? "var(--dr-data-dk, #3d6a5b)" : "var(--dr-data, #5f8a7b)"} />
+                )}
+                <text x={x0 + bw / 2} y={height - 8} textAnchor="middle" fontSize="11" fill="var(--muted, #6d7d76)">{String(d.h).padStart(2, "0")}</text>
+                <rect x={x0} y={padT} width={bw} height={ih} fill="transparent" onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} />
+              </g>
+            );
+          })}
+          <line x1={padL} x2={w - padR} y1={y(0)} y2={y(0)} stroke="var(--border, #d7e3dd)" strokeWidth="1" />
+          {targetPerHour > 0 && (
+            <g>
+              <line x1={padL} x2={w - padR} y1={y(targetPerHour)} y2={y(targetPerHour)} stroke="var(--text, #142420)" strokeWidth="1.5" strokeDasharray="5 4" opacity="0.55" />
+              <text x={w - padR} y={y(targetPerHour) - 5} textAnchor="end" fontSize="11" fill="var(--text, #142420)" opacity="0.75">{L(`เป้า ${fmtKpi(targetPerHour)}/ชม.`, `target ${fmtKpi(targetPerHour)}/h`)}</text>
+            </g>
+          )}
+        </svg>
+      )}
+      {hov != null && data[hov] && (
+        <div className="dr-tip" style={{ left: Math.min(Math.max(0, padL + hov * bw + bw / 2 - 80), Math.max(0, w - 170)), top: 0 }}>
+          <b>{String(data[hov].h).padStart(2, "0")}:00–{String(data[hov].h + 1).padStart(2, "0")}:00</b><br />
+          {L("ชิ้นงาน", "Pieces")} {fmtNum(data[hov].pcs)} · {L("น้ำหนัก", "weight")} {fmtKpi(data[hov].kg)} {L("กก.", "kg")}<br />
+          {L("สแกน", "Scans")} {fmtNum(data[hov].scans)}{targetPerHour > 0 ? <> · {L("เป้า", "target")} {fmtKpi(targetPerHour)}</> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Pareto แนวนอน (มาก → น้อย) ──
+function DrPareto({ rows, unit, empty, tone }) {
+  if (!rows.length) return <div style={{ color: "var(--muted)", fontSize: 13, padding: "6px 2px" }}>{empty}</div>;
+  const max = Math.max(1, ...rows.map((r) => r.v));
+  return (
+    <div className="dr-pareto">
+      {rows.map((r) => (
+        <div key={r.k} className="dr-pareto-row" title={`${r.k}: ${fmtNum(r.v)} ${unit}${r.n != null ? ` · ${r.n}×` : ""}`}>
+          <div className="dr-pareto-k">{r.k}</div>
+          <div className="dr-pareto-bar"><div className={"fill " + (tone || "")} style={{ width: `${(r.v / max) * 100}%` }} /></div>
+          <div className="dr-pareto-v">{fmtNum(r.v)} {unit}{r.n != null ? <span style={{ color: "var(--muted)" }}> · {r.n}×</span> : null}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── ตั้งค่า (แอดมิน): เวลากะกลาง + เป้าต่อเครื่องต่อวัน ──
+function DrSettingsModal({ cfg, machines, onClose, onSaved, lang }) {
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [f, setF] = useState(() => ({ ...cfg, targets: { ...(cfg.targets || {}) } }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const planned = (() => { const s = hmToMin(f.start), e = hmToMin(f.end); const bs = hmToMin(f.breakStart), be = bs + (Number(f.breakMin) || 0); return Math.max(0, e - s - Math.max(0, Math.min(e, be) - Math.max(s, bs))); })();
+  const setT = (code, k, v) => setF((x) => ({ ...x, targets: { ...x.targets, [code]: { ...(x.targets[code] || {}), [k]: v === "" ? "" : Math.max(0, Number(v) || 0) } } }));
+  async function save() {
+    if (hmToMin(f.end) <= hmToMin(f.start)) { setErr(L("เวลาเลิกต้องหลังเวลาเริ่ม", "End must be after start")); return; }
+    setBusy(true); setErr("");
+    const targets = {};
+    Object.entries(f.targets || {}).forEach(([k, t]) => {
+      const pcs = Number(t?.pcs) || 0, kg = Number(t?.kg) || 0;
+      if (pcs > 0 || kg > 0) targets[k] = { pcs, kg };
+    });
+    const v = { start: f.start, end: f.end, breakStart: f.breakStart, breakMin: Math.max(0, Number(f.breakMin) || 0), targets };
+    try { await drSaveSettings(v); onSaved(v); }
+    catch (e) { setErr(String(e?.message || e).includes("get_app_settings") || String(e?.message || e).includes("set_app_setting") ? L("ยังไม่ได้รัน migration-daily-report-settings.sql ใน Supabase", "Run migration-daily-report-settings.sql in Supabase first") : L("บันทึกไม่สำเร็จ: ", "Save failed: ") + (e?.message || e)); }
+    finally { setBusy(false); }
+  }
+  const inp = { height: 36, borderRadius: 9, border: "1px solid var(--border)", padding: "0 8px", fontFamily: "inherit", fontSize: 14, background: "var(--surface)", color: "var(--text)" };
+  return (
+    <Modal title={L("ตั้งค่ารายงานประจำวัน", "Daily report settings")} sub={L("ใช้ร่วมกันทุกเครื่อง/ทุกคน", "Shared by everyone")} onClose={onClose} locked={busy} wide>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>{L("เวลากะ (เวลาทำงานตามแผน)", "Shift (planned time)")}</div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 6 }}>
+        <label style={{ fontSize: 12.5 }}>{L("เริ่ม", "Start")}<br /><input type="time" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} style={inp} /></label>
+        <label style={{ fontSize: 12.5 }}>{L("เลิก", "End")}<br /><input type="time" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} style={inp} /></label>
+        <label style={{ fontSize: 12.5 }}>{L("พักเริ่ม", "Break at")}<br /><input type="time" value={f.breakStart} onChange={(e) => setF({ ...f, breakStart: e.target.value })} style={inp} /></label>
+        <label style={{ fontSize: 12.5 }}>{L("พัก (นาที)", "Break (min)")}<br /><input type="number" min="0" value={f.breakMin} onChange={(e) => setF({ ...f, breakMin: e.target.value })} style={{ ...inp, width: 90 }} /></label>
+        <div style={{ fontSize: 13, color: "var(--muted)", paddingBottom: 8 }}>= {fmtDur(planned, lang)} {L("ต่อเครื่องต่อวัน", "per machine per day")}</div>
+      </div>
+      <div style={{ fontWeight: 700, margin: "16px 0 8px" }}>{L("เป้าต่อเครื่องต่อวัน (เว้นว่าง = ไม่มีเป้า)", "Daily target per machine (blank = no target)")}</div>
+      <div style={{ maxHeight: "42vh", overflow: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+        <table className="data-table" style={{ minWidth: 0 }}>
+          <thead><tr><th>{L("เครื่อง", "Machine")}</th><th style={{ textAlign: "right" }}>{L("เป้า ชิ้น/วัน", "Target pcs/day")}</th><th style={{ textAlign: "right" }}>{L("เป้า กก./วัน", "Target kg/day")}</th></tr></thead>
+          <tbody>
+            {machines.map((m) => {
+              const t = f.targets[m.code] || {};
+              return (
+                <tr key={m.code}>
+                  <td><b style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{m.code}</b> <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{m.name && m.name !== m.code ? m.name : ""}</span></td>
+                  <td style={{ textAlign: "right" }}><input type="number" min="0" value={t.pcs ?? ""} onChange={(e) => setT(m.code, "pcs", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า ชิ้น/วัน", "target pcs/day")}`} /></td>
+                  <td style={{ textAlign: "right" }}><input type="number" min="0" value={t.kg ?? ""} onChange={(e) => setT(m.code, "kg", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า กก./วัน", "target kg/day")}`} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {err && <div style={{ color: "var(--danger)", fontSize: 13, marginTop: 10 }}>{err}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+        <Btn variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
+        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? L("กำลังบันทึก…", "Saving…") : L("บันทึก", "Save")}</Btn>
+      </div>
+    </Modal>
+  );
+}
 
 function DailyReportPage() {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
-  const manage = canManage(getSession());
+  const sess = getSession();
+  const manage = canManage(sess);
+  const admin = isAdmin(sess);
   const today = localDayStr();
   const [day, setDay] = useState(today);
   const [machineF, setMachineF] = useState("");
@@ -7182,11 +7410,17 @@ function DailyReportPage() {
   const [statusF, setStatusF] = useState("");
   const [q, setQ] = useState("");
   const [logs, setLogs] = useState(null);          // null = กำลังโหลด
+  const [hist, setHist] = useState(null);          // สแกน 7 วันก่อนหน้า (ไว้เทียบ)
   const [slowRows, setSlowRows] = useState([]);
-  const [stops, setStops] = useState(null);        // เครื่องหยุดของวันนั้น (null = ไม่มีสิทธิ์ดู/โหลดไม่ได้)
-  const [relInfo, setRelInfo] = useState({});      // release_id → releases.* + part_master(*, projects)
+  const [stopsAll, setStopsAll] = useState(null);  // เครื่องหยุด 8 วัน (null = ไม่มีสิทธิ์ดู/โหลดไม่ได้)
+  const [relInfo, setRelInfo] = useState({});
   const [ops, setOps] = useState([]);
+  const [machinesAll, setMachinesAll] = useState([]);
+  const [cfg, setCfg] = useState(DR_DEFAULT);
+  const [cfgState, setCfgState] = useState("loading");   // loading | ok | nosql
+  const [showCfg, setShowCfg] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [nowMs, setNowMs] = useState(Date.now());
   const [exporting, setExporting] = useState(false);
   const sortM = useTableSort("pcs", "desc");
   const sortS = useTableSort("time", "desc");
@@ -7195,22 +7429,28 @@ function DailyReportPage() {
   const listRef = useRef(null);
 
   useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  useEffect(() => { listRows("machines", { order: "code" }).then((r) => setMachinesAll(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  useEffect(() => {
+    drLoadSettings().then((v) => { setCfg(v); setCfgState("ok"); }).catch(() => { setCfg(DR_DEFAULT); setCfgState("nosql"); });
+  }, []);
+  // วันนี้: เดินนาฬิกาทุก 1 นาที (เวลาตามแผน ณ ตอนนี้ / เป้า ณ ตอนนี้)
+  useEffect(() => { if (day !== today) return undefined; const t = setInterval(() => setNowMs(Date.now()), 60000); return () => clearInterval(t); }, [day, today]);
   useEffect(() => {
     let alive = true;
     const { from, to } = customRangeFor(day, day);
-    setLogs(null);
+    const h = customRangeFor(shiftDayStr(day, -7), shiftDayStr(day, -1));
+    setLogs(null); setHist(null);
     getScanLogsBetween(from, to).then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setLogs([]); });
+    getScanLogsBetween(h.from, h.to).then((d) => { if (alive) setHist(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setHist([]); });
     listScanSlow(from, to).then((d) => { if (alive) setSlowRows(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setSlowRows([]); });
     if (manage) {
-      const endT = new Date(to).getTime();
-      machineReportSummary(from)
-        .then((r) => { if (alive) setStops((r?.downtime || []).filter((x) => new Date(x.started_at).getTime() <= endT)); })
-        .catch(() => { if (alive) setStops(null); });
+      machineReportSummary(h.from)
+        .then((r) => { if (alive) setStopsAll(Array.isArray(r?.downtime) ? r.downtime : []); })
+        .catch(() => { if (alive) setStopsAll(null); });
     }
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day, reloadTick]);
-  // ข้อมูลระดับ Release/Part (จำนวนสั่ง · INV · MDF · REV · ความยาว · M-xx) — แบ่งก้อนกัน URL ยาวเกิน
   useEffect(() => {
     const ids = [...new Set((logs || []).map((l) => l.release_id).filter(Boolean))];
     if (!ids.length) { setRelInfo({}); return; }
@@ -7227,20 +7467,19 @@ function DailyReportPage() {
   }, [logs]);
 
   const opType = useMemo(() => { const m = {}; ops.forEach((o) => { if (o && o.name) m[o.name] = o.op_type; }); return m; }, [ops]);
+  const machineName = useMemo(() => { const m = {}; machinesAll.forEach((x) => { if (x.code) m[x.code] = x.name || ""; }); return m; }, [machinesAll]);
 
-  // ── 1 สแกน = 1 แถว: ยุบแถว co-tick (จำนวน 0) เข้ากับแถวหลักของ "เครื่องเดียวกัน" ──
-  const grouped = useMemo(() => {
-    const asc = [...(logs || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
-    const out = [];
-    const cur = new Map();
-    let n = 0;
+  // ── 1 สแกน = 1 แถว: ยุบแถว co-tick (จำนวน 0) เข้ากับแถวหลักของเครื่องเดียวกัน ──
+  const groupLogs = (list) => {
+    const asc = [...(list || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
+    const out = []; const cur = new Map(); let n = 0;
     const mk = (l, qty) => {
       const pm = l.part_unit?.part_master || {};
       const mkey = l.machine?.code || l.machine?.name || "—";
       const op = l.operation?.name || null;
       return {
         key: `${l.part_unit_id || "u"}-${l.scanned_at}-${mkey}-${n++}`,
-        time: l.scanned_at, mkey, machine_name: l.machine?.name || "",
+        time: l.scanned_at, day: l.scanned_at ? localDayStr(new Date(l.scanned_at)) : "", mkey, machine_name: l.machine?.name || "",
         employee: l.employee?.name || "",
         project_id: pm.project_id || null, project_name: pm.projects?.name || "",
         release_id: l.release_id || null, release_order: l.release_order || "—",
@@ -7259,12 +7498,15 @@ function DailyReportPage() {
       const c = cur.get(mkey);
       if (qv > 0) { const g = mk(l, qv); cur.set(mkey, g); out.push(g); }
       else if (c && c.part_unit_id === l.part_unit_id && String(c.status).toLowerCase() === String(l.status).toLowerCase()) {
-        if (op && !c.ops.includes(op)) c.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → รวมในแถวเดียว
+        if (op && !c.ops.includes(op)) c.ops.push(op);
         c.weight += logWeight(l); c.secs += Number(l.process_seconds) || 0;
       } else { out.push(mk(l, 0)); }
     }
-    // รายงานการทำงาน (รอบช้า) → จับคู่ด้วย part_unit + เวลาใกล้สุด (±3 วิ)
-    if (slowRows && slowRows.length) {
+    return out;
+  };
+  const grouped = useMemo(() => {
+    const out = groupLogs(logs);
+    if (slowRows && slowRows.length) {   // รายงานการทำงาน → จับคู่ part_unit + เวลาใกล้สุด (±3 วิ)
       const used = new Set();
       for (const g of out) {
         let best = null, bestDt = 3000, bi = -1;
@@ -7279,9 +7521,10 @@ function DailyReportPage() {
       }
     }
     return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logs, slowRows, opType]);
+  const histGrouped = useMemo(() => groupLogs(hist), [hist, opType]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // เติมข้อมูลระดับ Release/Part
   const rowsAll = grouped.map((g) => {
     const r = relInfo[g.release_id] || null;
     const pm = r?.part_master || {};
@@ -7294,75 +7537,192 @@ function DailyReportPage() {
       project_code: pm.projects?.code || "",
       project_name: g.project_name || pm.projects?.name || "",
       mod: r?.mod_version || "",
+      machine_name: g.machine_name || machineName[g.mkey] || "",
     };
   });
   const text = (x) => String(x || "").toLowerCase();
   const qq = text(q).trim();
-  const rows = rowsAll.filter((g) =>
+  const pass = (g) =>
     (!machineF || g.mkey === machineF) &&
     (!projF || g.project_id === projF) &&
     (!deptF || g.dept === deptF) &&
     (!statusF || (statusF === "office" ? g.office : String(g.status).toLowerCase() === statusF)) &&
-    (!qq || [g.part_no, g.part_name, g.release_order, g.employee, g.mkey, g.machine_name, g.project_name, g.project_code, g.inv].some((v) => text(v).includes(qq))));
+    (!qq || [g.part_no, g.part_name, g.release_order, g.employee, g.mkey, g.machine_name, g.project_name, g.project_code, g.inv].some((v) => text(v).includes(qq)));
+  const rows = rowsAll.filter(pass);
+  const histRows = histGrouped.filter(pass);   // ใช้ตัวกรองเดียวกัน → เทียบแบบเดียวกัน
 
-  // ตัวเลือกตัวกรอง (จากข้อมูลของวันนั้น)
-  const machineOpts = [...new Map(rowsAll.map((g) => [g.mkey, g.machine_name])).entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
+  const tgtMachines = Object.keys(cfg.targets || {}).filter((k) => (Number(cfg.targets[k]?.pcs) || 0) > 0 || (Number(cfg.targets[k]?.kg) || 0) > 0);
+  const machineOpts = [...new Map([...tgtMachines.map((k) => [k, machineName[k] || ""]), ...rowsAll.map((g) => [g.mkey, g.machine_name])]).entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
   const projOpts = [...new Map(rowsAll.filter((g) => g.project_id).map((g) => [g.project_id, `${g.project_code ? g.project_code + " — " : ""}${g.project_name}`])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
   const deptOpts = [["machine", L("เครื่องจักร", "Machining")], ["sub", L("ประกอบ (ซับ)", "Sub-assembly")], ["panel", L("แผง", "Panel")], ["packing", L("แพ็ก", "Packing")]]
     .filter(([k]) => rowsAll.some((g) => g.dept === k));
+  const anyFilter = !!(machineF || projF || deptF || statusF || qq);
 
-  // ── ภาพรวม ──
+  // ── ตัวเลขหลัก ──
   const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
   const totPcs = sum(rows, (g) => g.qty);
   const totKg = sum(rows, (g) => g.weight);
   const totSec = sum(rows, (g) => g.secs);
-  const finRows = rows.filter((g) => String(g.status).toLowerCase() === "finished");
-  const inpRows = rows.filter((g) => String(g.status).toLowerCase() === "inprocess");
-  const nMachines = new Set(rows.map((g) => g.mkey)).size;
+  const finPcs = sum(rows.filter((g) => String(g.status).toLowerCase() === "finished"), (g) => g.qty);
+  const inpPcs = sum(rows.filter((g) => String(g.status).toLowerCase() === "inprocess"), (g) => g.qty);
+  const nSlow = rows.filter((g) => g.slow_reason).length;
+  const activeMachines = [...new Set(rows.map((g) => g.mkey))];
   const nEmp = new Set(rows.map((g) => g.employee).filter(Boolean)).size;
   const nParts = new Set(rows.map((g) => `${g.project_id}|${g.part_no}`)).size;
   const nRel = new Set(rows.map((g) => g.release_order).filter((x) => x && x !== "—")).size;
-  const nSlow = rows.filter((g) => g.slow_reason).length;
-  const stopsF = (stops || []).filter((s) => !machineF || s.machine === machineF);
-  const stopMin = sum(stopsF, (s) => s.minutes);
   const firstT = rows.length ? rows.reduce((m, g) => (g.time < m ? g.time : m), rows[0].time) : null;
   const lastT = rows.length ? rows.reduce((m, g) => (g.time > m ? g.time : m), rows[0].time) : null;
 
-  // ชิ้นงานรายชั่วโมง (ช่วงชั่วโมงแรก → ชั่วโมงสุดท้ายที่มีงาน)
+  // เวลาตามแผน · เป้า (ตามเครื่องที่อยู่ในมุมมอง: ทำงานวันนี้ ∪ มีเป้า — ตัวกรองอื่นนอกจากเครื่องทำให้เป้าไม่ตรง → ไม่ใช้เป้า)
+  const plannedFull = drPlannedMin(cfg, "0000-00-00");                 // ทั้งกะ
+  const plannedNow = drPlannedMin(cfg, day, nowMs);                    // ถึงตอนนี้ (วันที่ผ่านแล้ว = ทั้งกะ)
+  const paceRatio = plannedFull > 0 ? plannedNow / plannedFull : 1;
+  const tgts = cfg.targets || {};
+  const targetOK = !projF && !deptF && !statusF && !qq;                // เป้าตั้งเป็น "ต่อเครื่องทั้งวัน" — กรองย่อยลงไปจะเทียบไม่ได้
+  const planSet = (active) => [...new Set([...active, ...tgtMachines])]
+    .filter((k) => !machineF || k === machineF)
+    .filter((k) => !anyFilter || machineF || active.includes(k));
+  const plannedMachines = planSet(activeMachines);
+  const tPcs = targetOK ? sum(plannedMachines, (k) => tgts[k]?.pcs) : 0;
+  const tKg = targetOK ? sum(plannedMachines, (k) => tgts[k]?.kg) : 0;
+  const nPlanned = plannedMachines.length;
+  const plannedMinTotal = plannedNow * nPlanned;
+  const util = plannedMinTotal > 0 ? (totSec / 60) / plannedMinTotal : null;
+  const stops = (stopsAll || []).map((s) => ({ ...s, ...drStopMin(s, cfg, day, nowMs) })).filter((s) => s.day > 0 || (s.started_at && localDayStr(new Date(s.started_at)) === day));
+  const stopsF = stops.filter((s) => !machineF || s.machine === machineF);
+  const stopMin = sum(stopsF, (s) => s.day);
+  const openStops = stopsF.filter((s) => s.open);
+  const cycleMin = totPcs > 0 ? (totSec / 60) / totPcs : null;
+
+  // ── สิ่งเทียบ: วันทำงานก่อนหน้า + เฉลี่ย 7 วัน (เฉพาะวันที่มีงาน) ──
+  const byDay = {};
+  histRows.forEach((g) => { const e = byDay[g.day] || (byDay[g.day] = { pcs: 0, kg: 0, secs: 0, ms: new Set() }); e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0; e.ms.add(g.mkey); });
+  const workDays = Object.keys(byDay).filter((d) => byDay[d].pcs > 0).sort();
+  workDays.forEach((d) => { const n = planSet([...byDay[d].ms]).length; byDay[d].util = plannedFull > 0 && n > 0 ? (byDay[d].secs / 60) / (plannedFull * n) : null; });
+  const prevDay = workDays.length ? workDays[workDays.length - 1] : null;
+  const prev = prevDay ? byDay[prevDay] : null;
+  const avg = workDays.length ? {
+    pcs: sum(workDays, (d) => byDay[d].pcs) / workDays.length,
+    kg: sum(workDays, (d) => byDay[d].kg) / workDays.length,
+    secs: sum(workDays, (d) => byDay[d].secs) / workDays.length,
+    cyc: (() => { const p = sum(workDays, (d) => byDay[d].pcs); return p > 0 ? (sum(workDays, (d) => byDay[d].secs) / 60) / p : null; })(),
+    util: (() => { const u = workDays.map((d) => byDay[d].util).filter((x) => x != null); return u.length ? u.reduce((a, b) => a + b, 0) / u.length : null; })(),
+  } : null;
+  if (prev) prev.cyc = prev.pcs > 0 ? (prev.secs / 60) / prev.pcs : null;
+  const isToday = day === today;
+  const prevLbl = prevDay ? new Date(`${prevDay}T12:00:00`).toLocaleDateString(lang === "en" ? "en-GB" : "th-TH", { day: "numeric", month: "short" }) : "";
+  // ▲▼ — ยอดสะสม (ชิ้น/กก.) ของวันนี้ที่ยังไม่จบวัน: เทียบกับ "สัดส่วนเดียวกันของวัน" (× paceRatio) ไม่งั้นช่วงเช้าจะดูแย่ตลอด
+  //       ค่าที่เป็นอัตรา (นาที/ชิ้น · %) ไม่ต้องปรับ · % ใช้ส่วนต่าง "จุด" (pts) ไม่ใช่ % ของ %
+  const deltaOf = (cur, base, higherBetter, basisLbl, { scaled = true, pts = false } = {}) => {
+    if (base == null || !(base > 0) || cur == null) return null;
+    const b = scaled && isToday ? base * paceRatio : base;
+    if (!(b > 0)) return null;
+    const diff = pts ? (cur - b) * 100 : (cur - b) / b * 100;
+    const up = diff >= 0;
+    const good = higherBetter ? up : !up;
+    const near = Math.abs(diff) < (pts ? 2 : 5);
+    const num = pts ? L(`${Math.abs(Math.round(diff))} จุด`, `${Math.abs(Math.round(diff))} pts`) : `${Math.abs(Math.round(diff))}%`;
+    return { tone: near ? "" : good ? "good" : "bad", text: `${near ? "≈" : up ? "▲" : "▼"} ${num} ${basisLbl}` };
+  };
+  const vsPrev = (cur, base, hb, o) => deltaOf(cur, base, hb, L(`จาก ${prevLbl}`, `vs ${prevLbl}`), o);
+  const vsAvg = (cur, base, hb, o) => deltaOf(cur, base, hb, L("จากเฉลี่ย 7 วัน", "vs 7-day avg"), o);
+  const goalOf = (actual, target, unitLbl) => {
+    if (!(target > 0)) return null;
+    const pace = isToday ? target * paceRatio : target;
+    const low = actual < pace * 0.9;
+    return {
+      actual, target, pace: isToday ? pace : null, low,
+      text: isToday
+        ? L(`${Math.round(actual / target * 100)}% ของเป้า ${fmtKpi(target)} ${unitLbl} · ณ ตอนนี้ควรได้ ${fmtKpi(pace)}`, `${Math.round(actual / target * 100)}% of ${fmtKpi(target)} ${unitLbl} target · pace now ${fmtKpi(pace)}`)
+        : L(`${Math.round(actual / target * 100)}% ของเป้า ${fmtKpi(target)} ${unitLbl}`, `${Math.round(actual / target * 100)}% of ${fmtKpi(target)} ${unitLbl} target`),
+      paceText: L("เป้า ณ ตอนนี้", "pace now"),
+    };
+  };
+
+  // ── ชิ้นงานรายชั่วโมง (ช่วงกะ ขยายถ้ามีงานนอกกะ) ──
   const hourly = (() => {
-    if (!rows.length) return [];
     const by = {};
-    rows.forEach((g) => { const h = new Date(g.time).getHours(); by[h] = (by[h] || 0) + (Number(g.qty) || 0); });
+    rows.forEach((g) => { const h = new Date(g.time).getHours(); const e = by[h] || (by[h] = { pcs: 0, kg: 0, scans: 0 }); e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.scans += 1; });
     const hs = Object.keys(by).map(Number);
-    const h0 = Math.min(...hs), h1 = Math.max(...hs);
+    let h0 = Math.floor(hmToMin(cfg.start) / 60), h1 = Math.ceil(hmToMin(cfg.end) / 60) - 1;
+    if (hs.length) { h0 = Math.min(h0, ...hs); h1 = Math.max(h1, ...hs); }
+    if (isToday) h1 = Math.min(h1, Math.max(new Date(nowMs).getHours(), hs.length ? Math.max(...hs) : h0));
     const out = [];
-    for (let h = h0; h <= h1; h++) out.push({ name: `${String(h).padStart(2, "0")}:00`, count: by[h] || 0 });
+    for (let h = h0; h <= h1; h++) out.push({ h, pcs: by[h]?.pcs || 0, kg: by[h]?.kg || 0, scans: by[h]?.scans || 0 });
     return out;
   })();
+  const breakHours = (() => {
+    const bs = hmToMin(cfg.breakStart), be = bs + (Number(cfg.breakMin) || 0);
+    const out = []; for (let h = Math.floor(bs / 60); h * 60 < be; h++) { if ((Math.min(be, (h + 1) * 60) - Math.max(bs, h * 60)) >= 30) out.push(h); }
+    return out;
+  })();
+  const targetPerHour = tPcs > 0 && plannedFull > 0 ? tPcs / (plannedFull / 60) : 0;
 
-  // สรุปรายเครื่อง
+  // ── สรุปรายเครื่อง (+ เวลาตามแผน · เป้า · ธงผิดปกติ) ──
+  const histByMachine = (() => {
+    const m = {};
+    histRows.forEach((g) => { const e = m[g.mkey] || (m[g.mkey] = {}); e[g.day] = (e[g.day] || 0) + (Number(g.qty) || 0); });
+    const out = {};
+    Object.entries(m).forEach(([k, days]) => { const ds = Object.values(days).filter((v) => v > 0); out[k] = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : null; });
+    return out;
+  })();
   const machineRows = (() => {
     const m = new Map();
+    const blank = (k) => ({ mkey: k, name: machineName[k] || "", emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: null, last: null });
     for (const g of rows) {
-      const e = m.get(g.mkey) || { mkey: g.mkey, name: g.machine_name, emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: g.time, last: g.time };
+      const e = m.get(g.mkey) || blank(g.mkey);
+      if (!e.name) e.name = g.machine_name || "";
       e.scans += 1; e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0;
       if (g.employee) e.emps.add(g.employee);
       e.parts.add(`${g.project_id}|${g.part_no}`);
-      if (String(g.status).toLowerCase() === "finished") e.fin += 1; else if (String(g.status).toLowerCase() === "inprocess") e.inp += 1;
+      const st = String(g.status).toLowerCase();
+      if (st === "finished") e.fin += Number(g.qty) || 0; else if (st === "inprocess") e.inp += Number(g.qty) || 0;
       if (g.slow_reason) e.slow += 1;
-      if (g.time < e.first) e.first = g.time;
-      if (g.time > e.last) e.last = g.time;
+      if (!e.first || g.time < e.first) e.first = g.time;
+      if (!e.last || g.time > e.last) e.last = g.time;
       m.set(g.mkey, e);
     }
-    for (const s of stopsF) {   // เครื่องที่หยุดแต่ไม่มีสแกน ก็ให้โชว์
-      if (!m.has(s.machine) && (!machineF || s.machine === machineF) && !statusF && !qq && !projF && !deptF) {
-        m.set(s.machine, { mkey: s.machine, name: s.machine_name || "", emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: null, last: null });
-      }
+    // เครื่องที่ "ตามแผนต้องทำ" (มีเป้า) หรือหยุด แต่ไม่มีสแกน → ต้องโชว์ (ข้อยกเว้นสำคัญ)
+    if (!projF && !deptF && !statusF && !qq) {
+      plannedMachines.forEach((k) => { if (!m.has(k)) m.set(k, blank(k)); });
+      stopsF.forEach((s) => { if (!m.has(s.machine)) m.set(s.machine, blank(s.machine)); });
     }
     return [...m.values()].map((e) => {
-      const st = (stops || []).filter((s) => s.machine === e.mkey);
-      return { ...e, empText: [...e.emps].join(", "), nParts: e.parts.size, secPer: e.pcs > 0 ? e.secs / e.pcs : 0, stops: st.length, stopMin: sum(st, (s) => s.minutes) };
+      const st = stops.filter((s) => s.machine === e.mkey);
+      const stopM = sum(st, (s) => s.day);
+      const stopPl = sum(st, (s) => s.planned);   // ส่วนที่อยู่ในเวลากะ → ใช้แบ่งเวลาตามแผน
+      const runM = e.secs / 60;
+      const planned = plannedNow;
+      const tp = targetOK ? Number(tgts[e.mkey]?.pcs) || 0 : 0;
+      const tk = targetOK ? Number(tgts[e.mkey]?.kg) || 0 : 0;
+      const paceP = tp * (isToday ? paceRatio : 1);
+      const flags = [];
+      if (st.some((s) => s.open)) flags.push({ tone: "bad", t: L("⛔ หยุดอยู่", "⛔ stopped now") });
+      if (tp > 0 && e.scans > 0 && e.pcs < paceP * 0.9) flags.push({ tone: "warn", t: L("▼ ต่ำกว่าเป้า", "▼ below target") });
+      if (e.scans === 0 && !st.length) flags.push({ tone: "warn", t: L("ยังไม่มีงาน", "no work yet") });
+      if (st.length && !st.some((s) => s.open)) flags.push({ tone: "warn", t: L(`หยุด ${st.length} ครั้ง`, `${st.length} stop(s)`) });
+      if (e.slow) flags.push({ tone: "warn", t: L(`รอบช้า ${e.slow}`, `${e.slow} slow`) });
+      return {
+        ...e, empText: [...e.emps].join(", "), nParts: e.parts.size, cycle: e.pcs > 0 ? runM / e.pcs : null,
+        stops: st.length, stopMin: stopM, runMin: runM, planned,
+        stopPlMin: stopPl, idleMin: Math.max(0, planned - runM - stopPl),
+        util: planned > 0 ? runM / planned : null,
+        tPcs: tp, tKg: tk, pctT: tp > 0 ? e.pcs / tp : null,
+        avg7: histByMachine[e.mkey] ?? null, flags, sev: flags.some((f) => f.tone === "bad") ? 2 : flags.length ? 1 : 0,
+      };
     });
+  })();
+
+  // Pareto: เวลาหยุดตามสาเหตุ (นาที) · รายงานการทำงานตามเหตุผล (ครั้ง)
+  const stopPareto = (() => {
+    const m = {};
+    stopsF.forEach((s) => { const k = s.reason || L("ไม่ระบุ", "unspecified"); const e = m[k] || (m[k] = { v: 0, n: 0 }); e.v += Number(s.day) || 0; e.n += 1; });
+    return Object.entries(m).map(([k, e]) => ({ k, v: Math.round(e.v), n: e.n })).sort((a, b) => b.v - a.v);
+  })();
+  const slowPareto = (() => {
+    const m = {};
+    rows.forEach((g) => { if (g.slow_reason) m[g.slow_reason] = (m[g.slow_reason] || 0) + 1; });
+    return Object.entries(m).map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
   })();
 
   const loading = logs === null;
@@ -7379,31 +7739,42 @@ function DailyReportPage() {
   };
   const chip = { fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap", color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" };
   const nf = (v) => (v != null && v !== "" ? fmtNum(v) : "-");
+  const pctTxt = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
   const statusText = (g) => (g.office ? L("สแกนสำนักงาน", "office scan") : String(g.status).toLowerCase() === "finished" ? L("เสร็จ", "finished") : L("กำลังทำ", "in process"));
 
-  // ── คอลัมน์ตารางสรุปรายเครื่อง (exp = ค่าตอน Export) ──
+  // ── คอลัมน์ "สรุปรายเครื่อง" ──
   const mCols = [
+    { key: "flag", header: L("สถานะเครื่อง", "Condition"), sortKey: "flag", tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => (m.flags.length ? <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>{m.flags.map((f, i) => <span key={i} className={"dr-flag " + f.tone}>{f.t}</span>)}</span> : <span className="dr-flag ok">{L("✓ ปกติ", "✓ normal")}</span>),
+      exp: (m) => (m.flags.length ? m.flags.map((f) => f.t).join(" · ") : L("ปกติ", "normal")) },
     { key: "mkey", header: L("เครื่อง", "Machine"), sortKey: "mkey", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }, cell: (m) => m.mkey, exp: (m) => m.mkey },
     { key: "name", header: L("ชื่อเครื่อง", "Machine name"), sortKey: "name", tdStyle: { color: "var(--muted)", whiteSpace: "nowrap" }, cell: (m) => m.name || "-", exp: (m) => m.name || "" },
     { key: "emp", header: L("พนักงาน", "Operator"), sortKey: "emp", tdStyle: { whiteSpace: "nowrap" }, cell: (m) => m.empText || "-", exp: (m) => m.empText },
-    { key: "scans", header: L("สแกน (ครั้ง)", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
     { key: "pcs", header: L("ชิ้นงาน", "Pieces"), sortKey: "pcs", align: "right", tdStyle: { fontWeight: 700 }, cell: (m) => fmtNum(m.pcs), exp: (m) => m.pcs },
-    { key: "kg", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "kg", align: "right", tdStyle: { color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => fmtNum(m.kg), exp: (m) => Number((m.kg || 0).toFixed(2)) },
-    { key: "secs", header: L("เวลาเดินเครื่อง", "Run time"), sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.secs ? fmtHrs(m.secs) : "—"), exp: (m) => (m.secs ? fmtHrs(m.secs) : "") },
-    { key: "secPer", header: L("วินาที/ชิ้น", "Sec/pc"), sortKey: "secPer", align: "right", cell: (m) => (m.secPer ? fmtNum(Math.round(m.secPer)) : "—"), exp: (m) => (m.secPer ? Math.round(m.secPer) : "") },
-    { key: "parts", header: L("จำนวน Part", "Parts"), sortKey: "parts", align: "right", cell: (m) => fmtNum(m.nParts), exp: (m) => m.nParts },
-    { key: "fin", header: L("เสร็จ (สแกน)", "Finished scans"), sortKey: "fin", align: "right", tdStyle: { color: "var(--success)" }, cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
-    { key: "inp", header: L("กำลังทำ (สแกน)", "In-process scans"), sortKey: "inp", align: "right", cell: (m) => fmtNum(m.inp), exp: (m) => m.inp },
+    { key: "tgt", header: L("เป้า (ชิ้น)", "Target (pcs)"), sortKey: "tgt", align: "right", tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => (m.tPcs > 0 ? <span className="dr-mini"><span className="dr-mini-bar"><i className={m.flags.some((f) => f.t.includes("▼")) ? "low" : ""} style={{ width: `${Math.min(100, (m.pctT || 0) * 100)}%` }} /></span>{pctTxt(m.pctT)} <span style={{ color: "var(--muted)" }}>/ {fmtNum(m.tPcs)}</span></span> : "—"),
+      exp: (m) => (m.tPcs > 0 ? `${Math.round((m.pctT || 0) * 100)}% / ${m.tPcs}` : "") },
+    { key: "avg7", header: L("เฉลี่ย 7 วัน", "7-day avg"), sortKey: "avg7", align: "right", tdStyle: { color: "var(--muted)" }, cell: (m) => (m.avg7 != null ? fmtKpi(m.avg7) : "—"), exp: (m) => (m.avg7 != null ? Math.round(m.avg7 * 10) / 10 : "") },
+    { key: "kg", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "kg", align: "right", tdStyle: { color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => fmtKpi(m.kg), exp: (m) => Number((m.kg || 0).toFixed(2)) },
+    { key: "util", header: L("เวลาเดินเครื่อง %", "Utilization %"), sortKey: "util", align: "right", tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => (m.util != null ? <>{pctTxt(m.util)} <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{fmtDur(m.runMin, lang)}</span></> : "—"), exp: (m) => (m.util != null ? Math.round(m.util * 100) : "") },
+    { key: "cycle", header: L("นาที/ชิ้น", "Min/pc"), sortKey: "cycle", align: "right", cell: (m) => (m.cycle != null ? fmtKpi(m.cycle) : "—"), exp: (m) => (m.cycle != null ? Math.round(m.cycle * 10) / 10 : "") },
+    ...(manage ? [{ key: "stops", header: L("เวลาหยุด", "Downtime"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap" },
+      cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }}>{fmtDur(m.stopMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${Math.round(m.stopMin)} min · ${m.stops}×` : "") }] : []),
+    { key: "idle", header: L("ว่าง/อื่นๆ", "Idle/other"), sortKey: "idle", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)" }, cell: (m) => fmtDur(m.idleMin, lang), exp: (m) => Math.round(m.idleMin) },
+    { key: "scans", header: L("สแกน", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
+    { key: "fin", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "fin", align: "right", cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
+    { key: "inp", header: L("กำลังทำ (ชิ้น)", "In process (pcs)"), sortKey: "inp", align: "right", cell: (m) => fmtNum(m.inp), exp: (m) => m.inp },
+    { key: "parts", header: "Part", dataLabel: "Part", sortKey: "parts", align: "right", cell: (m) => fmtNum(m.nParts), exp: (m) => m.nParts },
+    { key: "slow", header: L("รายงานการทำงาน", "Work reports"), sortKey: "slow", align: "right", cell: (m) => (m.slow ? fmtNum(m.slow) : "—"), exp: (m) => m.slow || "" },
     { key: "first", header: L("สแกนแรก", "First scan"), sortKey: "first", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.first ? fmtClock(m.first) : "—"), exp: (m) => (m.first ? fmtClock(m.first) : "") },
     { key: "last", header: L("สแกนล่าสุด", "Last scan"), sortKey: "last", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.last ? fmtClock(m.last) : "—"), exp: (m) => (m.last ? fmtClock(m.last) : "") },
-    { key: "slow", header: L("รายงานการทำงาน", "Work reports"), sortKey: "slow", align: "right", tdStyle: { color: "#b45309" }, cell: (m) => (m.slow ? fmtNum(m.slow) : "—"), exp: (m) => m.slow || "" },
-    ...(manage ? [{ key: "stops", header: L("เครื่องหยุด", "Stops"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--danger)" },
-      cell: (m) => (m.stops ? `${fmtNum(m.stops)} · ${fmtNum(m.stopMin)} ${L("นาที", "min")}` : "—"), exp: (m) => (m.stops ? `${m.stops} · ${m.stopMin} min` : "") }] : []),
   ];
-  const mAcc = { mkey: (m) => m.mkey, name: (m) => m.name, emp: (m) => m.empText, scans: (m) => m.scans, pcs: (m) => m.pcs, kg: (m) => m.kg, secs: (m) => m.secs, secPer: (m) => m.secPer,
-    parts: (m) => m.nParts, fin: (m) => m.fin, inp: (m) => m.inp, first: (m) => m.first || "", last: (m) => m.last || "", slow: (m) => m.slow, stops: (m) => m.stopMin };
+  const mAcc = { flag: (m) => m.sev, mkey: (m) => m.mkey, name: (m) => m.name, emp: (m) => m.empText, pcs: (m) => m.pcs, tgt: (m) => m.pctT, avg7: (m) => m.avg7, kg: (m) => m.kg,
+    util: (m) => m.util, cycle: (m) => m.cycle, stops: (m) => m.stopMin, idle: (m) => m.idleMin, scans: (m) => m.scans, fin: (m) => m.fin, inp: (m) => m.inp,
+    parts: (m) => m.nParts, slow: (m) => m.slow, first: (m) => m.first || "", last: (m) => m.last || "" };
 
-  // ── คอลัมน์ตาราง "ทุกอย่าง" ──
+  // ── คอลัมน์ "รายการทั้งหมด" ──
   const sCols = [
     { key: "time", header: L("เวลา", "Time"), sortKey: "time", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => fmtClock(g.time), exp: (g) => fmtClock(g.time) },
     { key: "machine", header: L("เครื่อง", "Machine"), sortKey: "machine", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }, cell: (g) => g.mkey, exp: (g) => g.mkey },
@@ -7427,7 +7798,7 @@ function DailyReportPage() {
     { key: "matlen", header: L("Mat. Length (มม.)", "Mat. Length (mm)"), sortKey: "matlen", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => nf(g.matlen), exp: (g) => (g.matlen != null ? g.matlen : "") },
     { key: "inv", header: "INV Code", dataLabel: "INV Code", sortKey: "inv", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.inv || "-", exp: (g) => g.inv },
     { key: "secs", header: L("เวลาเดินเครื่อง", "Run time"), sortKey: "secs", align: "right", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (g) => (g.secs ? fmtHrs(g.secs) : "—"), exp: (g) => (g.secs ? fmtHrs(g.secs) : "") },
-    { key: "secPer", header: L("วินาที/ชิ้น", "Sec/pc"), sortKey: "secPer", align: "right", cell: (g) => (g.qty > 0 && g.secs ? fmtNum(Math.round(g.secs / g.qty)) : "—"), exp: (g) => (g.qty > 0 && g.secs ? Math.round(g.secs / g.qty) : "") },
+    { key: "minPer", header: L("นาที/ชิ้น", "Min/pc"), sortKey: "minPer", align: "right", cell: (g) => (g.qty > 0 && g.secs ? fmtKpi(g.secs / 60 / g.qty) : "—"), exp: (g) => (g.qty > 0 && g.secs ? Math.round(g.secs / 6 / g.qty) / 10 : "") },
     { key: "slow", header: L("รายงานการทำงาน", "Work report"), sortKey: "slow", tdStyle: { color: "#b45309", whiteSpace: "nowrap" }, cell: (g) => (g.slow_reason ? g.slow_reason + (g.slow_note ? " — " + g.slow_note : "") : "—"), exp: (g) => (g.slow_reason ? g.slow_reason + (g.slow_note ? " — " + g.slow_note : "") : "") },
     { key: "mod", header: "Modify", dataLabel: "Modify", sortKey: "mod", tdStyle: { whiteSpace: "nowrap" }, cell: (g) => g.mod || "-", exp: (g) => g.mod },
   ];
@@ -7436,7 +7807,7 @@ function DailyReportPage() {
     part: (g) => g.part_no, pname: (g) => g.part_name, mdf: (g) => g.mdf, rev: (g) => g.rev, op: (g) => g.ops.join(" · "),
     status: (g) => (g.office ? -1 : String(g.status).toLowerCase() === "finished" ? 1 : 0), qty: (g) => Number(g.qty) || 0, ordered: (g) => g.ordered,
     weight: (g) => Number(g.weight) || 0, partlen: (g) => (g.part_len != null ? Number(g.part_len) : null), matlen: (g) => g.matlen, inv: (g) => g.inv,
-    secs: (g) => Number(g.secs) || 0, secPer: (g) => (g.qty > 0 ? (Number(g.secs) || 0) / g.qty : null), slow: (g) => g.slow_reason || "", mod: (g) => g.mod,
+    secs: (g) => Number(g.secs) || 0, minPer: (g) => (g.qty > 0 ? (Number(g.secs) || 0) / g.qty : null), slow: (g) => g.slow_reason || "", mod: (g) => g.mod,
   };
 
   async function doExport() {
@@ -7450,18 +7821,28 @@ function DailyReportPage() {
         return list.map((x) => { const o = {}; useCols.forEach((c) => { o[typeof c.header === "string" ? c.header : c.key] = c.exp ? c.exp(x) : ""; }); return o; });
       };
       const kpi = [
-        [L("วันที่", "Date"), day], [L("ชิ้นงาน", "Pieces"), totPcs], [L("น้ำหนัก (กก.)", "Weight (kg)"), Number(totKg.toFixed(2))],
-        [L("เวลาเดินเครื่อง", "Run time"), totSec ? fmtHrs(totSec) : ""], [L("สแกน (ครั้ง)", "Scans"), rows.length],
-        [L("เครื่องที่ทำงาน", "Machines working"), nMachines], [L("พนักงาน", "Operators"), nEmp], ["Part", nParts], ["Release", nRel],
-        [L("สแกนเสร็จ / กำลังทำ", "Finished / in-process scans"), `${finRows.length} / ${inpRows.length}`],
-        [L("รายงานการทำงาน", "Work reports"), nSlow],
-        ...(manage && stops ? [[L("เครื่องหยุด", "Stops"), `${stopsF.length} · ${stopMin} min`]] : []),
+        [L("วันที่", "Date"), day],
+        [L("ชิ้นงาน", "Pieces"), totPcs], [L("เป้า (ชิ้น)", "Target (pcs)"), tPcs || ""],
+        [L("ชิ้นที่กด Finished", "Finished pcs"), finPcs], [L("ชิ้นกำลังทำ", "In-process pcs"), inpPcs],
+        [L("น้ำหนัก (กก.)", "Weight (kg)"), Number(totKg.toFixed(2))], [L("เป้า (กก.)", "Target (kg)"), tKg || ""],
+        [L("เวลาเดินเครื่อง (นาที)", "Run time (min)"), Math.round(totSec / 60)],
+        [L("เวลาตามแผน (นาที)", "Planned time (min)"), Math.round(plannedMinTotal)],
+        [L("เวลาเดินเครื่อง %", "Utilization %"), util != null ? Math.round(util * 100) : ""],
+        [L("นาที/ชิ้น", "Min per piece"), cycleMin != null ? Math.round(cycleMin * 10) / 10 : ""],
+        ...(manage && stopsAll ? [[L("เวลาหยุด (นาที)", "Downtime (min)"), Math.round(stopMin)], [L("หยุด (ครั้ง)", "Stops"), stopsF.length]] : []),
+        [L("สแกน (ครั้ง)", "Scans"), rows.length], [L("เครื่องที่ทำงาน", "Machines working"), activeMachines.length], [L("พนักงาน", "Operators"), nEmp],
+        ["Part", nParts], ["Release", nRel], [L("รายงานการทำงาน", "Work reports"), nSlow],
+        [L("เทียบวันก่อน", "Previous working day"), prevDay || ""], [L("ชิ้นงาน วันก่อน", "Pieces prev day"), prev ? prev.pcs : ""],
+        [L("ชิ้นงาน เฉลี่ย 7 วัน", "Pieces 7-day avg"), avg ? Math.round(avg.pcs * 10) / 10 : ""],
+        [L("เวลากะ", "Shift"), `${cfg.start}–${cfg.end} · ${L("พัก", "break")} ${cfg.breakStart} ${cfg.breakMin} min`],
       ].map(([k, v]) => ({ [L("หัวข้อ", "Item")]: k, [L("ค่า", "Value")]: v }));
       const { downloadSheets } = await import("./excelExport.js");
       await downloadSheets(`daily-report-${day}.xlsx`, [
         { name: L("ภาพรวม", "Overview"), rows: kpi },
         { name: L("สรุปรายเครื่อง", "By machine"), rows: pick(mCols, colApiM, sortM.sortRows(machineRows, mAcc)) },
         { name: L("รายการทั้งหมด", "All scans"), rows: pick(sCols, colApiS, sortS.sortRows(rows, sAcc)) },
+        ...(stopPareto.length ? [{ name: L("สาเหตุหยุด", "Downtime reasons"), rows: stopPareto.map((r) => ({ [L("สาเหตุ", "Reason")]: r.k, [L("นาที", "Minutes")]: r.v, [L("ครั้ง", "Count")]: r.n })) }] : []),
+        ...(slowPareto.length ? [{ name: L("รายงานการทำงาน", "Work reports"), rows: slowPareto.map((r) => ({ [L("เหตุผล", "Reason")]: r.k, [L("ครั้ง", "Count")]: r.v })) }] : []),
       ]);
     } catch (e) {
       console.warn("daily report export error", e);
@@ -7470,28 +7851,36 @@ function DailyReportPage() {
   }
 
   const selStyle = { height: 38, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", padding: "0 10px", fontFamily: "inherit", fontSize: 13.5, minWidth: 150 };
-  const anyFilter = machineF || projF || deptF || statusF || qq;
   const dayLabel = new Date(`${day}T12:00:00`).toLocaleDateString(lang === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const exceptions = machineRows.filter((m) => m.sev > 0).sort((a, b) => b.sev - a.sev);
+  const pctDone = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
   return (
-    <div>
+    <div className="dr-page">
       <div className="page-head">
         <div>
           <div className="page-title">{L("รายงานประจำวัน", "Daily Report")}</div>
-          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>{dayLabel}{day === today ? L(" · วันนี้", " · today") : ""}</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
+            {dayLabel}{isToday ? L(" · วันนี้ (ยังไม่จบวัน)", " · today (in progress)") : ""}
+            {" · "}{L("กะ", "shift")} {cfg.start}–{cfg.end} ({L("พัก", "break")} {cfg.breakMin} {L("น.", "min")})
+            {admin ? <button type="button" className="dr-link" onClick={() => setShowCfg(true)}>⚙ {L("ตั้งเวลากะ / เป้า", "Shift & targets")}</button> : null}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Btn variant="ghost" size="sm" onClick={() => setDay(shiftDayStr(day, -1))} title={L("วันก่อนหน้า", "Previous day")}>◀</Btn>
           <input type="date" value={day} max={today} onChange={(e) => e.target.value && setDay(e.target.value)} style={{ ...selStyle, minWidth: 0 }} aria-label={L("เลือกวันที่", "Pick a date")} />
           <Btn variant="ghost" size="sm" onClick={() => setDay(shiftDayStr(day, 1))} disabled={day >= today} title={L("วันถัดไป", "Next day")}>▶</Btn>
-          {day !== today && <Btn variant="ghost" size="sm" onClick={() => setDay(today)}>{L("วันนี้", "Today")}</Btn>}
-          <Btn variant="ghost" size="sm" onClick={() => setReloadTick((n) => n + 1)} title={L("โหลดใหม่", "Reload")}><Icon name="refresh" size={14} /></Btn>
+          {!isToday && <Btn variant="ghost" size="sm" onClick={() => setDay(today)}>{L("วันนี้", "Today")}</Btn>}
+          <Btn variant="ghost" size="sm" onClick={() => { setNowMs(Date.now()); setReloadTick((n) => n + 1); }} title={L("โหลดใหม่", "Reload")}><Icon name="refresh" size={14} /></Btn>
           <Btn variant="accent" size="sm" onClick={doExport} disabled={exporting || loading}><Icon name="grid" size={14} /> {exporting ? L("กำลังสร้าง…", "Exporting…") : "Export Excel"}</Btn>
         </div>
       </div>
 
-      {/* ตัวกรอง — มีผลกับภาพรวมและทุกตาราง */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+      {cfgState === "nosql" && admin && (
+        <div className="dr-banner">{L("⚠ ยังไม่ได้รัน migration-daily-report-settings.sql — ใช้เวลากะเริ่มต้น 08:00–17:00 และยังตั้งเป้าไม่ได้", "⚠ migration-daily-report-settings.sql not run yet — using default shift 08:00–17:00, targets unavailable")}</div>
+      )}
+
+      <div className="dr-filters">
         <select value={machineF} onChange={(e) => setMachineF(e.target.value)} style={selStyle} aria-label={L("เครื่อง", "Machine")}>
           <option value="">{L("ทุกเครื่อง", "All machines")}</option>
           {machineOpts.map(([k, n]) => <option key={k} value={k}>{k}{n && n !== k ? ` — ${n}` : ""}</option>)}
@@ -7520,28 +7909,53 @@ function DailyReportPage() {
         <Card><div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div></Card>
       ) : (
         <>
-          {/* ── ภาพรวม ── */}
-          <div className="stat-row">
-            <StatCard label={L("ชิ้นงาน", "Pieces")} value={fmtNum(totPcs)} icon="box" />
-            <StatCard label={L("น้ำหนัก (กก.)", "Weight (kg)")} value={fmtNum(totKg)} icon="weight" />
-            <StatCard label={L("เวลาเดินเครื่อง", "Run time")} value={totSec ? fmtHrs(totSec) : "—"} icon="clock" />
-            <StatCard label={L("สแกน (ครั้ง)", "Scans")} value={fmtNum(rows.length)} icon="scan" />
+          {/* ── ชั้นที่ 1: ตัวชี้วัดหลัก 5 ตัว (สำคัญสุดซ้าย) · ทุกตัวมีสิ่งเทียบ ── */}
+          <div className="dr-kpis">
+            <DrKpi label={L("ชิ้นงานที่ทำ", "Pieces produced")} value={fmtNum(totPcs)} unit={L("ชิ้น", "pcs")}
+              goal={targetOK ? goalOf(totPcs, tPcs, L("ชิ้น", "pcs")) : null}
+              sub={L(`กด Finished ${fmtNum(finPcs)} · กำลังทำ ${fmtNum(inpPcs)}`, `Finished ${fmtNum(finPcs)} · in process ${fmtNum(inpPcs)}`)}
+              deltas={[vsPrev(totPcs, prev?.pcs, true), vsAvg(totPcs, avg?.pcs, true)]}
+              info={L("รวมจำนวนที่ใส่ตอนกด OK ทุกงานของวัน (ชิ้นที่ผ่าน 2 เครื่อง นับ 2 ครั้ง = ปริมาณงานของเครื่อง)", "Sum of quantities saved today (a piece through 2 machines counts twice = machine workload)")} />
+            <DrKpi label={L("น้ำหนักงาน", "Weight processed")} value={fmtKpi(totKg)} unit={L("กก.", "kg")}
+              goal={targetOK ? goalOf(totKg, tKg, L("กก.", "kg")) : null}
+              sub={totPcs > 0 ? L(`เฉลี่ย ${fmtKpi(totKg / totPcs)} กก./ชิ้น`, `avg ${fmtKpi(totKg / totPcs)} kg/pc`) : null}
+              deltas={[vsPrev(totKg, prev?.kg, true), vsAvg(totKg, avg?.kg, true)]}
+              info={L("จำนวน × น้ำหนักต่อชิ้นของงานที่บันทึก", "Quantity × unit weight of saved work")} />
+            <DrKpi label={L("เวลาเดินเครื่อง", "Utilization")} value={util != null ? `${Math.round(util * 100)}` : "—"} unit={util != null ? "%" : ""}
+              sub={L(`เดิน ${fmtDur(totSec / 60, lang)} จากเวลาตามแผน ${fmtDur(plannedMinTotal, lang)} (${nPlanned} เครื่อง)`, `ran ${fmtDur(totSec / 60, lang)} of ${fmtDur(plannedMinTotal, lang)} planned (${nPlanned} machine${nPlanned === 1 ? "" : "s"})`)}
+              deltas={util != null ? [vsPrev(util, prev?.util, true, { scaled: false, pts: true }), vsAvg(util, avg?.util, true, { scaled: false, pts: true })] : []}
+              info={L("เวลาเดินเครื่อง (สแกนรอบแรก → กด OK) ÷ เวลาทำงานตามแผน (กะ − พัก) × จำนวนเครื่องที่ตามแผน (ทำงานวันนี้ หรือมีเป้า) · วันนี้นับถึงตอนนี้", "Run time (first scan → OK) ÷ planned time (shift − break) × planned machines (worked today or have a target) · today counts up to now")} />
+            <DrKpi label={L("เวลาต่อชิ้น", "Time per piece")} value={cycleMin != null ? fmtKpi(cycleMin) : "—"} unit={cycleMin != null ? L("นาที", "min") : ""}
+              deltas={cycleMin != null ? [vsPrev(cycleMin, prev?.cyc, false, { scaled: false }), vsAvg(cycleMin, avg?.cyc, false, { scaled: false })] : []}
+              sub={L("เวลาเดินเครื่อง ÷ ชิ้นงาน (น้อย = เร็ว)", "run time ÷ pieces (lower = faster)")}
+              info={L("เฉลี่ยทุกเครื่อง · ดูรายเครื่องในตารางด้านล่าง", "All machines average · see per machine below")} />
+            <DrKpi label={L("เวลาหยุดเครื่อง", "Downtime")} value={manage && stopsAll ? fmtDur(stopMin, lang) : "—"}
+              sub={manage && stopsAll ? L(`${stopsF.length} ครั้ง${openStops.length ? ` · หยุดอยู่ ${openStops.length} เครื่อง` : ""}`, `${stopsF.length} stop(s)${openStops.length ? ` · ${openStops.length} stopped now` : ""}`) : L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}
+              alert={openStops.length ? L(`⛔ ${openStops.map((s) => s.machine).join(", ")} หยุดอยู่ตอนนี้`, `⛔ ${openStops.map((s) => s.machine).join(", ")} stopped now`) : null}
+              info={L("จากการกด \"แจ้งเครื่องหยุด\" ที่หน้าเครื่อง จนกด \"พร้อมทำงาน\"", "From \"machine stop\" on the terminal until \"ready\"")} />
           </div>
-          <div className="stat-row">
-            <StatCard label={L("เครื่องที่ทำงาน · พนักงาน", "Machines · operators")} value={`${fmtNum(nMachines)} · ${fmtNum(nEmp)}`} icon="machine" />
-            <StatCard label={L("Part · Release", "Parts · releases")} value={`${fmtNum(nParts)} · ${fmtNum(nRel)}`} icon="grid" />
-            <StatCard label={L("สแกนเสร็จ · กำลังทำ", "Finished · in-process scans")} value={`${fmtNum(finRows.length)} · ${fmtNum(inpRows.length)}`} icon="check" />
-            <StatCard label={manage && stops ? L("รายงานการทำงาน · เครื่องหยุด", "Work reports · stops") : L("รายงานการทำงาน", "Work reports")}
-              value={manage && stops ? `${fmtNum(nSlow)} · ${fmtNum(stopsF.length)}${stopMin ? ` (${fmtNum(stopMin)} ${L("นาที", "min")})` : ""}` : fmtNum(nSlow)} icon="warn" />
+          <div className="dr-context">
+            {L("สแกน", "Scans")} <b>{fmtNum(rows.length)}</b> · {L("เครื่องทำงาน", "machines working")} <b>{activeMachines.length}</b>{machinesAll.length ? <>/{machinesAll.length}</> : null}
+            {" · "}{L("พนักงาน", "operators")} <b>{nEmp}</b> · Part <b>{nParts}</b> · Release <b>{nRel}</b>
+            {" · "}{L("รายงานการทำงาน", "work reports")} <b>{nSlow}</b>
+            {rows.length ? <> · {L("สแกนแรก", "first")} <b className="mono">{fmtClock(firstT)}</b> {L("ล่าสุด", "last")} <b className="mono">{fmtClock(lastT)}</b></> : null}
+            {prevDay ? <> · {L("เทียบ", "compared with")} {prevLbl} {L("และเฉลี่ย", "and the average of")} {workDays.length} {L("วันทำงาน", "working days")}</> : <> · {L("ยังไม่มีข้อมูล 7 วันก่อนหน้าให้เทียบ", "no previous 7 days to compare")}</>}
+            {anyFilter ? <span style={{ color: "#b45309" }}> · {L("ตัวเลขตามตัวกรอง", "filtered")}{!targetOK ? L(" (ไม่แสดงเป้า)", " (targets hidden)") : ""}</span> : null}
           </div>
-          {rows.length > 0 && (
-            <div style={{ fontSize: 12, color: "var(--muted)", margin: "-4px 2px 14px" }}>
-              {L("สแกนแรก", "First scan")} <b style={{ fontFamily: "var(--font-mono)" }}>{fmtClock(firstT)}</b> · {L("สแกนล่าสุด", "last scan")} <b style={{ fontFamily: "var(--font-mono)" }}>{fmtClock(lastT)}</b>
-              {anyFilter ? <span style={{ color: "#b45309" }}> · {L("ตัวเลขตามตัวกรองที่เลือก", "numbers follow the selected filters")}</span> : null}
+
+          {/* ── ข้อยกเว้น (Report by exception): เครื่องที่ต้องดู ── */}
+          {exceptions.length > 0 && (
+            <div className="dr-exc">
+              <b>{L("ต้องดู", "Needs attention")}:</b>
+              {exceptions.slice(0, 8).map((m) => (
+                <button key={m.mkey} type="button" className={"dr-exc-item " + (m.sev === 2 ? "bad" : "warn")} onClick={() => { setMachineF(m.mkey); setTimeout(() => { try { listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* ignore */ } }, 60); }}>
+                  <b>{m.mkey}</b> {m.flags.map((f) => f.t).join(" · ")}
+                </button>
+              ))}
             </div>
           )}
 
-          {rows.length === 0 ? (
+          {rows.length === 0 && machineRows.length === 0 ? (
             <Card>
               <div className="empty-state">
                 <Icon name="chart" size={32} />
@@ -7551,39 +7965,105 @@ function DailyReportPage() {
             </Card>
           ) : (
             <>
-              <Card title={L("ชิ้นงานรายชั่วโมง", "Pieces per hour")}>
-                <SimpleBarChart data={hourly} color={CHART.accent} height={220} />
-              </Card>
+              {/* ── ชั้นที่ 2: แนวโน้มระหว่างวัน + การใช้เวลาเครื่อง ── */}
+              <div className="dr-grid2">
+                <Card title={L("ชิ้นงานรายชั่วโมง", "Pieces per hour")}
+                  right={<span className="dr-legend">{targetPerHour > 0 ? <><i className="dash" /> {L("เป้า/ชม.", "target/h")}</> : null} <i className="sq brk" /> {L("พัก", "break")}</span>}>
+                  <DrHourlyChart data={hourly} targetPerHour={targetOK ? targetPerHour : 0} breakHours={breakHours} lang={lang} />
+                </Card>
+                <Card title={L("การใช้เวลาเครื่อง (ตามแผน)", "Machine time (planned)")}
+                  right={<span className="dr-legend"><i className="sq run" /> {L("เดินเครื่อง", "running")} <i className="sq stop" /> {L("หยุด", "down")} <i className="sq idle" /> {L("ว่าง/อื่นๆ", "idle/other")}</span>}>
+                  <div className="dr-time">
+                    {[...machineRows].sort((a, b) => b.runMin - a.runMin).slice(0, 12).map((m) => {
+                      const tot = Math.max(m.planned, m.runMin + m.stopPlMin, 1);
+                      const w = (v) => `${(v / tot) * 100}%`;
+                      return (
+                        <div key={m.mkey} className="dr-time-row" title={`${m.mkey}: ${L("เดิน", "run")} ${fmtDur(m.runMin, lang)} · ${L("หยุด", "down")} ${fmtDur(m.stopPlMin, lang)} · ${L("ว่าง", "idle")} ${fmtDur(m.idleMin, lang)} / ${L("ตามแผน", "planned")} ${fmtDur(m.planned, lang)}`}>
+                          <div className="dr-time-k">{m.mkey}</div>
+                          <div className="dr-time-bar">
+                            {m.runMin > 0 && <i className="run" style={{ width: w(m.runMin) }} />}
+                            {m.stopPlMin > 0 && <i className="stop" style={{ width: w(m.stopPlMin) }} />}
+                            {m.idleMin > 0 && <i className="idle" style={{ width: w(m.idleMin) }} />}
+                          </div>
+                          <div className="dr-time-v">{pctTxt(m.util)}</div>
+                        </div>
+                      );
+                    })}
+                    {plannedNow <= 0 && <div style={{ color: "var(--muted)", fontSize: 12.5 }}>{L("ยังไม่ถึงเวลาเริ่มกะ", "Shift hasn't started")}</div>}
+                  </div>
+                </Card>
+              </div>
 
+              {/* ── Pareto: สาเหตุเวลาหยุด · เหตุผลรอบช้า ── */}
+              <div className="dr-grid2">
+                <Card title={L("สาเหตุเวลาหยุด (นาที)", "Downtime by reason (min)")}>
+                  {manage && stopsAll
+                    ? <DrPareto rows={stopPareto} unit={L("น.", "min")} tone="stop" empty={L("ไม่มีเครื่องหยุดในวันนี้", "No downtime on this day")} />
+                    : <div style={{ color: "var(--muted)", fontSize: 13 }}>{L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}</div>}
+                </Card>
+                <Card title={L("รายงานการทำงาน (รอบช้า) ตามเหตุผล", "Work reports (slow) by reason")}>
+                  <DrPareto rows={slowPareto} unit={L("ครั้ง", "×")} tone="warn" empty={L("ไม่มีรายงานการทำงาน", "No work reports")} />
+                  {rows.length > 0 && nSlow / rows.length > 0.5 ? (
+                    <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 8 }}>
+                      {L(`มีเหตุผลแนบ ${nSlow} จาก ${rows.length} งาน — หน้าเครื่องแนบเหตุผลค้างไว้กับทุกงานถัดไปจนกด "ยกเลิก" ตรวจว่าคนงานลืมยกเลิกหรือไม่`,
+                         `${nSlow} of ${rows.length} jobs carry a reason — the terminal keeps it for every next job until "Clear"; check whether it was left on`)}
+                    </div>
+                  ) : null}
+                </Card>
+              </div>
+
+              {/* ── ชั้นที่ 3: รายเครื่อง ── */}
               <Card title={L("สรุปรายเครื่อง", "By machine")}
                 right={<Btn variant="ghost" size="sm" onClick={() => colApiM.current && colApiM.current.resetAll()} title={L("คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อน", "Reset column order + show hidden columns")}>↺ {L("คอลัมน์", "Columns")}</Btn>}>
-                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                <div className="dr-hint">
                   {L("แตะแถวเพื่อดูเฉพาะเครื่องนั้นในตารางด้านล่าง · คลิกขวาที่หัวตาราง/ปุ่ม ▥ = เลือกคอลัมน์ · ลาก ⠿ = ย้ายคอลัมน์",
                      "Tap a row to show only that machine below · right-click the header / ▥ = choose columns · drag ⠿ = move columns")}
                 </div>
-                <DataTable id="daily-machines" wrapClass="table-wrap" tableClass="data-table responsive-cards" orderApiRef={colApiM}
+                <DataTable id="daily-machines2" wrapClass="table-wrap" tableClass="data-table responsive-cards" orderApiRef={colApiM}
                   rows={machineRows} rowKey={(m) => m.mkey} sort={sortM} sortAccessors={mAcc} columns={mCols}
-                  defaultHidden={["name", "secPer", "first", "last"]}
+                  defaultHidden={["name", "scans", "parts", "first", "last", "inp"]}
                   rowProps={(m) => ({ className: "release-row", style: { cursor: "pointer", background: machineF === m.mkey ? "var(--accent-soft, rgba(16,185,129,.08))" : undefined },
                     onClick: () => { setMachineF(machineF === m.mkey ? "" : m.mkey); setTimeout(() => { try { listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* ignore */ } }, 60); },
                     title: L("แตะเพื่อกรองเฉพาะเครื่องนี้ (แตะซ้ำ = ยกเลิก)", "Tap to filter this machine (tap again to clear)") })} />
               </Card>
 
+              {/* ── ชั้นที่ 4: รายการละเอียด ── */}
               <div ref={listRef} />
               <Card title={`${L("รายการทั้งหมด", "All scans")} (${fmtNum(rows.length)})`}
                 right={<Btn variant="ghost" size="sm" onClick={() => colApiS.current && colApiS.current.resetAll()} title={L("คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อน", "Reset column order + show hidden columns")}>↺ {L("คอลัมน์", "Columns")}</Btn>}>
-                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                <div className="dr-hint">
                   {L("1 แถว = 1 การสแกน (ขั้นตอนที่ติ๊กร่วมรวมในแถวเดียว) · คลิกขวาที่หัวตาราง/ปุ่ม ▥ = เปิด-ปิดคอลัมน์ · ลาก ⠿ = ย้ายคอลัมน์ · Export ออกตามคอลัมน์ที่เห็น",
                      "1 row = 1 scan (co-ticked steps merged) · right-click the header / ▥ = show/hide columns · drag ⠿ = move columns · Export follows the visible columns")}
                 </div>
                 <DataTable id="daily-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" orderApiRef={colApiS}
                   rows={rows} rowKey={(g) => g.key} sort={sortS} sortAccessors={sAcc} columns={sCols}
-                  defaultHidden={["pname", "mdf", "rev", "secPer", "mod"]}
+                  defaultHidden={["pname", "mdf", "rev", "minPer", "mod"]}
                   empty={L("ไม่มีรายการ", "No rows")} />
               </Card>
             </>
           )}
+
+          {/* ── นิยามตัวเลข (ISO 22400: ทุกคนอ่านแบบเดียวกัน) ── */}
+          <details className="dr-defs">
+            <summary>ⓘ {L("นิยามตัวเลขในหน้านี้", "How the numbers are defined")}</summary>
+            <ul>
+              <li><b>{L("ชิ้นงานที่ทำ", "Pieces produced")}</b> — {L("รวมจำนวนที่ใส่ตอนกด OK ทุกงาน (ปริมาณงานของเครื่อง: ชิ้นที่ผ่าน 2 เครื่องนับ 2 ครั้ง)", "sum of quantities saved (machine workload: a piece through 2 machines counts twice)")}</li>
+              <li><b>{L("เป้า", "Target")}</b> — {L("เป้าชิ้น/กก. ต่อเครื่องต่อวันที่แอดมินตั้ง · วันนี้ขีดดำ = เป้า ณ ตอนนี้ (ตามสัดส่วนเวลากะที่ผ่านไป) · ต่ำกว่า 90% ของเป้า ณ ตอนนี้ = ▼ ต่ำกว่าเป้า", "admin-set pcs/kg per machine per day · today the black tick = pace now (share of the shift elapsed) · below 90% of pace = ▼ below target")}</li>
+              <li><b>{L("เวลาเดินเครื่อง %", "Utilization %")}</b> — {L("เวลาเดินเครื่อง (สแกนรอบแรก → กด OK) ÷ เวลาตามแผน (เวลากะ − พัก) ของเครื่องที่ทำงานวันนี้หรือมีเป้า", "run time (first scan → OK) ÷ planned time (shift − break) of machines that worked today or have a target")}</li>
+              <li><b>{L("เวลาหยุด / ว่าง", "Downtime / idle")}</b> — {L("หยุด = จากกด \"แจ้งเครื่องหยุด\" ถึง \"พร้อมทำงาน\" (ตัดตามขอบวัน · หยุดค้าง = ถึงตอนนี้) · ว่าง/อื่นๆ = เวลาตามแผน − เดินเครื่อง − หยุดในเวลากะ (รอของ, ตั้งเครื่อง, ไม่ได้สแกน ฯลฯ) · ทำงานนอกเวลากะ/ล่วงเวลา ทำให้เกิน 100% ได้", "down = from \"machine stop\" to \"ready\" (clipped to the day · open stop = until now) · idle/other = planned − running − down within the shift (waiting, setup, unscanned work …) · work outside the shift/overtime can exceed 100%")}</li>
+              <li><b>{L("เวลาต่อชิ้น", "Time per piece")}</b> — {L("เวลาเดินเครื่อง ÷ ชิ้นงาน (น้อย = เร็ว)", "run time ÷ pieces (lower = faster)")}</li>
+              <li><b>{L("▲▼ เทียบ", "▲▼ comparisons")}</b> — {L("เทียบวันทำงานก่อนหน้า และค่าเฉลี่ยของวันที่มีงานใน 7 วันก่อน · วันนี้เทียบกับสัดส่วนเดียวกันของวัน · เขียว = ดีขึ้น · ส้ม = แย่ลง · ≈ = ต่างไม่ถึง 5%", "vs the previous working day and the average of working days in the previous 7 · today is compared at the same share of the day · green = better · amber = worse · ≈ = within 5%")}</li>
+              <li><b>{L("ยังไม่มี", "Not yet included")}</b> — {L("คุณภาพ/ของเสีย (หน้าเครื่องยังไม่เก็บ) จึงยังไม่คิด OEE เต็ม (Availability × Performance × Quality)", "quality/scrap (not captured yet), so full OEE (Availability × Performance × Quality) isn't computed")}</li>
+            </ul>
+          </details>
         </>
+      )}
+
+      {showCfg && (
+        <DrSettingsModal cfg={cfg} lang={lang}
+          machines={(machinesAll.length ? machinesAll : activeMachines.map((c) => ({ code: c, name: "" }))).filter((m) => m.code)}
+          onClose={() => setShowCfg(false)}
+          onSaved={(v) => { setCfg({ ...DR_DEFAULT, ...v }); setCfgState("ok"); setShowCfg(false); mlsToast(L("บันทึกเวลากะ/เป้าแล้ว", "Shift & targets saved"), "success"); }} />
       )}
     </div>
   );
