@@ -287,6 +287,26 @@ a { color: var(--accent-dk); }
 /* Release Modify: แถวประวัติ M */
 .relmod-hrow { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; background: var(--surface); }
 .relmod-hrow:hover { border-color: rgba(109,74,255,.45); background: rgba(109,74,255,.06); }
+/* ── ยกเลิก M / ย้อนกลับ + Export แต่ละ M ── */
+.relmod-hrow.cancelled { background: var(--surface-2); border-style: dashed; }
+.relmod-hrow.cancelled:hover { border-color: rgba(185,28,28,.35); background: rgba(239,68,68,.04); }
+.relmod-strike { position: relative; display: inline-flex; flex-shrink: 0; }
+.relmod-strike::after { content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 1.5px; background: #fff; transform: rotate(-8deg); }
+.relmod-strike-txt { text-decoration: line-through; color: var(--muted); }
+.relmod-xchip { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; color: #b91c1c; background: rgba(239,68,68,.10); border: 1px solid rgba(239,68,68,.35); margin-right: 5px; white-space: nowrap; }
+.relmod-nowchip { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; color: #6d4aff; background: rgba(109,74,255,.10); border: 1px solid rgba(109,74,255,.35); margin-right: 5px; white-space: nowrap; }
+.relmod-dl { flex-shrink: 0; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; padding: 0; }
+.relmod-dl:hover { color: var(--accent-dk); border-color: var(--accent); }
+.relmod-dl:disabled { opacity: .5; cursor: default; }
+.relmod-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.relmod-cancelled-banner { background: #fdf0f0; border: 1px solid #f3b4b4; color: #8f1d1d; border-radius: 10px; padding: 9px 12px; font-size: 12.5px; margin-bottom: 10px; line-height: 1.5; }
+.relmod-err { background: #fdf0f0; border: 1px solid #f3b4b4; color: #8f1d1d; border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+.relmod-rv-list { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow: auto; }
+.relmod-rv-m { border: 1px solid var(--border); border-radius: 10px; padding: 8px 11px; background: var(--surface); }
+.relmod-rv-it { font-size: 12.5px; padding: 3px 0; line-height: 1.5; }
+.relmod-rv-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); font-weight: 600; }
+.relmod-rv-chip.bad { color: #b91c1c; background: #fdf0f0; border-color: #f3b4b4; }
+.relmod-rv-chip.now { color: #6d4aff; background: rgba(109,74,255,.08); border-color: rgba(109,74,255,.35); }
 .grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px,1fr)); gap: 10px; }
 .stat-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .stat-row .card { flex: 1; min-width: 140px; margin-bottom: 0; }
@@ -1059,3 +1079,7 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
   .dr-kpi-val { font-size: 24px; }
   .dr-filters select { flex: 1 1 140px; min-width: 0 !important; }
 }
+.relmod-date { height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 0 8px; font-family: inherit; font-size: 13px; background: var(--surface); color: var(--text); }
+.relmod-datebtn { border: 0; background: none; padding: 0 2px; color: var(--accent-dk); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.relmod-dateedit { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.relmod-datelog { font-size: 11.5px; color: var(--muted); margin: -4px 0 10px; line-height: 1.6; }
