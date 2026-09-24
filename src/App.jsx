@@ -907,7 +907,6 @@ function Login({ onLogin }) {
 const MENU = [
   { group: "ขั้นตอนงาน", items: [
     { key: "projects", label: "โปรเจค", icon: "folder" },
-    { key: "materials", label: "บันทึก Material", en: "Materials", icon: "scale" },
     { key: "release", label: "ปล่อยงาน (Release)", icon: "box" },
     { key: "labels", label: "พิมพ์ QR / ป้าย", icon: "qr" },
     { key: "report", label: "รายงานข้อมูลสแกน", icon: "chart" },
@@ -920,6 +919,7 @@ const MENU = [
     { key: "machinereports", label: "รายงานปัญหาเครื่อง", icon: "warn", can: canManage },
   ] },
   { group: "จัดการ", items: [
+    { key: "materials", label: "บันทึก Material", en: "Materials", icon: "scale" },
     { key: "setup", label: "ตั้งค่า", icon: "settings", can: isAdmin },
   ] },
 ];
@@ -1480,93 +1480,237 @@ function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
   );
 }
 
-// ── เพิ่มหลายรายการ (พิมพ์เอง หรือวางจาก Excel: INV · Weight/M · ความยาว · จำนวน · หมายเหตุ) ──
+// ── เพิ่ม / แก้ไขหลายรายการ (ตารางกรอก · ก็อปจาก Excel มาวางได้) ─────────────────────────────
+//   mode "add"  : แถวว่าง 5 แถว · INV ที่มีอยู่แล้วติดป้าย "มีแล้ว" → ข้าม (หรือติ๊กอัปเดตทับ)
+//   mode "edit" : แสดงทุกรายการของขอบเขตนี้ให้แก้ในตาราง (+ แถวว่างท้ายตาราง) · ช่องที่แก้ = สีเหลือง
+//   วาง (Ctrl+V) ได้ทุกที่ในหน้าต่าง — คลิกช่องไหนก็เริ่มวางที่ช่องนั้น · ไม่ได้คลิกช่อง = เริ่มที่แถวว่างแรก คอลัมน์ INV
+//   ถ้าที่วางมามีคอลัมน์ INV → จับคู่ตาม INV: INV ที่มีในตารางแล้ว = อัปเดตแถวนั้น (ช่องว่างที่วางมาไม่ลบค่าเดิม)
+//                                           INV ใหม่ = ลงแถวว่างถัดไป · มีหัวตาราง = จับคอลัมน์ตามชื่อหัว
 const MAT_COLS = ["inv", "wpm", "len", "qty", "note"];
 const MAT_HEADER = { inv: [/inv/i, /material/i, /code/i, /รหัส/i, /วัสดุ/i], wpm: [/weight\s*\/?\s*m/i, /\bw\/?m\b/i, /กก\.?\s*\/\s*ม/i, /น้ำหนัก/i], len: [/length/i, /ยาว/i], qty: [/qty/i, /จำนวน/i], note: [/remark/i, /note/i, /หมายเหตุ/i] };
-const MAT_BLANK = () => ({ id: Math.random().toString(36).slice(2), inv: "", wpm: "", len: "", qty: "", note: "" });
-function MaterialAddModal({ projectId, scopeLabel, index, onClose, onSaved }) {
+const matRid = () => Math.random().toString(36).slice(2);
+const MAT_BLANK = () => ({ key: matRid(), id: null, inv: "", wpm: "", len: "", qty: "", note: "", orig: null });
+const matStr = (v) => (v == null ? "" : String(v));
+const matRowFrom = (m) => {
+  const o = { inv: matStr(m.inv_code), wpm: matStr(m.weight_per_m), len: matStr(m.length_mm), qty: matStr(m.qty), note: matStr(m.note) };
+  return { key: matRid(), id: m.id, ...o, orig: o };
+};
+const matBlank = (r) => MAT_COLS.every((k) => !String(r[k] ?? "").trim());
+const matNormNum = (v) => { const t = String(v ?? "").trim(); if (!t) return ""; const n = gnum(t); return n == null ? t : String(n); };
+const matCellChanged = (r, k) => !!r.orig && (k === "inv" || k === "note" ? String(r[k] ?? "").trim() !== String(r.orig[k] ?? "").trim() : matNormNum(r[k]) !== matNormNum(r.orig[k]));
+const matRowChanged = (r) => !!r.orig && MAT_COLS.some((k) => matCellChanged(r, k));
+const matBadNum = (v, int) => { const t = String(v ?? "").trim(); if (!t) return false; const n = gnum(t); return n == null || n < 0 || (int && !Number.isInteger(n)); };
+// แปลงข้อความที่ก็อปจาก Excel → { map: [col|null...] | null (ไม่มีหัว), grid: [[cell...]] }
+function matParseClip(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  let grid = lines.filter((l) => l.trim() !== "").map((l) => l.split("\t").map((c) => c.trim()));
+  if (!grid.length) return null;
+  const hdr = grid[0].map((c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null);
+  if (hdr.filter(Boolean).length >= 2) return { map: hdr, grid: grid.slice(1) };
+  return { map: null, grid };
+}
+// วางลงตาราง rows (คืน rows ใหม่) · startRow/startCol = ตำแหน่งที่คลิก (หรือค่าเริ่มต้น)
+function matApplyPaste(rows, clip, startRow, startCol) {
+  const next = rows.map((r) => ({ ...r }));
+  const colsFor = (cells) => (clip.map ? clip.map : cells.map((_, j) => MAT_COLS[MAT_COLS.indexOf(startCol) + j] || null));
+  const hasInv = clip.map ? clip.map.includes("inv") : startCol === "inv";
+  let cursor = Math.max(0, startRow);
+  const nextFree = () => {                       // แถวว่างถัดไป (ตั้งแต่ cursor) — ไม่มีก็เพิ่มแถว
+    while (cursor < next.length && !matBlank(next[cursor])) cursor++;
+    if (cursor >= next.length) next.push(MAT_BLANK());
+    return cursor;
+  };
+  clip.grid.forEach((cells, i) => {
+    const cols = colsFor(cells);
+    const data = {};
+    cols.forEach((k, j) => { if (k && cells[j] !== undefined) data[k] = cells[j]; });
+    if (hasInv) {
+      const inv = String(data.inv || "").trim();
+      if (!inv) return;
+      const hit = next.findIndex((r) => matKey(r.inv) === matKey(inv));
+      if (hit >= 0) {                            // INV มีในตารางแล้ว → อัปเดตเฉพาะช่องที่วางมามีค่า
+        Object.entries(data).forEach(([k, v]) => { if (k !== "inv" && String(v).trim() !== "") next[hit][k] = v; });
+        return;
+      }
+      const idx = nextFree();
+      next[idx] = { ...next[idx], ...data, inv };
+      cursor = idx + 1;
+    } else {                                     // ไม่มี INV → วางตามตำแหน่ง (ลงไปทีละแถวจากช่องที่คลิก)
+      const idx = startRow + i;
+      while (next.length <= idx) next.push(MAT_BLANK());
+      next[idx] = { ...next[idx], ...data };
+    }
+  });
+  return next;
+}
+
+function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existing = [], onClose, onSaved }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
-  const [rows, setRows] = useState(() => Array.from({ length: 5 }, MAT_BLANK));
+  const edit = mode === "edit";
+  const [rows, setRows] = useState(() => (edit ? [...existing.map(matRowFrom), ...Array.from({ length: 3 }, MAT_BLANK)] : Array.from({ length: 5 }, MAT_BLANK)));
   const [updateDup, setUpdateDup] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const inScope = (inv) => { const e = index.get(matKey(inv)); return !!(e && (projectId ? e.proj : e.center)); };
-  const setCell = (id, k, v) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [k]: v } : r)));
-  function onPaste(e, rowIndex, colKey) {
-    const text = e.clipboardData.getData("text");
-    if (!text || (!text.includes("\t") && !text.includes("\n"))) return;
-    e.preventDefault();
-    const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim() !== "");
-    let grid = lines.map((l) => l.split("\t").map((c) => c.trim()));
-    let map = null;
-    const hdr = grid[0] ? grid[0].map((c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null) : [];
-    if (hdr.filter(Boolean).length >= 2) { map = hdr; grid = grid.slice(1); }
-    const start = MAT_COLS.indexOf(colKey);
-    setRows((rs) => {
-      const next = [...rs];
-      grid.forEach((cells, i) => {
-        const idx = rowIndex + i;
-        while (next.length <= idx) next.push(MAT_BLANK());
-        const r = { ...next[idx] };
-        if (map) map.forEach((k, j) => { if (k && cells[j] !== undefined) r[k] = cells[j]; });
-        else cells.forEach((c, j) => { const k = MAT_COLS[start + j]; if (k) r[k] = c; });
-        next[idx] = r;
-      });
-      return next;
-    });
+  const [flash, setFlash] = useState("");
+  const wrapRef = useRef(null);
+  const firstRef = useRef(null);
+  const inScope = (inv) => { const e = index && index.get(matKey(inv)); return !!(e && (projectId ? e.proj : e.center)); };
+  const setCell = (key, k, v) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [k]: v } : r)));
+  // โฟกัสช่อง INV ของแถวว่างแรก → เปิดหน้าต่างแล้วกด Ctrl+V ได้ทันที
+  useEffect(() => { const t = setTimeout(() => { try { firstRef.current && firstRef.current.focus(); } catch { /* ignore */ } }, 60); return () => clearTimeout(t); }, []);
+  const firstBlank = (rs) => { const i = rs.findIndex(matBlank); return i >= 0 ? i : rs.length; };
+  function pasteText(text, startRow, startCol) {
+    const clip = matParseClip(text);
+    if (!clip || !clip.grid.length) return false;
+    setRows((rs) => matApplyPaste(rs, clip, startRow == null ? firstBlank(rs) : startRow, startCol || "inv"));
+    setFlash(L(`วางแล้ว ${clip.grid.length} แถว`, `Pasted ${clip.grid.length} row(s)`));
+    setTimeout(() => setFlash(""), 2200);
+    return true;
   }
-  const valid = rows.filter((r) => r.inv.trim());
-  const dupCount = valid.filter((r) => inScope(r.inv)).length;
+  // จับการวางทั้งหน้าต่าง: ในช่องตาราง = เริ่มที่ช่องนั้น · นอกช่อง = แถวว่างแรก คอลัมน์ INV
+  useEffect(() => {
+    function onPaste(e) {
+      const text = e.clipboardData ? e.clipboardData.getData("text") : "";
+      if (!text) return;
+      const el = e.target;
+      const inGrid = el && el.closest && wrapRef.current && wrapRef.current.contains(el) && el.dataset && el.dataset.col;
+      if (inGrid) {
+        if (!text.includes("\t") && !text.includes("\n")) return;   // ค่าเดียว → วางปกติในช่องนั้น
+        e.preventDefault();
+        pasteText(text, Number(el.dataset.row), el.dataset.col);
+        return;
+      }
+      const tag = (el && el.tagName) || "";
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (el && el.isContentEditable)) return;   // ช่องอื่นนอกตาราง → ปล่อยปกติ
+      e.preventDefault();
+      pasteText(text, null, "inv");
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
+  async function pasteFromButton() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!pasteText(text, null, "inv")) mlsToast(L("คลิปบอร์ดว่าง — ก็อปจาก Excel ก่อน", "Clipboard is empty — copy from Excel first"), "warn");
+    } catch {
+      mlsToast(L("เบราว์เซอร์ไม่ให้อ่านคลิปบอร์ด — คลิกช่อง INV แล้วกด Ctrl+V แทน", "The browser blocked clipboard access — click an INV cell and press Ctrl+V"), "warn");
+    }
+  }
+
+  const filled = rows.filter((r) => !matBlank(r));
+  const newRows = filled.filter((r) => !r.id);
+  const changedRows = rows.filter((r) => r.id && matRowChanged(r));
+  const noInv = filled.filter((r) => !String(r.inv).trim());
+  const badRows = filled.filter((r) => matBadNum(r.wpm) || matBadNum(r.len) || matBadNum(r.qty, true));
+  const keyCount = new Map();
+  filled.forEach((r) => { const k = matKey(r.inv); if (k) keyCount.set(k, (keyCount.get(k) || 0) + 1); });
+  const dupInGrid = (r) => (keyCount.get(matKey(r.inv)) || 0) > 1;
+  const dupDb = edit ? [] : newRows.filter((r) => inScope(r.inv));
+  const nWork = edit ? changedRows.length + newRows.length : newRows.length;
+  const clean = (x) => ({ inv: String(x.inv).trim(), wpm: isScrapInv(x.inv) ? "" : String(x.wpm ?? "").replace(/,/g, ""), len: String(x.len ?? "").replace(/,/g, ""), qty: String(x.qty ?? "").replace(/,/g, ""), note: x.note });
+
   async function save() {
-    if (!valid.length) { setErr(L("กรอกอย่างน้อย 1 INV", "Enter at least one INV")); return; }
+    if (noInv.length) { setErr(L(`มี ${noInv.length} แถวที่ยังไม่มี INV Code`, `${noInv.length} row(s) have no INV Code`)); return; }
+    if (badRows.length) { setErr(L(`ตัวเลขไม่ถูกต้อง ${badRows.length} แถว (ช่องสีแดง)`, `${badRows.length} row(s) have invalid numbers (red cells)`)); return; }
+    if (filled.some(dupInGrid)) { setErr(L("มี INV ซ้ำกันในตาราง (ป้าย \"ซ้ำ\") — ลบหรือแก้ให้เหลือแถวเดียว", "The same INV appears twice (\"dup\" tag) — keep one row")); return; }
+    if (!nWork) { setErr(edit ? L("ยังไม่ได้แก้อะไร", "Nothing changed") : L("กรอกอย่างน้อย 1 INV", "Enter at least one INV")); return; }
     setBusy(true); setErr("");
-    const r = await upsertMaterials(projectId, valid.map((x) => ({ inv: x.inv, wpm: isScrapInv(x.inv) ? "" : x.wpm.replace(/,/g, ""), len: x.len.replace(/,/g, ""), qty: x.qty.replace(/,/g, ""), note: x.note })), updateDup ? "update" : "skip");
+    const fails = [];
+    const skippedExisting = [];      // INV ที่มีอยู่แล้ว (ไม่ได้ติ๊กอัปเดตทับ) = ข้ามตามตั้งใจ ไม่นับว่าพลาด
+    let nUpd = 0, nAdd = 0, nUpdDup = 0;
+    const doneKeys = new Set();
+    // 1) แก้รายการเดิม (ทีละแถว — ล้างช่องได้)
+    for (const r of changedRows) {
+      const res = await saveMaterial({ id: r.id, ...clean(r) });
+      if (res && res.ok) { nUpd++; doneKeys.add(r.key); } else fails.push(`${r.inv || "-"}: ${matReasonText(res?.reason, L)}`);
+    }
+    // 2) เพิ่มรายการใหม่ (ทีเดียว)
+    if (newRows.length) {
+      const res = await upsertMaterials(projectId, newRows.map(clean), updateDup ? "update" : "skip");
+      if (res && res.ok) {
+        nAdd = res.added || 0; nUpdDup = res.updated || 0;
+        const why = { exists: L("มีแล้ว", "exists"), dup_in_list: L("ซ้ำในรายการ", "repeated"), bad_inv: L("ไม่มี INV", "no INV"), bad_number: L("ตัวเลขผิด", "bad number") };
+        const failKeys = new Set();
+        (res.skipped || []).forEach((sk) => {
+          if (sk.reason === "exists") { skippedExisting.push(sk.inv); return; }
+          failKeys.add(matKey(sk.inv)); fails.push(`${sk.inv || "-"}: ${why[sk.reason] || sk.reason}`);
+        });
+        newRows.forEach((r) => { if (!failKeys.has(matKey(r.inv))) doneKeys.add(r.key); });
+      } else fails.push(matReasonText(res?.reason, L));
+    }
     setBusy(false);
-    if (!r || !r.ok) { setErr(matReasonText(r?.reason, L)); return; }
-    auditRecord("material_add", "material", null, { scope: scopeLabel, added: r.added, updated: r.updated, skipped: (r.skipped || []).length });
-    const skipped = (r.skipped || []);
-    const why = { exists: L("มีแล้ว", "exists"), dup_in_list: L("ซ้ำในรายการ", "repeated"), bad_inv: L("ไม่มี INV", "no INV"), bad_number: L("ตัวเลขผิด", "bad number") };
-    mlsToast(L(`เพิ่ม ${r.added} · อัปเดต ${r.updated}`, `Added ${r.added} · updated ${r.updated}`)
-      + (skipped.length ? L(` · ข้าม ${skipped.length} (${skipped.slice(0, 4).map((s) => `${s.inv || "-"}: ${why[s.reason] || s.reason}`).join(", ")}${skipped.length > 4 ? " …" : ""})`, ` · skipped ${skipped.length} (${skipped.slice(0, 4).map((s) => `${s.inv || "-"}: ${why[s.reason] || s.reason}`).join(", ")}${skipped.length > 4 ? " …" : ""})`) : ""),
-      skipped.length ? "warn" : "success");
-    onSaved && onSaved();
+    auditRecord(edit ? "material_bulk_edit" : "material_add", "material", null, { scope: scopeLabel, updated: nUpd + nUpdDup, added: nAdd, failed: fails.length });
+    const msg = [nUpd + nUpdDup ? L(`แก้ ${nUpd + nUpdDup}`, `updated ${nUpd + nUpdDup}`) : "", nAdd ? L(`เพิ่ม ${nAdd}`, `added ${nAdd}`) : "",
+      skippedExisting.length ? L(`ข้าม ${skippedExisting.length} ที่มีแล้ว (${skippedExisting.slice(0, 4).join(", ")}${skippedExisting.length > 4 ? " …" : ""})`, `skipped ${skippedExisting.length} existing (${skippedExisting.slice(0, 4).join(", ")}${skippedExisting.length > 4 ? " …" : ""})`) : ""].filter(Boolean).join(" · ");
+    if (fails.length) {
+      // เก็บแถวที่บันทึกไม่ผ่านไว้ให้แก้ต่อ · แถวที่ผ่านแล้วถือเป็นค่าเดิมใหม่ (กดบันทึกซ้ำไม่ส่งซ้ำ)
+      setRows((rs) => rs.map((r) => (doneKeys.has(r.key) ? (r.id ? { ...r, orig: { inv: r.inv, wpm: r.wpm, len: r.len, qty: r.qty, note: r.note } } : MAT_BLANK()) : r)));
+      setErr(L(`บันทึกไม่ผ่าน ${fails.length}: `, `${fails.length} not saved: `) + fails.slice(0, 5).join(" · ") + (fails.length > 5 ? " …" : ""));
+      if (msg) mlsToast(msg, "success");
+      if (doneKeys.size) onSaved && onSaved({ keepOpen: true });
+      return;
+    }
+    mlsToast(msg || L("บันทึกแล้ว", "Saved"), skippedExisting.length ? "warn" : "success");
+    onSaved && onSaved({});
   }
+
+  const cellCls = (r, k) => [r.id && matCellChanged(r, k) ? "mat-cell-changed" : "", (k === "wpm" || k === "len" || k === "qty") && matBadNum(r[k], k === "qty") ? "mat-cell-bad" : "", k === "inv" && ((!edit && !r.id && r.inv.trim() && inScope(r.inv)) || (r.inv.trim() && dupInGrid(r))) ? "mat-cell-dup" : ""].filter(Boolean).join(" ") || undefined;
+  const title = edit ? L("แก้ไข Material (ทั้งตาราง)", "Edit materials (whole table)") : L("เพิ่ม Material", "Add materials");
+  let firstAssigned = false;
   return (
-    <Modal title={L("เพิ่ม Material", "Add materials")} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
-        {L(<>พิมพ์เอง หรือวางจาก Excel (Ctrl+V) — คอลัมน์ <b>INV Code · Weight/M · ความยาว/เส้น · จำนวน · หมายเหตุ</b> (มีหัวตารางก็ได้ ระบบจับจากชื่อหัว) · เว้นว่างได้ กรอกทีหลัง</>,
-           <>Type or paste from Excel (Ctrl+V) — columns <b>INV Code · Weight/M · Length/bar · Qty · Note</b> (a header row is fine, it's matched by name) · blanks can be filled later</>)}
+    <Modal title={title} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide>
+      <div className="mat-pastebar">
+        <div>
+          <b>{L("ก็อปจาก Excel มาวางได้เลย (Ctrl+V)", "Copy from Excel and paste (Ctrl+V)")}</b>
+          <span>{L(" — คอลัมน์ INV Code · Weight/M · ความยาว/เส้น · จำนวน · หมายเหตุ (มีหัวตารางก็ได้ จับตามชื่อหัว) · คลิกช่องไหน เริ่มวางที่ช่องนั้น · ",
+                   " — columns INV Code · Weight/M · Length/bar · Qty · Note (a header row is fine, matched by name) · paste starts at the clicked cell · ")}</span>
+          <span>{edit ? L("INV ที่มีอยู่แล้วจะอัปเดตแถวเดิม (ช่องว่างที่วางมาไม่ลบค่าเดิม)", "an INV already in the table updates that row (blank pasted cells keep the old value)")
+                      : L("เว้นว่างได้ มาแก้ทีหลังได้", "blanks are fine — edit later")}</span>
+        </div>
+        <Btn type="button" variant="ghost" size="sm" onClick={pasteFromButton} disabled={busy}>📋 {L("วางจากคลิปบอร์ด", "Paste clipboard")}</Btn>
       </div>
-      <div className="pgrid-wrap" style={{ maxHeight: "44vh" }}>
-        <table className="pgrid" style={{ minWidth: 640 }}>
+      <div className="pgrid-wrap" style={{ maxHeight: "48vh" }} ref={wrapRef}>
+        <table className="pgrid" style={{ minWidth: 660 }}>
           <thead><tr>
-            <th style={{ width: 34 }}>#</th><th style={{ minWidth: 150 }}>INV Code *</th>
+            <th style={{ width: 34 }}>#</th><th style={{ minWidth: 160 }}>INV Code *</th>
             <th style={{ width: 110 }}>{L("Weight/M (กก./ม.)", "Weight/M (kg/m)")}</th><th style={{ width: 110 }}>{L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}</th>
             <th style={{ width: 90 }}>{L("จำนวน (เส้น)", "Qty (bars)")}</th><th style={{ width: 96, textAlign: "right" }}>{L("น้ำหนักรวม", "Total kg")}</th>
             <th style={{ minWidth: 120 }}>{L("หมายเหตุ", "Note")}</th><th style={{ width: 30 }}></th>
           </tr></thead>
           <tbody>
             {rows.map((r, i) => {
-              const dup = r.inv.trim() && inScope(r.inv);
               const scrap = r.inv.trim() && isScrapInv(r.inv);
               const tot = matTotKg({ length_mm: gnum(r.len), weight_per_m: scrap ? null : gnum(r.wpm), qty: gnum(r.qty) });
+              const dupDbRow = !edit && !r.id && r.inv.trim() && inScope(r.inv);
+              const dupG = r.inv.trim() && dupInGrid(r);
+              const isFirst = !firstAssigned && !r.id && matBlank(r) && (firstAssigned = true);
               return (
-                <tr key={r.id}>
+                <tr key={r.key} className={r.id ? "mat-row-existing" : undefined}>
                   <td className="pgrid-idx">{i + 1}</td>
-                  {["inv", "wpm", "len", "qty"].map((k) => (k === "wpm" && scrap ? (
-                    <td key={k} className="mat-cell-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>
-                      <input value="" disabled placeholder={L("เศษ · ไม่บันทึก", "scrap · not stored")} />
-                    </td>
-                  ) : (
-                    <td key={k} className={k === "inv" && dup ? "mat-cell-dup" : undefined} title={k === "inv" && dup ? L("มีแล้วในรายการนี้ — จะข้าม (หรือติ๊ก \"อัปเดตทับ\")", "Already in this list — skipped (or tick \"update\")") : undefined}>
-                      <input value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => onPaste(e, i, k)} inputMode={k === "inv" ? undefined : "decimal"} />
-                      {k === "inv" && dup ? <span className="pg-tag dup">{L("มีแล้ว", "exists")}</span> : null}
-                    </td>
-                  )))}
-                  <td className="pgrid-ro">{tot != null ? fmtDec(tot, 2) : "-"}</td>
-                  <td><input value={r.note} onChange={(e) => setCell(r.id, "note", e.target.value)} onPaste={(e) => onPaste(e, i, "note")} /></td>
-                  <td className="pgrid-del" onClick={() => setRows((rs) => { const n = rs.filter((x) => x.id !== r.id); return n.length ? n : [MAT_BLANK()]; })} title={L("ลบแถว", "Remove row")}>✕</td>
+                  {["inv", "wpm", "len", "qty", "note"].map((k) => {
+                    if (k === "wpm" && scrap) return (
+                      <td key={k} className="mat-cell-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>
+                        <input value="" disabled placeholder={L("เศษ · ไม่บันทึก", "scrap · not stored")} />
+                      </td>
+                    );
+                    const inputEl = <input ref={k === "inv" && isFirst ? firstRef : undefined} data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.key, k, e.target.value)} inputMode={k === "inv" || k === "note" ? undefined : "decimal"} />;
+                    const cells = [];
+                    if (k === "note") cells.push(<td key="tot" className="pgrid-ro">{tot != null ? fmtDec(tot, 2) : "-"}</td>);
+                    cells.push(
+                      <td key={k} className={cellCls(r, k)}
+                        title={k === "inv" && dupDbRow ? L("มีแล้วในรายการนี้ — จะข้าม (หรือติ๊ก \"อัปเดตทับ\")", "Already in this list — skipped (or tick \"update\")") : k === "inv" && dupG ? L("INV ซ้ำกันในตาราง", "Same INV twice in the table") : (r.id && matCellChanged(r, k) ? L(`เดิม: ${r.orig[k] || "(ว่าง)"}`, `was: ${r.orig[k] || "(empty)"}`) : undefined)}>
+                        {inputEl}
+                        {k === "inv" && dupG ? <span className="pg-tag dup">{L("ซ้ำ", "dup")}</span> : k === "inv" && dupDbRow ? <span className="pg-tag dup">{L("มีแล้ว", "exists")}</span> : null}
+                      </td>
+                    );
+                    return cells;
+                  })}
+                  {r.id
+                    ? <td className="pgrid-idx" title={L("ลบรายการเดิมได้ที่ปุ่ม \"ลบ\" ในหน้ารายการ", "Delete saved items with \"Delete\" on the list")} />
+                    : <td className="pgrid-del" onClick={() => setRows((rs) => { const n = rs.filter((x) => x.key !== r.key); return n.length ? n : [MAT_BLANK()]; })} title={L("ลบแถว", "Remove row")}>✕</td>}
                 </tr>
               );
             })}
@@ -1574,9 +1718,13 @@ function MaterialAddModal({ projectId, scopeLabel, index, onClose, onSaved }) {
         </table>
       </div>
       <div className="pgrid-foot">
-        <Btn variant="ghost" size="sm" onClick={() => setRows((rs) => [...rs, MAT_BLANK()])}><Icon name="plus" size={14} /> {L("เพิ่มแถว", "Add row")}</Btn>
-        <span>{L("รายการ", "Items")} <b>{valid.length}</b>{dupCount ? <span style={{ color: "var(--warning)" }}> · {L(`มีแล้ว ${dupCount}`, `${dupCount} already exist`)}</span> : null}</span>
-        {dupCount > 0 && (
+        <Btn variant="ghost" size="sm" onClick={() => setRows((rs) => [...rs, MAT_BLANK(), MAT_BLANK(), MAT_BLANK()])}><Icon name="plus" size={14} /> {L("เพิ่มแถว", "Add rows")}</Btn>
+        <span>
+          {edit ? <>{L("แก้", "Changed")} <b>{changedRows.length}</b> · {L("ใหม่", "new")} <b>{newRows.length}</b></> : <>{L("รายการ", "Items")} <b>{newRows.length}</b></>}
+          {dupDb.length ? <span style={{ color: "var(--warning)" }}> · {L(`มีแล้ว ${dupDb.length}`, `${dupDb.length} already exist`)}</span> : null}
+        </span>
+        {flash && <span className="mat-flash">✓ {flash}</span>}
+        {dupDb.length > 0 && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={updateDup} onChange={(e) => setUpdateDup(e.target.checked)} />
             {L("INV ที่มีแล้ว: อัปเดตค่าที่กรอก (ช่องว่างไม่ทับ)", "Existing INV: update with what's entered (blanks don't overwrite)")}
@@ -1585,8 +1733,10 @@ function MaterialAddModal({ projectId, scopeLabel, index, onClose, onSaved }) {
       </div>
       {err && <div className="mat-err">{err}</div>}
       <div className="modal-actions">
-        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
-        <Btn type="button" variant="accent" onClick={save} disabled={busy || !valid.length}>{busy ? L("กำลังบันทึก...", "Saving...") : L(`บันทึก (${valid.length})`, `Save (${valid.length})`)}</Btn>
+        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ปิด", "Close")}</Btn>
+        <Btn type="button" variant="accent" onClick={save} disabled={busy || !nWork}>
+          {busy ? L("กำลังบันทึก...", "Saving...") : edit ? L(`บันทึกการแก้ไข (${nWork})`, `Save changes (${nWork})`) : L(`บันทึก (${nWork})`, `Save (${nWork})`)}
+        </Btn>
       </div>
     </Modal>
   );
@@ -1605,7 +1755,7 @@ function MaterialsPage({ user }) {
   const [q, setQ] = useState("");
   const [chip, setChip] = useState("all");        // all | incomplete | release
   const [edit, setEdit] = useState(null);         // row ที่กำลังแก้
-  const [adding, setAdding] = useState(false);
+  const [grid, setGrid] = useState(null);         // null | "add" | "edit" — ตารางกรอก/วางจาก Excel
   const [bf, setBf] = useState(null);             // { count, items } จาก materials_backfill (dry run)
   const [bfBusy, setBfBusy] = useState(false);
   const sort = useTableSort("inv", "asc");
@@ -1710,7 +1860,12 @@ function MaterialsPage({ user }) {
                 <Icon name="refresh" size={14} /> {L(`ดึง INV จาก Release เดิม (${bf.count})`, `Add INV from past releases (${bf.count})`)}
               </Btn>
             )}
-            <Btn variant="accent" onClick={() => setAdding(true)} disabled={scope === "project" && !projectId}>
+            {list.length > 0 && (
+              <Btn variant="ghost" onClick={() => setGrid("edit")} title={L("แก้ทุกรายการในตาราง · ก็อปจาก Excel มาวางทับได้ (จับคู่ตาม INV)", "Edit every item in a grid · paste from Excel to update (matched by INV)")}>
+                ✎ {L("แก้ไขทั้งตาราง", "Edit table")}
+              </Btn>
+            )}
+            <Btn variant="accent" onClick={() => setGrid("add")} disabled={scope === "project" && !projectId}>
               <Icon name="plus" size={15} /> {L("เพิ่ม Material", "Add material")}
             </Btn>
           </div>
@@ -1768,14 +1923,15 @@ function MaterialsPage({ user }) {
               wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
               rowProps={(m) => ({ className: "mat-row" + (incomplete(m) ? " incomplete" : ""), onDoubleClick: canEdit ? () => setEdit(m) : undefined })}
               empty={loading ? L("กำลังโหลด...", "Loading...")
-                : list.length === 0 ? (scope === "center" ? L("ยังไม่มี INV ใน Center Stock — กด \"เพิ่ม Material\"", "No INV in Center Stock yet — press \"Add material\"") : L("ยังไม่มี INV ในโปรเจคนี้ — กด \"เพิ่ม Material\" หรือสร้าง Release แล้วระบบจะบันทึกให้", "No INV in this project yet — press \"Add material\" or create a release and they'll be added"))
+                : list.length === 0 ? (scope === "center" ? L("ยังไม่มี INV ใน Center Stock — กด \"เพิ่ม Material\" (ก็อปจาก Excel มาวางได้)", "No INV in Center Stock yet — press \"Add material\" (you can paste from Excel)") : L("ยังไม่มี INV ในโปรเจคนี้ — กด \"เพิ่ม Material\" (ก็อปจาก Excel มาวางได้) หรือสร้าง Release แล้วระบบจะบันทึกให้", "No INV in this project yet — press \"Add material\" (you can paste from Excel) or create a release and they'll be added"))
                 : L("ไม่พบรายการที่ตรงกับตัวกรอง", "No items match the filter")} />
           </>
         )}
       </Card>
 
       {edit && <MaterialEditModal row={edit} scopeLabel={scopeLabel} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); mlsToast(L("บันทึกแล้ว", "Saved"), "success"); load(); }} />}
-      {adding && <MaterialAddModal projectId={scope === "center" ? null : projectId} scopeLabel={scopeLabel} index={index} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
+      {grid && <MaterialGridModal mode={grid} projectId={scope === "center" ? null : projectId} scopeLabel={scopeLabel} index={index} existing={list}
+        onClose={() => { setGrid(null); load(); }} onSaved={(o) => { if (!o || !o.keepOpen) setGrid(null); load(); }} />}
     </div>
   );
 }
@@ -4572,7 +4728,6 @@ function pmNowText(m, qty, lang, nowMs) {
   return en ? `paused · ${fmtNum(m.done)} of ${fmtNum(qty)} made · ${fmtNum(m.bal)} to go · idle ${idle}`
             : `พักอยู่ · ทำไป ${fmtNum(m.done)} จาก ${fmtNum(qty)} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
 }
-const pmEmp = (m) => (m.active && m.active.employee) || m.last_employee || (Array.isArray(m.employees) && m.employees[m.employees.length - 1]) || "";
 const pmOps = (m) => {
   const names = (Array.isArray(m.ops) ? m.ops : []).map((o) => o && o.name).filter(Boolean);
   const act = (m.active && Array.isArray(m.active.ops)) ? m.active.ops : [];
@@ -4590,7 +4745,7 @@ function PmChips({ ms, qty, open, onToggle, lang }) {
     <>
       {ms.map((m) => (
         <button type="button" key={m.machine_id || m.code} className={`pm-mchip ${m.st}`} onClick={stop}
-          title={`${m.code || "?"} · ${PM_ST[m.st]} · ${fmtNum(m.done)}/${fmtNum(qty)}${pmEmp(m) ? " · " + pmEmp(m) : ""}`}>
+          title={`${m.code || "?"} · ${PM_ST[m.st]} · ${fmtNum(m.done)}/${fmtNum(qty)}`}>
           <i />{m.code || "?"}
         </button>
       ))}
@@ -4616,7 +4771,7 @@ function PmDetail({ r, ms, qty, lang, nowMs }) {
             <th>{L("เครื่อง", "Machine")}</th><th>{L("ขั้นตอน", "Steps")}</th><th>{L("สถานะ", "Status")}</th>
             <th className="num">{L("ทำแล้ว / สั่ง", "Done / ordered")}</th><th className="num">Balance</th>
             <th className="num">{L("เวลาทำงานรวม", "Run time")}</th><th>{L("เริ่ม", "Start")}</th><th>{L("ล่าสุด", "Last")}</th>
-            <th className="num">{L("ชุดที่เสร็จ", "Batches")}</th><th>{L("ตอนนี้", "Now")}</th><th>{L("พนักงาน", "Operator")}</th>
+            <th className="num">{L("ชุดที่เสร็จ", "Batches")}</th><th>{L("ตอนนี้", "Now")}</th>
           </tr></thead>
           <tbody>
             {ms.map((m) => {
@@ -4624,9 +4779,6 @@ function PmDetail({ r, ms, qty, lang, nowMs }) {
               const uniform = ops.every((o) => (Number(o.done) || 0) === (Number(ops[0]?.done) || 0));
               const actOps = (m.active && Array.isArray(m.active.ops)) ? m.active.ops.filter((n) => !ops.some((o) => o.name === n)) : [];
               const pct = qty > 0 ? Math.min(100, (m.done / qty) * 100) : (m.done > 0 ? 100 : 0);
-              const emps = Array.isArray(m.employees) ? m.employees : [];
-              const who = pmEmp(m);
-              const extra = emps.filter((x) => x !== who).length;
               return (
                 <tr key={m.machine_id || m.code}>
                   <td data-label={L("เครื่อง", "Machine")}><span><span className={`pm-mchip ${m.st} static`}><i />{m.code || "?"}</span>{m.name ? <span className="pm-mname">{m.name}</span> : null}</span></td>
@@ -4649,7 +4801,6 @@ function PmDetail({ r, ms, qty, lang, nowMs }) {
                   <td className="mono" data-label={L("ล่าสุด", "Last")} title={m.last_at ? fmtDT(m.last_at) : ""}>{pmClock(m.last_at, nowMs)}</td>
                   <td className="num" data-label={L("ชุดที่เสร็จ", "Batches")}>{fmtNum(m.batches || 0)}</td>
                   <td className="pm-nowc" data-label={L("ตอนนี้", "Now")}><span className={`pm-live ${m.st}`}>{pmNowText(m, qty, lang, nowMs)}</span></td>
-                  <td data-label={L("พนักงาน", "Operator")} title={emps.join(", ")}><span>{who || "-"}{extra > 0 ? <span className="pm-more"> +{extra}</span> : null}</span></td>
                 </tr>
               );
             })}
@@ -4670,7 +4821,7 @@ async function pmExportExcel({ rows, lang, ro, isAsm, filterKeys, fileName, item
   const nowMs = Date.now();
   const MACH = [L("เครื่อง", "Machine"), L("สถานะเครื่อง", "Machine status"), L("ขั้นตอน", "Steps"), L("จำนวน (สั่ง)", "Qty (ordered)"),
     L("ทำแล้ว (เครื่องนี้)", "Done (this machine)"), L("Balance (เครื่องนี้)", "Balance (this machine)"), L("เวลาทำงานรวม", "Run time"),
-    L("เริ่ม", "Start"), L("ล่าสุด", "Last"), L("ชุดที่เสร็จ", "Batches"), L("ตอนนี้", "Now"), L("พนักงาน", "Operator")];
+    L("เริ่ม", "Start"), L("ล่าสุด", "Last"), L("ชุดที่เสร็จ", "Batches"), L("ตอนนี้", "Now")];
   const PART = [L("สถานะเบอร์", "Part status"), L("เสร็จแล้ว (เบอร์)", "Finished (part)"), L("เกิน (สแปร์)", "Spare (over)"), L("กำลังทำ", "In progress"),
     L("ความคืบหน้า (%)", "Progress (%)"),
     ...(!isAsm ? [L("น้ำหนัก/ชิ้น (กก.)", "Weight/pc (kg)"), L("น้ำหนักรวม (กก.)", "Total weight (kg)")] : []),
@@ -4694,14 +4845,14 @@ async function pmExportExcel({ rows, lang, ro, isAsm, filterKeys, fileName, item
     const pn = r.part_master?.part_no || "";
     if (!ms.length) {
       out.push({ st: null, pst: st, vals: [no, pn, "", "", "", qty, null, null, null, null, null, null,
-        st === "pend" ? L("ยังไม่มีเครื่องเริ่ม", "no machine started yet") : L("ไม่มีงานหน้าเครื่อง (ยอดจากการสแกนออฟฟิศ)", "no machine work (office scan totals)"), "", ...partVals] });
+        st === "pend" ? L("ยังไม่มีเครื่องเริ่ม", "no machine started yet") : L("ไม่มีงานหน้าเครื่อง (ยอดจากการสแกนออฟฟิศ)", "no machine work (office scan totals)"), ...partVals] });
       return;
     }
     ms.forEach((m) => {
       const first = m.first_at || m.active?.started_at || null;
       out.push({ st: m.st, pst: st, bal: m.bal, vals: [no, pn, m.code || "", PM_ST[m.st], pmOps(m).join(" · "), qty, m.done, m.bal,
         { dur: Number(m.run_seconds) || 0 }, first ? new Date(first) : null, m.last_at ? new Date(m.last_at) : null,
-        Number(m.batches) || 0, pmNowText(m, qty, lang, nowMs), pmEmp(m), ...partVals] });
+        Number(m.batches) || 0, pmNowText(m, qty, lang, nowMs), ...partVals] });
     });
   });
   const sheetName = L("รายการ Part", "Parts");
@@ -4733,7 +4884,7 @@ async function pmExportExcel({ rows, lang, ro, isAsm, filterKeys, fileName, item
     const wb = new ExcelJS.Workbook();
     wb.created = new Date(nowMs);
     const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", xSplit: 3, ySplit: 1 }] });
-    const WID = [7, 14, 10, 19, 16, 12, 16, 16, 14, 17, 17, 11, 56, 14, 19, 15, 12, 11, 15, ...(!isAsm ? [16, 16] : []), 17, 14, 16, 16, 12];
+    const WID = [7, 14, 10, 19, 16, 12, 16, 16, 14, 17, 17, 11, 56, 19, 15, 12, 11, 15, ...(!isAsm ? [16, 16] : []), 17, 14, 16, 16, 12];
     ws.columns = HEAD.map((h, i) => ({ header: h, key: "c" + i, width: WID[i] || 14 }));
     const F = "Arial";
     const hr = ws.getRow(1);
@@ -4971,7 +5122,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   // ★ ใช้ตัวช่วยกลาง computeGroupProgress → นิยาม "เสร็จ" เดียวกับหน้า Projects และ
   //   รายการ Release (max ระหว่างสแกนสำนักงาน กับขั้นตอนสุดท้ายหน้าเครื่อง) — เลิกขัดกันเอง
   const wPer = (r) => Number(r.unit_weight ?? r.part_master?.unit_weight ?? 0);
-  const { finished: totalFinished, inProgress: totalInProgress, opAgg, stationDrove, stationFinished: stFinSum, stationDone: stDoneSum } =
+  const { finished: totalFinished, inProgress: totalInProgress, stationDrove } =
     computeGroupProgress(releases, unitStats, opProg, totalQty);
   const pctOverall = totalQty > 0 ? Math.round((totalFinished / totalQty) * 100) : 0;
   // น้ำหนักที่ทำแล้ว = Σ (เสร็จของแต่ละ Part × น้ำหนัก/ชิ้นของ Part นั้น)
@@ -5252,46 +5403,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         )}
       </div>
 
-      {!statsLoading && opAgg.length > 0 && (
-        <Card title="ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)">
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
-            {lang === "en"
-              ? <>From work recorded at the machine terminals · the route of each piece = the steps ticked by the machines that scanned it, until Finished is pressed · <b>Scanned</b> = any status · <b>Finished</b> = marked Finished · vs ordered {fmtNum(totalQty)} pcs</>
-              : <>นับจากงานที่บันทึกหน้าเครื่องจริง · รูทของชิ้น = ขั้นตอนที่เครื่องที่สแกนติ๊กไว้ สะสมจนกด Finished — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalQty)} ชิ้น</>}
-          </div>
-          {/* ★ ยุบเป็นแถวเดียว: ชิปทุกขั้นตอน (Cut·Notch·Milling·Drill) + แถบรวม (ยึดขั้นตอนสุดท้ายจริง) */}
-          {(() => {
-            // ★ ยอดรวม = ตามรูทของเครื่อง: ทำแล้ว = ชิ้นที่ถูกสแกน (ทุกสถานะ) · เสร็จ = ชิ้นที่กด Finished (ไม่ยึดขั้นตอนสุดท้าย)
-            const repDone = Number(stDoneSum) || 0;
-            const repFin = Number(stFinSum) || 0;
-            const pct = totalQty > 0 ? Math.round((repDone / totalQty) * 100) : 0;
-            const over = repDone > totalQty;
-            // ★ ถ้าบางชิ้นทำไม่ครบทุกขั้นตอน (จำนวนแต่ละขั้นตอนไม่เท่ากัน) → โชว์จำนวนบนชิปแต่ละอัน
-            const doneList = opAgg.map((o) => Number(o.done) || 0);
-            const uniform = doneList.every((d) => d === doneList[0]);
-            return (
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-                  <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6 }}>
-                    {opAgg.map((o) => (
-                      <span key={o.op} style={{ fontSize: 12, fontWeight: 700, padding: "3px 11px", borderRadius: 99, whiteSpace: "nowrap",
-                        color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>
-                        {o.op}{!uniform ? <span style={{ marginLeft: 6, fontWeight: 800 }}>{fmtNum(Number(o.done) || 0)}</span> : null}
-                      </span>
-                    ))}
-                  </span>
-                  <span style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>
-                    {lang === "en" ? "Scanned" : "ทำแล้ว"} {fmtNum(repDone)} / {fmtNum(totalQty)} {lang === "en" ? "pcs" : "ชิ้น"}
-                    {repFin > 0 ? <span style={{ color: "var(--success)" }}> · {lang === "en" ? "finished" : "เสร็จ"} {fmtNum(repFin)}</span> : null}
-                    {over ? <span style={{ color: "var(--alert, #d97a00)" }}> · เกิน (สแปร์)</span> : null}
-                  </span>
-                </div>
-                <ProgressBar pct={Math.min(pct, 100)} finished={repDone} total={totalQty} />
-              </div>
-            );
-          })()}
-        </Card>
-      )}
+      {/* (ผู้ใช้ 2026-09-24: เอาการ์ด "ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)" ออก — ดูรายเครื่องในตาราง Part แทน) */}
 
       <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
         right={
