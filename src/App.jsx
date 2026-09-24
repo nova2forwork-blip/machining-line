@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -7,7 +7,7 @@ import {
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
-  getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate,
+  getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate, getReleaseMachineStatus,
   machineReportSummary, listScanSlow,
   recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
@@ -359,7 +359,8 @@ function ReorderTh({ col, sort, drag, setDrag, onMove }) {
 }
 // ตารางข้อมูลที่คอลัมน์ลากสลับได้ (ขับด้วย config: หัว+ค่าอยู่ด้วยกัน จึงไม่มีทางสลับผิดคู่)
 // columns: [{ key, header, sortKey?, thStyle?, tdStyle?, tdProps?(row,i,ctx), cell(row,i,ctx), dataLabel? }]
-function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef, defaultHidden }) {
+// rowAfter(row, i, ctx) → เนื้อหาแถวเสริมใต้แถวนั้น (เช่น ตารางเครื่องจักรที่เปิดขยาย) · null = ไม่มี
+function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, rowProps, rowAfter, wrapClass, tableClass, tableStyle, wrapStyle, empty, orderApiRef, defaultHidden }) {
   const cols0 = (columns || []).filter(Boolean);
   const keys = cols0.map((c) => c.key);
   const { order, move, reset, drag, setDrag, hidden, toggleHide, showAll, resetAll } = useColOrder(id, keys, defaultHidden);
@@ -379,7 +380,11 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
   const wrapRef = useRef(null);
   const [showTableTop, setShowTableTop] = useState(false);
   const [canScrollV, setCanScrollV] = useState(false);   // ตารางเลื่อนแนวตั้งในกล่องได้ไหม (มีปุ่มขึ้น + เว้นที่ท้ายตารางกันปุ่มทับ)
-  const recheckScroll = () => { const el = wrapRef.current; if (el) setCanScrollV((el.scrollHeight - el.clientHeight) > 24); };
+  const recheckScroll = () => {
+    const el = wrapRef.current; if (!el) return;
+    setCanScrollV((el.scrollHeight - el.clientHeight) > 24);
+    try { el.style.setProperty("--dt-vw", el.clientWidth + "px"); } catch { /* ignore */ }   // ความกว้างที่มองเห็น → แถวเสริม (rowAfter) ค้างในจอแม้ตารางเลื่อนแนวนอน
+  };
   useEffect(() => { recheckScroll(); const on = () => recheckScroll(); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, [data.length, cols.length]);
   const onWrapScroll = (e) => { setShowTableTop((e.currentTarget.scrollTop || 0) > 120); };
   const tableToTop = () => { const el = wrapRef.current; if (!el) return; try { el.scrollTo({ top: 0, behavior: "smooth" }); } catch { el.scrollTop = 0; } };
@@ -411,8 +416,12 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
           ) : data.map((row, i) => {
             const ctx = rowCtx ? rowCtx(row, i) : undefined;
             const rp = rowProps ? rowProps(row, i, ctx) : null;
+            const after = rowAfter ? rowAfter(row, i, ctx) : null;
+            const rk = rowKey ? rowKey(row, i) : i;
+            const rpx = after ? { ...(rp || {}), className: ((rp && rp.className) || "") + " dt-has-after" } : rp;
             return (
-              <tr key={rowKey ? rowKey(row, i) : i} {...(rp || {})}>
+              <Fragment key={rk}>
+              <tr {...(rpx || {})}>
                 {cols.map((c) => {
                   const tp = c.tdProps ? c.tdProps(row, i, ctx) : null;
                   let tstyle, trest = null;
@@ -427,6 +436,12 @@ function DataTable({ id, columns, rows, rowKey, sort, sortAccessors, rowCtx, row
                 })}
                 <td className="dt-colpad" data-label="" aria-hidden="true" />
               </tr>
+              {after ? (
+                <tr className="dt-after">
+                  <td colSpan={(cols.length || 1) + 1} data-label="">{after}</td>
+                </tr>
+              ) : null}
+              </Fragment>
             );
           })}
         </tbody>
@@ -3912,6 +3927,315 @@ function ReleaseRevertModal({ mode, version, projectId, releaseOrder, mods, curr
   );
 }
 
+// ══ เครื่องจักรต่อเบอร์ + สถานะ (ตาราง Part ของ Release) ══════════════════════════════
+//   ข้อมูล: release_machine_status (migration-part-machine-status.sql) — ยอด/เวลา/พนักงาน ต่อ (เบอร์, เครื่อง)
+//          + "งานที่กำลังทำ" ที่หน้าเครื่องแจ้งตอนสแกนรอบแรก (ล้างเมื่อกด OK / ยกเลิก)
+//   ต่อเครื่อง: กำลังทำ (สแกนรอบแรกแล้ว ยังไม่ OK) = In Process · กด Finished หรือ ทำครบจำนวนสั่ง = Finish
+//              · นอกนั้น (ทำไปบางส่วน รอชุดถัดไป) = In Process Balance
+//   ต่อเบอร์ : ไม่มีเครื่อง = Pending · มีเครื่องกำลังทำ = In Process · ทุกเครื่อง Finish = Finish · นอกนั้น = In Process Balance
+const PM_ST = { pend: "Pending", run: "In Process", bal: "In Process Balance", fin: "Finish" };
+const PM_ORDER = ["pend", "run", "bal", "fin"];
+const PM_COLOR = { pend: "#9aa8a2", run: "#2563eb", bal: "#d97706", fin: "#10b981" };
+function pmMachines(list, qty) {
+  const q = Number(qty) || 0;
+  return (Array.isArray(list) ? list : []).map((m) => {
+    const done = Number(m.done) || 0;
+    const st = m.active ? "run" : (m.finished || (q > 0 && done >= q)) ? "fin" : "bal";
+    return { ...m, done, st, bal: Math.max(0, q - done), over: Math.max(0, done - q) };
+  });
+}
+function pmRowStatus(ms, prog) {
+  if (!ms.length) {
+    // ไม่มีงานหน้าเครื่อง แต่มียอดจากการสแกนออฟฟิศแบบเดิม → ไม่ขึ้น Pending หลอก
+    if (prog && prog.total > 0 && prog.done >= prog.total) return "fin";
+    if (prog && prog.done > 0) return "bal";
+    return "pend";
+  }
+  if (ms.some((m) => m.st === "run")) return "run";
+  if (ms.every((m) => m.st === "fin")) return "fin";
+  return "bal";
+}
+const pmPad = (n) => String(n).padStart(2, "0");
+function pmDur(secs) {
+  const s = Math.max(0, Math.round(Number(secs) || 0));
+  return `${pmPad(Math.floor(s / 3600))}:${pmPad(Math.floor((s % 3600) / 60))}:${pmPad(s % 60)}`;
+}
+// เวลาสั้น: วันนี้ = HH:mm · วันอื่น = DD/MM HH:mm
+function pmClock(iso, nowMs) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  const n = new Date(nowMs || Date.now());
+  const hm = `${pmPad(d.getHours())}:${pmPad(d.getMinutes())}`;
+  return d.toDateString() === n.toDateString() ? hm : `${pmPad(d.getDate())}/${pmPad(d.getMonth() + 1)} ${hm}`;
+}
+function pmAgo(ms, lang) {
+  const m = Math.max(0, Math.floor((Number(ms) || 0) / 60000));
+  if (m < 1) return lang === "en" ? "<1m" : "ไม่ถึง 1 นาที";
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  if (lang === "en") return [d ? `${d}d` : "", h ? `${h}h` : "", !d && mm ? `${mm}m` : ""].filter(Boolean).join(" ");
+  return [d ? `${d} วัน` : "", h ? `${h} ชม.` : "", !d && mm ? `${mm} น.` : ""].filter(Boolean).join(" ");
+}
+// ข้อความช่อง "ตอนนี้" (ใช้ทั้งบนจอและใน Excel)
+function pmNowText(m, qty, lang, nowMs) {
+  const en = lang === "en";
+  if (m.st === "run") {
+    const a = m.active || {};
+    const t0 = a.started_at ? new Date(a.started_at).getTime() : NaN;
+    const el = isNaN(t0) ? "-" : pmDur((nowMs - t0) / 1000);
+    const n = (Number(m.batches) || 0) + 1;
+    return en ? `running batch ${n} · started ${pmClock(a.started_at, nowMs)} · ${el} elapsed`
+              : `กำลังทำชุดที่ ${n} · เริ่ม ${pmClock(a.started_at, nowMs)} · ผ่านไป ${el}`;
+  }
+  if (m.st === "fin") {
+    const how = m.finished ? (en ? "Finished pressed" : "กด Finished") : (en ? "full qty" : "ครบจำนวน");
+    const over = m.over > 0 ? (en ? ` · +${fmtNum(m.over)} spare` : ` · เกิน ${fmtNum(m.over)} (สแปร์)`) : "";
+    return `${how} · ${en ? "done" : "เสร็จ"} ${pmClock(m.last_at, nowMs)}${over}`;
+  }
+  const idle = m.last_at ? pmAgo(nowMs - new Date(m.last_at).getTime(), lang) : "-";
+  return en ? `paused · ${fmtNum(m.done)} of ${fmtNum(qty)} made · ${fmtNum(m.bal)} to go · idle ${idle}`
+            : `พักอยู่ · ทำไป ${fmtNum(m.done)} จาก ${fmtNum(qty)} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
+}
+const pmEmp = (m) => (m.active && m.active.employee) || m.last_employee || (Array.isArray(m.employees) && m.employees[m.employees.length - 1]) || "";
+const pmOps = (m) => {
+  const names = (Array.isArray(m.ops) ? m.ops : []).map((o) => o && o.name).filter(Boolean);
+  const act = (m.active && Array.isArray(m.active.ops)) ? m.active.ops : [];
+  return [...new Set([...names, ...act])];
+};
+function PmPill({ k, sm }) {
+  return <span className={`pm-st pm-st-${k}${sm ? " sm" : ""}`}>{k === "run" && <i className="pm-pulse" />}{PM_ST[k]}</span>;
+}
+// ชิปเครื่องใต้เบอร์ (สีตามสถานะของเครื่อง) — กด = เปิด/ปิดตารางเครื่อง (ไม่เปิดป็อปอัปของแถว)
+function PmChips({ ms, qty, open, onToggle, lang }) {
+  const en = lang === "en";
+  if (!ms.length) return <span className="pm-none">{en ? "no machine yet" : "ยังไม่มีเครื่อง"}</span>;
+  const stop = (e) => { e.stopPropagation(); onToggle(); };
+  return (
+    <>
+      {ms.map((m) => (
+        <button type="button" key={m.machine_id || m.code} className={`pm-mchip ${m.st}`} onClick={stop}
+          title={`${m.code || "?"} · ${PM_ST[m.st]} · ${fmtNum(m.done)}/${fmtNum(qty)}${pmEmp(m) ? " · " + pmEmp(m) : ""}`}>
+          <i />{m.code || "?"}
+        </button>
+      ))}
+      <button type="button" className={"pm-toggle" + (open ? " open" : "")} onClick={stop}
+        aria-expanded={open} title={en ? "Show / hide each machine" : "เปิด/ปิด รายละเอียดแต่ละเครื่อง"}>
+        <span className="ar">▶</span>{open ? (en ? "hide" : "ซ่อน") : (en ? `${ms.length} machine${ms.length > 1 ? "s" : ""}` : `${ms.length} เครื่อง`)}
+      </button>
+    </>
+  );
+}
+// ตารางเครื่องใต้แถว (เปิดขยาย)
+function PmDetail({ r, ms, qty, lang, nowMs }) {
+  const en = lang === "en";
+  const L = (th, e) => (en ? e : th);
+  const pn = r.part_master?.part_no || "";
+  return (
+    <div className="pm-dbox" onClick={(e) => e.stopPropagation()}>
+      <div className="pm-dbox-h">{L(`เครื่องที่ทำ ${pn}`, `Machines on ${pn}`)}
+        <span>· {L(`${ms.length} เครื่อง · เรียงตามเวลาที่เริ่มทำ · สั่ง ${fmtNum(qty)} ชิ้น`, `${ms.length} machine(s) · in order started · ordered ${fmtNum(qty)} pcs`)}</span></div>
+      <div className="pm-subwrap">
+        <table className="pm-sub">
+          <thead><tr>
+            <th>{L("เครื่อง", "Machine")}</th><th>{L("ขั้นตอน", "Steps")}</th><th>{L("สถานะ", "Status")}</th>
+            <th className="num">{L("ทำแล้ว / สั่ง", "Done / ordered")}</th><th className="num">Balance</th>
+            <th className="num">{L("เวลาทำงานรวม", "Run time")}</th><th>{L("เริ่ม", "Start")}</th><th>{L("ล่าสุด", "Last")}</th>
+            <th className="num">{L("ชุดที่เสร็จ", "Batches")}</th><th>{L("ตอนนี้", "Now")}</th><th>{L("พนักงาน", "Operator")}</th>
+          </tr></thead>
+          <tbody>
+            {ms.map((m) => {
+              const ops = Array.isArray(m.ops) ? m.ops : [];
+              const uniform = ops.every((o) => (Number(o.done) || 0) === (Number(ops[0]?.done) || 0));
+              const actOps = (m.active && Array.isArray(m.active.ops)) ? m.active.ops.filter((n) => !ops.some((o) => o.name === n)) : [];
+              const pct = qty > 0 ? Math.min(100, (m.done / qty) * 100) : (m.done > 0 ? 100 : 0);
+              const emps = Array.isArray(m.employees) ? m.employees : [];
+              const who = pmEmp(m);
+              const extra = emps.filter((x) => x !== who).length;
+              return (
+                <tr key={m.machine_id || m.code}>
+                  <td data-label={L("เครื่อง", "Machine")}><span><span className={`pm-mchip ${m.st} static`}><i />{m.code || "?"}</span>{m.name ? <span className="pm-mname">{m.name}</span> : null}</span></td>
+                  <td data-label={L("ขั้นตอน", "Steps")}><span>
+                    {ops.map((o) => <span key={o.name} className="pm-opc" title={`${o.name} · ${fmtNum(o.done)} ${L("ชิ้น", "pcs")}`}>{o.name}{!uniform ? <b> {fmtNum(o.done)}</b> : null}</span>)}
+                    {actOps.map((n) => <span key={"a" + n} className="pm-opc" title={L("ขั้นตอนของงานที่กำลังทำ", "step of the running job")}>{n}</span>)}
+                    {!ops.length && !actOps.length ? <span className="pm-none">-</span> : null}
+                  </span></td>
+                  <td data-label={L("สถานะ", "Status")}><PmPill k={m.st} /></td>
+                  <td className="num" data-label={L("ทำแล้ว / สั่ง", "Done / ordered")}>
+                    <span><span className="pm-mini"><i style={{ width: `${pct}%`, background: PM_COLOR[m.st] }} /></span><b>{fmtNum(m.done)}</b> / {fmtNum(qty)}</span>
+                  </td>
+                  <td className="num" data-label="Balance"><span>
+                    <span className={"pm-balv " + (m.bal > 0 ? (m.st === "fin" ? "muted" : "pos") : "zero")}
+                      title={m.bal > 0 && m.st === "fin" ? L("เครื่องนี้กด Finished แล้ว (อาจแบ่งงานกับเครื่องอื่น)", "this machine pressed Finished (work may be split with another machine)") : undefined}>{fmtNum(m.bal)}</span>
+                    {m.over > 0 ? <span className="pm-over"> +{fmtNum(m.over)}</span> : null}
+                  </span></td>
+                  <td className="num mono" data-label={L("เวลาทำงานรวม", "Run time")}>{pmDur(m.run_seconds)}</td>
+                  <td className="mono" data-label={L("เริ่ม", "Start")} title={m.first_at ? fmtDT(m.first_at) : ""}>{pmClock(m.first_at || m.active?.started_at, nowMs)}</td>
+                  <td className="mono" data-label={L("ล่าสุด", "Last")} title={m.last_at ? fmtDT(m.last_at) : ""}>{pmClock(m.last_at, nowMs)}</td>
+                  <td className="num" data-label={L("ชุดที่เสร็จ", "Batches")}>{fmtNum(m.batches || 0)}</td>
+                  <td className="pm-nowc" data-label={L("ตอนนี้", "Now")}><span className={`pm-live ${m.st}`}>{pmNowText(m, qty, lang, nowMs)}</span></td>
+                  <td data-label={L("พนักงาน", "Operator")} title={emps.join(", ")}><span>{who || "-"}{extra > 0 ? <span className="pm-more"> +{extra}</span> : null}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Export: 1 แถว = 1 เบอร์ + 1 เครื่อง (sort/filter ใน Excel ง่าย) ──
+//   rows: [{ r, ms, st, p }] ตามลำดับบนจอ (กรองแล้ว) · p = ความคืบหน้าของเบอร์ (rowProg)
+//   exceljs (มีใน package.json) → ชนิดข้อมูลจริง: ตัวเลข · วันเวลา · ระยะเวลา [h]:mm:ss · ตรึงหัว + 3 คอลัมน์ · ตัวกรองหัวคอลัมน์ · สีสถานะ
+//   ถ้าโหลด exceljs ไม่ได้ → ใช้ downloadSheets เดิม (ค่าเป็นข้อความ/ตัวเลข)
+async function pmExportExcel({ rows, lang, ro, isAsm, filterKeys, fileName, itemNo }) {
+  const en = lang === "en";
+  const L = (th, e) => (en ? e : th);
+  const nowMs = Date.now();
+  const MACH = [L("เครื่อง", "Machine"), L("สถานะเครื่อง", "Machine status"), L("ขั้นตอน", "Steps"), L("จำนวน (สั่ง)", "Qty (ordered)"),
+    L("ทำแล้ว (เครื่องนี้)", "Done (this machine)"), L("Balance (เครื่องนี้)", "Balance (this machine)"), L("เวลาทำงานรวม", "Run time"),
+    L("เริ่ม", "Start"), L("ล่าสุด", "Last"), L("ชุดที่เสร็จ", "Batches"), L("ตอนนี้", "Now"), L("พนักงาน", "Operator")];
+  const PART = [L("สถานะเบอร์", "Part status"), L("เสร็จแล้ว (เบอร์)", "Finished (part)"), L("เกิน (สแปร์)", "Spare (over)"), L("กำลังทำ", "In progress"),
+    L("ความคืบหน้า (%)", "Progress (%)"),
+    ...(!isAsm ? [L("น้ำหนัก/ชิ้น (กก.)", "Weight/pc (kg)"), L("น้ำหนักรวม (กก.)", "Total weight (kg)")] : []),
+    L("ความยาว/ชิ้น (มม.)", "Length/pc (mm)"), "INV Code", L("Mat. Length (มม.)", "Mat. Length (mm)"), L("หมายเหตุ", "Remark"), "Modify"];
+  const HEAD = [L("ลำดับ", "Item"), L("เบอร์พาร์ท", "Part No."), ...MACH, ...PART];
+  const nM = MACH.length;
+  // ค่าแต่ละแถว (ชนิดจริง) — วันเวลาเป็น Date · ระยะเวลาเป็นวินาที (แปลงตอนเขียน)
+  const out = [];
+  rows.forEach(({ r, ms, st, p, matLen }, idx) => {
+    const qty = Number(r.qty) || 0;
+    const done = p.done ?? p.finished ?? 0;
+    const total = p.total || qty;
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    const uw = Number(r.unit_weight) || 0;
+    const partVals = [PM_ST[st], done, p.over || null, p.inProgress || null, pct,
+      ...(!isAsm ? [uw ? Math.round(uw * 100) / 100 : null, uw ? Math.round(uw * qty * 100) / 100 : null] : []),
+      r.length_mm ? Number(r.length_mm) : null, r.part_master?.material || r.material || "",
+      matLen.length === 1 ? Number(matLen[0]) : (matLen.length ? matLen.map((n) => fmtNum(n)).join(" · ") : null),
+      r.note || "", (r.mod_version ? fmtM(r.mod_version) : "") + (r.mod_cancelled_at ? (r.mod_cancel_keep === "moved" ? L(" · ย้ายหมดแล้ว", " · all moved") : L(" · ยกเลิก", " · cancelled")) : "")];
+    const no = itemNo ? itemNo(r, idx) : idx + 1;
+    const pn = r.part_master?.part_no || "";
+    if (!ms.length) {
+      out.push({ st: null, pst: st, vals: [no, pn, "", "", "", qty, null, null, null, null, null, null,
+        st === "pend" ? L("ยังไม่มีเครื่องเริ่ม", "no machine started yet") : L("ไม่มีงานหน้าเครื่อง (ยอดจากการสแกนออฟฟิศ)", "no machine work (office scan totals)"), "", ...partVals] });
+      return;
+    }
+    ms.forEach((m) => {
+      const first = m.first_at || m.active?.started_at || null;
+      out.push({ st: m.st, pst: st, bal: m.bal, vals: [no, pn, m.code || "", PM_ST[m.st], pmOps(m).join(" · "), qty, m.done, m.bal,
+        { dur: Number(m.run_seconds) || 0 }, first ? new Date(first) : null, m.last_at ? new Date(m.last_at) : null,
+        Number(m.batches) || 0, pmNowText(m, qty, lang, nowMs), pmEmp(m), ...partVals] });
+    });
+  });
+  const sheetName = L("รายการ Part", "Parts");
+  const fDesc = filterKeys && filterKeys.length ? filterKeys.map((k) => PM_ST[k]).join(", ") : L("ทั้งหมด (ไม่กรอง)", "all (no filter)");
+  const notes = [
+    [L(`Export — รายละเอียดแต่ละ Part × เครื่องจักร${ro ? " (Release Order " + ro + ")" : ""}`, `Export — each Part × machine${ro ? " (Release Order " + ro + ")" : ""}`), true],
+    [L(`สร้างเมื่อ ${fmtDT(new Date(nowMs).toISOString())} · ตัวกรองสถานะ: ${fDesc} · ${rows.length} เบอร์ · ${out.length} แถว`, `Created ${fmtDT(new Date(nowMs).toISOString())} · status filter: ${fDesc} · ${rows.length} parts · ${out.length} rows`), false],
+    ["", false],
+    [L("1 แถว = 1 เบอร์ + 1 เครื่อง · เบอร์ที่ผ่าน 2 เครื่อง = 2 แถว (ข้อมูลของเบอร์ซ้ำในทุกแถว → sort / filter ใน Excel ได้ทันที)", "1 row = 1 part + 1 machine · a part on 2 machines = 2 rows (part data repeats on every row → sort / filter in Excel directly)"), false],
+    [L("เบอร์ที่ยังไม่มีเครื่องเริ่ม = 1 แถว ช่องเครื่องว่าง", "A part with no machine yet = 1 row with empty machine columns"), false],
+    [L("Export ตามตัวกรองสถานะที่เลือกบนหน้าจอ (ไม่กรอง = ทั้งหมด) · เรียงตามที่เห็นบนจอ", "Follows the status filter on screen (no filter = all) · same order as on screen"), false],
+    ["", false],
+    [L("สถานะเครื่อง", "Machine status"), true],
+    [L("In Process = สแกนรอบแรกแล้ว เวลากำลังเดิน (ยังไม่กด OK)", "In Process = first scan done, timer running (OK not pressed yet)"), false],
+    [L("In Process Balance = ทำไปบางส่วน รอชุดถัดไป (ยังไม่สแกนรอบแรกของชุดต่อไป)", "In Process Balance = partly done, waiting for the next batch"), false],
+    [L("Finish = ทำครบจำนวนสั่ง หรือกด Finished ที่หน้าเครื่อง", "Finish = full ordered qty done, or Finished pressed at the machine"), false],
+    [L("สถานะเบอร์ = In Process ถ้ามีเครื่องกำลังทำ · Finish ถ้าทุกเครื่องเสร็จ · In Process Balance ถ้าเริ่มแล้วยังไม่ครบ · Pending ถ้ายังไม่มีเครื่องเริ่ม", "Part status = In Process if a machine is running · Finish if all machines are done · In Process Balance if started but not complete · Pending if no machine started"), false],
+    ["", false],
+    [L("คอลัมน์", "Columns"), true],
+    [L("ทำแล้ว (เครื่องนี้) = ยอดของขั้นตอนที่มากสุดในเครื่องนั้น (ขั้นตอนที่ติ๊กร่วมไม่นับซ้ำ) · Balance = จำนวนสั่ง − ทำแล้ว", "Done (this machine) = the highest step total on that machine (co-ticked steps not double counted) · Balance = ordered − done"), false],
+    [L("เวลาทำงานรวม = รวมเวลาที่จับได้ทุกชุดของเครื่องนั้น (ชม.:นาที:วินาที รวม/เรียงได้) · เริ่ม / ล่าสุด = วันเวลาจริง (เรียงได้)", "Run time = sum of timed batches on that machine ([h]:mm:ss, can be summed/sorted) · Start / Last = real date-times (sortable)"), false],
+    [L("หัวคอลัมน์สีม่วง = ข้อมูลของเครื่อง · สีเข้ม = ข้อมูลของเบอร์", "Purple headers = machine data · dark headers = part data"), false],
+  ];
+  const FILL = { fin: ["FFE3F7EE", "FF047857"], run: ["FFE8EFFF", "FF1D4ED8"], bal: ["FFFFF4E0", "FF92400E"], pend: ["FFEEF2F0", "FF5B6B65"] };
+  const iDur = 2 + 6, iStart = 2 + 7, iLast = 2 + 8, iPst = 2 + nM;   // 0-based index ใน vals
+  let ExcelJS = null;
+  try { const mod = await import("exceljs"); ExcelJS = mod.default || mod; } catch (e) { console.warn("exceljs load failed → fallback", e); }
+  if (ExcelJS && ExcelJS.Workbook) {
+    const wb = new ExcelJS.Workbook();
+    wb.created = new Date(nowMs);
+    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", xSplit: 3, ySplit: 1 }] });
+    const WID = [7, 14, 10, 19, 16, 12, 16, 16, 14, 17, 17, 11, 56, 14, 19, 15, 12, 11, 15, ...(!isAsm ? [16, 16] : []), 17, 14, 16, 16, 12];
+    ws.columns = HEAD.map((h, i) => ({ header: h, key: "c" + i, width: WID[i] || 14 }));
+    const F = "Arial";
+    const hr = ws.getRow(1);
+    hr.height = 32;
+    hr.eachCell((c, col) => {
+      c.font = { name: F, bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: (col >= 3 && col < 3 + nM) ? "FF6D4AFF" : "FF142420" } };
+      c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    });
+    const local = (d) => (d instanceof Date && !isNaN(d.getTime())) ? new Date(d.getTime() - d.getTimezoneOffset() * 60000) : null;   // exceljs เขียนเป็น UTC → ชดเชยให้ Excel เห็นเวลาไทย
+    const numCols = new Set([5, 6, 7, 11, iPst + 1, iPst + 2, iPst + 3, iPst + 4]);   // 0-based
+    const wCols = !isAsm ? new Set([iPst + 5, iPst + 6]) : new Set();
+    const lenCol = iPst + (!isAsm ? 7 : 5), matCol = lenCol + 2;
+    out.forEach((o) => {
+      const vals = o.vals.map((v, i) => {
+        if (v && typeof v === "object" && "dur" in v) return v.dur / 86400;
+        if (i === iStart || i === iLast) return v ? local(v) : null;
+        return v === "" ? null : v;
+      });
+      const row = ws.addRow(vals);
+      row.eachCell({ includeEmpty: true }, (c, col) => {
+        const i = col - 1;
+        c.font = { name: F, size: 10, bold: i === 1 || i === 2 };
+        c.alignment = { vertical: "middle" };
+        c.border = { bottom: { style: "thin", color: { argb: "FFD7E3DD" } } };
+        if (i === iDur) c.numFmt = "[h]:mm:ss";
+        else if (i === iStart || i === iLast) c.numFmt = "dd/mm/yyyy hh:mm";
+        else if (numCols.has(i)) c.numFmt = "#,##0";
+        else if (wCols.has(i)) c.numFmt = "#,##0.00";
+        else if (i === lenCol || i === matCol) c.numFmt = "#,##0.##";
+      });
+      if (o.st) {
+        const [bg, fg] = FILL[o.st];
+        const c = row.getCell(4);
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+        c.font = { name: F, size: 10, bold: true, color: { argb: fg } };
+        if (o.bal > 0 && o.st !== "fin") row.getCell(8).font = { name: F, size: 10, bold: true, color: { argb: "FFB45309" } };
+      }
+      { const [bg, fg] = FILL[o.pst] || FILL.pend;
+        const c = row.getCell(iPst + 1);
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+        c.font = { name: F, size: 10, bold: true, color: { argb: fg } }; }
+    });
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, out.length + 1), column: HEAD.length } };
+    const n = wb.addWorksheet(L("อ่านก่อน", "Read me"));
+    n.getColumn(1).width = 130;
+    notes.forEach(([t, b]) => { const row = n.addRow([t]); row.getCell(1).font = { name: F, size: b ? 11 : 10, bold: b }; });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return { rows: out.length, engine: "exceljs" };
+  }
+  // ── fallback: downloadSheets เดิม (ค่าเรียงได้: วันเวลา = yyyy-mm-dd hh:mm · ระยะเวลา = hh:mm:ss) ──
+  const ymdhm = (d) => (d instanceof Date && !isNaN(d.getTime())) ? `${d.getFullYear()}-${pmPad(d.getMonth() + 1)}-${pmPad(d.getDate())} ${pmPad(d.getHours())}:${pmPad(d.getMinutes())}` : "";
+  const flat = out.map((o) => {
+    const obj = {};
+    HEAD.forEach((h, i) => {
+      const v = o.vals[i];
+      obj[h] = (v && typeof v === "object" && "dur" in v) ? pmDur(v.dur) : (v instanceof Date ? ymdhm(v) : (v == null ? "" : v));
+    });
+    return obj;
+  });
+  const { downloadSheets } = await import("./excelExport.js");
+  await downloadSheets(fileName, [{ name: sheetName, rows: flat }, { name: L("อ่านก่อน", "Read me"), rows: notes.map(([t]) => ({ [L("คำอธิบาย", "Notes")]: t })) }]);
+  return { rows: out.length, engine: "downloadSheets" };
+}
+
+// จำตัวกรอง/แถวที่เปิดขยาย ต่อ Release Order ในเครื่องนี้ (สะดวก ไม่สำคัญ — อ่าน/เขียนพลาดก็ข้าม)
+function pmUiLoad(key) {
+  try { const v = JSON.parse(localStorage.getItem(key) || "null"); if (v && typeof v === "object") return v; } catch { /* ignore */ }
+  return null;
+}
+function pmUiSave(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ } }
+
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const canEdit = isAdmin(user);   // เฉพาะ Admin เท่านั้นที่แก้ไข/ลบ Release ได้ (office เพิ่ม/นำเข้า/ดูได้ แต่แก้/ลบไม่ได้)
   const [lang] = useLang();        // แปลหัวคอลัมน์ที่เพิ่มเอง (ลำดับ/Item) ตามภาษา
@@ -3989,14 +4313,48 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const notes = new Set(releases.map((r) => r.note).filter(Boolean));
   const noteLabel = notes.size === 0 ? "-" : notes.size === 1 ? [...notes][0] : `${notes.size} หมายเหตุ`;
 
-  const loadStats = useCallback((list = releases) => {
+  // ── เครื่องจักรต่อเบอร์ + สถานะ (ชิปใต้เบอร์ · ตารางเครื่องเปิดขยาย · ตัวกรองสถานะ) ──
+  const [mstat, setMstat] = useState({ state: "loading", data: {} });   // state: loading | ok | not_installed | error
+  const mstatSig = useRef("");
+  const loadMachineStatus = useCallback(async (list, { silent = false } = {}) => {
+    if (isAsmGroup) return false;
+    const ids = (list || []).map((r) => r.id);
+    if (!ids.length) { setMstat({ state: "ok", data: {} }); return false; }
+    let res;
+    try { res = await getReleaseMachineStatus(ids); } catch (e) { res = { ok: false, reason: "error", message: e?.message }; }
+    if (!res.ok) {
+      setMstat((s) => ({ state: res.reason === "not_installed" ? "not_installed" : (silent && s.state === "ok" ? "ok" : "error"), data: s.data }));
+      return false;
+    }
+    // ลายเซ็นข้อมูล → ถ้าเปลี่ยน (มีงานใหม่/เริ่ม/จบ) ให้รีเฟรชยอดของตารางด้วย
+    const sig = Object.keys(res.data).sort().map((k) => k + ":" + (res.data[k] || []).map((m) => [m.machine_id, m.done, m.finished, m.last_at, m.active ? m.active.started_at : ""].join(",")).join(";")).join("|");
+    const changed = !!mstatSig.current && sig !== mstatSig.current;
+    mstatSig.current = sig;
+    setMstat({ state: "ok", data: res.data || {} });
+    return changed;
+  }, [isAsmGroup]);
+
+  // ★ รับได้ทั้ง loadStats() / loadStats(list) / onClick={loadStats} (event) — เดิมปุ่มรีเฟรชส่ง event มาแทน list แล้วพัง
+  const loadStats = useCallback((arg, { silent = false } = {}) => {
+    const list = Array.isArray(arg) ? arg : releases;
     const ids = list.map((r) => r.id);
-    if (ids.length === 0) { setUnitStats({}); setOpProg({}); setMatLens({}); setStatsLoading(false); return; }
-    setStatsLoading(true);
+    if (ids.length === 0) { setUnitStats({}); setOpProg({}); setMatLens({}); setStatsLoading(false); setMstat({ state: "ok", data: {} }); return; }
+    if (!silent) setStatsLoading(true);
     Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids), getReleaseMaterialLengths(ids)])
       .then(([s, op, ml]) => { setUnitStats(s); setOpProg(op || {}); setMatLens(ml || {}); setStatsLoading(false); });
-  }, [releases]);
+    if (!silent) loadMachineStatus(list);
+  }, [releases, loadMachineStatus]);
   useEffect(() => { loadStats(); }, [loadStats]);
+  // สถานะเครื่องเปลี่ยนตลอด (สแกนรอบแรก / กด OK) → ดึงใหม่ทุก 30 วิ ตอนเปิดหน้านี้อยู่ · มีการเปลี่ยน = รีเฟรชยอดแบบเงียบ
+  useEffect(() => {
+    if (isAsmGroup) return undefined;
+    const t = setInterval(async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const changed = await loadMachineStatus(releases, { silent: true });
+      if (changed) loadStats(releases, { silent: true });
+    }, 30000);
+    return () => clearInterval(t);
+  }, [releases, isAsmGroup, loadMachineStatus, loadStats]);
 
   // ── ลบ Release (พร้อม QR + ประวัติสแกนของล็อตนั้น) ───────────────────────
   async function handleDelete(r) {
@@ -4065,6 +4423,49 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     matlen: (r) => { const a = matLenList(r); return a.length ? Math.max(...a.map(Number)) : 0; },
   };
 
+  // ── เครื่องจักรต่อเบอร์ + สถานะ ──
+  const LL = (th, en) => (lang === "en" ? en : th);
+  const pmOn = !isAsmGroup;                          // ประกอบ/แพ็ก ไม่ใช้ (ไม่มีงานเครื่อง)
+  const pmKey = `mls.pm-ui:${projectId || ""}:${hdr.ro || group.releases?.[0]?.id || ""}`;
+  const [pmFilter, setPmFilter] = useState(() => { const v = pmUiLoad(pmKey); return new Set(Array.isArray(v?.f) ? v.f.filter((k) => PM_ORDER.includes(k)) : []); });
+  const [pmOpen, setPmOpen] = useState(() => { const v = pmUiLoad(pmKey); return new Set(Array.isArray(v?.o) ? v.o : []); });
+  useEffect(() => {
+    const ids = new Set(releases.map((r) => r.id));
+    pmUiSave(pmKey, { f: [...pmFilter], o: [...pmOpen].filter((id) => ids.has(id)) });   // เก็บเฉพาะแถวที่ยังอยู่ในใบนี้
+  }, [pmKey, pmFilter, pmOpen, releases]);
+  const pmReady = pmOn && mstat.state === "ok";
+  const pmInfo = useMemo(() => {
+    const m = new Map();
+    for (const r of releases) {
+      const ms = pmMachines(mstat.data[r.id] || mstat.data[String(r.id)], r.qty);
+      m.set(r.id, { ms, st: pmRowStatus(ms, relProgress(r, unitStats, opProg)) });
+    }
+    return m;
+  }, [releases, mstat, unitStats, opProg]);
+  const pmCounts = useMemo(() => {
+    const c = { pend: 0, run: 0, bal: 0, fin: 0 };
+    if (pmReady) for (const v of pmInfo.values()) c[v.st] = (c[v.st] || 0) + 1;
+    return c;
+  }, [pmInfo, pmReady]);
+  const pmActiveFilter = pmReady && pmFilter.size > 0;
+  const viewRows = pmActiveFilter ? releases.filter((r) => pmFilter.has(pmInfo.get(r.id)?.st)) : releases;
+  // ลำดับ (ITEM) คงเลขเดิมแม้กรอง — นับจากทั้งตารางตามการเรียงที่เลือก
+  const itemNoMap = new Map(sort.sortRows(releases, sortAccessors).map((r, i) => [r.id, i + 1]));
+  const pmToggle = (id) => setPmOpen((s0) => { const n = new Set(s0); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const pmExpandable = pmReady ? viewRows.filter((r) => (pmInfo.get(r.id)?.ms.length || 0) > 0) : [];
+  const pmAllOpen = pmExpandable.length > 0 && pmExpandable.every((r) => pmOpen.has(r.id));
+  const pmToggleAll = () => setPmOpen((s0) => { const n = new Set(s0); pmExpandable.forEach((r) => { if (pmAllOpen) n.delete(r.id); else n.add(r.id); }); return n; });
+  const pmFilterToggle = (k) => setPmFilter((s0) => { if (k === "all") return new Set(); const n = new Set(s0); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  // นาฬิกาสำหรับ "ผ่านไป / หยุดมาแล้ว" — ทุกวินาทีเฉพาะตอนเปิดดูเครื่องที่กำลังทำ · นอกนั้นทุก 30 วิ
+  const [pmNow, setPmNow] = useState(() => Date.now());
+  const pmNeedsSec = pmReady && viewRows.some((r) => pmOpen.has(r.id) && (pmInfo.get(r.id)?.ms || []).some((m) => m.st === "run"));
+  useEffect(() => {
+    if (!pmOn) return undefined;
+    setPmNow(Date.now());
+    const t = setInterval(() => setPmNow(Date.now()), pmNeedsSec ? 1000 : 30000);
+    return () => clearInterval(t);
+  }, [pmOn, pmNeedsSec]);
+
   // ── ดาวน์โหลดตาราง "รายละเอียดแต่ละ Part" เป็นไฟล์ Excel (.xlsx) ──
   // คอลัมน์/ลำดับตรงกับที่เห็นบนจอ · หัวคอลัมน์ตามภาษาที่ใช้อยู่ · ตัวเลขเป็นตัวเลขจริง (รวม/เรียงใน Excel ได้)
   async function doExportExcel() {
@@ -4072,6 +4473,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     setExporting(true);
     const w2 = (n) => (Number(n) || 0).toFixed(2);   // ★ บังคับ 2 ตำแหน่งทศนิยมเสมอ (เช่น 5.00, 5.20)
     try {
+      // ★ มีสถานะเครื่องแล้ว → 1 แถว = 1 เบอร์ + 1 เครื่อง (ตามตัวกรองสถานะ + การเรียงบนจอ)
+      if (pmReady) {
+        const roTag0 = String(hdr.ro || releases[0]?.part_master?.part_no || "export").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 60);
+        const list = sort.sortRows(viewRows, sortAccessors).map((r) => {
+          const pi = pmInfo.get(r.id) || { ms: [], st: "pend" };
+          return { r, ms: pi.ms, st: pi.st, p: rowProg(r), matLen: matLenList(r) };
+        });
+        await pmExportExcel({ rows: list, lang, ro: hdr.ro, isAsm: isAsmGroup, fileName: `release-${roTag0}.xlsx`,
+          filterKeys: pmActiveFilter ? PM_ORDER.filter((k) => pmFilter.has(k)) : [], itemNo: (r) => itemNoMap.get(r.id) });
+        return;
+      }
       const rows = sort.sortRows(releases, sortAccessors).map((r, i) => {
         const p = rowProg(r);
         const done = p.done ?? p.finished;        // จำนวนจริงที่ทำ/เสร็จ (รวมสแปร์)
@@ -4115,7 +4527,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             <Btn variant="ghost" size="sm" onClick={onBack}>
               <Icon name="arrowLeft" size={14} /> กลับไปหน้า Release
             </Btn>
-            <Btn variant="ghost" size="sm" onClick={loadStats} title="โหลดความคืบหน้าล่าสุด">
+            <Btn variant="ghost" size="sm" onClick={() => loadStats()} title="โหลดความคืบหน้าล่าสุด">
               <Icon name="refresh" size={14} /> รีเฟรช
             </Btn>
             <Btn variant="ghost" size="sm" onClick={() => (onHome ? onHome() : onBack())} title="กลับหน้าแรก">
@@ -4312,7 +4724,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               title={lang === "en" ? "Reset column order + show all columns" : "คืนค่าเริ่มต้น: ลำดับคอลัมน์ + แสดงคอลัมน์ที่ซ่อนไว้ทั้งหมด"}>
               ↺ {lang === "en" ? "Columns" : "คอลัมน์"}
             </Btn>
-            <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || releases.length === 0}
+            <Btn variant="accent" size="sm" onClick={doExportExcel} disabled={exporting || viewRows.length === 0}
               title={lang === "en" ? "Download this table as Excel (.xlsx)" : "ดาวน์โหลดตารางนี้เป็นไฟล์ Excel (.xlsx)"}>
               <Icon name="grid" size={14} /> {exporting ? (lang === "en" ? "Exporting…" : "กำลังสร้าง…") : (lang === "en" ? "Export Excel" : "Export Excel")}
             </Btn>
@@ -4329,11 +4741,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             { key: "item", header: lang === "en" ? "Item" : "ลำดับ",
               thStyle: { minWidth: 44, textAlign: "right", whiteSpace: "nowrap" },
               tdStyle: { color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" },
-              cell: (r, i) => i + 1 },
+              cell: (r, i) => itemNoMap.get(r.id) || i + 1 },
             { key: "part_no", header: lang === "en" ? "Part No." : "เบอร์พาร์ท", sortKey: "part_no",
               tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, dataLabel: lang === "en" ? "Part No." : "เบอร์พาร์ท",
-              cell: (r) => (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              cell: (r) => {
+                const pi = pmReady ? pmInfo.get(r.id) : null;
+                return (
+                <div className="pm-pncell">
+                <span className="pm-pnline1">
                   <span style={r.mod_cancelled_at ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>{r.part_master?.part_no || "-"}</span>
                   {r.mod_version && (
                     <span onClick={(e) => { e.stopPropagation(); if (modByVersion(r.mod_version)) setModView(r.mod_version); }}
@@ -4341,8 +4756,17 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                       style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)", cursor: "pointer" }}>{r.mod_version}</span>
                   )}
                   {r.mod_cancelled_at && <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "rgba(239,68,68,.11)", color: "var(--danger)" }}>{r.mod_cancel_keep === "moved" ? (lang === "en" ? "all moved" : "ย้ายหมดแล้ว") : (lang === "en" ? "cancelled" : "ยกเลิก")}</span>}
+                  {pi && <PmPill k={pi.st} sm />}
                 </span>
-              ) },
+                {pmOn && (
+                  <div className="pm-pnline2">
+                    {pi ? <PmChips ms={pi.ms} qty={Number(r.qty) || 0} open={pmOpen.has(r.id)} onToggle={() => pmToggle(r.id)} lang={lang} />
+                      : mstat.state === "loading" ? <span className="pm-none">…</span> : null}
+                  </div>
+                )}
+                </div>
+                );
+              } },
             { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", cell: (r) => fmtNum(r.qty) },
             { key: "finished", header: lang === "en" ? "Finished" : "เสร็จแล้ว", sortKey: "finished",
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : (
@@ -4386,11 +4810,64 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             return { finished: p.finished, inProgress: p.inProgress, over, done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
           };
           return (
-            <DataTable id="lot-parts" columns={cols} rows={releases} rowKey={(r) => r.id}
+            <>
+            {pmOn && (
+              <div className="pm-tbar">
+                <div className="pm-tbar-l">
+                  <span className="pm-tbar-lbl">{LL("สถานะ", "Status")}</span>
+                  {pmReady ? (
+                    <div className="pm-fchips" role="group" aria-label={LL("กรองตามสถานะ", "Filter by status")}>
+                      <button type="button" className={"pm-fchip all" + (pmFilter.size ? "" : " on")} onClick={() => pmFilterToggle("all")} aria-pressed={!pmFilter.size}>
+                        {LL("ทั้งหมด", "All")} <b>{releases.length}</b>
+                      </button>
+                      {PM_ORDER.map((k) => (
+                        <button key={k} type="button" className={`pm-fchip ${k}` + (pmFilter.has(k) ? " on" : "") + (pmCounts[k] ? "" : " zero")}
+                          onClick={() => pmFilterToggle(k)} aria-pressed={pmFilter.has(k)}
+                          title={{ pend: LL("ยังไม่มีเครื่องเริ่ม", "no machine started yet"), run: LL("สแกนรอบแรกแล้ว เวลากำลังเดิน", "first scan done, timer running"), bal: LL("ทำไปบางส่วน รอชุดถัดไป", "partly done, waiting for the next batch"), fin: LL("ครบจำนวนสั่ง หรือกด Finished", "full qty done, or Finished pressed") }[k] + LL(" · กดเลือกได้หลายสถานะ", " · pick several")}>
+                          <i />{PM_ST[k]} <b>{pmCounts[k]}</b>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="pm-tbar-msg">
+                      {mstat.state === "loading" ? LL("กำลังโหลดสถานะเครื่อง…", "Loading machine status…")
+                        : mstat.state === "not_installed" ? LL("ยังไม่ได้ติดตั้งส่วนสถานะเครื่อง — รัน migration-part-machine-status.sql ใน Supabase", "Machine status isn't installed — run migration-part-machine-status.sql in Supabase")
+                        : <>{LL("โหลดสถานะเครื่องไม่สำเร็จ", "Couldn't load machine status")} · <button type="button" className="pm-linkbtn" onClick={() => loadMachineStatus(releases)}>{LL("ลองใหม่", "retry")}</button></>}
+                    </span>
+                  )}
+                </div>
+                {pmReady && (
+                  <div className="pm-tbar-r">
+                    <span className="pm-tbar-count">{pmActiveFilter
+                      ? <>{LL("แสดง", "showing")} <b>{viewRows.length}</b> {LL(`จาก ${releases.length} เบอร์`, `of ${releases.length} parts`)}</>
+                      : <>{LL("ทั้งหมด", "")} <b>{releases.length}</b> {LL("เบอร์", "parts")}</>}</span>
+                    <Btn variant="ghost" size="sm" onClick={pmToggleAll} disabled={!pmExpandable.length}
+                      title={LL("เปิด/ปิด ตารางเครื่องของทุกเบอร์ที่เห็นอยู่", "Open/close the machine table of every visible part")}>
+                      {pmAllOpen ? LL("⊟ ย่อทั้งหมด", "⊟ Collapse all") : LL("⊞ ขยายทั้งหมด", "⊞ Expand all")}
+                    </Btn>
+                    <Btn variant="ghost" size="sm" onClick={() => setPmFilter(new Set())} disabled={!pmFilter.size}>
+                      {LL("✕ ล้างตัวกรอง", "✕ Clear filter")}
+                    </Btn>
+                  </div>
+                )}
+              </div>
+            )}
+            {pmReady && (
+              <div className="pm-hint">{LL("กดชิปเครื่อง หรือ “▸ N เครื่อง” ใต้เบอร์ = เปิดดูรายละเอียดของแต่ละเครื่อง · กดที่อื่นในแถว = เปิดความคืบหน้าเหมือนเดิม",
+                "Click a machine chip or “▸ N machines” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
+            )}
+            <DataTable id="lot-parts" columns={cols} rows={viewRows} rowKey={(r) => r.id}
               sort={sort} sortAccessors={sortAccessors} rowCtx={rctx} orderApiRef={colApi}
               wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
               rowProps={(r) => ({ className: "release-row", onClick: () => setViewPart(r), title: "กดเพื่อดูความคืบหน้าแยกขั้นตอน" })}
-              empty={lang === "en" ? "No parts" : "ยังไม่มีข้อมูล"} />
+              rowAfter={(r) => {
+                if (!pmReady || !pmOpen.has(r.id)) return null;
+                const pi = pmInfo.get(r.id);
+                if (!pi || !pi.ms.length) return null;
+                return <PmDetail r={r} ms={pi.ms} qty={Number(r.qty) || 0} lang={lang} nowMs={pmNow} />;
+              }}
+              empty={pmActiveFilter ? LL("ไม่มีเบอร์ที่ตรงกับสถานะที่เลือก", "No parts match the selected status") : (lang === "en" ? "No parts" : "ยังไม่มีข้อมูล")} />
+            </>
           );
         })()}
       </Card>
