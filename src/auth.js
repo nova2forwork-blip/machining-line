@@ -48,6 +48,7 @@ export async function verifyLogin(code, password) {
   });
   if (error) {
     console.warn("verify_login error", error);
+    if (tooManyAttempts(error)) return { locked: true };
     return null;
   }
   const row = Array.isArray(data) ? data[0] : data;
@@ -56,10 +57,24 @@ export async function verifyLogin(code, password) {
 }
 
 // ─── Offline login (หน้าเครื่อง) ──────────────────────────────────────────
-// เก็บ credential ที่ล็อกอินสำเร็จ "ตอนออนไลน์" ไว้ในเครื่อง (salt + SHA-256 ของรหัสผ่าน)
-// เพื่อให้ล็อกอินซ้ำได้แม้ไม่มีเน็ต · ปลอดภัยพอสำหรับจอหน้าเครื่องที่เป็นอุปกรณ์เฉพาะ
-// (ไม่ใช่ bcrypt แต่ hash+salt ในเครื่อง — และตัว token เองก็เก็บในเครื่องอยู่แล้ว)
+// เก็บ credential ที่ล็อกอินสำเร็จ "ตอนออนไลน์" ไว้ในเครื่อง เพื่อให้ล็อกอินซ้ำได้แม้ไม่มีเน็ต
+// ★ รอบ 12 (C3):
+//   • hash = PBKDF2-SHA256 150,000 รอบ + salt (เดิม SHA-256 รอบเดียว — เดาด้วยการ์ดจอได้เร็วมาก) · ของเดิมยังใช้ได้ แล้วอัปเกรดตอนล็อกอินออนไลน์ครั้งถัดไป
+//   • อายุ 14 วันนับจากล็อกอินออนไลน์ครั้งล่าสุด (บัญชีที่ถูกปิด/เปลี่ยนรหัส เข้าออฟไลน์ได้ไม่เกิน 14 วัน)
+//   • ออนไลน์แล้วเซิร์ฟเวอร์ตอบ "รหัสผิด" → ลบที่จำไว้ของรหัสนั้นทันที (เปลี่ยนรหัส/ปิดบัญชี = ออฟไลน์ใช้รหัสเก่าไม่ได้)
+//   • token ที่จำไว้ = ใช้ได้เท่าที่ server ยังรับ (server ตัด 12 ชม.) — หมดแล้วหน้าเครื่องเด้งให้ล็อกอินใหม่ งานในคิวไม่หาย
 const LOGIN_CACHE_KEY = "mls-login-cache";
+const LOGIN_CACHE_TTL_MS = 14 * 24 * 3600 * 1000;
+const PBKDF2_ITER = 150000;
+async function pbkdf2Hex(password, saltHex, iter = PBKDF2_ITER) {
+  try {
+    if (typeof crypto === "undefined" || !crypto.subtle) return null;
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+    const salt = new Uint8Array((saltHex.match(/.{2}/g) || []).map((h) => parseInt(h, 16)));
+    const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, key, 256);
+    return Array.from(new Uint8Array(bits)).map((x) => x.toString(16).padStart(2, "0")).join("");
+  } catch { return null; }
+}
 async function sha256Hex(s) {
   // crypto.subtle มีเฉพาะ secure context (https/PWA) — ถ้าไม่มี (http บน LAN) คืน null
   // แล้ว offline login จะข้ามไป (ยังล็อกอินออนไลน์ได้ปกติ) แทนที่จะ throw ทำแอปพัง
@@ -79,13 +94,25 @@ function writeLoginCache(m) { try { localStorage.setItem(LOGIN_CACHE_KEY, JSON.s
 async function cacheCredential(code, password, user) {
   try {
     const salt = randSalt();
-    const hash = await sha256Hex(salt + ":" + password);
+    const hash = await pbkdf2Hex(password, salt);
     if (!hash) return;   // ไม่มี crypto.subtle (http) → ไม่เก็บ (จะได้ไม่มีทาง match แบบ null===null)
     const m = readLoginCache();
-    m[code.trim().toLowerCase()] = { salt, hash, user, ts: Date.now() };
+    m[code.trim().toLowerCase()] = { v: 2, salt, hash, iter: PBKDF2_ITER, user, ts: Date.now() };
     writeLoginCache(m);
   } catch { /* ignore */ }
 }
+function forgetCredential(code) {
+  try { const m = readLoginCache(); const k = String(code || "").trim().toLowerCase(); if (m[k]) { delete m[k]; writeLoginCache(m); } } catch { /* ignore */ }
+}
+// เทียบรหัสกับที่จำไว้ (รองรับของเดิม SHA-256 รอบเดียว) · หมดอายุ = ไม่รับ
+async function matchCachedCredential(e, password) {
+  if (!e || !e.hash || !e.salt) return false;
+  if (!e.ts || Date.now() - Number(e.ts) > LOGIN_CACHE_TTL_MS) return false;
+  const hash = e.v === 2 ? await pbkdf2Hex(password, e.salt, Number(e.iter) || PBKDF2_ITER) : await sha256Hex(e.salt + ":" + password);
+  return !!hash && hash === e.hash;   // null ไม่ถือว่า match
+}
+// ★ รอบ 12: ลองรหัสผิดหลายครั้ง (server ล็อก 5 นาที)
+function tooManyAttempts(error) { return /too_many_attempts/i.test(error?.message || ""); }
 
 // ล็อกอินหน้าเครื่อง: ออนไลน์ = ตรวจ DB + จำ credential ไว้ · ออฟไลน์/เน็ตหลุด = เทียบกับที่จำไว้
 // คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
@@ -102,17 +129,18 @@ export async function stationLogin(code, password) {
     const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
     if (!error) {
       const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return { error: "bad" };            // เซิร์ฟเวอร์ตอบว่ารหัสผิด → ไม่ fallback
+      if (!row) { forgetCredential(code); return { error: "bad" }; }   // เซิร์ฟเวอร์ตอบว่ารหัสผิด → ไม่ fallback + ลืมรหัสเก่าที่จำไว้
       const user = mapLoginRow(row);
       await cacheCredential(code, password, user);   // จำไว้ใช้ตอนออฟไลน์
       return { user, offline: false };
     }
+    if (tooManyAttempts(error)) return { error: "locked" };
     // error = เน็ตมีปัญหา → ลองใช้ credential ที่แคชไว้
   }
   const e = readLoginCache()[key];
   if (!e) return { error: isOffline ? "offline_first" : "bad" };
-  const hash = await sha256Hex(e.salt + ":" + password);
-  if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };   // null ไม่ถือว่า match
+  if (e.ts && Date.now() - Number(e.ts) > LOGIN_CACHE_TTL_MS) return { error: "offline_expired" };
+  if (!(await matchCachedCredential(e, password))) return { error: "bad" };
   return { user: e.user, offline: true };
 }
 
@@ -142,17 +170,18 @@ export async function appLogin(code, password) {
     const { data, error } = await Promise.race([rpc, timeout]);
     if (!error) {
       const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return { error: "bad" };            // รหัสผิด → ไม่ fallback
+      if (!row) { forgetCredential(code); return { error: "bad" }; }   // รหัสผิด → ไม่ fallback + ลืมรหัสเก่าที่จำไว้
       const user = mapLoginRow(row);
       await cacheCredential(code, password, user);   // จำไว้ล็อกอินออฟไลน์รอบหน้า (สำหรับคนงานหน้างาน)
       return { user, offline: false };
     }
+    if (tooManyAttempts(error)) return { error: "locked" };
     onlineFailed = true;   // เน็ต/timeout มีปัญหา (ไม่ใช่รหัสผิด) → ลองใช้ credential ที่แคชไว้
   }
   const e = readLoginCache()[key];
   if (!e) return { error: isOffline ? "offline_first" : (onlineFailed ? "network" : "bad") };
-  const hash = await sha256Hex(e.salt + ":" + password);
-  if (!hash || !e.hash || hash !== e.hash) return { error: "bad" };
+  if (e.ts && Date.now() - Number(e.ts) > LOGIN_CACHE_TTL_MS) return { error: "offline_expired" };
+  if (!(await matchCachedCredential(e, password))) return { error: "bad" };
   return { user: e.user, offline: true };
 }
 
