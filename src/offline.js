@@ -11,6 +11,8 @@ const ST_UNITS = "units";       // key = qr_code → object (รูปเดี�
 const ST_KV = "kv";             // key/value ทั่วไป (snapshot ความคืบหน้า ฯลฯ)
 
 let _dbPromise = null;
+// ★ รอบ 12 (D): Safari ปิด connection ของ IndexedDB เองเมื่อแอปอยู่เบื้องหลังนาน / ที่เก็บตึง → เดิมใช้ connection ตายต่อ
+//   (ทุกคำสั่งพลาดเงียบ → แคชออฟไลน์ใช้ไม่ได้จนรีโหลดแอป) · ตอนนี้: ปิด/พัง = เปิดใหม่อัตโนมัติ · เปิดไม่ได้ = ลองใหม่หลัง 30 วิ
 function db() {
   if (_dbPromise) return _dbPromise;
   _dbPromise = new Promise((resolve) => {
@@ -22,18 +24,35 @@ function db() {
         if (!d.objectStoreNames.contains(ST_UNITS)) d.createObjectStore(ST_UNITS, { keyPath: "qr_code" });
         if (!d.objectStoreNames.contains(ST_KV)) d.createObjectStore(ST_KV);
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
-    } catch { resolve(null); }
+      req.onsuccess = () => {
+        const d = req.result;
+        try {
+          d.onclose = () => { _dbPromise = null; };
+          d.onversionchange = () => { try { d.close(); } catch { /* ignore */ } _dbPromise = null; };
+        } catch { /* ignore */ }
+        resolve(d);
+      };
+      req.onerror = () => { setTimeout(() => { _dbPromise = null; }, 30000); resolve(null); };
+      req.onblocked = () => { setTimeout(() => { _dbPromise = null; }, 30000); resolve(null); };
+    } catch { setTimeout(() => { _dbPromise = null; }, 30000); resolve(null); }
   });
   return _dbPromise;
 }
+// เปิด transaction — connection ปิดไปแล้ว (InvalidStateError) → เปิดใหม่แล้วลองอีก 1 ครั้ง
+async function openTx(store, mode) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const d = await db();
+    if (!d) return null;
+    try { return d.transaction(store, mode); }
+    catch { _dbPromise = null; }
+  }
+  return null;
+}
 
 function tx(store, mode, fn) {
-  return db().then((d) => new Promise((resolve) => {
-    if (!d) return resolve(null);
+  return openTx(store, mode).then((t) => new Promise((resolve) => {
+    if (!t) return resolve(null);
     try {
-      const t = d.transaction(store, mode);
       const s = t.objectStore(store);
       let out = null;
       const r = fn(s);
@@ -65,10 +84,10 @@ export function cacheUnit(unit) {
   return tx(ST_UNITS, "readwrite", (s) => s.put(unit));
 }
 export function cacheUnitsBulk(units) {
-  return db().then((d) => new Promise((resolve) => {
-    if (!d || !Array.isArray(units) || !units.length) return resolve();
+  if (!Array.isArray(units) || !units.length) return Promise.resolve();
+  return openTx(ST_UNITS, "readwrite").then((t) => new Promise((resolve) => {
+    if (!t) return resolve();
     try {
-      const t = d.transaction(ST_UNITS, "readwrite");
       const s = t.objectStore(ST_UNITS);
       for (const u of units) { if (u && u.qr_code) s.put(u); }
       t.oncomplete = () => resolve();
@@ -83,10 +102,10 @@ export function uncacheUnit(qr) {
   return tx(ST_UNITS, "readwrite", (s) => s.delete(String(qr).trim()));
 }
 export function uncacheUnitsBulk(qrs) {
-  return db().then((d) => new Promise((resolve) => {
-    if (!d || !Array.isArray(qrs) || !qrs.length) return resolve();
+  if (!Array.isArray(qrs) || !qrs.length) return Promise.resolve();
+  return openTx(ST_UNITS, "readwrite").then((t) => new Promise((resolve) => {
+    if (!t) return resolve();
     try {
-      const t = d.transaction(ST_UNITS, "readwrite");
       const s = t.objectStore(ST_UNITS);
       for (const q of qrs) { if (q) s.delete(String(q).trim()); }
       t.oncomplete = () => resolve();
