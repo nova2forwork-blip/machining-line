@@ -1024,3 +1024,13 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
   color: var(--st-ink); font-weight: 500; }
 .stn-dr-time { flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 1.3vh; color: var(--st-muted); }
 @media (max-width: 640px) { .stn-daily-reports { display: none; } }  /* จอเล็ก/มือถือ: ซ่อน (พื้นที่ไม่พอ) */
+
+/* ── รอบ 11 (2026-09-25) ───────────────────────────────────────────────── */
+/* B25: toast ข้อความยาว (เตือนผิดเบอร์/Modify/ขั้นตอนร่วม) ตัดบรรทัดได้ ไม่ล้นจนอ่านไม่ออก */
+.stn-toast { white-space: normal; max-width: calc(100% - 24px); width: max-content; text-align: center; line-height: 1.4; overflow-wrap: anywhere; }
+/* A3: ขั้นตอนหลัก (รับจำนวน/เวลา) มีดาว + กรอบเด่น · B21: ล็อกปุ่มขั้นตอนระหว่างทำงาน */
+.stn-oppick-btn.primary { box-shadow: 0 0 0 2px #fff inset, 0 0 0 2px rgba(255,255,255,.35); font-weight: 800; }
+.stn-oppick-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+.stn-oppick-btn.sel:disabled { opacity: .8; }
+/* L4: ป้ายลูกที่สแกนแล้ว (แพ็ก) แตะง่ายขึ้นสำหรับถุงมือ */
+.asw-chip { font-size: 13px; padding: 7px 12px; min-height: 36px; display: inline-flex; align-items: center; }
