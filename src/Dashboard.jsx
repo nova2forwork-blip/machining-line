@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import "./dashboard.css";
-import { getScanLogsBetween, supabase } from "./supabase.js";
+import { getScanLogsToday, listRows, supabase, getTvMachineStatus } from "./supabase.js";
 import { machineOpMatrix, logWeight } from "./metrics.js";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+// ★ รอบ 12 (D): กราฟ SVG ในตัว (เดิม recharts — ตัวที่เคยทำ build พัง + ไฟล์ใหญ่)
+import { SimpleAreaChart } from "./svgcharts.jsx";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────
@@ -29,12 +30,14 @@ const STR = {
     kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
     kpiTime: "เวลาเดินเครื่องรวม (หน้าเครื่อง)",
     kpiScans: "การสแกนวันนี้", unitTimes: "ครั้ง",
-    machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง",
+    machines: "เครื่องจักร · วันนี้", machineUnit: "เครื่อง", idle: "ยังไม่มีงานวันนี้", page: "หน้า",
     noWork: "ยังไม่มีงานเข้าวันนี้ — รอเครื่องเริ่มสแกน…",
     hourly: "การผลิตรายชั่วโมง · วันนี้", waitingData: "รอข้อมูลการผลิต…",
     liveFeed: "◉ ฟีดการผลิตสด", waitingScan: "รอการสแกนจากหน้าเครื่อง…",
     finished: "เสร็จแล้ว", inProcess: "กำลังทำ",
     booting: "กำลังเชื่อมต่อสายการผลิต…",
+    stRunning: "กำลังทำ", stStopped: "หยุด", stPaused: "พัก", stIdle: "ว่าง", stOff: "ไม่มีสัญญาณ", min: "น.",
+    sumRunning: "เดิน", sumStopped: "หยุด", sumIdle: "ว่าง/ปิด",
   },
   en: {
     subtitle: "Live Production Monitor", live: "LIVE",
@@ -42,12 +45,14 @@ const STR = {
     kpiWeight: "Total Weight Today", unitKg: "kg",
     kpiTime: "Machine Time · logged",
     kpiScans: "Scans Today", unitTimes: "scans",
-    machines: "Machines · Today", machineUnit: "machines",
+    machines: "Machines · Today", machineUnit: "machines", idle: "No work yet today", page: "Page",
     noWork: "No work yet today — waiting for the first scan…",
     hourly: "Hourly Production · Today", waitingData: "Waiting for production data…",
     liveFeed: "◉ Live Production Feed", waitingScan: "Waiting for scans from the floor…",
     finished: "Finished", inProcess: "In Progress",
     booting: "Connecting to the production line…",
+    stRunning: "Running", stStopped: "Stopped", stPaused: "Break", stIdle: "Idle", stOff: "No signal", min: "m",
+    sumRunning: "running", sumStopped: "stopped", sumIdle: "idle/off",
   },
 };
 
@@ -192,7 +197,7 @@ export default function Dashboard() {
     const { from, to } = bangkokTodayRange();
     let data;
     try {
-      data = await getScanLogsBetween(from, to);
+      data = await getScanLogsToday(from, to);   // ★ รอบ 12 (C1): จอ TV ไม่ล็อกอิน → เฉพาะวันนี้ ไม่มีชื่อพนักงาน
     } catch {
       // ดึงข้อมูลพลาด (เน็ต/DB) → คงข้อมูลเดิมไว้ (ไม่ล้างเป็น 0) · ไม่แตะ lastOkRef → จอขึ้น "ข้อมูลค้าง" เอง
       setBooted(true);
@@ -267,6 +272,28 @@ export default function Dashboard() {
   // ── สรุปตัวเลข ────────────────────────────────────────────────────────
   // memo ตาม logs เท่านั้น — นาฬิกาเดินทุก 1 วิ ไม่ต้องคำนวณยอดทั้งวันใหม่ (เปลือง CPU
   // บนจอเปิดทั้งวัน) · ค่าจริงเปลี่ยนแค่ตอนโพล 5 วิ
+  // ★ รอบ 12 (D): เครื่องที่ยังไม่มีงานวันนี้ก็ขึ้นการ์ด (ว่าง) — เดิมเห็นเฉพาะเครื่องที่สแกนแล้ว · โหลดรายชื่อทุก 10 นาที
+  const [allMachines, setAllMachines] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => listRows("machines", { order: "code" }).then((ms) => { if (alive && Array.isArray(ms) && ms.length) setAllMachines(ms); }).catch(() => {});
+    load();
+    const t = setInterval(load, 10 * 60 * 1000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  // ★ รอบ 13: สถานะสดทุกเครื่อง (กำลังทำ / หยุด+เหตุผล / พัก / ว่าง / ไม่มีสัญญาณ) — โพลทุก 15 วิ · ยังไม่รัน SQL = ไม่โชว์
+  const [mstat, setMstat] = useState(null);   // { [code]: { state, reason, since, part_no, signal } }
+  useEffect(() => {
+    let alive = true;
+    const load = () => getTvMachineStatus().then((arr) => {
+      if (!alive || !arr) return;
+      const m = {}; arr.forEach((x) => { if (x && x.code) m[x.code] = x; });
+      setMstat(m);
+    });
+    load();
+    const t = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
   const { totalPieces, totalKg, totalSec, scanCount, machines, maxKg, feed } = useMemo(() => {
     const tPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
     const tKg = logs.reduce((s, l) => s + logWeight(l), 0);   // ★ รอบ 11: สูตรเดียวกับการ์ดเครื่อง (น้ำหนัก 0 ตอนสแกน → น้ำหนัก/ชิ้นปัจจุบัน)
@@ -277,11 +304,36 @@ export default function Dashboard() {
       const op = Object.entries(m.ops).sort((a, b) => (b[1].count - a[1].count) || (b[1].weight - a[1].weight))[0];
       return { name: m.name, code: m.code || "", op: op ? op[0] : "", count: m.total.count, weight: m.total.weight, seconds: m.total.seconds };
     });
+    const seen = new Set(mach.map((m) => m.code || m.name));
+    const idle = allMachines.filter((m) => !seen.has(m.code || m.name))
+      .map((m) => ({ name: m.name || m.code, code: m.code || "", op: "", count: 0, weight: 0, seconds: 0, idle: true }));
+    const active = [...mach].sort((a, b) => (b.weight - a.weight) || String(a.code).localeCompare(String(b.code)));
+    // ★ รอบ 13: เครื่องที่ "หยุด" ขึ้นก่อน (เห็นในหน้าแรกเสมอ) · ที่เหลือเรียงเหมือนเดิม
+    const all = [...active, ...idle].map((m) => ({ ...m, st: mstat ? mstat[m.code] || null : null }));
+    const stopped = all.filter((m) => m.st && m.st.state === "stopped");
     return {
       totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
-      machines: mach, maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: groupScans(logs).slice(0, 9),
+      machines: [...stopped, ...all.filter((m) => !(m.st && m.st.state === "stopped"))], maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: groupScans(logs).slice(0, 9),
     };
-  }, [logs]);
+  }, [logs, allMachines, mstat]);
+  const stSum = useMemo(() => {
+    if (!mstat) return null;
+    const v = Object.values(mstat);
+    return { run: v.filter((x) => x.state === "running").length, stop: v.filter((x) => x.state === "stopped").length,
+             other: v.filter((x) => x.state !== "running" && x.state !== "stopped").length };
+  }, [mstat]);
+  // หลายเครื่อง: การ์ดเล็กลง + หมุนหน้าเองทุก 10 วิ (จอ TV เลื่อนไม่ได้ — เดิมเกิน ~19 เครื่อง การ์ดล้น กราฟหาย)
+  const dense = machines.length > 12;
+  const perPage = dense ? 24 : 12;
+  const pages = Math.max(1, Math.ceil(machines.length / perPage));
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    if (pages <= 1) { setPage(0); return undefined; }
+    const t = setInterval(() => setPage((p) => (p + 1) % pages), 10000);
+    return () => clearInterval(t);
+  }, [pages]);
+  const pageMachines = machines.slice((page % pages) * perPage, (page % pages) * perPage + perPage);
+  const activeCount = machines.filter((m) => !m.idle).length;
 
   // ── กราฟการผลิตรายชั่วโมง (กก. ต่อ ชม.) ตามเวลาไทย ────────────────────
   // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
@@ -366,17 +418,21 @@ export default function Dashboard() {
       {/* ── main: machine cards + chart ── */}
       <div className="dash-main">
         <div className="dash-panel">
-          <div className="dash-panel-h"><span>{t.machines}</span><span style={{ color: "var(--dash-green)" }}>{machines.length} {t.machineUnit}</span></div>
+          <div className="dash-panel-h"><span>{t.machines}</span><span style={{ color: "var(--dash-green)" }}>
+            {stSum ? <>{`● ${stSum.run} ${t.sumRunning}`}{stSum.stop ? <b className="dash-sum-stop">{` · ■ ${stSum.stop} ${t.sumStopped}`}</b> : null}{` · ${stSum.other} ${t.sumIdle}`}</>
+              : <>{activeCount}{allMachines.length ? ` / ${machines.length}` : ""} {t.machineUnit}</>}{pages > 1 ? ` · ${t.page} ${(page % pages) + 1}/${pages}` : ""}</span></div>
           {machines.length === 0 ? (
             <div className="dash-empty">{t.noWork}</div>
           ) : (
-            <div className="dash-machines">
-              {machines.map((m) => (
-                <div key={m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}`}>
+            <div className={`dash-machines${dense ? " dense" : ""}`}>
+              {pageMachines.map((m) => (
+                <div key={m.code || m.name} className={`dash-mach ${hit.has(m.name) ? "hit" : ""}${m.idle && !(m.st && (m.st.state === "running" || m.st.state === "stopped" || m.st.state === "paused")) ? " idle" : ""}${m.st ? " st-" + m.st.state : ""}`}>
                   <div className="name" style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", letterSpacing: ".03em" }}>{m.code || m.name}{m.op ? <span className="op">{opLabel(m.op, lang)}</span> : null}</div>
                   <div className="big"><CountNumber value={m.weight} format={fmtKg} /><span className="unit">{t.unitKg}</span></div>
                   <div className="meta"><CountNumber value={m.count} format={fmtInt} /> {t.unitPieces} · {fmtHrs(m.seconds, lang)}</div>
-                  <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div>
+                  {m.st ? <MachineState st={m.st} t={t} />
+                    : m.idle ? <div className="dash-idle-note">{t.idle}</div> : null}
+                  {!m.idle ? <div className="dash-bar-track"><div className="dash-bar-fill" style={{ width: `${Math.max(4, (m.weight / maxKg) * 100)}%` }} /></div> : null}
                 </div>
               ))}
             </div>
@@ -403,41 +459,7 @@ export default function Dashboard() {
             {hourly.length === 0 ? (
               <div className="dash-empty">{t.waitingData}</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hourly} margin={{ top: 12, right: 8, left: 4, bottom: 4 }}>
-                  <defs>
-                    <linearGradient id="dashArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#14e39a" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="#14e39a" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="#24302a" vertical={false} />
-                  <XAxis dataKey="hour" stroke="#24302a" tickLine={false}
-                    tick={{ fill: "#9db1a8", fontSize: 14 }} interval="preserveStartEnd" />
-                  {/* แกนซ้าย = ชิ้น (เขียว) · แกนขวา = น้ำหนัก กก. (เหลือง) — เปิด/ปิดได้จาก legend */}
-                  {series.pcs && (
-                    <YAxis yAxisId="pcs" stroke="#24302a" tickLine={false} width={42}
-                      tick={{ fill: "#14e39a", fontSize: 12 }}
-                      tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  )}
-                  {series.kg && (
-                    <YAxis yAxisId="kg" orientation="right" stroke="#24302a" tickLine={false} width={46}
-                      tick={{ fill: "#ffc23d", fontSize: 12 }}
-                      tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : v)} />
-                  )}
-                  {series.pcs && (
-                    <Area yAxisId="pcs" type="monotone" dataKey="pcs" stroke="#14e39a" strokeWidth={3}
-                      fill="url(#dashArea)" dot={{ r: 3, fill: "#14e39a", strokeWidth: 0 }}
-                      activeDot={{ r: 6, fill: "#22e07a", stroke: "#0b0f0d", strokeWidth: 2 }}
-                      connectNulls={false} animationDuration={900} isAnimationActive />
-                  )}
-                  {series.kg && (
-                    <Area yAxisId="kg" type="monotone" dataKey="kg" stroke="#ffc23d" strokeWidth={2.5}
-                      fill="none" dot={{ r: 3, fill: "#ffc23d", strokeWidth: 0 }}
-                      connectNulls={false} isAnimationActive={false} />
-                  )}
-                </AreaChart>
-              </ResponsiveContainer>
+              <SimpleAreaChart data={hourly} showPcs={series.pcs} showKg={series.kg} />
             )}
           </div>
         </div>
@@ -576,6 +598,24 @@ const MLINE_SVG = `
   <g class="ml-box" style="animation-delay:0s"><rect x="1096" y="96" width="40" height="26" rx="3" fill="#2c3a34" stroke="#0d1310"/><rect x="1096" y="106" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
   <g class="ml-box" style="animation-delay:-3s"><rect x="1096" y="70" width="40" height="24" rx="3" fill="#33413a" stroke="#0d1310"/><rect x="1096" y="79" width="40" height="4" fill="#14e39a" opacity=".55"/></g>
 </svg>`;
+
+// ★ รอบ 13: แถบสถานะบนการ์ดเครื่อง · นาทีนับจาก "since" (เวลาเริ่มงาน/เริ่มหยุด/เริ่มพัก)
+function MachineState({ st, t }) {
+  const [, force] = useState(0);
+  useEffect(() => { const i = setInterval(() => force((n) => n + 1), 30000); return () => clearInterval(i); }, []);
+  const mins = st.since ? Math.max(0, Math.floor((Date.now() - new Date(st.since).getTime()) / 60000)) : null;
+  const dur = mins != null ? (mins >= 60 ? `${Math.floor(mins / 60)}:${pad(mins % 60)} ${t.min === "m" ? "h" : "ชม."}` : `${mins} ${t.min}`) : "";
+  const label = { running: t.stRunning, stopped: t.stStopped, paused: t.stPaused, idle: t.stIdle, off: t.stOff }[st.state] || st.state;
+  const icon = { running: "●", stopped: "■", paused: "❚❚", idle: "○", off: "◌" }[st.state] || "•";
+  const detail = st.state === "stopped" ? (st.reason || "") : st.state === "running" ? (st.part_no || "") : "";
+  return (
+    <div className={`dash-st st-${st.state}`} title={[label, detail, dur].filter(Boolean).join(" · ")}>
+      <span className="ic">{icon}</span><span className="lb">{label}</span>
+      {detail ? <span className="dt">{detail}</span> : null}
+      {dur && st.state !== "idle" && st.state !== "off" ? <span className="du">{dur}</span> : null}
+    </div>
+  );
+}
 
 function MachineLine() {
   return <div className="dash-panel dash-line" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
