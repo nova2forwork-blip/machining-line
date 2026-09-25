@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import "./dashboard.css";
 import { getScanLogsBetween, supabase } from "./supabase.js";
-import { machineOpMatrix } from "./metrics.js";
+import { machineOpMatrix, logWeight } from "./metrics.js";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 
@@ -180,17 +180,27 @@ export default function Dashboard() {
   const hitTimer = useRef(0);
   const hourlyRef = useRef([]);                        // อ้างอิงข้อมูลกราฟคงที่ (กันรีอนิเมชันซ้ำ)
   const lastOkRef = useRef(0);                         // เวลาที่ดึงข้อมูลสำเร็จล่าสุด — ใช้บอก "ข้อมูลค้าง/หลุด"
+  // ★ รอบ 11 (B5): ยิงทีละคำขอ — ช้ากว่า 5 วิ เดิมคำขอซ้อนกัน + ผลเก่าที่มาทีหลังทับผลใหม่ (ตัวเลขถอยหลัง)
+  //   ระหว่างรอ มีสัญญาณใหม่ (โพล/เรียลไทม์) = ดึงซ้ำอีก 1 ครั้งหลังจบ (รวมเป็นครั้งเดียว)
+  const inflightRef = useRef(false);
+  const pendingRef = useRef(false);
+  const fetchRef = useRef(null);
 
   const fetchNow = useCallback(async () => {
+    if (inflightRef.current) { pendingRef.current = true; return; }
+    inflightRef.current = true;
     const { from, to } = bangkokTodayRange();
     let data;
     try {
       data = await getScanLogsBetween(from, to);
     } catch {
-      // ดึงข้อมูลพลาด (เน็ต/DB) → อย่าค้างสปินเนอร์ ปล่อยให้โพลรอบหน้าลองใหม่
+      // ดึงข้อมูลพลาด (เน็ต/DB) → คงข้อมูลเดิมไว้ (ไม่ล้างเป็น 0) · ไม่แตะ lastOkRef → จอขึ้น "ข้อมูลค้าง" เอง
       setBooted(true);
+      inflightRef.current = false;
       return;
     }
+    inflightRef.current = false;
+    if (pendingRef.current) { pendingRef.current = false; setTimeout(() => fetchRef.current && fetchRef.current(), 250); }
     const rows = Array.isArray(data) ? data : [];
     setLogs(rows);
     setBooted(true);
@@ -214,6 +224,7 @@ export default function Dashboard() {
     }
     seenRef.current = keys;
   }, []);
+  fetchRef.current = fetchNow;
 
   // จอโชว์ไม่มีคนกด → มีเวอร์ชันใหม่ก็รีโหลดเงียบๆ เอง (หน่วง 4 วิ กันจังหวะกำลังอัปเดต)
   const updateReady = useUpdateReady();
@@ -258,7 +269,7 @@ export default function Dashboard() {
   // บนจอเปิดทั้งวัน) · ค่าจริงเปลี่ยนแค่ตอนโพล 5 วิ
   const { totalPieces, totalKg, totalSec, scanCount, machines, maxKg, feed } = useMemo(() => {
     const tPieces = logs.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-    const tKg = logs.reduce((s, l) => s + (Number(l.weight) || 0), 0);
+    const tKg = logs.reduce((s, l) => s + logWeight(l), 0);   // ★ รอบ 11: สูตรเดียวกับการ์ดเครื่อง (น้ำหนัก 0 ตอนสแกน → น้ำหนัก/ชิ้นปัจจุบัน)
     const tSec = logs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
     const matrix = machineOpMatrix(logs);
     const mach = matrix.machines.map((m) => {
@@ -284,7 +295,7 @@ export default function Dashboard() {
     for (const l of logs) {
       const h = bkkHour(l.scanned_at);
       perHour[h] += Number(l.quantity) || 0;
-      perHourKg[h] += Number(l.weight) || 0;
+      perHourKg[h] += logWeight(l);
     }
     const active = logs.map((l) => bkkHour(l.scanned_at));
     let startH = active.length ? Math.min(...active) : Math.max(0, curH - 6);
