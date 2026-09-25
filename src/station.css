@@ -1034,3 +1034,37 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-oppick-btn.sel:disabled { opacity: .8; }
 /* L4: ป้ายลูกที่สแกนแล้ว (แพ็ก) แตะง่ายขึ้นสำหรับถุงมือ */
 .asw-chip { font-size: 13px; padding: 7px 12px; min-height: 36px; display: inline-flex; align-items: center; }
+
+/* ── รอบ 12 (D): เอาชิปออกพลาด → ปุ่มเอาคืน 6 วิ ── */
+.asw-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: #2a2412; border: 1px solid #8a6a1e; color: #ffe2a3; border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 8px; }
+.asw-undo button { background: #ffc23d; color: #1b1405; border: 0; border-radius: 8px; font-weight: 800; font-size: 14px; padding: 8px 14px; min-height: 40px; cursor: pointer; }
+
+/* ── รอบ 13 (2026-09-25) ───────────────────────────────────────────────── */
+/* ป็อปอัปแจ้งปัญหา: ปุ่ม "พักงาน" + สลับ "รอบนี้ช้า ↔ เครื่องหยุดกลางงาน" */
+.stn-rep-modes { display: flex; gap: 1.2vh; margin: 1.4vh 0 .2vh; flex-wrap: wrap; }
+.stn-rep-modes:empty { display: none; }
+.stn-rep-mode { flex: 1 1 220px; display: flex; align-items: center; gap: 1.2vh; text-align: left; cursor: pointer;
+  border: 2px dashed var(--st-line); border-radius: 1.4vh; background: #f7f9fc; padding: 1.5vh 1.6vh;
+  font-family: inherit; color: var(--st-ink); }
+.stn-rep-mode .em { font-size: 3vh; flex-shrink: 0; }
+.stn-rep-mode b { display: block; font-size: 1.9vh; }
+.stn-rep-mode small { display: block; font-size: 1.45vh; color: var(--st-muted); margin-top: .2vh; }
+.stn-rep-mode.brk { border-color: #7aa7e8; background: #eef4ff; }
+.stn-rep-mode.brk b { color: #1f4f9a; }
+.stn-rep-mode.on.stop { border-style: solid; border-color: var(--st-alert); background: #fdeaea; }
+.stn-rep-mode:disabled { opacity: .5; cursor: not-allowed; }
+.stn-rep-mode:active { transform: scale(.99); }
+/* บังจอ "พักงาน" (ฟ้า) · ข้อความรอง */
+.stn-down.brk { background: rgba(236,243,255,.97); }
+.stn-down.brk .ttl { color: #1f4f9a; }
+.stn-down .sub { font-size: 1.7vh; color: var(--st-muted); max-width: 46ch; line-height: 1.45; }
+.stn-down .sub.q { color: #8a5c12; font-weight: 600; }
+/* ยอดวันนี้แยกขั้นตอน (ใต้ KPI) */
+.stn-dayops { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .6vh .8vh;
+  border-top: 1px solid var(--st-line); padding-top: 1vh; margin-top: .6vh; }
+.stn-dayops .lbl { font-size: 1.2vh; font-weight: 700; color: var(--st-muted); text-transform: uppercase; letter-spacing: .04em; margin-right: .2vh; }
+.stn-dayop { font-size: 1.6vh; background: #f3f5f8; border: 1px solid var(--st-line); border-radius: 1vh; padding: .4vh .9vh; white-space: nowrap; }
+.stn-dayop b { font-weight: 700; color: var(--st-ink); }
+.stn-dayop em { font-style: normal; color: #8a5c12; font-size: 1.35vh; }
+.stn-build { margin-left: 8px; font-size: 10px; opacity: .55; }
