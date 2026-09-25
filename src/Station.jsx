@@ -10,7 +10,8 @@ import {
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
-  reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason, listMachineReports,
+  getOpenDowntime, listMachineReports,
+  stationStop, stationReady, stationSlowReason, onStationEvents, stationEventsPending, stationPing, getStationDayOps, getTypicalTime, appBuildId,
   reportActiveJob, clearActiveJobNow,
   getStationScanInfo, queueForeignOwners, myQueueCount, addRejected, releaseMdf,
 } from "./supabase.js";
@@ -50,11 +51,12 @@ const STN_WORK_REASONS = [
 ];
 
 // ป็อปอัพเลือกเหตุผล — mode "stop" = แจ้งเครื่องหยุด · "work" = รายงานการทำงาน (แนบกับสแกน)
-function StnReportModal({ mode, onSubmit, onClose, busy }) {
+function StnReportModal({ mode: mode0, onSubmit, onClose, busy, midJob = false, onBreak }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
   const [pick, setPick] = useState(null);
   const [note, setNote] = useState("");
+  const [mode, setMode] = useState(mode0);      // ★ รอบ 13: กลางงานสลับเป็น "เครื่องหยุด" ได้
   const stop = mode === "stop";
   const reasons = stop ? STN_STOP_REASONS : STN_WORK_REASONS;
   const has = !!(pick || note.trim());
@@ -71,6 +73,22 @@ function StnReportModal({ mode, onSubmit, onClose, busy }) {
           </div>
           <button className="stn-rep-close" onClick={onClose} aria-label="close">✕</button>
         </div>
+        {/* ★ รอบ 13: พักงาน (หยุดเวลา) · กลางงาน: สลับ "รอบนี้ช้า" ↔ "เครื่องหยุด" */}
+        <div className="stn-rep-modes">
+          {onBreak ? (
+            <button type="button" className="stn-rep-mode brk" disabled={busy} onClick={onBreak}>
+              <span className="em">☕</span>
+              <span><b>{t("พักงาน", "Take a break")}</b><small>{midJob ? t("หยุดเวลาไว้ · กลับมากด ทำงานต่อ", "pauses the timer · press Resume when back") : t("พัก/เบรก · ไม่นับเป็นเครื่องหยุด", "break · not counted as downtime")}</small></span>
+            </button>
+          ) : null}
+          {midJob ? (
+            <button type="button" className={`stn-rep-mode ${stop ? "on stop" : ""}`} onClick={() => { setMode(stop ? "work" : "stop"); setPick(null); }}>
+              <span className="em">{stop ? "⚠️" : "🛑"}</span>
+              <span><b>{stop ? t("รอบนี้ช้า (แนบเหตุผล)", "Slow round (reason)") : t("เครื่องหยุดกลางงาน", "Machine stopped mid-job")}</b>
+                <small>{stop ? t("กลับไปเลือกเหตุผลรอบช้า", "back to slow-round reasons") : t("หยุดเวลา + แจ้งออฟฟิศ", "pauses the timer + tells the office")}</small></span>
+            </button>
+          ) : null}
+        </div>
         <div className="stn-rep-grid">
           {reasons.map((r) => (
             <button key={r.th} type="button"
@@ -86,13 +104,91 @@ function StnReportModal({ mode, onSubmit, onClose, busy }) {
         <div className="stn-rep-actions">
           <button type="button" className="stn-rep-btn cancel" onClick={onClose}>{t("ยกเลิก", "Cancel")}</button>
           <button type="button" className={`stn-rep-btn ${stop ? "go-stop" : "go-work"}`} disabled={!has || busy}
-            onClick={() => onSubmit(pick || "อื่นๆ", note.trim())}>
+            onClick={() => onSubmit(pick || "อื่นๆ", note.trim(), mode)}>
             {stop ? t("บันทึกการหยุด", "Report stop") : t("ตั้งเหตุผล → SCAN", "Set reason → SCAN")}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+// ─── ★ รอบ 13: กันจอดับระหว่างใช้งาน (Screen Wake Lock) ─────────────────────────
+//   ขอค้างจอไว้ตลอดที่เปิดหน้าเครื่อง · สลับแอป/ล็อกจอแล้วกลับมา = ขอใหม่เอง · เบราว์เซอร์ไม่รองรับ = เงียบ
+function useWakeLock() {
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return undefined;
+    let lock = null, stopped = false, asking = false;
+    const req = async () => {
+      if (stopped || lock || asking || document.visibilityState !== "visible") return;
+      asking = true;
+      try {
+        lock = await navigator.wakeLock.request("screen");
+        lock.addEventListener?.("release", () => { lock = null; });
+        if (stopped) { try { lock.release(); } catch { /* ignore */ } lock = null; }
+      } catch { lock = null; } finally { asking = false; }
+    };
+    const onVis = () => { if (document.visibilityState === "visible") req(); };
+    req();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pointerdown", req);          // บางเครื่องต้องมีการแตะก่อน
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pointerdown", req);
+      try { lock && lock.release(); } catch { /* ignore */ }
+    };
+  }, []);
+}
+
+// ─── ★ รอบ 13: เครื่องสแกน USB / Bluetooth (แบบคีย์บอร์ด — keyboard wedge) ───────────
+//   ตัวสแกนพิมพ์ตัวอักษรเร็วมาก (< ~35 มิลลิวินาที/ตัว) แล้วกด Enter/Tab → จับเป็น "สแกน 1 ครั้ง"
+//   คนพิมพ์ปกติช้ากว่านี้มาก → ไม่โดนดัก · ถ้าตัวอักษรหลุดเข้าช่องกรอกที่โฟกัสอยู่ → คืนค่าเดิมให้
+function setNativeValue(el, value) {
+  try {
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  } catch { /* ignore */ }
+}
+function useWedgeScanner(onCode) {
+  const cbRef = useRef(onCode);
+  cbRef.current = onCode;
+  useEffect(() => {
+    let buf = "", first = 0, last = 0, el = null, elVal = null, idleT = null;
+    const AVG_MS = 35, MIN_LEN = 4;
+    const isBurst = (now) => buf.length >= MIN_LEN && (last - first) / Math.max(1, buf.length - 1) < AVG_MS && now - last < 150;
+    const fire = () => {
+      const code = buf.trim(); const target = el, before = elVal;
+      buf = ""; el = null; elVal = null; first = 0; last = 0;
+      if (target && before != null && target.value !== before) setNativeValue(target, before);
+      if (code) { try { cbRef.current && cbRef.current(code); } catch (e) { console.warn("wedge scan", e); } }
+    };
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const now = performance.now();
+      if (e.key === "Enter" || e.key === "Tab") {
+        clearTimeout(idleT);
+        if (isBurst(now)) { e.preventDefault(); e.stopImmediatePropagation(); fire(); }
+        else { buf = ""; el = null; elVal = null; }
+        return;
+      }
+      if (!e.key || e.key.length !== 1) return;              // Shift/CapsLock ฯลฯ — ไม่นับ ไม่รีเซ็ต
+      if (!buf || now - last > 80) {                          // เริ่มชุดใหม่
+        buf = ""; first = now;
+        const a = document.activeElement;
+        el = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") ? a : null;
+        elVal = el ? el.value : null;
+      }
+      buf += e.key; last = now;
+      // สแกนเนอร์ที่ไม่ส่ง Enter ท้าย → เงียบ 120 มิลลิวินาที + ยาวพอ + เร็วพอ = ถือว่าจบ 1 ครั้ง
+      clearTimeout(idleT);
+      idleT = setTimeout(() => { if (buf.length >= 6 && isBurst(last + 1)) fire(); else if (performance.now() - last > 100) { buf = ""; el = null; elVal = null; } }, 120);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); clearTimeout(idleT); };
+  }, []);
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -262,6 +358,10 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
       }
       setErr(res && res.error === "offline_first"
         ? "บัญชีนี้ยังไม่เคยล็อกอินในเครื่องนี้ — ต้องล็อกอินตอนมีเน็ต 1 ครั้งก่อน แล้วครั้งต่อไปจะออฟไลน์ได้"
+        : res && res.error === "locked"
+          ? "ลองรหัสผิดหลายครั้ง — ระบบพักบัญชีนี้ไว้ 5 นาที แล้วลองใหม่"
+        : res && res.error === "offline_expired"
+          ? "ไม่ได้ล็อกอินตอนมีเน็ตมานานกว่า 14 วัน — ต่อเน็ตแล้วล็อกอินใหม่ 1 ครั้ง"
         : "รหัสเครื่อง/พนักงาน หรือรหัสผ่านไม่ถูกต้อง");
       return;
     }
@@ -323,7 +423,22 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ── รายงานปัญหาหน้าเครื่อง ──
   const [reportOpen, setReportOpen] = useState(null);   // null | 'stop' | 'work'
   const [slowArmed, setSlowArmed] = useState(null);     // { reason, note } — แนบกับสแกนถัดไป (ค้างจนกดยกเลิก)
-  const [downStop, setDownStop] = useState(null);       // { id, reason } — เครื่องกำลังหยุด
+  // ★ รอบ 13: "พัก/หยุด" (hold) = { kind: 'stop'|'break', reason, since(ms), id?, queued? }
+  //   stop = แจ้งเครื่องหยุด (บันทึกที่ server · ออฟไลน์ = เข้าคิว) · break = พักงาน (หยุดเวลา · ไม่บันทึกเป็นเครื่องหยุด)
+  //   ระหว่างมีงานอยู่ → เวลาเดินเครื่องหยุดนับ (process_seconds ไม่รวมช่วงพัก/หยุด) · เก็บในเครื่อง → รีโหลด/ออฟไลน์ไม่หาย
+  const HOLD_KEY = `mls-stn-hold:${machine?.id || "none"}`;
+  const [hold, setHoldState] = useState(() => {
+    try { const h = JSON.parse(localStorage.getItem(`mls-stn-hold:${user.machine?.id || "none"}`) || "null"); return h && (h.kind === "stop" || h.kind === "break") ? h : null; } catch { return null; }
+  });
+  const holdRef = useRef(hold);
+  const setHold = (h) => {
+    holdRef.current = h; setHoldState(h);
+    try { if (h) localStorage.setItem(HOLD_KEY, JSON.stringify(h)); else localStorage.removeItem(HOLD_KEY); } catch { /* ignore */ }
+  };
+  const downStop = hold && hold.kind === "stop" ? hold : null;     // เครื่องกำลังหยุด (ชื่อเดิม — ใช้ต่อทั้งไฟล์)
+  const onBreak = hold && hold.kind === "break" ? hold : null;     // พักงานอยู่
+  const [evPending, setEvPending] = useState(() => stationEventsPending(user.machine?.id || null));
+  useEffect(() => onStationEvents(() => setEvPending(stationEventsPending(machine?.id || null))), [machine?.id]);
   const [reportBusy, setReportBusy] = useState(false);
   const [stnReports, setStnReports] = useState([]);     // รายการรายงานวันนี้ของเครื่องนี้ (โชว์ท้าย DAILY REPORT)
   // ดึงรายการ "รายงานวันนี้" ของเครื่องนี้ (ไม่โชว์ระยะเวลาหยุด) — เรียกตอนเข้า + หลังรายงาน/สแกน
@@ -343,7 +458,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   useEffect(() => {
     let ok = true;
     if (machine?.id) {
-      getOpenDowntime(machine.id).then((r) => { if (ok && r && r.open) setDownStop({ id: r.id, reason: r.reason }); }).catch(() => {});
+      // ★ รอบ 13: server = ความจริง เว้นแต่ในเครื่องยังมีแจ้งหยุด/พร้อมที่ยังไม่ได้ส่ง (ออฟไลน์) · อ่านไม่ได้ (ออฟไลน์) = ใช้ของในเครื่อง
+      getOpenDowntime(machine.id).then((r) => {
+        if (!ok || !r || r.ok === false) return;
+        if (stationEventsPending(machine.id) > 0) return;
+        const cur = holdRef.current;
+        if (r.open) {
+          if (!cur || cur.kind !== "stop" || cur.id !== r.id) {
+            const since = r.started_at ? new Date(r.started_at).getTime() : Date.now();
+            beginHoldRef.current({ kind: "stop", id: r.id, reason: r.reason, since: cur && cur.kind === "stop" ? cur.since : since });
+          }
+        } else if (cur && cur.kind === "stop") {
+          endHoldRef.current();                        // ปิดไปแล้วที่ server (เช่น ออฟฟิศ/เครื่องอื่นกดพร้อม) → ล้างในเครื่อง
+        }
+      }).catch(() => {});
       loadReports();
     }
     return () => { ok = false; };
@@ -357,6 +485,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [allOps, setAllOps] = useState([]);           // ★ ทุกขั้นตอนของบัญชี (ยังไม่กรอง) — ใช้บอกว่าบัญชีนี้เป็นแผนกอะไร
   const [opsLoaded, setOpsLoaded] = useState(false);  // โหลดรายการขั้นตอนเสร็จหรือยัง (กันเด้ง redirect ก่อนรู้ข้อมูล)
   const [daily, setDaily] = useState({ quantity: 0, weight: 0, process_seconds: 0 });
+  const [dayOps, setDayOps] = useState(null);   // ★ รอบ 13: ยอดวันนี้แยกขั้นตอน { ops:[{operation_id,name,qty}], pending:{opId:qty} }
   const [rows, setRows] = useState([]);
   const [newRowId, setNewRowId] = useState(null);
   const [loadErr, setLoadErr] = useState("");
@@ -404,6 +533,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // ── load today's records for this machine ──────────────────────────────
   const reload = useCallback(async () => {
+    getStationDayOps().then((d) => setDayOps(d)).catch(() => {});   // ★ รอบ 13: ยอดแยกขั้นตอน (ไม่บล็อก)
     const res = await getMachineDay();
     // ถูกเตะออก (บัญชีถูกใช้ล็อกอินที่เครื่องอื่น) — เฉพาะตอนออนไลน์ที่เซิร์ฟเวอร์ตอบ unauthorized
     if (res && res.ok === false && res.reason === "unauthorized"
@@ -563,14 +693,42 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // ── timer ───────────────────────────────────────────────────────────────
   // ยึด "เวลาเริ่มจริง (startTsRef)" เป็นหลัก → เวลาไม่ดริฟต์ + กู้ต่อได้เป๊ะตอนโหลดแอปใหม่
+  // ★ รอบ 13: เวลาเดินเครื่อง = ตอนนี้ − เวลาเริ่ม − ช่วงพัก/หยุด (pauseRef) · พักอยู่ = นาฬิกาหยุดนิ่ง
+  const pauseRef = useRef({ total: 0, since: null });   // ms ที่พักไปแล้ว (งานนี้) + เริ่มพักรอบปัจจุบันเมื่อไร
+  function activeSecs(now = Date.now()) {
+    if (startTsRef.current == null) return Number(elapsed) || 0;
+    const p = pauseRef.current;
+    const paused = (Number(p.total) || 0) + (p.since ? Math.max(0, now - p.since) : 0);
+    return Math.max(0, Math.floor((now - startTsRef.current - paused) / 1000));
+  }
   function startTimer() {
     clearInterval(timerRef.current);
     if (startTsRef.current == null) startTsRef.current = Date.now() - (Number(elapsed) || 0) * 1000;
-    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTsRef.current) / 1000)));
+    const tick = () => setElapsed(activeSecs());
     tick();
+    if (pauseRef.current.since) { timerRef.current = null; return; }   // พักอยู่ → ไม่เดิน
     timerRef.current = setInterval(tick, 1000);
   }
-  function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; startTsRef.current = null; }
+  function stopTimer() { clearInterval(timerRef.current); timerRef.current = null; startTsRef.current = null; pauseRef.current = { total: 0, since: null }; }
+  // เริ่ม/จบ พัก-หยุด: มีงานอยู่ → หยุดนับเวลา · จบ → นับต่อ (ช่วงพักไม่ถูกนับเป็นเวลาเดินเครื่อง)
+  function beginHold(h) {
+    setHold(h);
+    if (startTsRef.current != null && !pauseRef.current.since) {
+      pauseRef.current = { ...pauseRef.current, since: h.since || Date.now() };
+      clearInterval(timerRef.current); timerRef.current = null;
+      setElapsed(activeSecs());
+    }
+  }
+  function endHold() {
+    setHold(null);
+    const p = pauseRef.current;
+    if (p.since) {
+      pauseRef.current = { total: (Number(p.total) || 0) + Math.max(0, Date.now() - p.since), since: null };
+      if (startTsRef.current != null) startTimer();
+    }
+  }
+  const beginHoldRef = useRef(beginHold); beginHoldRef.current = beginHold;
+  const endHoldRef = useRef(endHold); endHoldRef.current = endHold;
   useEffect(() => () => stopTimer(), []);
   // ปิดกล้องถาวรตอนออกจากหน้าเครื่อง (ออกจากระบบ/ถูกเตะ) — ระหว่างใช้งานกล้องเปิดค้างไว้ตัวเดียว
   useEffect(() => () => releaseSharedCamera(), []);
@@ -591,11 +749,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         unit, op, progress, dupCount,
         opSel: [...opSel],                  // ★ ขั้นตอนที่เลือกไว้ (หลายอัน) — กันรีโหลดแล้วกลับไปเลือกทุกอันเอง
         startTs: startTsRef.current,        // เวลาเริ่มจริง (สแกนรอบ 1) → คำนวณเวลาเดินเครื่องต่อได้
+        pause: pauseRef.current,            // ★ รอบ 13: ช่วงพัก/หยุดของงานนี้ (ไม่นับเป็นเวลาเดินเครื่อง)
         clientIdMap: clientIdMapRef.current || null,   // ★ client_id ต่อขั้นตอน — กู้กลับได้ ถ้ารีโหลดหลังกด OK แล้วตอบกลับหาย (กัน DB บันทึกซ้ำ)
         savedAt: Date.now(),
       }));
     } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
-  }, [step, materialLen, qty, status, statusLock, unit, op, progress, dupCount, opSel]);
+  }, [step, materialLen, qty, status, statusLock, unit, op, progress, dupCount, opSel, hold]);
 
   // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
   useEffect(() => {
@@ -622,6 +781,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           if (d.clientIdMap && typeof d.clientIdMap === "object") clientIdMapRef.current = d.clientIdMap;   // ★ กู้ client_id ต่อขั้นตอน → กด OK ซ้ำหลังรีโหลด = ตัวเดิม → DB dedup ไม่บันทึกซ้ำ
           unitRef.current = d.unit ?? null;
           if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
+          // ★ รอบ 13: ช่วงพัก — ยังพักอยู่ (hold ในเครื่อง) = นาฬิกาหยุดต่อ · ไม่พักแล้ว = ปิดช่วงพักตอนนี้แล้วเดินต่อ
+          if (d.pause && typeof d.pause === "object") {
+            const pz = { total: Number(d.pause.total) || 0, since: d.pause.since || null };
+            if (pz.since && !holdRef.current) { pz.total += Math.max(0, Date.now() - pz.since); pz.since = null; }
+            pauseRef.current = pz;
+          } else if (holdRef.current && d.startTs) {
+            pauseRef.current = { total: 0, since: holdRef.current.since || Date.now() };
+          }
           // กล้องไม่เปิดเองตอนกู้ (SCAN → REC)
           const st = d.step === STEP.SCAN ? STEP.REC : d.step;
           if (d.unit && d.startTs) {
@@ -679,6 +846,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (!restoredRef.current || !opsLoaded) return;
     restoredRef.current = false;
     refreshLockRef.current && refreshLockRef.current();
+    if (unitRef.current) loadTypical(unitRef.current);   // ★ รอบ 13: กู้งานค้าง → โหลดเวลาปกติต่อชิ้นด้วย
   }, [opsLoaded, primaryOp]);
   useEffect(() => {
     const on = () => { if (unitRef.current) setTimeout(() => refreshLockRef.current && refreshLockRef.current(), 1500); };
@@ -700,24 +868,47 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   // ── รายงานปัญหา: เดินเครื่องอยู่ = "รายงานการทำงาน" · ยังไม่เริ่ม = "แจ้งเครื่องหยุด" ──
   function openReport() {
-    if (downStop) return;                       // หยุดอยู่ → ให้กด "พร้อมทำงาน" ก่อน
+    if (hold) return;                           // หยุด/พักอยู่ → ให้กด "พร้อมทำงาน / ทำงานต่อ" ก่อน
     setReportOpen(step !== STEP.IDLE ? "work" : "stop");
   }
+  // ★ รอบ 13: แจ้งหยุดได้ทั้ง "ก่อนเริ่มงาน" และ "กลางงาน" (เวลาหยุดนับ) · ออฟไลน์ = เข้าคิว ส่งเมื่อเน็ตกลับ
   async function submitStop(reason, note) {
     if (reportBusy) return; setReportBusy(true);
     try {
-      const r = await reportMachineStop(machine?.id, reason, note, op?.id || null);
-      setDownStop({ id: r.id, reason });
+      const r = await stationStop({ machineId: machine?.id, reason, note, operationId: op?.id || null });
+      if (r && r.ok === false) {
+        flash(r.reason === "forbidden" ? t("บัญชีนี้แจ้งหยุดเครื่องนี้ไม่ได้", "This account can't report this machine")
+          : t("แจ้งไม่สำเร็จ ลองใหม่", "Report failed, try again"), "warn");
+        return;
+      }
+      beginHold({ kind: "stop", id: r?.id || null, reason, since: Date.now(), queued: !!r?.queued });
       setReportOpen(null);
-      flash(t("แจ้งเครื่องหยุดแล้ว", "Machine stop reported"), "ok");
+      flash(r?.queued ? t("แจ้งเครื่องหยุดแล้ว (ออฟไลน์ — จะส่งให้เองเมื่อเน็ตกลับ)", "Stop recorded (offline — will send when back online)")
+        : t("แจ้งเครื่องหยุดแล้ว", "Machine stop reported"), "ok");
       loadReports();
     } catch { flash(t("แจ้งไม่สำเร็จ ลองใหม่", "Report failed, try again"), "warn"); }
     finally { setReportBusy(false); }
   }
+  // พักงาน (เบรก/พักกินข้าว) — หยุดเวลาไว้ ไม่บันทึกเป็นเครื่องหยุด
+  function startBreak() {
+    if (hold) return;
+    beginHold({ kind: "break", reason: t("พักงาน", "Break"), since: Date.now() });
+    setReportOpen(null);
+    flash(step !== STEP.IDLE ? t("พักงาน — หยุดเวลาไว้แล้ว", "On break — timer paused") : t("พักงาน", "On break"), "ok");
+  }
   async function markReady() {
-    if (reportBusy) return; setReportBusy(true);
-    try { await machineReady(machine?.id); setDownStop(null); flash(t("เครื่องพร้อมทำงาน", "Machine ready"), "ok"); loadReports(); }
-    catch { flash(t("ทำรายการไม่สำเร็จ ลองใหม่", "Failed, try again"), "warn"); }
+    if (reportBusy) return;
+    if (onBreak) { endHold(); flash(t("ทำงานต่อ", "Back to work"), "ok"); return; }
+    setReportBusy(true);
+    try {
+      const r = await stationReady({ machineId: machine?.id });
+      if (r && r.ok === false && r.reason !== "retry_exhausted") {
+        flash(t("ทำรายการไม่สำเร็จ ลองใหม่", "Failed, try again"), "warn"); return;
+      }
+      endHold();
+      flash(r?.queued ? t("เครื่องพร้อมทำงาน (ออฟไลน์ — จะส่งให้เอง)", "Machine ready (offline — will send later)") : t("เครื่องพร้อมทำงาน", "Machine ready"), "ok");
+      loadReports();
+    } catch { flash(t("ทำรายการไม่สำเร็จ ลองใหม่", "Failed, try again"), "warn"); }
     finally { setReportBusy(false); }
   }
   function submitWork(reason, note) {           // ตั้งเหตุผลค้างไว้ → บันทึกตอน SCAN (ผูกกับชิ้น)
@@ -730,17 +921,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ต้องกรอกความยาววัสดุก่อน ถึงจะกด Start ได้
   const matReady = materialLen !== "" && Number(materialLen) > 0;
   const prevStepRef = useRef(STEP.REC);
+  const holdMsg = () => (downStop ? t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first")
+    : t("พักงานอยู่ — กด \"ทำงานต่อ\" ก่อน", "On break — press \"Resume\" first"));
+  // START (ใช้ร่วมกับสแกนเนอร์ USB: สแกนตอนยังไม่เริ่ม = เริ่มงานให้เลย) · คืน false = ยังเริ่มไม่ได้ (บอกเหตุผลแล้ว)
+  function beginJob() {
+    if (!matReady) { errorBeep(); flash(t("กรอกความยาววัสดุ (Material Length) ก่อน", "Enter the Material Length first"), "warn"); return false; }
+    if (machineOps.length > 1 && !op) { errorBeep(); flash(t("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน", "Pick the operation first"), "warn"); return false; }
+    warmAudio();
+    // ★ START = เปิดกล้องให้สแกน (ยังไม่จับเวลา) · เวลาเริ่มนับตอนสแกนรอบ 1
+    clientIdRef.current = null; clientIdMapRef.current = null;
+    stopTimer(); setElapsed(0);
+    setUnit(null); unitRef.current = null; setProgress(null); setDupCount(0); setQty(0); setStatus(null);
+    setStep(STEP.SCAN);
+    return true;
+  }
   function onRecord() {
-    if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
+    if (hold) { flash(holdMsg(), "warn"); return; }
     if (step === STEP.IDLE) {
-      if (!matReady) { flash(t("กรอกความยาววัสดุ (Material Length) ก่อน", "Enter the Material Length first"), "warn"); return; }
-      if (machineOps.length > 1 && !op) { flash(t("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน", "Pick the operation first"), "warn"); return; }
-      warmAudio();
-      // ★ START = เปิดกล้องให้สแกน (ยังไม่จับเวลา) · เวลาเริ่มนับตอนสแกนรอบ 1
-      clientIdRef.current = null; clientIdMapRef.current = null;
-      stopTimer(); setElapsed(0);
-      setUnit(null); unitRef.current = null; setProgress(null); setDupCount(0); setQty(0); setStatus(null);
-      setStep(STEP.SCAN);
+      beginJob();
     } else if (step !== STEP.CANCEL) {
       // pressing RECORD again while active → ask to cancel (จำ step เดิมไว้กลับ)
       prevStepRef.current = step;
@@ -759,7 +957,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function tickBeep() { beep(880, 45, 0.14); }                     // เสียงเบาๆ = สแกนเจอชิ้นงาน
 
   async function onScan() {
-    if (downStop) { flash(t("เครื่องกำลังหยุด — กด \"พร้อมทำงาน\" ก่อน", "Machine is stopped — press \"Ready\" first"), "warn"); return; }
+    if (hold) { flash(holdMsg(), "warn"); return; }
     if (step === STEP.IDLE) { flash(t("กรอกความยาว แล้วกด START ก่อน", "Enter the length, then press START"), "warn"); return; }
     // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง (toggle) · งาน/เวลาที่เริ่มไว้ยังอยู่
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
@@ -843,7 +1041,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (!(await loadScannedUnit(u))) return false;
     if (gen !== jobGenRef.current) return false;   // ยกเลิกไปแล้วระหว่างรอ → ไม่เริ่มงานผี
     setQty(0);                                // จำนวนใส่ตอนสแกนรอบ 2
+    pauseRef.current = { total: 0, since: null };
     startTsRef.current = t0; startTimer();   // ★ เริ่มจับเวลาตอนสแกนรอบ 1
+    loadTypical(u);                          // ★ รอบ 13: เวลาปกติต่อชิ้นของเบอร์นี้ (ไว้เตือนตอนกด OK)
     setStep(STEP.REC);
     flash(t("เริ่มจับเวลาแล้ว — ยกชิ้นงานขึ้นเครื่อง · ทำเสร็จแล้วกด SCAN สแกนอีกครั้ง",
             "Timer started — load the piece · when done press SCAN and scan again"), "ok");
@@ -918,6 +1118,33 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // คนงานเลือกโปรเจคแล้ว → ใช้ชิ้นตัวแทนของโปรเจคนั้น
   async function onPickUnit(u) { if (u) { setBusy(false); await showScannedUnit(u); } }
 
+  // ★ รอบ 13: เวลาปกติต่อชิ้น (ค่ากลาง 40 ครั้งล่าสุดของเบอร์นี้ × ขั้นตอนหลัก) → เตือนเวลาผิดปกติตอนกด OK
+  const typicalRef = useRef(null);   // { key, v:{ n, median } }
+  const durWarnedRef = useRef(null); // เตือนแล้วสำหรับงานไหน (เวลาเริ่ม) — เตือนครั้งเดียวต่องาน
+  function loadTypical(u) {
+    const pm = u?.part_master_id || u?.part_master?.id || null;
+    const opId = primaryOp?.id || op?.id || user.operation?.id || null;
+    const key = `${pm}|${opId}`;
+    typicalRef.current = { key, v: null };
+    if (!pm || !opId) return;
+    getTypicalTime(pm, opId).then((v) => { if (typicalRef.current && typicalRef.current.key === key) typicalRef.current = { key, v }; }).catch(() => {});
+  }
+  // คืน null = ปกติ · { kind:'fast'|'slow', secs, per, median } = ผิดปกติ
+  function durationIssue() {
+    const secs = activeSecs();
+    const q = Math.max(1, Number(qty) || 1);
+    const per = secs / q;
+    const v = typicalRef.current && typicalRef.current.v;
+    if (v && v.n >= 5 && v.median > 0) {
+      if (per < v.median / 4 && v.median * q - secs > 30) return { kind: "fast", secs, per, median: v.median };
+      if (per > v.median * 4 && secs - v.median * q > 600) return { kind: "slow", secs, per, median: v.median };
+      return null;
+    }
+    if (secs < 2) return { kind: "fast", secs, per, median: null };                  // ไม่มีประวัติ: สแกน 2 รอบติดกันทันที = ลืมสแกนตอนเริ่ม
+    if (secs > 8 * 3600) return { kind: "slow", secs, per, median: null };
+    return null;
+  }
+
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
   async function confirmPart() {
     if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
@@ -945,6 +1172,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     }))) return;
     // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
     //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
+    // ★ รอบ 13: เวลาผิดปกติ (เร็ว/ช้ากว่าปกติมาก) → ถามก่อนบันทึก (ครั้งเดียวต่องาน · มีเหตุผลรอบช้าแล้ว = ไม่ถามเรื่องช้า)
+    const iss = durationIssue();
+    if (iss && durWarnedRef.current !== startTsRef.current && !(iss.kind === "slow" && slowArmed)) {
+      durWarnedRef.current = startTsRef.current;
+      const typ = iss.median ? t(` · ปกติ ~${hms(Math.round(iss.median))} ต่อชิ้น`, ` · usually ~${hms(Math.round(iss.median))} per piece`) : "";
+      const msg = iss.kind === "fast"
+        ? t(`⏱ เวลาเร็วผิดปกติ: ${hms(iss.secs)} สำหรับ ${qty} ชิ้น${typ}\n\nลืมสแกนรอบแรกตอนเริ่มงาน หรือใส่จำนวนผิดหรือเปล่า?`,
+            `⏱ Unusually fast: ${hms(iss.secs)} for ${qty} pc${typ}\n\nDid you forget the first scan at the start, or enter the wrong quantity?`)
+        : t(`⏱ เวลานานผิดปกติ: ${hms(iss.secs)} สำหรับ ${qty} ชิ้น${typ}\n\nลืมกด "พักงาน/แจ้งหยุด" หรือเปล่า? ถ้ารอบนี้ช้าจริง กด "กลับไปตรวจ" แล้วใช้ปุ่ม แจ้งปัญหา → ใส่เหตุผล`,
+            `⏱ Unusually long: ${hms(iss.secs)} for ${qty} pc${typ}\n\nDid you forget "Break/Stop"? If this round really was slow, press "Go back" and use REPORT → reason`);
+      if (!(await askConfirm({ title: t("ตรวจเวลาก่อนบันทึก", "Check the time"), message: msg, tone: "warn",
+        confirmText: t("บันทึกตามนี้", "Save anyway"), cancelText: t("กลับไปตรวจ", "Go back") }))) return;
+    }
     doSave();
   }
 
@@ -980,7 +1220,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         qr: unit.qr_code,
         quantity: qty,
         materialLengthMm: materialLen === "" ? null : Number(materialLen),
-        processSeconds: startTsRef.current ? Math.max(0, Math.floor((Date.now() - startTsRef.current) / 1000)) : elapsed,   // ★ คิดจากเวลาเริ่มจริง (ไม่พึ่งนาฬิกาบนจอ)
+        processSeconds: activeSecs(),   // ★ คิดจากเวลาเริ่มจริง (ไม่พึ่งนาฬิกาบนจอ) · ★ รอบ 13: ไม่รวมช่วงพัก/หยุด
         status,
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
         operationId: primaryId,       // ★ ขั้นตอนหลัก — นับยอด/เวลา/น้ำหนักจริง
@@ -1029,6 +1269,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       const savedSteps = 1 + coOk;   // ขั้นตอนหลัก + co-tick ที่สำเร็จ
       setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
+      // ★ รอบ 13: แนบเหตุผล "รอบช้า" ได้ทั้งออนไลน์ (record id) และออฟไลน์ (client_id → ส่งหลังงานซิงค์) · ค้างไว้ต่อจนกดยกเลิก
+      if (slowArmed) {
+        const recId = res && res.row && res.row.id ? res.row.id : null;
+        stationSlowReason({ machineId: machine?.id, recordId: recId, recordClientId: recId ? null : clientIdMapRef.current[pk],
+          reason: slowArmed.reason, note: slowArmed.note }).then(() => loadReports()).catch(() => {});
+      }
       if (res.queued) {
         okBeep();
         flash("เน็ตสะดุด — เก็บเข้าคิวแล้ว จะซิงค์ให้อัตโนมัติ", "ok");
@@ -1037,6 +1283,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         return;
       }
       if (!anyRow) reload();   // เผื่อ server ไม่คืน row — ดึงยอด/ตารางใหม่
+      else getStationDayOps().then((d) => setDayOps(d)).catch(() => {});   // ★ รอบ 13: ยอดแยกขั้นตอนอัปเดตทันที
       okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
       // แจ้งผลจำนวนขั้นตอนที่บันทึก — โชว์บนจอ (เห็นบนแท็บเล็ตโดยไม่ต้องเปิด DevTools)
       if (opIds.length > 1 && coFail > 0) {
@@ -1045,10 +1292,6 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       } else {
         // โชว์จำนวนขั้นตอนเสมอ (ต่างจากข้อความเดิม) → ถ้ายังเห็น "บันทึกแล้ว ✓ พร้อมงานถัดไป" = แท็บเล็ตยังรันโค้ดเก่า (แคช)
         flash(t(`บันทึกครบ ${savedSteps} ขั้นตอน ✓`, `Saved ${savedSteps} step(s) ✓`), "ok");
-      }
-      // แนบเหตุผล "รอบช้า" กับชิ้นที่เพิ่งบันทึก (ออนไลน์เท่านั้น — มี record id) · ค้างไว้ต่อสำหรับชิ้นถัดไปจนกดยกเลิก
-      if (slowArmed && res && res.row && res.row.id) {
-        try { await setScanSlowReason(res.row.id, slowArmed.reason, slowArmed.note); loadReports(); } catch { /* ไม่บล็อกงานหลัก */ }
       }
       resetAll(true);          // เก็บความยาววัสดุไว้ ไม่ต้องกรอกใหม่ทุกชิ้น
     } finally {
@@ -1150,15 +1393,36 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     return () => clearTimeout(id);
   }, [asmDone]);
 
-  function asmReset() { setAsmParent(null); setAsmParentQty(1); setAsmQtyLocked(false); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }
-  function asmRemoveChild(unitId) { setAsmChildren((prev) => prev.filter((c) => c.unit_id !== unitId)); }
+  function asmReset() { setAsmParent(null); setAsmParentQty(1); setAsmQtyLocked(false); setAsmChildren([]); setAsmPending(null); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); setAsmUndo(null); }
+  // ★ รอบ 12 (D): แตะชิปพลาด = เอาออกทันที → มีปุ่ม "↶ เอาคืน" 6 วิ (เดิมไม่มี undo ต้องสแกนใหม่)
+  const [asmUndo, setAsmUndo] = useState(null);   // { child, idx }
+  const asmUndoTimer = useRef(0);
+  function asmRemoveChild(unitId) {
+    setAsmChildren((prev) => {
+      const idx = prev.findIndex((c) => c.unit_id === unitId);
+      if (idx < 0) return prev;
+      setAsmUndo({ child: prev[idx], idx });
+      clearTimeout(asmUndoTimer.current);
+      asmUndoTimer.current = setTimeout(() => setAsmUndo(null), 6000);
+      return prev.filter((c) => c.unit_id !== unitId);
+    });
+  }
+  function asmUndoRemove() {
+    const u = asmUndo; if (!u) return;
+    clearTimeout(asmUndoTimer.current); setAsmUndo(null);
+    setAsmChildren((prev) => (prev.some((c) => c.unit_id === u.child.unit_id) ? prev
+      : [...prev.slice(0, u.idx), u.child, ...prev.slice(u.idx)]));
+  }
+  useEffect(() => () => clearTimeout(asmUndoTimer.current), []);
   // ลบลูกที่ "บันทึกแล้ว" (installed) ออกจากเบอร์แม่ — ไว้แก้งานที่เสร็จ · ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
   async function asmRemoveInstalled(childUnitId, partNo) {
     if (!asmParent || !childUnitId) return;
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       errorBeep(); flash(t("ลบชิ้นที่บันทึกแล้วต้องออนไลน์ก่อน", "removing a saved child needs to be online"), "warn"); return;
     }
-    if (!window.confirm(t(`เอา ${partNo || "ลูกนี้"} ออกจากเบอร์แม่? (ลบชิ้นที่บันทึกไปแล้ว)`, `Remove ${partNo || "this child"} from the parent?`))) return;
+    // ★ รอบ 12 (D): การ์ดยืนยันในแอป (window.confirm ถูกบล็อกบนจอ kiosk/PWA บางเครื่อง = กดแล้วเงียบ)
+    if (!(await askConfirm({ message: t(`เอา ${partNo || "ลูกนี้"} ออกจากเบอร์แม่? (ลบชิ้นที่บันทึกไปแล้ว)`, `Remove ${partNo || "this child"} from the parent?`),
+      tone: "danger", confirmText: t("เอาออก", "Remove"), cancelText: t("ยกเลิก", "Cancel") }))) return;
     setBusy(true);
     try {
       const res = await removeAssemblyChild(asmParent.unit.id, childUnitId);
@@ -1511,6 +1775,53 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, newRowId, lang]);
 
+  // ── ★ รอบ 13: ยอดวันนี้แยกขั้นตอน (server + งานรอซิงค์ในเครื่อง) ─────────────────
+  const dayOpsList = useMemo(() => {
+    if (!dayOps) return [];
+    const m = new Map();
+    (dayOps.ops || []).forEach((o) => m.set(String(o.operation_id || "?"), { id: String(o.operation_id || "?"), name: o.name, seq: o.seq, qty: Number(o.qty) || 0, pend: 0 }));
+    Object.entries(dayOps.pending || {}).forEach(([id, q]) => {
+      const known = allOps.find((x) => String(x.id) === id);
+      const cur = m.get(id) || { id, name: known?.name || "?", seq: known?.seq, qty: 0, pend: 0 };
+      cur.pend += Number(q) || 0; m.set(id, cur);
+    });
+    return [...m.values()].filter((x) => x.qty || x.pend).sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+  }, [dayOps, allOps]);
+
+  // ── ★ รอบ 13: กันจอดับ + สแกนเนอร์ USB/Bluetooth ───────────────────────────────
+  useWakeLock();
+  useWedgeScanner(async (code) => {
+    const s = String(code || "").trim();
+    if (!s) return;
+    if (document.querySelector(".mls-confirm-backdrop, .stn-rep-ov")) { errorBeep(); return; }   // มีหน้าต่างถามอยู่ → ไม่สแกนทับ
+    if (busy || savingRef.current) { errorBeep(); flash(t("กำลังทำงานอยู่ — รอสักครู่แล้วสแกนใหม่", "Busy — wait a moment and scan again"), "warn"); return; }
+    if (isAsm) { warmAudio(); await asmScan(s); return; }
+    if (hold) { errorBeep(); flash(holdMsg(), "warn"); return; }
+    if (step === STEP.CANCEL) return;
+    if (step === STEP.PART) { errorBeep(); flash(t("กด OK เพื่อบันทึก หรือกด ยกเลิก ก่อนสแกนใหม่", "Press OK to save, or Cancel, before scanning again"), "warn"); return; }
+    if (step === STEP.IDLE && !beginJob()) return;           // ยังไม่เริ่ม → สแกน = กด START ให้เลย
+    warmAudio();
+    await onDecoded(s);
+  });
+
+  // ── ★ รอบ 13: ส่งสถานะหน้าเครื่องให้ออฟฟิศ/จอ TV (ทุก 1 นาที + ทันทีที่สถานะเปลี่ยน) ─────────
+  const pingState = hold ? (hold.kind === "stop" ? "stopped" : "paused")
+    : ((isAsm ? !!asmParent : (step !== STEP.IDLE && !!unit)) ? "running" : "idle");
+  const pingPart = (isAsm ? asmParent?.unit?.part_master?.part_no : unit?.part_master?.part_no) || null;
+  const pingSince = hold ? hold.since : (pingState === "running" && !isAsm ? startTsRef.current : null);
+  const pingRef = useRef(null);
+  pingRef.current = { dept, state: pingState, part_no: pingPart, state_since: pingSince ? new Date(pingSince).toISOString() : null };
+  useEffect(() => {
+    const tmo = setTimeout(() => { stationPing(pingRef.current); }, 1500);
+    return () => clearTimeout(tmo);
+  }, [pingState, pingPart, pending, rejected, evPending]);
+  useEffect(() => {
+    const iv = setInterval(() => { stationPing(pingRef.current); }, 60000);
+    const on = () => setTimeout(() => stationPing(pingRef.current), 2500);
+    window.addEventListener("online", on);
+    return () => { clearInterval(iv); window.removeEventListener("online", on); };
+  }, []);
+
   // ── ยามแผนก (department gate): หน้านี้รับเฉพาะบัญชีของแผนกตัวเอง ──────────────
   const acctDepts = opsLoaded
     ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
@@ -1525,7 +1836,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   const recording = step !== STEP.IDLE;
   const scanArmed = step === STEP.REC;                     // รอสแกน (รอบ 1 = เริ่ม · รอบ 2 = จบงาน) → ปุ่ม SCAN เด่น
-  const timerLive = !!unit && recording;   // เวลาเดินจริง (สแกนรอบ 1 แล้ว จนกด OK)
+  const timerLive = !!unit && recording && !hold;   // เวลาเดินจริง (สแกนรอบ 1 แล้ว จนกด OK) · พัก/หยุดอยู่ = นาฬิกานิ่ง
 
   // WorkArea ตัวเดียว ใช้ได้ทั้งหน้า machine (โหมดเครื่อง) และ assembly/packing (โหมดประกอบ/แพ็ก)
   const workAreaEl = (
@@ -1540,6 +1851,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       asmQtyLocked={asmQtyLocked} setAsmQtyLocked={setAsmQtyLocked}
       asmDecoded={asmDecoded} asmManual={asmManual} asmScan={asmScan}
       asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} asmReset={asmReset} asmOpenCam={asmOpenCam}
+      asmUndo={asmUndo} asmUndoRemove={asmUndoRemove}
       asmPending={asmPending} asmAddPending={asmAddPending} asmCancelPending={asmCancelPending}
       packPhotos={packPhotos} photoOpen={photoOpen} openPhoto={() => setPhotoOpen(true)} closePhoto={() => setPhotoOpen(false)}
       photoCapture={photoCapture} photoRemove={photoRemove}
@@ -1633,16 +1945,18 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   return (
     <div className="stn-shell">
       {/* แถบสถานะเน็ต — โชว์เมื่อ "ออฟไลน์" หรือมีงาน "ค้างซิงค์" (ออนไลน์กำลังดันขึ้น) */}
-      {(!online || pending > 0) && (
+      {(!online || pending > 0 || evPending > 0) && (
         <div className={`stn-netbar${online ? " syncing" : " offline"}`}>
           {!online ? (
             <span><Icon name="wifiOff" size={15} className="stn-ico" />{t("ออฟไลน์", "Offline")}
               {pending > 0
                 ? ` · ${t("ค้างซิงค์", "pending sync")} ${pending} ${t("ชิ้น", "pcs")}`
                 : ` · ${t("ทำงานต่อได้ตามปกติ", "you can keep working")}`}
+              {evPending > 0 ? ` · ${t("แจ้งหยุด/พร้อม/เหตุผล รอส่ง", "stop/ready/reasons waiting")} ${evPending}` : ""}
             </span>
           ) : (
-            <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}</span>
+            <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}
+              {evPending > 0 ? ` · ${t("แจ้งหยุด/พร้อม/เหตุผล", "stop/ready/reasons")} ${evPending}` : ""}</span>
           )}
         </div>
       )}
@@ -1741,7 +2055,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         <div className="stn-daily">
           <div className="stn-daily-head">
             <h2>{t("รายงานประจำวัน", "DAILY REPORT")}</h2>
-            <div className="stn-date">{todayISOdate()}</div>
+            <div className="stn-date">{todayISOdate()}<span className="stn-build" title="รุ่นของเว็บ">build {appBuildId()}</span></div>
           </div>
           <div className="stn-kpis">
             <div className="stn-kpi"><div className="lbl">{t("จำนวนวันนี้", "Daily Quantity")}</div>
@@ -1751,6 +2065,18 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
               <div className="val mono">{hms(daily.process_seconds)}</div></div>
           </div>
+          {/* ★ รอบ 13: ยอดวันนี้แยกตามขั้นตอน (ขั้นตอนที่ติ๊กร่วม = จำนวนชิ้นของสแกนนั้น) */}
+          {dayOpsList.length > 0 && (
+            <div className="stn-dayops" title={t("จำนวนชิ้นวันนี้ แยกตามขั้นตอน", "Pieces today, per step")}>
+              <span className="lbl">{t("แยกขั้นตอน", "By step")}</span>
+              {dayOpsList.map((o) => (
+                <span key={o.id} className="stn-dayop">
+                  <b>{opLabel(o.name, lang)}</b> {fmt(o.qty + o.pend)}
+                  {o.pend ? <em> ({t("รอซิงค์", "pending")} {fmt(o.pend)})</em> : null}
+                </span>
+              ))}
+            </div>
+          )}
           {/* ท้ายสุด: รายงานวันนี้ของเครื่องนี้ (มีอะไรบ้าง) — ไม่โชว์ระยะเวลาที่หยุด */}
           {stnReports.length > 0 && (
             <div className="stn-daily-reports">
@@ -1791,20 +2117,22 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 </div>
               </div>
             ) : null}
-            {/* เครื่องกำลังหยุด — บังหน้าจอทำงาน + ปุ่มพร้อมทำงาน (ไม่โชว์เวลาที่หยุด) */}
-            {downStop ? (
-              <div className="stn-down">
-                <div className="ico">⛔</div>
-                <div className="ttl">{t("เครื่องหยุด", "MACHINE STOPPED")}</div>
-                <div className="rsn">{downStop.reason}</div>
+            {/* เครื่องกำลังหยุด / พักงาน — บังหน้าจอทำงาน + ปุ่มกลับมาทำงาน (ไม่โชว์เวลาที่หยุด) */}
+            {hold ? (
+              <div className={`stn-down${onBreak ? " brk" : ""}`}>
+                <div className="ico">{onBreak ? "☕" : "⛔"}</div>
+                <div className="ttl">{onBreak ? t("พักงาน", "ON BREAK") : t("เครื่องหยุด", "MACHINE STOPPED")}</div>
+                {!onBreak ? <div className="rsn">{hold.reason}</div> : null}
+                {unit && recording ? <div className="sub">{t("หยุดจับเวลางานนี้ไว้แล้ว — ช่วงนี้ไม่นับเป็นเวลาเดินเครื่อง", "Job timer paused — this time isn't counted")}</div> : null}
+                {evPending > 0 ? <div className="sub q">{t("ออฟไลน์ — จะส่งแจ้งหยุด/พร้อมให้เองเมื่อเน็ตกลับ", "Offline — the stop/ready will be sent when back online")}</div> : null}
                 <button className="ready" disabled={reportBusy} onClick={markReady}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                  {t("พร้อมทำงาน", "READY TO WORK")}
+                  {onBreak ? t("ทำงานต่อ", "RESUME") : t("พร้อมทำงาน", "READY TO WORK")}
                 </button>
               </div>
             ) : null}
             {/* เหตุผล "รอบช้า" ที่ตั้งค้างไว้ — จะบันทึกกับชิ้นที่สแกนถัดไป */}
-            {slowArmed && !downStop ? (
+            {slowArmed && !hold ? (
               <div className="stn-armed">
                 <span className="em">⚠️</span>
                 <div className="tx"><b>{t("จะแนบกับชิ้นที่สแกน", "Attaches to next SCAN")}:</b> {slowArmed.reason}</div>
@@ -1827,10 +2155,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               </div>
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
-                disabled={busy || !!downStop}>
+                disabled={busy || !!hold}>
                 <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy || !!downStop}>
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy || !!hold}>
                 <div className="row1">
                   <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
@@ -1841,12 +2169,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                   : t("กด START ก่อน", "press START first")}</div>
               </button>
               {/* ปุ่มรายงานปัญหา — เดินเครื่องอยู่ = รายงานการทำงาน · ยังไม่เริ่ม = แจ้งเครื่องหยุด */}
-              <button className={`stn-ctl-btn stn-scan-cell stn-report${slowArmed ? " armed" : ""}`} onClick={openReport} disabled={busy || !!downStop}>
+              <button className={`stn-ctl-btn stn-scan-cell stn-report${slowArmed ? " armed" : ""}`} onClick={openReport} disabled={busy || !!hold}>
                 <div className="row1">
                   <span>{t("แจ้งปัญหา", "REPORT")}</span>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
                 </div>
-                <div className="qty">{recording ? (slowArmed ? t("ตั้งเหตุผลแล้ว ✓", "reason set ✓") : t("รายงานการทำงาน", "Work report")) : t("แจ้งเครื่องหยุด", "Machine stop")}</div>
+                <div className="qty">{recording ? (slowArmed ? t("ตั้งเหตุผลแล้ว ✓", "reason set ✓") : t("พัก / หยุด / ช้า", "Break / stop / slow")) : t("แจ้งหยุด / พัก", "Stop / break")}</div>
               </button>
             </div>
             <button className="stn-ctl-btn stn-exit" onClick={onLogout}>
@@ -1855,9 +2183,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             </button>
           </div>
           {reportOpen ? (
-            <StnReportModal mode={reportOpen} busy={reportBusy}
+            <StnReportModal mode={reportOpen} busy={reportBusy} midJob={recording} onBreak={startBreak}
               onClose={() => setReportOpen(null)}
-              onSubmit={(reason, note) => (reportOpen === "stop" ? submitStop(reason, note) : submitWork(reason, note))} />
+              onSubmit={(reason, note, mode) => ((mode || reportOpen) === "stop" ? submitStop(reason, note) : submitWork(reason, note))} />
           ) : null}
         </div>
       </div>
@@ -2127,7 +2455,7 @@ function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
 //    คอลัมน์: # · เบอร์ชิ้น/ยูนิต · รายละเอียด · ขนาด/ยาว(ประกอบ)|น้ำหนัก(แพ็ก) · จำนวน · ประกอบแล้ว/แพ็กแล้ว (X/Y)
 //    ✓ = ครบ · ◐ = บางส่วน · ○ = ยังไม่ทำ (นับสะสม: ที่ติดไปแล้ว + ที่สแกนรอบนี้) · สแกนลูก = ติ๊กเพิ่มอัตโนมัติ
 //    ใช้คอมโพเนนต์เดียวทั้งประกอบ (ธีมเขียว) และแพ็ก (isPack → ธีมน้ำเงินจาก .dept-packing + ปุ่มถ่ายรูป)
-function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, busy, t, childWord, confirmVerb, isPack = false, parentQty = 1, setParentQty, autoIn = 0, qtyLocked = false, setQtyLocked, openPhoto, packPhotos = [], photoRemove }) {
+function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmUndo = null, asmUndoRemove, busy, t, childWord, confirmVerb, isPack = false, parentQty = 1, setParentQty, autoIn = 0, qtyLocked = false, setQtyLocked, openPhoto, packPhotos = [], photoRemove }) {
   const isSub = asmType === "assembly";   // สเตชัน "ซับ" — มีช่อง "จำนวนที่จะทำ" + ปิดงานอัตโนมัติเมื่อครบ BOM (ซ่อน BOM)
   const pq = Math.max(1, Math.floor(Number(parentQty) || 1));
   const subAuto = isSub && (asmParent.bom || []).length > 0;   // ซับที่มี BOM (มาจากตอนสั่งผลิต) → ปิดงานอัตโนมัติ ไม่มีปุ่มแตะปิด
@@ -2318,6 +2646,12 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
       </div>
 
       <div className="asw-actions">
+        {asmUndo && asmUndoRemove && (
+          <div className="asw-undo">
+            <span>{t("เอาออกแล้ว:", "Removed:")} {asmUndo.child.part_no} · {asmUndo.child.qr}</span>
+            <button type="button" onClick={asmUndoRemove}>↶ {t("เอาคืน", "Undo")}</button>
+          </div>
+        )}
         {/* ชิป "รอคอนเฟิร์ม" นอกตาราง — เหลือเฉพาะแพ็ก (ประกอบ: ที่กดใส่แล้วอยู่ในตารางเลย) */}
         {!free && asmChildren.length > 0 && (
           <div className="asw-scanned">
@@ -2518,6 +2852,7 @@ function modNoteText(note, lang) {
 }
 function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
+  asmUndo = null, asmUndoRemove,
   asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
   asmPending = null, asmAddPending, asmCancelPending,
   packPhotos = [], photoOpen, openPhoto, closePhoto, photoCapture, photoRemove }) {
@@ -2548,6 +2883,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             asmParent={asmParent} asmChildren={asmChildren} asmType={asmType}
             asmComplete={asmComplete} asmReset={asmReset} asmOpenCam={asmOpenCam} asmScan={asmScan}
             asmConfirm={asmConfirm} asmRemoveChild={asmRemoveChild} asmRemoveInstalled={asmRemoveInstalled} busy={busy} t={t}
+            asmUndo={asmUndo} asmUndoRemove={asmUndoRemove}
             isPack={isPack} childWord={childWord} confirmVerb={confirmVerb}
             parentQty={asmParentQty} setParentQty={setAsmParentQty} autoIn={asmAutoIn}
             qtyLocked={asmQtyLocked} setQtyLocked={setAsmQtyLocked}
