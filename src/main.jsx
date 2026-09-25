@@ -87,6 +87,14 @@ function onChunkError(e) {
   // ครั้งที่ 2+ = น่าจะ chunk ค้างไม่ตรงเวอร์ชัน → ล้างแคช service worker + ถอน SW ก่อน reload (กัน loop)
   const hardHeal = tries >= 1;
   const go = () => {
+    // ★ รอบ 12 (D): ออฟไลน์ = ห้ามล้างแคช/ถอน service worker (ล้างแล้วไม่มีอะไรให้เสิร์ฟ → หน้าเครื่องเปิดไม่ขึ้นถาวร)
+    //   รอเน็ตกลับแล้วค่อยโหลดใหม่
+    try {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        window.addEventListener("online", () => reloadNow(), { once: true });
+        return;
+      }
+    } catch { /* ignore */ }
     if (!hardHeal) return reloadNow();
     const cc = (window.caches && caches.keys)
       ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
