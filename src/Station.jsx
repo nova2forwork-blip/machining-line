@@ -12,6 +12,7 @@ import {
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
   reportMachineStop, machineReady, getOpenDowntime, setScanSlowReason, listMachineReports,
   reportActiveJob, clearActiveJobNow,
+  getStationScanInfo, queueForeignOwners, myQueueCount, addRejected, releaseMdf,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -85,7 +86,7 @@ function StnReportModal({ mode, onSubmit, onClose, busy }) {
         <div className="stn-rep-actions">
           <button type="button" className="stn-rep-btn cancel" onClick={onClose}>{t("ยกเลิก", "Cancel")}</button>
           <button type="button" className={`stn-rep-btn ${stop ? "go-stop" : "go-work"}`} disabled={!has || busy}
-            onClick={() => onSubmit(pick || t("อื่นๆ", "Other"), note.trim())}>
+            onClick={() => onSubmit(pick || "อื่นๆ", note.trim())}>
             {stop ? t("บันทึกการหยุด", "Report stop") : t("ตั้งเหตุผล → SCAN", "Set reason → SCAN")}
           </button>
         </div>
@@ -95,6 +96,25 @@ function StnReportModal({ mode, onSubmit, onClose, busy }) {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
+// ★ รอบ 11 (L5): รหัสเหตุผลจาก server → ข้อความที่คนหน้าเครื่องอ่านรู้เรื่อง (เดิมโชว์ "machine_cannot" ดิบๆ)
+function reasonText(code, t) {
+  const m = {
+    machine_cannot: t("เครื่องนี้ไม่ได้ตั้งให้ทำขั้นตอนนี้ — แจ้งแอดมิน", "this machine isn't set up for that step — tell admin"),
+    not_found: t("ไม่พบ QR/ล็อตในระบบ", "QR/lot not found"), unit_not_found: t("ไม่พบ QR/ล็อตในระบบ", "QR/lot not found"),
+    project_closed: t("โปรเจคปิดแล้ว", "project closed"),
+    qr_cancelled: t("QR ถูกยกเลิกใน Modify", "QR cancelled in Modify"),
+    release_cancelled: t("Part ถูกยกเลิกใน Modify", "part cancelled in Modify"),
+    unauthorized: t("เซสชันหมดอายุ — ล็อกอินใหม่", "session expired — log in again"),
+    forbidden: t("ไม่มีสิทธิ์", "not allowed"),
+    no_machine: t("บัญชีนี้ไม่ได้ผูกกับเครื่อง", "this account has no machine"),
+    bad_quantity: t("จำนวนไม่ถูกต้อง", "invalid quantity"), bad_status: t("สถานะไม่ถูกต้อง", "invalid status"),
+    retry_exhausted: t("ลองหลายครั้งไม่สำเร็จ", "failed after several retries"),
+    cotick_failed: t("บันทึกขั้นตอนร่วมไม่สำเร็จ", "co-ticked step failed"),
+    storage_full: t("ที่เก็บข้อมูลเต็ม", "storage full"),
+    exception: t("ข้อผิดพลาด", "error"), error: t("ข้อผิดพลาด", "error"),
+  };
+  return m[code] || code || t("ไม่ทราบสาเหตุ", "unknown");
+}
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
 const pad = (n) => String(n).padStart(2, "0");
 function hms(sec) {
@@ -289,7 +309,9 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
 // ══════════════════════════════════════════════════════════════════════════
 const STEP = { IDLE: "idle", REC: "rec", CANCEL: "cancel", SCAN: "scan", PART: "part", READY: "ready", SAVE: "save" };
 // เก็บ "งานที่กำลังทำ" (ยังไม่กด OK) ไว้ใน localStorage → กดอัปเดต/รีโหลด/แอปเด้ง แล้วกู้กลับมาได้ ไม่หาย
-const DRAFT_KEY = "mls-station-draft";
+const DRAFT_KEY = "mls-station-draft";       // เดิม: key เดียวทั้งเครื่อง (ยังอ่านครั้งเดียวตอนอัปเดต)
+// ★ รอบ 11 (B22): draft แยก "ต่อบัญชี" — บัญชีเครื่องอื่นที่ล็อกอินแท็บเล็ตเดียวกันไม่รับงานค้าง/เวลา/ขั้นตอนของคนก่อน
+const draftKeyFor = (userId) => DRAFT_KEY + ":" + (userId || "x");
 const DRAFT_MAX_AGE_MS = 6 * 3600 * 1000;   // เกินนี้ถือว่าเก่าเกิน (ไม่ใช่การรีโหลดสั้นๆ) → ไม่กู้ กันเวลาเดินเครื่องเพี้ยน
 const ASM_WIP_KEY = "mls-asm-wip";          // WIP ประกอบ/แพ็ก: เบอร์แม่ + ลูกที่สแกนแต่ "ยังไม่กดยืนยัน" → refresh/อัปเดตแล้วไม่หาย
 
@@ -297,6 +319,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [lang] = useLang();                       // ★ สลับป้าย report/ปุ่ม ตามภาษา (ไม่พึ่ง DICT ที่ใช้ร่วมกับออฟฟิศ)
   const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
+  const DKEY = draftKeyFor(user.id);   // ★ รอบ 11: draft งานค้าง "ของบัญชีนี้"
   // ── รายงานปัญหาหน้าเครื่อง ──
   const [reportOpen, setReportOpen] = useState(null);   // null | 'stop' | 'work'
   const [slowArmed, setSlowArmed] = useState(null);     // { reason, note } — แนบกับสแกนถัดไป (ค้างจนกดยกเลิก)
@@ -372,7 +395,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const clientIdMapRef = useRef(null);  // ★ หน้าเครื่องหลายขั้นตอน: client_id แยกต่อขั้นตอน (คงเดิมตอน retry ทั้งชุด)
   const [toast, setToast] = useState(null);   // { text, tone }
   const toastRef = useRef(null);
-  const [pending, setPending] = useState(scanQueueCount());
+  const [pending, setPending] = useState(() => myQueueCount());          // ★ รอบ 11: งานค้าง "ของบัญชีนี้"
+  const [foreign, setForeign] = useState(() => queueForeignOwners());   // ★ รอบ 11 (A1): งานค้างของบัญชีอื่นบนแท็บเล็ตนี้
   const [rejected, setRejected] = useState(rejectedQueueCount());
   const [storageFull, setStorageFull] = useState(false);   // ที่เก็บเต็ม — โชว์แถบค้างจนกว่าจะบันทึกได้
   const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine !== false);
@@ -386,7 +410,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         && !(typeof navigator !== "undefined" && navigator.onLine === false)) {
       // ★ H2: ดันงานค้างขึ้นก่อนเตะออก — กันงานออฟไลน์ค้างซิงค์ไม่ได้อีก
       await flushScanQueue();
-      if (scanQueueCount() === 0) { onKicked && onKicked(); }
+      if (myQueueCount() === 0) { onKicked && onKicked(); }
       else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
       return;
     }
@@ -425,17 +449,18 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     }).catch(() => { setAllOps([]); setMachineOps([]); setOpsLoaded(true); });   // โหลดขั้นตอนพลาด → ไม่ค้าง "กำลังตรวจ" (ถือว่ายังไม่มีแผนก)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept]);
-  // หน้าเครื่อง: ให้ op (ตัวแทน — ใช้โชว์ rework/ความคืบหน้า) ชี้ไป "ขั้นตอนที่ยังเลือกอยู่" เสมอ · ว่าง = ไม่มีเลือก (บล็อกบันทึกเหมือนเดิม)
+  // ★ รอบ 11 (A3): ขั้นตอนที่เลือก "เรียงตามลำดับกระบวนการ (seq)" · ตัวแรก = ขั้นตอนหลัก (รับจำนวน/เวลา/น้ำหนัก)
+  //   เดิม: ขั้นตอนหลัก = ตัวแรกใน Set (ลำดับการกด) แต่เลขวิ่ง/ล็อกสถานะใช้ "ขั้นตอนประจำบัญชี" → ไม่ตรงกัน
+  //   (บัญชีตั้ง Drill แต่ติ๊ก Cut+Drill → Cut รับจำนวน · ป้ายขึ้น "#1 of 500" ตลอด · กด Finished ไม่ได้)
+  const selOps = useMemo(() => machineOps.filter((o) => opSel.has(o.id)), [machineOps, opSel]);
+  const primaryOp = selOps[0] || null;
+  // หน้าเครื่อง: op (ใช้นับเลขวิ่ง/rework/ล็อกสถานะ) = ขั้นตอนหลักเสมอ · ว่าง = ไม่มีเลือก (บล็อกบันทึกเหมือนเดิม)
   useEffect(() => {
     if (dept !== "machine") return;
     if (machineOps.length === 0) return;   // ไม่มี caps → ปล่อย op ตาม fallback (ขั้นตอนประจำของพนักงาน)
-    setOp((cur) => {
-      if (cur && opSel.has(cur.id)) return cur;
-      const firstId = opSel.size ? [...opSel][0] : null;
-      return machineOps.find((x) => x.id === firstId) || null;
-    });
+    setOp((cur) => (primaryOp ? (cur && cur.id === primaryOp.id ? cur : primaryOp) : null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opSel, machineOps, dept]);
+  }, [primaryOp, machineOps, dept]);
   // เช็คเป็นระยะ (ตอนออนไลน์) เผื่อถูกเตะออก + รีเฟรชยอดวัน
   useEffect(() => {
     const t = setInterval(() => { if (!(typeof navigator !== "undefined" && navigator.onLine === false)) reload(); }, 45000);
@@ -457,7 +482,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       if (r && r.superseded) {
         await flushScanQueue();                                  // ดันงานค้างขึ้นก่อน
-        if (scanQueueCount() === 0) { onKicked && onKicked(); }  // ไม่มีค้างแล้ว → ออกได้ปลอดภัย
+        if (myQueueCount() === 0) { onKicked && onKicked(); }  // ไม่มีค้างแล้ว → ออกได้ปลอดภัย
         else { flash("บัญชีถูกใช้ที่เครื่องอื่น — กำลังซิงค์งานค้างก่อนออก", "warn"); }
       }
     }
@@ -476,9 +501,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }, []);
 
   useEffect(() => {
-    flushScanQueue().then(() => setPending(scanQueueCount()));
+    flushScanQueue().then(() => { setPending(myQueueCount()); setForeign(queueForeignOwners()); });
     if (rejectedQueueCount() > 0) reportDeadLetter();   // มีงานค้างเดิมค้างอยู่ → แจ้ง office ตอนเปิดเครื่อง
-    const off = onScanQueue((n) => setPending(n));
+    const off = onScanQueue(() => { setPending(myQueueCount()); setForeign(queueForeignOwners()); });
     const offR = onRejectedQueue((n) => setRejected(n));
     return () => { off(); offR(); };
   }, []);
@@ -554,14 +579,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // เก็บงานที่กำลังทำ (พาร์ทที่สแกน/จำนวน/สถานะ/เวลาเดินเครื่อง) ลง localStorage แบบสด
   // แล้วกู้กลับตอนโหลดแอปใหม่ → กดอัปเดตกลางงานก็ไม่หาย (เวลาเดินเครื่องนับต่อจากเวลาเริ่มจริง)
   const draftLoadedRef = useRef(false);
+  const restoredRef = useRef(false);        // กู้งานค้างที่สแกนรอบแรกแล้ว → รอ ops โหลดเสร็จแล้วดึงล็อกสถานะใหม่
   useEffect(() => {
     if (dept !== "machine") return;        // ★ ประกอบ/แพ็กไม่ใช้ draft (สถานะประกอบไม่ได้ถูกเก็บใน draft) — กันเด้ง "กู้งาน" หลอก + จับเวลาผี
     if (!draftLoadedRef.current) return;   // ยังไม่ผ่านขั้นกู้ draft — อย่าเพิ่งเขียนทับ
     try {
       // "กำลังทำงาน" = กด START แล้ว (timer เดิน / สแกน / เลือกจำนวน) — step ไม่ใช่ IDLE
-      if (step === STEP.IDLE) { localStorage.removeItem(DRAFT_KEY); return; }   // จบ/ยกเลิก/บันทึกแล้ว → ล้าง draft
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        v: 1, step, materialLen, qty, status,
+      if (step === STEP.IDLE) { localStorage.removeItem(DKEY); return; }   // จบ/ยกเลิก/บันทึกแล้ว → ล้าง draft
+      localStorage.setItem(DKEY, JSON.stringify({
+        v: 1, step, materialLen, qty, status, statusLock,
         unit, op, progress, dupCount,
         opSel: [...opSel],                  // ★ ขั้นตอนที่เลือกไว้ (หลายอัน) — กันรีโหลดแล้วกลับไปเลือกทุกอันเอง
         startTs: startTsRef.current,        // เวลาเริ่มจริง (สแกนรอบ 1) → คำนวณเวลาเดินเครื่องต่อได้
@@ -569,13 +595,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         savedAt: Date.now(),
       }));
     } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
-  }, [step, materialLen, qty, status, unit, op, progress, dupCount, opSel]);
+  }, [step, materialLen, qty, status, statusLock, unit, op, progress, dupCount, opSel]);
 
   // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
   useEffect(() => {
     if (dept !== "machine") { draftLoadedRef.current = true; return; }   // ★ ประกอบ/แพ็ก: ไม่กู้ draft (กันงานเครื่องหลอกมาทับหน้าประกอบ)
     try {
-      const raw = localStorage.getItem(DRAFT_KEY);
+      // ★ รอบ 11 (B22): draft ของบัญชีนี้ · ไฟล์เดิม (key รวม) อ่านได้ครั้งเดียวหลังอัปเดต แล้วลบทิ้ง
+      let raw = localStorage.getItem(DKEY);
+      if (!raw) { raw = localStorage.getItem(DRAFT_KEY); if (raw) localStorage.removeItem(DRAFT_KEY); }
       if (raw) {
         const d = JSON.parse(raw);
         const tooOld = d && d.savedAt && (Date.now() - d.savedAt > DRAFT_MAX_AGE_MS);
@@ -586,6 +614,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setStatus(d.status ?? null);
           setProgress(d.progress ?? null);
           setDupCount(Number(d.dupCount) || 0);
+          if (d.statusLock && typeof d.statusLock === "object") setStatusLock({ finishedExists: !!d.statusLock.finishedExists, inProcessExists: !!d.statusLock.inProcessExists });
+          if (d.unit) restoredRef.current = true;   // ★ รอบ 11 (B19): ดึงล็อกสถานะ/เลขวิ่งจาก server ใหม่หลังกู้
           if (d.op) setOp(d.op);
           if (Array.isArray(d.opSel)) setOpSel(new Set(d.opSel));   // ★ กู้ "ขั้นตอนที่เลือกไว้" (หลายอัน) ให้ตรงกับตอนก่อนรีโหลด
           clientIdRef.current = d.clientId ?? null;
@@ -604,7 +634,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             ? t("กู้งานที่ค้างอยู่กลับมาแล้ว — ทำเสร็จแล้วสแกนอีกครั้ง / ตรวจแล้วกด OK", "Restored your in-progress job — scan again when done / review and press OK")
             : t("กู้งานที่ค้างอยู่กลับมาแล้ว — กด SCAN สแกนชิ้นงานเพื่อเริ่ม", "Restored — press SCAN to scan the piece and start"), "ok");
         } else if (tooOld) {
-          localStorage.removeItem(DRAFT_KEY);   // เก่าเกิน → ทิ้ง
+          localStorage.removeItem(DKEY);   // เก่าเกิน → ทิ้ง
         }
       }
     } catch { /* ignore */ }
@@ -622,12 +652,44 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     const ts = startTsRef.current;
     if (step === STEP.IDLE || !unit || !unit.release_id || !ts) { ajUnitRef.current = { ts: null, id: null }; reportActiveJob(null); return; }
     if (ajUnitRef.current.ts !== ts) ajUnitRef.current = { ts, id: unit.id || null };
-    const opIds = opSel.size ? [...opSel] : (op?.id ? [op.id] : (user.operation?.id ? [user.operation.id] : []));
+    const opIds = selOps.length ? selOps.map((o) => o.id) : (op?.id ? [op.id] : (user.operation?.id ? [user.operation.id] : []));
     reportActiveJob({ releaseId: unit.release_id, partUnitId: ajUnitRef.current.id, operationIds: opIds, startedAt: ts });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, unit, opSel, op]);
+  }, [step, unit, selOps, op]);
 
+  // ★ รอบ 11 (B19): ล็อกสถานะ (เคย Finished → ห้าม In Process) อยู่ในเครื่องอย่างเดียว — หายเมื่อรีโหลด/ออฟไลน์
+  //   → ดึงใหม่จาก server หลังกู้งานค้าง และทุกครั้งที่เน็ตกลับมาระหว่างทำงาน
+  const refreshLockRef = useRef(null);
+  refreshLockRef.current = async () => {
+    const u = unitRef.current;
+    if (dept !== "machine" || !u || !u.release_id) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const opId = primaryOp?.id || op?.id || user.operation?.id || null;
+    if (!opId) return;
+    const gen = jobGenRef.current;
+    try {
+      const info = await getStationScanInfo({ releaseId: u.release_id, operationId: opId, machineId: machine?.id, partUnitId: u.id, sinceIso: u.release?.mod_qty_at || null });
+      if (gen !== jobGenRef.current || unitRef.current !== u) return;
+      setStatusLock(info.lock);
+      if (info.done != null) setProgress((p) => (p ? { ...p, done: info.done, offline: false } : p));
+      if (info.lock.finishedExists) setStatus((st) => (st === "inprocess" || !st ? "finished" : st));
+    } catch { /* ไม่บล็อกงาน */ }
+  };
+  useEffect(() => {
+    if (!restoredRef.current || !opsLoaded) return;
+    restoredRef.current = false;
+    refreshLockRef.current && refreshLockRef.current();
+  }, [opsLoaded, primaryOp]);
+  useEffect(() => {
+    const on = () => { if (unitRef.current) setTimeout(() => refreshLockRef.current && refreshLockRef.current(), 1500); };
+    window.addEventListener("online", on);
+    return () => window.removeEventListener("online", on);
+  }, []);
+
+  // ★ รอบ 11 (B23): เลขรุ่นงาน — ยกเลิก/จบงานแล้ว ผลค้นป้ายที่ตอบกลับมาทีหลัง "ทิ้ง" (เดิมเริ่มจับเวลางานผีเอง)
+  const jobGenRef = useRef(0);
   function resetAll(keepLen = false) {
+    jobGenRef.current += 1;
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStatusLock({ finishedExists: false, inProcessExists: false }); setStep(STEP.IDLE);
@@ -714,7 +776,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
   function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังทำงาน (ถ้ายังไม่ได้สแกนรอบ 1 = ยังไม่จับเวลา)
   // หน้าจำนวน/สถานะ กด ยกเลิก → กลับไปหน้ากำลังทำงาน (งาน + เวลายังเดินอยู่ ไม่ได้หยุด) · สแกนรอบ 2 ใหม่ได้
-  function backToRun() { clientIdRef.current = null; clientIdMapRef.current = null; setStep(STEP.REC); }
+  function backToRun() { jobGenRef.current += 1; clientIdRef.current = null; clientIdMapRef.current = null; setStep(STEP.REC); }
   // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
@@ -742,14 +804,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       return false;
     }
     tickBeep();   // เสียงเบายืนยันว่าเจอชิ้นงาน
-    const opId = op?.id || user.operation?.id || null;
-    const done = opId ? await getReleaseProgress(u.release_id, opId) : null;
-    const dup = opId ? await countUnitOpRecords(u.id, opId) : 0;   // เตือน rework (0 เมื่อออฟไลน์)
+    const gen = jobGenRef.current;
+    const opId = (dept === "machine" ? primaryOp?.id : null) || op?.id || user.operation?.id || null;
+    // ★ รอบ 11 (B24): เลขวิ่ง + rework + ล็อกสถานะ ในคำขอเดียว (เดิม 3 คำขอต่อกัน + โหลดทุกแถวมารวม)
+    //   กฎเลือกสถานะ = ที่เครื่องนี้เคยบันทึกไว้กับ (รีลีส+ขั้นตอน) นี้ (fail-open ถ้าออฟไลน์/พลาด)
+    //   ★ เพิ่มจำนวนแล้ว (mod_qty_at) → นับ Finished เฉพาะหลังจากนั้น (ปลดล็อก)
+    const info = opId
+      ? await getStationScanInfo({ releaseId: u.release_id, operationId: opId, machineId: machine?.id, partUnitId: u.id, sinceIso: u.release?.mod_qty_at || null })
+      : { done: null, dup: 0, lock: { finishedExists: false, inProcessExists: false } };
+    if (gen !== jobGenRef.current) return false;   // ★ ระหว่างรอ ผู้ใช้กดยกเลิก/จบงานไปแล้ว → ทิ้งผลนี้
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    const done = info.done, dup = info.dup || 0, lock = info.lock;
     setDupCount(dup);
     setProgress({ done, total: u.release?.qty ?? null, offline, noOp: !opId });
-    // กฎเลือกสถานะ: ดึงสถานะที่เครื่องนี้เคยบันทึกไว้กับ (รีลีส+ขั้นตอน) นี้ (fail-open ถ้าออฟไลน์/พลาด)
-    const lock = opId ? await getScanStatusLock(u.release_id, opId, machine?.id, u.release?.mod_qty_at || null) : { finishedExists: false, inProcessExists: false };   // ★ เพิ่มจำนวนแล้ว → นับ Finished เฉพาะหลังจากนั้น (ปลดล็อก)
     setStatusLock(lock);
     // เลือกสถานะเริ่มต้นให้เมื่อมีทางเดียว: เคย Finished → Finished · เคย In Process → In Process (Finished ปลดล็อกเมื่อครบ)
     if (lock.finishedExists) setStatus("finished");
@@ -760,7 +827,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
   // ★ สแกน 2 รอบ: เพิ่ม "สแกนรอบแรก" ตอนเริ่มงานเท่านั้น — ที่เหลือเหมือนเดิมทุกอย่าง
   //   รอบ 1 = เริ่มจับเวลา · รอบ 2 = ขั้นตอนสแกนเดิม (ใส่จำนวน · สถานะ · OK) เวลาเดินจนกด OK
-  async function showScannedUnit(u) {
+  async function showScannedUnit(u, gen = jobGenRef.current) {
+    if (gen !== jobGenRef.current) return false;   // ★ B23: สแกนนี้เริ่มก่อนกดยกเลิก → ทิ้ง
     const job = unitRef.current;
     if (job) {
       // รอบ 2: QR ไหนก็ได้ ขอแค่เป็นเบอร์พาร์ทเดียวกัน (โปรเจคเดียวกัน) กับที่เริ่มไว้
@@ -773,6 +841,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     }
     const t0 = Date.now();   // เวลาเริ่มจริง = ตอนสแกนรอบ 1 (ก่อนรอถามข้อมูลจาก DB)
     if (!(await loadScannedUnit(u))) return false;
+    if (gen !== jobGenRef.current) return false;   // ยกเลิกไปแล้วระหว่างรอ → ไม่เริ่มงานผี
     setQty(0);                                // จำนวนใส่ตอนสแกนรอบ 2
     startTsRef.current = t0; startTimer();   // ★ เริ่มจับเวลาตอนสแกนรอบ 1
     setStep(STEP.REC);
@@ -807,15 +876,16 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const curOpId = () => op?.id || user.operation?.id || null;
   async function onDecoded(qr) {
     if (!qr) return false;
+    const gen = jobGenRef.current;              // ★ B23: รุ่นงานตอนเริ่มสแกน (ยกเลิกระหว่างค้น = ทิ้งผล)
     setBusy(true);
     const u = await findUnitByQr(qr);           // QR = ระบุชิ้น/โปรเจค/ใบเจาะจงเสมอ
-    if (u) { setBusy(false); return await showScannedUnit(u); }   // โปรเจคปิด → คืน false ให้สแกนต่อได้
+    if (u) { setBusy(false); return await showScannedUnit(u, gen); }   // โปรเจคปิด → คืน false ให้สแกนต่อได้
     // ★ Modify: QR ที่ถูกยกเลิก (ลดจำนวน/ยกเลิก Part) → บอกให้ชัดว่ายกเลิกใน M ไหน (ไม่ใช่แค่ "ไม่พบ")
     { const cq = await lookupCancelledQr(qr); if (cq) { setBusy(false); errorBeep(); flash(cancelledQrMsg(cq), "warn"); return false; } }
     // ไม่เจอด้วย QR → เผื่อชี้กล้องที่ "เบอร์พาร์ท": ตรงโปรเจคเดียวใช้เลย · หลายโปรเจค → อย่าเดา ให้พิมพ์เลือก
     const opts = await findManualPartOptions(qr, curOpId());
     setBusy(false);
-    if (opts.length === 1) { return await showScannedUnit(opts[0].unit); }
+    if (opts.length === 1) { return await showScannedUnit(opts[0].unit, gen); }
     if (opts.length >= 2) {
       errorBeep();
       flash(t("เบอร์นี้อยู่หลายโปรเจค — พิมพ์ในช่องด้านล่างแล้วเลือกโปรเจค",
@@ -832,16 +902,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function onManualEntry(text) {
     const s = String(text || "").trim();
     if (!s) return { ok: false };
+    const gen = jobGenRef.current;
     setBusy(true);
     // 1) เผื่อพิมพ์เป็น QR (unique) → ระบุชิ้นเจาะจงได้เลย
     const u = await findUnitByQr(s);
-    if (u) { setBusy(false); return { ok: await showScannedUnit(u) }; }
+    if (u) { setBusy(false); return { ok: await showScannedUnit(u, gen) }; }
     { const cq = await lookupCancelledQr(s); if (cq) { setBusy(false); errorBeep(); flash(cancelledQrMsg(cq), "warn"); return { ok: false }; } }
     // 2) เป็นเบอร์พาร์ท → หาตัวเลือกระดับโปรเจค (findManualPartOptions ตัดโปรเจคปิดออกให้แล้ว)
     const opts = await findManualPartOptions(s, curOpId());
     setBusy(false);
     if (!opts.length) { errorBeep(); flash("ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง", "warn"); return { ok: false }; }
-    if (opts.length === 1) { return { ok: await showScannedUnit(opts[0].unit) }; }
+    if (opts.length === 1) { return { ok: await showScannedUnit(opts[0].unit, gen) }; }
     return { ok: false, choose: opts };   // หลายโปรเจค → ให้เลือก
   }
   // คนงานเลือกโปรเจคแล้ว → ใช้ชิ้นตัวแทนของโปรเจคนั้น
@@ -881,8 +952,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function doSave() {
     if (savingRef.current) return;      // กันกด OK รัวๆ → บันทึกซ้ำ (re-entrancy)
     // ★ หน้าเครื่อง: บันทึก "ทุกขั้นตอนที่เลือก" (CNC ทำหลายขั้นในครั้งเดียว) · ต้องเลือกอย่างน้อย 1 ขั้นตอน
+    // ★ รอบ 11 (A3): เรียงตามลำดับกระบวนการ (seq) — ตัวแรก = ขั้นตอนหลัก (ตัวเดียวกับที่ใช้นับเลขวิ่ง/ล็อกสถานะ)
     const opIds = (dept === "machine")
-      ? (opSel.size ? [...opSel] : (op?.id ? [op.id] : []))
+      ? (selOps.length ? selOps.map((o) => o.id) : (op?.id ? [op.id] : []))
       : [op?.id || null];
     if (opIds.length === 0) { flash(t("เลือกอย่างน้อย 1 ขั้นตอนก่อนบันทึก", "pick at least one operation first"), "warn"); return; }
     savingRef.current = true;
@@ -895,7 +967,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // ★ สร้าง client_id ของ "ทุกขั้นตอน" ล่วงหน้า แล้วเซฟลง draft ก่อนยิง —
     //   ถ้ารีโหลด/แอปอัปเดตกลางการบันทึก (insert ติดแล้วแต่ตอบกลับหาย) แล้วกู้งานมากด OK ซ้ำ จะใช้ id เดิม → DB dedup ไม่บันทึกซ้ำ
     for (const oid of opIds) { const k = String(oid); if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId(); }
-    try { const raw = localStorage.getItem(DRAFT_KEY); const d0 = raw ? JSON.parse(raw) : {}; d0.clientIdMap = clientIdMapRef.current; localStorage.setItem(DRAFT_KEY, JSON.stringify(d0)); } catch { /* localStorage เต็ม/ปิด — ข้าม */ }
+    try { const raw = localStorage.getItem(DKEY); const d0 = raw ? JSON.parse(raw) : {}; d0.clientIdMap = clientIdMapRef.current; localStorage.setItem(DKEY, JSON.stringify(d0)); } catch { /* localStorage เต็ม/ปิด — ข้าม */ }
     try {
       // น้ำหนักต่อชิ้น (mirror ฝั่งเซิร์ฟเวอร์: unit.weight ?? part_master.unit_weight) → เก็บลงคิวไว้โชว์ยอดออฟไลน์
       const wpp = Number(unit.weight ?? unit.part_master?.unit_weight ?? 0) || 0;
@@ -908,7 +980,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         qr: unit.qr_code,
         quantity: qty,
         materialLengthMm: materialLen === "" ? null : Number(materialLen),
-        processSeconds: elapsed,
+        processSeconds: startTsRef.current ? Math.max(0, Math.floor((Date.now() - startTsRef.current) / 1000)) : elapsed,   // ★ คิดจากเวลาเริ่มจริง (ไม่พึ่งนาฬิกาบนจอ)
         status,
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
         operationId: primaryId,       // ★ ขั้นตอนหลัก — นับยอด/เวลา/น้ำหนักจริง
@@ -921,7 +993,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           ? t("โปรเจคนี้ปิดแล้ว — บันทึกไม่ได้ · แจ้งแอดมินถ้าต้องแก้งาน", "Project closed — can't save · ask admin to reopen")
           : (res?.reason === "qr_cancelled" || res?.reason === "release_cancelled")
             ? t(`⛔ ${fmtMText(res.message) || "ถูกยกเลิกใน Modify"} — ออฟฟิศเพิ่งแก้ Release นี้ · สแกนใหม่`, `⛔ Cancelled in ${fmtM(res.version) || "Modify"} — the office just changed this release · rescan`)
-            : (res?.message || "บันทึกไม่สำเร็จ");
+            : (res?.message || (res?.reason && res.reason !== "error" ? t(`บันทึกไม่สำเร็จ — ${reasonText(res.reason, t)}`, `Save failed — ${reasonText(res.reason, t)}`) : t("บันทึกไม่สำเร็จ", "Save failed")));
         flash(msg, "warn");
         setStep(STEP.PART); // กลับไปหน้าจำนวน/สถานะ ให้กด OK ลองใหม่ได้
         return;
@@ -930,20 +1002,30 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (res.daily) setDaily(res.daily);
       if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
       // ขั้นตอนอื่นที่เลือก — มาร์กว่า "ทำแล้ว" ยอด 0 (ไม่บวกซ้ำ) · นับผลไว้แจ้งบนจอ (วินิจฉัยบนแท็บเล็ตได้)
-      let coOk = 0, coFail = 0, coReason = "";
+      let coOk = 0, coFail = 0, coReason = "", coParked = 0;
       for (const oid of opIds.slice(1)) {
         const k = String(oid);
         if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId();
-        try {
-          const cr = await recordMachineWork({
-            qr: unit.qr_code, quantity: 0,
-            materialLengthMm: materialLen === "" ? null : Number(materialLen),
-            processSeconds: 0, status,
-            releaseId: unit.release_id, operationId: oid,
-            clientId: clientIdMapRef.current[k], weight: 0,
-          });
-          if (cr && cr.ok !== false) coOk++; else { coFail++; coReason = cr?.reason || coReason; }
-        } catch { coFail++; coReason = coReason || "exception"; }
+        const payload = {
+          qr: unit.qr_code, quantity: 0,
+          materialLengthMm: materialLen === "" ? null : Number(materialLen),
+          processSeconds: 0, status,
+          releaseId: unit.release_id, operationId: oid,
+          clientId: clientIdMapRef.current[k], weight: 0,
+          recordedAt: new Date().toISOString(),
+        };
+        let cr = null;
+        try { cr = await recordMachineWork(payload); } catch { cr = { ok: false, reason: "exception" }; }
+        if (cr && cr.ok !== false) { coOk++; continue; }
+        coFail++; coReason = cr?.reason || coReason;
+        // ★ รอบ 11 (B20): ขั้นตอนร่วมที่บันทึกไม่ได้ → เก็บเข้า "ซิงค์ไม่สำเร็จ" + แจ้งออฟฟิศ (เดิมหายเงียบ)
+        //   (client_id เดิม → กด "ลองซิงค์ใหม่" แล้วไม่ซ้ำ)
+        const mw = {
+          p_qr: String(payload.qr || "").trim(), p_quantity: 0,
+          p_material_length: payload.materialLengthMm, p_process_seconds: 0, p_status: status || "inprocess",
+          p_client_id: payload.clientId, p_recorded_at: payload.recordedAt, p_operation_id: oid,
+        };
+        if (addRejected({ machineWork: mw, release_id: unit.release_id || null, weight: 0, qid: payload.clientId }, cr?.reason || "cotick_failed")) coParked++;
       }
       const savedSteps = 1 + coOk;   // ขั้นตอนหลัก + co-tick ที่สำเร็จ
       setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
@@ -958,8 +1040,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
       // แจ้งผลจำนวนขั้นตอนที่บันทึก — โชว์บนจอ (เห็นบนแท็บเล็ตโดยไม่ต้องเปิด DevTools)
       if (opIds.length > 1 && coFail > 0) {
-        flash(t(`บันทึก ${savedSteps}/${opIds.length} ขั้นตอน · พลาด ${coFail} (${coReason})`,
-                `Saved ${savedSteps}/${opIds.length} steps · ${coFail} failed (${coReason})`), "warn");
+        flash(t(`บันทึก ${savedSteps}/${opIds.length} ขั้นตอน · พลาด ${coFail} (${reasonText(coReason, t)})${coParked ? " — เก็บไว้ที่ \"ซิงค์ไม่สำเร็จ\" แล้ว" : ""}`,
+                `Saved ${savedSteps}/${opIds.length} steps · ${coFail} failed (${reasonText(coReason, t)})${coParked ? " — kept under “failed to sync”" : ""}`), "warn");
       } else {
         // โชว์จำนวนขั้นตอนเสมอ (ต่างจากข้อความเดิม) → ถ้ายังเห็น "บันทึกแล้ว ✓ พร้อมงานถัดไป" = แท็บเล็ตยังรันโค้ดเก่า (แคช)
         flash(t(`บันทึกครบ ${savedSteps} ขั้นตอน ✓`, `Saved ${savedSteps} step(s) ✓`), "ok");
@@ -993,9 +1075,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       el.style.maxHeight = "";                            // ≤ 6 แถว → ไม่ต้องล็อก
     }
   }, []);
+  // ★ รอบ 11 (L1): เลื่อนลงแถวล่าสุด "เฉพาะตอนมีแถวใหม่" (เดิมทุก 45 วิ ที่รีเฟรช → กำลังดูแถวเก่าก็เด้งลงล่าง)
+  const lastRowCountRef = useRef(-1);
   useEffect(() => {
     lockTableHeight();
-    if (tableRef.current) tableRef.current.scrollTop = tableRef.current.scrollHeight;   // เลื่อนไปแถวล่าสุด
+    const n = rows.length;
+    if (tableRef.current && n > lastRowCountRef.current) tableRef.current.scrollTop = tableRef.current.scrollHeight;
+    lastRowCountRef.current = n;
   }, [rows, lockTableHeight]);
   // จอหมุน/เปลี่ยนขนาด → ฟอนต์ vh เปลี่ยน ต้องคำนวณความสูงใหม่
   useEffect(() => {
@@ -1231,7 +1317,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       const have = asmHave(u.part_master_id);
       if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบแล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
       tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
-      setAsmChildren((prev) => [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]);
+      // ★ รอบ 11 (A2): เช็กซ้ำใน updater ด้วย (สถานะล่าสุดจริง) — ป้ายเดียวกันเข้ารายการได้ครั้งเดียว
+      setAsmChildren((prev) => (prev.some((c) => c.unit_id === u.id) ? prev : [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]));
       return true;
     }
     // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
@@ -1383,6 +1470,47 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept, asmQtyLocked, asmBomMet, busy, asmChildren]);
 
+  // ★ รอบ 11 (B26): แถวตารางหน้าเครื่องสร้างครั้งเดียวต่อข้อมูลที่เปลี่ยน — นาฬิกาเดินทุกวินาทีไม่ต้องวาดทั้งตารางใหม่
+  //   (แท็บเล็ตรุ่นเล็กกระตุก/กินแบต เมื่อสัปดาห์มีหลายร้อยแถว)
+  const recRowsEl = useMemo(() => rows.map((r, i) => {
+                const fin = String(r.status).toLowerCase() === "finished";
+                const isNew = (r.id && r.id === newRowId);
+                return (
+                  <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
+                    title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
+                    <td className="stn-mono">{r.day || todayMD()}</td>
+                    <td className="stn-hide-sm">{fmtM(r.mdf_no) || "-"}</td>
+                    <td className="stn-hide-sm">{r.rel_no || "-"}</td>
+                    <td className="l">{r.part_no || "-"}</td>
+                    <td className="stn-hide-sm">{r.rev || "-"}</td>
+                    <td>{fmt(r.qty)}</td>
+                    <td>{r.req != null ? fmt(r.req) : "-"}</td>
+                    <td>{r.process_cum != null && r.req != null
+                      ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
+                    {/* BALANCE = ยอดสะสมที่ทำแล้ว (PROCESS) − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
+                    <td className={r.process_cum != null && r.req != null && (r.process_cum - r.req) >= 0 ? "stn-st-fin" : ""}>
+                      {r.process_cum != null && r.req != null
+                        ? ((r.process_cum - r.req) > 0 ? `+${fmt(r.process_cum - r.req)}` : fmt(r.process_cum - r.req))
+                        : "-"}</td>
+                    <td className="stn-hide-sm">{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
+                    <td className="stn-hide-sm">{r.weight != null ? fmt(r.weight) : "-"}</td>
+                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง (Number() กันค่าเป็น string) */}
+                    <td style={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
+                        ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
+                      title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
+                        ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
+                      {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
+                    <td className="stn-hide-sm" style={{ textAlign: "center" }}>{r.inventory_code || "-"}</td>
+                    <td className="stn-hide-sm">{hms(r.process_seconds)}</td>
+                    <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
+                      {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
+                    </td>
+                  </tr>
+                );
+              }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, newRowId, lang]);
+
   // ── ยามแผนก (department gate): หน้านี้รับเฉพาะบัญชีของแผนกตัวเอง ──────────────
   const acctDepts = opsLoaded
     ? Array.from(new Set(allOps.length ? allOps.map(opDept) : ["machine"]))
@@ -1432,6 +1560,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             )}
           </div>
         )}
+        {foreign.length > 0 && (
+          <div className="stn-rejected" style={{ background: "#7c3aed" }}
+            title={t("งานเหล่านี้จะซิงค์ในชื่อเจ้าของงานเท่านั้น (ไม่ลงชื่อบัญชีนี้)", "These jobs only sync under their owner's account")}>
+            <Icon name="warn" size={15} className="stn-ico" />
+            {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${f.count} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
+            {" — "}{t("ให้เจ้าของล็อกอินที่แท็บเล็ตนี้เพื่อส่ง", "have the owner log in on this tablet to send them")}
+          </div>
+        )}
         {storageFull && (
           <div className="stn-rejected" onClick={() => setStorageFull(false)} style={{ background: "#b91c1c" }}>
             <Icon name="warn" size={15} className="stn-ico" />{t("ที่เก็บข้อมูลเต็ม — งานอาจไม่ถูกบันทึก! แจ้งผู้ดูแล (แตะเพื่อซ่อน)", "Storage full — notify admin (tap to hide)")}
@@ -1471,7 +1607,16 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <div className="stn-oppick">
             <span className="stn-oppick-lbl">{t("ขั้นตอน", "Operation")}:</span>
             {machineOps.map((o) => (
-              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} onClick={() => setOp(o)}>{opLabel(o.name, lang)}</button>
+              <button key={o.id} className={`stn-oppick-btn${op?.id === o.id ? " sel" : ""}`} disabled={busy}
+                onClick={async () => {
+                  if (op?.id === o.id) return;
+                  // ★ รอบ 11 (B21): มีเบอร์แม่/ลูกที่สแกนค้างอยู่ → ถามก่อน (เปลี่ยนขั้นตอน = ล้างงานประกอบที่ยังไม่ยืนยัน)
+                  if ((asmParent || asmChildren.length) && !(await askConfirm({
+                    message: t(`เปลี่ยนเป็น "${opLabel(o.name, lang)}"?\nเบอร์แม่ + ลูกที่สแกนไว้ (ยังไม่ยืนยัน) จะถูกล้าง`, `Switch to "${opLabel(o.name, lang)}"?\nThe open parent and unconfirmed children will be cleared`),
+                    tone: "warn", confirmText: t("เปลี่ยน", "Switch"), cancelText: t("ยกเลิก", "Cancel"),
+                  }))) return;
+                  setOp(o);
+                }}>{opLabel(o.name, lang)}</button>
             ))}
             {!op && <span className="stn-oppick-hint">← {t("แตะเลือกก่อน", "pick first")}</span>}
           </div>
@@ -1501,6 +1646,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           )}
         </div>
       )}
+      {foreign.length > 0 && (
+        <div className="stn-rejected" style={{ background: "#7c3aed" }}
+          title={t("งานเหล่านี้จะซิงค์ในชื่อเจ้าของงานเท่านั้น (ไม่ลงชื่อบัญชีนี้)", "These jobs only sync under their owner's account")}>
+          <Icon name="warn" size={15} className="stn-ico" />
+          {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${f.count} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
+          {" — "}{t("ให้เจ้าของล็อกอินที่แท็บเล็ตนี้เพื่อส่ง", "have the owner log in on this tablet to send them")}
+        </div>
+      )}
       {storageFull && (
         <div className="stn-rejected" onClick={() => setStorageFull(false)}
           style={{ background: "#b91c1c" }}
@@ -1524,15 +1677,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       {/* ── ปุ่มเลือกขั้นตอน — โชว์เฉพาะเครื่องที่ทำได้หลายขั้นตอน ─────────────── */}
       {machineOps.length > 1 && (
         <div className="stn-oppick">
-          <span className="stn-oppick-lbl">ขั้นตอน:</span>
-          {machineOps.map((o) => (
-            <button key={o.id}
-              className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}`}
-              onClick={() => setOpSel((prev) => { const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
-              {opLabel(o.name, lang)}
-            </button>
-          ))}
-          {opSel.size === 0 && <span className="stn-oppick-hint">← เลือกอย่างน้อย 1 ขั้นตอน</span>}
+          <span className="stn-oppick-lbl">{t("ขั้นตอน", "Step")}:</span>
+          {machineOps.map((o) => {
+            const isPrimary = primaryOp && primaryOp.id === o.id && selOps.length > 1;
+            // ★ รอบ 11 (B21): ระหว่างทำงาน (เริ่ม START แล้ว) ล็อกขั้นตอน — เดิมเปลี่ยนได้กลางงาน (ล็อก/เลขวิ่งคิดจากขั้นตอนเดิม)
+            const locked = step !== STEP.IDLE;
+            return (
+              <button key={o.id}
+                className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}${isPrimary ? " primary" : ""}`}
+                disabled={locked}
+                title={locked ? t("ล็อกระหว่างทำงาน — จบ/ยกเลิกงานก่อนถึงเปลี่ยนได้", "Locked during a job — finish or cancel first")
+                  : isPrimary ? t("ขั้นตอนหลัก — รับจำนวน/เวลา · ขั้นตอนอื่นบันทึกเป็นทำพร้อมกัน", "Primary step — takes the qty/time · others saved as done together") : undefined}
+                onClick={() => setOpSel((prev) => { const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
+                {isPrimary ? "★ " : ""}{opLabel(o.name, lang)}
+              </button>
+            );
+          })}
+          {opSel.size === 0 && <span className="stn-oppick-hint">← {t("เลือกอย่างน้อย 1 ขั้นตอน", "pick at least one step")}</span>}
+          {step !== STEP.IDLE && opSel.size > 0 && <span className="stn-oppick-hint">🔒 {t("ล็อกระหว่างทำงาน", "locked during job")}</span>}
         </div>
       )}
       {machineOps.length === 1 && (
@@ -1570,42 +1732,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               {rows.length === 0 && (
                 <tr className="stn-empty-row"><td colSpan={15}>{t("ยังไม่มีบันทึกสัปดาห์นี้ — เริ่มงานแรกได้เลย", "No records this week — start your first job")}</td></tr>
               )}
-              {rows.map((r, i) => {
-                const fin = String(r.status).toLowerCase() === "finished";
-                const isNew = (r.id && r.id === newRowId);
-                return (
-                  <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
-                    title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
-                    <td className="stn-mono">{r.day || todayMD()}</td>
-                    <td className="stn-hide-sm">{fmtM(r.mdf_no) || "-"}</td>
-                    <td className="stn-hide-sm">{r.rel_no || "-"}</td>
-                    <td className="l">{r.part_no || "-"}</td>
-                    <td className="stn-hide-sm">{r.rev || "-"}</td>
-                    <td>{fmt(r.qty)}</td>
-                    <td>{r.req != null ? fmt(r.req) : "-"}</td>
-                    <td>{r.process_cum != null && r.req != null
-                      ? `${fmt(r.process_cum)}/${fmt(r.req)}` : "-"}</td>
-                    {/* BALANCE = ยอดสะสมที่ทำแล้ว (PROCESS) − REQ · ติดลบ = ยังไม่ครบจำนวนสั่ง · เป็น + = ทำเกิน (สแปร์) */}
-                    <td className={r.process_cum != null && r.req != null && (r.process_cum - r.req) >= 0 ? "stn-st-fin" : ""}>
-                      {r.process_cum != null && r.req != null
-                        ? ((r.process_cum - r.req) > 0 ? `+${fmt(r.process_cum - r.req)}` : fmt(r.process_cum - r.req))
-                        : "-"}</td>
-                    <td className="stn-hide-sm">{r.length_mm != null ? fmt(r.length_mm) : "-"}</td>
-                    <td className="stn-hide-sm">{r.weight != null ? fmt(r.weight) : "-"}</td>
-                    {/* MATERIALS LENGTH สั้นกว่า LENGTH ของชิ้น → วัสดุไม่พอ ขึ้นสีแดง (Number() กันค่าเป็น string) */}
-                    <td style={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
-                        ? { color: "var(--st-red, #e11d1d)", fontWeight: 700 } : undefined}
-                      title={r.materials_length != null && r.length_mm != null && Number(r.materials_length) < Number(r.length_mm)
-                        ? t("ความยาววัสดุสั้นกว่าความยาวชิ้นงาน", "Material shorter than the part length") : undefined}>
-                      {r.materials_length != null ? fmt(r.materials_length) : "-"}</td>
-                    <td className="stn-hide-sm" style={{ textAlign: "center" }}>{r.inventory_code || "-"}</td>
-                    <td className="stn-hide-sm">{hms(r.process_seconds)}</td>
-                    <td className={fin ? "stn-st-fin" : "stn-st-inp"}>
-                      {fin ? t("เสร็จแล้ว", "Finished") : t("กำลังทำ", "In Process")}
-                    </td>
-                  </tr>
-                );
-              })}
+              {recRowsEl}
             </tbody>
           </table>
         </div>
@@ -2209,7 +2336,9 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
             {packPhotos.length > 0 && (
               <div className="asw-thumbs">
                 {packPhotos.map((p, i) => (
-                  <div key={i} className="asw-thumb" onClick={() => photoRemove(i)} title={t("แตะเพื่อลบ", "tap to remove")}><img src={p.url} alt="" /><span className="x">✕</span></div>
+                  <div key={i} className="asw-thumb" title={t("แตะเพื่อลบ", "tap to remove")}
+                    onClick={async () => { if (await askConfirm({ message: t("ลบรูปนี้?", "Delete this photo?"), tone: "warn", confirmText: t("ลบ", "Delete"), cancelText: t("ยกเลิก", "Cancel") })) photoRemove(i); }}>
+                    <img src={p.url} alt="" /><span className="x">✕</span></div>
                 ))}
               </div>
             )}
@@ -2477,7 +2606,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             <div className="stn-lbl-vline" />
             <div className="stn-lbl-col right">
               <div className="stn-lbl-kv">
-                <span className="k">MDF NO.</span><span className="v">{fmtM(p.mdf_no) || "-"}</span>
+                <span className="k">MDF NO.</span><span className="v">{fmtM(releaseMdf(unit?.release, p)) || "-"}</span>
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
@@ -2570,7 +2699,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             <div className="stn-lbl-vline" />
             <div className="stn-lbl-col right">
               <div className="stn-lbl-kv">
-                <span className="k">MDF NO.</span><span className="v">{fmtM(p.mdf_no) || "-"}</span>
+                <span className="k">MDF NO.</span><span className="v">{fmtM(releaseMdf(unit?.release, p)) || "-"}</span>
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
@@ -2631,6 +2760,13 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 
 // ── Camera QR scanner (rear camera + jsQR) with manual fallback ────────────
 function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locked = false }) {
+  // ★ รอบ 11 (A2): เรียก onDecoded "ตัวล่าสุด" เสมอ — เดิมกล้องจับฟังก์ชันตอนเปิดกล้องไว้ (effect [camOn])
+  //   → สถานีแพ็กที่เปิดกล้องค้าง เห็นรายการลูก "ตอนเปิดกล้อง" ตลอด → ถือกล้องค้างที่ป้ายเดิม = เพิ่มซ้ำทุก 1 วิ
+  const onDecodedRef = useRef(onDecoded);
+  onDecodedRef.current = onDecoded;
+  // ★ รอบ 11 (L3): ป้ายเดิมที่เพิ่งอ่าน (ไม่ผ่าน/รับแล้วในโหมดแพ็ก) ค้างหน้ากล้อง → ไม่อ่านซ้ำภายใน 4 วิ
+  //   (เดิมบี๊บ/สั่น/ค้นซ้ำทุก ~1 วิ)
+  const lastCodeRef = useRef({ code: null, at: 0 });
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);   // แคนวาสวาดกรอบขาวทับ QR ที่เจอ
@@ -2753,8 +2889,12 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
 
     // เมื่อ decode เจอ QR (ตัวไหนก็ได้ที่อ่านชัดก่อน) → ประมวลผล · ถ้าไม่พบในระบบ กลับมาสแกนต่อเอง
     function handleFound(data) {
+      const now = Date.now();
+      if (lastCodeRef.current.code === data && now - lastCodeRef.current.at < 4000) return;   // ป้ายเดิมยังค้างหน้ากล้อง → ข้าม
       doneRef.current = true;                          // หยุดทุกตัวชั่วคราว (กัน decode ซ้ำ)
-      onDecoded(data).then((ok) => { if (!ok) { clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); } });
+      Promise.resolve(onDecodedRef.current(data)).then((ok) => {
+        if (!ok) { lastCodeRef.current = { code: data, at: Date.now() }; clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); }
+      }).catch(() => { lastCodeRef.current = { code: data, at: Date.now() }; clearBox(); setTimeout(() => { doneRef.current = false; }, 1000); });
     }
     // ★ tick แบบ "reschedule เสมอ" — พอ doneRef กลับเป็น false (เคสไม่พบ) จะสแกนต่ออัตโนมัติ ไม่ค้าง
     function makeTick(video, canvas, { drawsBox }) {
@@ -2962,7 +3102,7 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
     if (r === "release_cancelled") return t("Part ถูกยกเลิกใน Modify — ออฟฟิศต้องตัดสิน (สแปร์/คืนงาน)", "Part cancelled by an office Modify");
     if (r === "retry_exhausted") return t("ลองซิงค์หลายครั้งไม่สำเร็จ", "Failed after several retries");
     if (r === "forbidden" || r === "unauthorized") return t("สิทธิ์/เซสชันมีปัญหา", "Permission/session issue");
-    return r || t("ไม่ทราบสาเหตุ", "unknown");
+    return reasonText(r, t);
   };
   const whatText = (it) => {
     const mw = it.machineWork;
@@ -3096,10 +3236,15 @@ export default function StationApp({ dept = "machine" } = {}) {
   const [notice, setNotice] = useState("");
   async function logout() {
     // เตือนถ้ายังมีงานค้างซิงค์ (ไม่หาย — เก็บใน localStorage รอดข้ามล็อกอิน จะซิงค์เองรอบหน้า)
-    const pending = scanQueueCount() + rejectedQueueCount();
-    const msg = pending > 0
-      ? `ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อล็อกอินอีกครั้ง (ข้อมูลไม่หาย)\n\nออกจากระบบและปิดแอป?`
-      : "ออกจากระบบและปิดแอป?";
+    // ★ รอบ 11: ออนไลน์ → ลองส่งงานค้างก่อน · งานค้างผูกกับบัญชีนี้ (A1) · มีงานกำลังทำ (B22) → บอกด้วย
+    if (typeof navigator === "undefined" || navigator.onLine !== false) { try { await flushScanQueue(); } catch { /* ignore */ } }
+    const pending = myQueueCount() + rejectedQueueCount();
+    let running = false;
+    try { const d = JSON.parse(localStorage.getItem(draftKeyFor(user?.id)) || "null"); running = !!(d && d.step && d.step !== "idle"); } catch { /* ignore */ }
+    const parts = [];
+    if (pending > 0) parts.push(t(`ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อบัญชีนี้ล็อกอินอีกครั้ง (ข้อมูลไม่หาย)`, `${pending} job(s) still waiting to sync — they'll sync when this account logs in again`));
+    if (running) parts.push(t("มีงานที่กำลังทำอยู่ (ยังไม่กด OK) — เก็บไว้ให้บัญชีนี้ทำต่อ · เวลาเดินเครื่องยังนับต่อ ถ้าไม่ได้ทำต่อให้กดยกเลิกงานก่อนออก", "A job is in progress (OK not pressed) — kept for this account · its timer keeps running; cancel the job first if you won't continue"));
+    const msg = parts.length ? parts.join("\n\n") + "\n\n" + t("ออกจากระบบและปิดแอป?", "Log out and close?") : t("ออกจากระบบและปิดแอป?", "Log out and close?");
     if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await clearActiveJobNow(); } catch { /* ignore */ }   // ★ ล้าง "กำลังทำงาน" ฝั่งออฟฟิศก่อน token หมด
     try { await logoutSession(); } catch { /* ignore */ }
@@ -3109,17 +3254,21 @@ export default function StationApp({ dept = "machine" } = {}) {
     try { window.close(); } catch { /* ignore */ }   // พยายามปิดแอป/แท็บ (ได้ผลบน PWA/บางเบราว์เซอร์)
   }
   // ถูกเตะออกเพราะบัญชีถูกใช้ล็อกอินที่เครื่องอื่น (1 บัญชี = 1 เครื่อง) — เด้งกลับหน้าล็อกอิน
+  // ★ รอบ 11 (L2): ออนไลน์จะถูกส่งไปหน้าเข้าสู่ระบบรวม (/) ทันที → ฝากข้อความไว้ให้หน้านั้นแสดง (เดิมไม่เคยเห็น)
+  const passNotice = (msg) => { try { sessionStorage.setItem("mls-login-notice", msg); } catch { /* ignore */ } };
   function onKicked() {
     clearSession();
     setUser(null);
-    setNotice("บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่");
+    const m = "บัญชีนี้ถูกใช้ล็อกอินที่เครื่องอื่น — กรุณาเข้าสู่ระบบใหม่";
+    setNotice(m); passNotice(m);
   }
   // token หมดอายุ (นาน ๆ ครั้ง — บัญชีเครื่องอายุ 30 วัน) — เด้งกลับหน้าล็อกอิน
   //   งานค้างอยู่ในคิว (localStorage) รอดข้ามล็อกอิน → ล็อกอินใหม่แล้วซิงค์ต่อเอง ไม่หาย
   function onExpired() {
     clearSession();
     setUser(null);
-    setNotice("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่ (งานที่ค้างจะซิงค์อัตโนมัติหลังล็อกอิน)");
+    const m = "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่ (งานที่ค้างจะซิงค์อัตโนมัติหลังล็อกอินด้วยบัญชีเดิม)";
+    setNotice(m); passNotice(m);
   }
   useEffect(() => { document.body.classList.add("stn-body"); return () => document.body.classList.remove("stn-body"); }, []);
   // เต็มจอเองตอนแตะครั้งแรก (สำหรับคนที่ล็อกอินค้างไว้ — ไม่มี gesture ตอนโหลด) · PWA จะเต็มจอเองอยู่แล้ว
