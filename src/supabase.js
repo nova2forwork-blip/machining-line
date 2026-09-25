@@ -94,7 +94,9 @@ function flagAuth(error) {
 // อ่าน (listRows) = query ตรงได้ (RLS ยังให้ SELECT) · เขียน = ผ่าน authz_* RPC เท่านั้น
 // (anon ถูกเพิกถอนสิทธิ์ INSERT/UPDATE/DELETE ตรงในตารางแล้ว)
 
-const ID_TABLES = new Set(["projects", "part_master", "releases", "part_units", "machines", "operations", "employees", "materials", "machine_records", "scan_logs"]);
+const ID_TABLES = new Set(["projects", "part_master", "releases", "part_units", "machines", "operations", "employees", "materials", "machine_records", "scan_logs", "departments"]);
+// ★ รอบ 12 (B29): ตารางที่ไม่มีคอลัมน์ id — เรียงด้วยคีย์หลัก
+const KEY_ORDER = { machine_operations: ["machine_id", "operation_id"] };
 export async function listRows(table, { order, ascending = true, filters, strict = false } = {}) {
   // แบ่งหน้าเอง (page 1000) — กันเพดาน 1,000 แถวของ PostgREST ที่ตัดข้อมูลเงียบๆ (H5)
   const pageSize = 1000; let from = 0; let all = [];
@@ -104,6 +106,11 @@ export async function listRows(table, { order, ascending = true, filters, strict
     if (order) q = q.order(order, { ascending });
     // ★ รอบ 11: เรียงด้วยค่าที่ซ้ำได้ (part_no / release_date) + แบ่งหน้า OFFSET = แถวซ้ำ/หายเงียบๆ → ต่อท้ายด้วย id
     if (order && order !== "id" && ID_TABLES.has(table)) q = q.order("id", { ascending: true });
+    // ★ รอบ 12 (B29): ไม่ระบุลำดับ + แบ่งหน้า OFFSET = ลำดับไม่แน่นอน → แถวซ้ำ/หายเงียบๆ (เช่นไฟล์สำรอง JSON) → เรียงด้วยคีย์เสมอ
+    if (!order) {
+      if (ID_TABLES.has(table)) q = q.order("id", { ascending: true });
+      else if (KEY_ORDER[table]) for (const c of KEY_ORDER[table]) q = q.order(c, { ascending: true });
+    }
     q = q.range(from, from + pageSize - 1);
     const { data, error } = await q;
     if (error) { console.warn("listRows error", table, error); if (strict) throw error; return all; }
@@ -651,7 +658,7 @@ export async function getStationScanInfo({ releaseId, operationId, machineId, pa
 export async function getUnitHistory(partUnitId) {
   const { data, error } = await supabase
     .from("scan_logs")
-    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name,code)")
+    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name)")   // ★ รอบ 12: ไม่ดึงรหัสพนักงาน (ปิดจาก anon)
     .eq("part_unit_id", partUnitId)
     .order("scanned_at", { ascending: true });
   if (error) {
@@ -792,7 +799,7 @@ export async function getReleasesFull() {
   for (;;) {
     const { data, error } = await supabase
       .from("releases")
-      .select("*, part_master(part_no, part_name, kind, routing, project_id, material, projects(code, name, status)), employee:employees(name, code)")
+      .select("*, part_master(part_no, part_name, kind, routing, project_id, material, projects(code, name, status)), employee:employees(name)")
       .order("release_date", { ascending: false })
       .range(from, from + pageSize - 1);
     if (error) { console.warn("getReleasesFull error", error); break; }
@@ -969,6 +976,243 @@ export async function machineReportSummary(since) {
   return data || { ok: true, downtime: [], slow: [] };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ★ รอบ 13: แจ้งหยุด / พร้อมทำงาน / เหตุผลรอบช้า — "ทำตอนออฟไลน์ได้"
+//   ทุกเรื่องเข้าคิวในเครื่องก่อน (เวลาที่กดจริง + client_id) แล้วส่งตามลำดับ (หยุด → พร้อม ไม่สลับกัน)
+//   ส่งซ้ำ (ตอบกลับหาย) = server คืนผลเดิม ไม่สร้างซ้ำ · ดู migration-round13.sql
+//   ev = { kind: 'stop'|'ready'|'slow', machine_id, reason, note, op_id, rec_id, rec_client, at, qid, owner, ts, attempts }
+// ════════════════════════════════════════════════════════════════════════════
+const EV_Q_KEY = "mls-stn-events";
+const evListeners = new Set();
+let _evMem = null;   // สำรองเมื่อ localStorage ใช้ไม่ได้
+function evRead() {
+  try { const raw = localStorage.getItem(EV_Q_KEY); if (raw) return JSON.parse(raw) || []; return _evMem || []; } catch { return _evMem || []; }
+}
+function evWrite(a) {
+  _evMem = a;
+  try { localStorage.setItem(EV_Q_KEY, JSON.stringify(a)); } catch (e) { console.warn("evWrite failed (storage full?)", e); }
+  evListeners.forEach((f) => { try { f(a.length); } catch (_) { /* ignore */ } });
+}
+export function onStationEvents(cb) { evListeners.add(cb); return () => evListeners.delete(cb); }
+// จำนวนเรื่องที่ยังไม่ส่ง (ของบัญชีนี้ · ถ้าระบุเครื่อง = เฉพาะเครื่องนั้น)
+export function stationEventsPending(machineId = null) {
+  const me = sessionUser();
+  return evRead().filter((it) => ownedByMe(it, me) && (!machineId || it.machine_id === machineId)).length;
+}
+const _evResults = new Map();   // qid → ผลจาก server (ให้ผู้ส่งรู้ผลหลัง flush)
+let _evFlushP = null;   // รอบส่งที่กำลังทำอยู่ (เรียกซ้อน = รอรอบเดิม)
+export function flushStationEvents() {
+  if (_evFlushP) return _evFlushP;
+  _evFlushP = _flushStationEvents().catch((e) => { console.warn("flushStationEvents", e); }).finally(() => { _evFlushP = null; });
+  return _evFlushP;
+}
+async function _flushStationEvents() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  const tok = authToken(); if (!tok) return;
+  const me = sessionUser();
+  const mine = evRead().filter((it) => ownedByMe(it, me));
+  if (!mine.length) return;
+  const done = new Set(); const bumped = new Map();
+  let authExpired = false;
+  const blockedMachines = new Set();   // เครื่องที่ส่งไม่ผ่าน (เน็ต) → เรื่องถัดไปของเครื่องนั้นรอ (คงลำดับ หยุด→พร้อม)
+  const pendingWork = new Set(qRead().filter((q) => !_syncedQids.has(q.qid)).map((q) => q.qid));
+  try {
+    for (const it of mine) {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) break;
+      if (it.kind !== "slow" && blockedMachines.has(it.machine_id)) continue;
+      // เหตุผลรอบช้าที่ผูกกับงานที่ยังอยู่ในคิว → รองานซิงค์ก่อน
+      if (it.kind === "slow" && !it.rec_id && it.rec_client && pendingWork.has(it.rec_client)) continue;
+      let data = null, error = null;
+      try {
+        if (it.kind === "stop") {
+          ({ data, error } = await supabase.rpc("report_machine_stop_at", {
+            p_token: tok, p_machine_id: it.machine_id, p_reason: it.reason || "", p_note: it.note || null,
+            p_operation_id: it.op_id || null, p_at: it.at || null, p_client_id: it.qid,
+          }));
+          if (error && isMissingFnErr(error)) ({ data, error } = await supabase.rpc("report_machine_stop", {   // ยังไม่ได้รัน SQL รอบ 13
+            p_token: tok, p_machine_id: it.machine_id, p_reason: it.reason || "", p_note: it.note || null, p_operation_id: it.op_id || null }));
+        } else if (it.kind === "ready") {
+          ({ data, error } = await supabase.rpc("machine_ready_at", { p_token: tok, p_machine_id: it.machine_id, p_at: it.at || null, p_client_id: it.qid }));
+          if (error && isMissingFnErr(error)) ({ data, error } = await supabase.rpc("machine_ready", { p_token: tok, p_machine_id: it.machine_id }));
+        } else if (it.kind === "slow") {
+          if (it.rec_id) {
+            ({ data, error } = await supabase.rpc("set_scan_slow_reason", { p_token: tok, p_record_id: it.rec_id, p_reason: it.reason || "", p_note: it.note || null }));
+          } else {
+            ({ data, error } = await supabase.rpc("set_scan_slow_reason_by_client", { p_token: tok, p_client_id: it.rec_client, p_reason: it.reason || "", p_note: it.note || null }));
+            if (error && isMissingFnErr(error)) { done.add(it.qid); continue; }   // SQL เก่า: ผูกย้อนหลังไม่ได้ → ทิ้ง (ไม่ค้างคิวตลอดไป)
+          }
+        } else { done.add(it.qid); continue; }
+      } catch (e) { error = e; }
+      if (error) {
+        if (isAuthError(error)) { authExpired = true; break; }
+        if (isNetworkErr(error)) break;                                    // เน็ต/server สะดุด → หยุดรอบนี้ (คงลำดับ) ลองใหม่รอบหน้า
+        const at = (Number(it.attempts) || 0) + 1;
+        if (at >= 20) { done.add(it.qid); _evResults.set(it.qid, { ok: false, reason: "retry_exhausted" }); }
+        else { bumped.set(it.qid, at); blockedMachines.add(it.machine_id); }
+        continue;
+      }
+      if (data && data.ok === false) {
+        if (data.reason === "unauthorized") { authExpired = true; break; }
+        if (data.reason === "not_found" && it.kind === "slow") {          // งานยังไม่ถึง server (หรือถูกปฏิเสธ) → ลองใหม่อีกพัก
+          const at = (Number(it.attempts) || 0) + 1;
+          if (at >= 40) done.add(it.qid); else bumped.set(it.qid, at);
+          continue;
+        }
+        done.add(it.qid); _evResults.set(it.qid, data);                   // forbidden / bad_input → ทิ้ง (ส่งซ้ำก็ไม่ผ่าน)
+        continue;
+      }
+      done.add(it.qid); _evResults.set(it.qid, data || { ok: true });
+    }
+  } finally {
+    if (done.size || bumped.size) {
+      evWrite(evRead().filter((it) => !done.has(it.qid)).map((it) => (bumped.has(it.qid) ? { ...it, attempts: bumped.get(it.qid) } : it)));
+    }
+    if (authExpired && typeof window !== "undefined") { try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ } }
+  }
+}
+// ส่งเรื่อง 1 เรื่อง: เข้าคิว → ลองส่งทันที → คืน { ok, queued } หรือผลจาก server
+export async function sendStationEvent(ev) {
+  const it = {
+    kind: ev.kind, machine_id: ev.machineId || null, reason: ev.reason || "", note: ev.note || null, op_id: ev.operationId || null,
+    rec_id: ev.recordId || null, rec_client: ev.recordClientId || null,
+    at: new Date().toISOString(), qid: newClientId(), owner: queueOwner(), ts: Date.now(),
+  };
+  evWrite([...evRead(), it]);
+  if (_evFlushP) await _evFlushP;          // มีรอบส่งค้างอยู่ (ไม่รวมเรื่องนี้) → รอจบแล้วส่งรอบใหม่
+  await flushStationEvents();
+  if (evRead().some((x) => x.qid === it.qid)) return { ok: true, queued: true, qid: it.qid };
+  const r = _evResults.get(it.qid) || { ok: true };
+  _evResults.delete(it.qid);
+  return r;
+}
+export function stationStop({ machineId, reason, note, operationId }) { return sendStationEvent({ kind: "stop", machineId, reason, note, operationId }); }
+export function stationReady({ machineId }) { return sendStationEvent({ kind: "ready", machineId }); }
+export function stationSlowReason({ machineId, recordId, recordClientId, reason, note }) {
+  return sendStationEvent({ kind: "slow", machineId, recordId, recordClientId, reason, note });
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { setTimeout(() => flushStationEvents(), 1200); });
+  setInterval(() => { if (evRead().length) flushStationEvents(); }, 20000);
+}
+
+// ── สถานะหน้าเครื่อง (heartbeat รอบ 13) ─────────────────────────────────────────
+// รุ่นของแอป = ชื่อไฟล์ JS หลักที่โหลดอยู่ (เปลี่ยนทุกครั้งที่ deploy) → ออฟฟิศเห็นว่าแท็บเล็ตไหนยังรันโค้ดเก่า
+export function appBuildId() {
+  try {
+    const s = [...document.querySelectorAll("script[src]")].map((x) => x.getAttribute("src") || "").find((src) => /assets\/index-[\w-]+\.js/.test(src));
+    const m = s && s.match(/index-([\w-]+)\.js/);
+    return m ? m[1] : "dev";
+  } catch { return "?"; }
+}
+function myQueueOldestAt() {
+  const me = sessionUser();
+  const ts = qRead().filter((it) => ownedByMe(it, me) && !_syncedQids.has(it.qid)).map((it) => Number(it.ts) || 0).filter((n) => n > 0);
+  return ts.length ? new Date(Math.min(...ts)).toISOString() : null;
+}
+let _pingMissing = false;
+export async function stationPing(info = {}) {
+  const t = authToken(); if (!t || _pingMissing) return { ok: false };
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return { ok: false, offline: true };
+  const payload = {
+    ...info,
+    queue_count: myQueueCount(), queue_oldest_at: myQueueOldestAt(),
+    rejected_count: rejectedQueueCount(), events_pending: stationEventsPending(),
+    app_version: appBuildId(), client_at: new Date().toISOString(),
+  };
+  try {
+    const { data, error } = await supabase.rpc("station_ping", { p_token: t, p_info: payload });
+    if (error) { if (isMissingFnErr(error)) _pingMissing = true; return { ok: false }; }
+    return data || { ok: false };
+  } catch { return { ok: false }; }
+}
+// ออฟฟิศ: สถานะหน้าเครื่องทุกเครื่อง → { ok, machines:[...] } · ยังไม่รัน SQL = { ok:false, missing:true }
+export async function getStationStatusList() {
+  const { data, error } = await supabase.rpc("station_status_list", { p_token: authToken() });
+  if (error) { if (isMissingFnErr(error)) return { ok: false, missing: true }; flagAuth(error); return { ok: false, reason: error.message }; }
+  return data || { ok: false };
+}
+// จอ TV (ไม่ล็อกอิน) → [{ code, name, state, reason, since, part_no, signal }] · พลาด = null (ไม่โชว์สถานะ)
+export async function getTvMachineStatus() {
+  try {
+    const { data, error } = await supabase.rpc("tv_machine_status");
+    if (error) return null;
+    return Array.isArray(data) ? data : null;
+  } catch { return null; }
+}
+
+// ── หน้าเครื่อง: ยอดวันนี้แยกขั้นตอน (แคชไว้ใช้ตอนออฟไลน์) ────────────────────────
+const DAYOPS_KEY = "mls-day-ops";
+export async function getStationDayOps() {
+  const me = sessionUser();
+  const day = bkkDay();
+  let base = null;
+  if (!(typeof navigator !== "undefined" && navigator.onLine === false)) {
+    try {
+      const { data, error } = await supabase.rpc("station_day_ops", { p_token: authToken() });
+      if (!error && data && data.ok) {
+        base = data.ops || [];
+        try { localStorage.setItem(DAYOPS_KEY, JSON.stringify({ emp: me?.id || null, day, ops: base })); } catch { /* ignore */ }
+      }
+    } catch { /* ออฟไลน์/เน็ตสะดุด → ใช้แคช */ }
+  }
+  let fromCache = false;
+  if (!base) {
+    try {
+      const c = JSON.parse(localStorage.getItem(DAYOPS_KEY) || "null");
+      if (c && c.day === day && c.emp === (me?.id || null)) { base = c.ops || []; fromCache = true; }
+    } catch { /* ignore */ }
+  }
+  // งานในคิวที่ยังไม่ซิงค์ (ของวันนี้) → บวกเป็น "รอซิงค์" ต่อขั้นตอน (ขั้นตอนร่วม = จำนวนของตัวหลักในสแกนเดียวกัน)
+  const q = qRead().filter((it) => ownedByMe(it, me) && it.machineWork && !_syncedQids.has(it.qid)
+    && bkkDay(new Date(it.machineWork.p_recorded_at || it.ts || Date.now())) === day);
+  const pend = {};
+  for (const it of q) {
+    const mw = it.machineWork; const op = mw.p_operation_id || "?";
+    let qty = Number(mw.p_quantity) || 0;
+    if (qty === 0) {
+      const t0 = new Date(mw.p_recorded_at || it.ts).getTime();
+      const prim = q.filter((x) => (Number(x.machineWork.p_quantity) || 0) > 0 && x.machineWork.p_qr === mw.p_qr)
+        .map((x) => ({ x, d: Math.abs(new Date(x.machineWork.p_recorded_at || x.ts).getTime() - t0) }))
+        .filter((o) => o.d <= 60000).sort((a, b) => a.d - b.d)[0];
+      qty = prim ? Number(prim.x.machineWork.p_quantity) || 0 : 0;
+    }
+    pend[op] = (pend[op] || 0) + qty;
+  }
+  return { ops: base || [], pending: pend, fromCache, known: !!base };
+}
+
+// ── เวลาปกติต่อชิ้น (เตือนเวลาผิดปกติตอนกด OK) · แคช 300 รายการล่าสุด ───────────────
+const TYP_KEY = "mls-typical-time";
+export async function getTypicalTime(partMasterId, operationId) {
+  if (!partMasterId || !operationId) return null;
+  const k = `${partMasterId}|${operationId}`;
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem(TYP_KEY) || "{}") || {}; } catch { cache = {}; }
+  const hit = cache[k];
+  const fresh = hit && Date.now() - (hit.at || 0) < 6 * 3600 * 1000;
+  if (fresh || (typeof navigator !== "undefined" && navigator.onLine === false)) return hit || null;
+  try {
+    const { data, error } = await supabase.rpc("station_typical_time", { p_token: authToken(), p_part_master_id: partMasterId, p_operation_id: operationId });
+    if (error || !data || !data.ok) return hit || null;
+    const v = { n: Number(data.n) || 0, median: data.median != null ? Number(data.median) : null, p25: data.p25 != null ? Number(data.p25) : null, p75: data.p75 != null ? Number(data.p75) : null, at: Date.now() };
+    cache[k] = v;
+    const keys = Object.keys(cache);
+    if (keys.length > 300) keys.sort((a, b) => (cache[a].at || 0) - (cache[b].at || 0)).slice(0, keys.length - 300).forEach((x) => delete cache[x]);
+    try { localStorage.setItem(TYP_KEY, JSON.stringify(cache)); } catch { /* ignore */ }
+    return v;
+  } catch { return hit || null; }
+}
+
+// ── สรุปรายงานฝั่ง server (แนวโน้ม / รายพนักงาน) · ดู report_summary_t ─────────────────
+// คืน { ok, rows:[{ b, k, label, code, qty, kg, sec, scans, units, days }] } · ยังไม่รัน SQL = { ok:false, reason:'missing' }
+export async function reportSummary({ from, to, bucket = "none", group = "none", filters = {} }) {
+  const clean = {};
+  Object.entries(filters || {}).forEach(([k, v]) => { if (v != null && v !== "") clean[k] = v; });
+  const { data, error } = await supabase.rpc("report_summary_t", { p_token: authToken(), p_from: from, p_to: to, p_bucket: bucket, p_group: group, p_filters: clean });
+  if (error) { if (isMissingFnErr(error)) return { ok: false, reason: "missing" }; flagAuth(error); return { ok: false, reason: error.message }; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── ลำดับคอลัมน์ในตาราง (2 ระดับ: company ค่ากลาง + user รายคน) · ดู migration-column-prefs.sql ──
 export async function getColumnPrefs() {
   const { data, error } = await supabase.rpc("get_column_prefs", { p_token: authToken() });
@@ -1024,7 +1268,15 @@ export async function getProjectStationProgress() {
 
 // ดึงรายชื่อพนักงานแบบเลือกคอลัมน์ชัดเจน (ไม่รวม password_hash)
 // จำเป็น เพราะ migration เพิกถอนสิทธิ์อ่านคอลัมน์ password_hash แล้ว — select * จะ error
+// ★ รอบ 12 (C1): อ่านผ่าน employees_list (ต้องล็อกอิน) — ไฟล์ lockdown ปิดรหัสพนักงานจาก anon · ยังไม่ติดตั้ง = อ่านตารางตรงแบบเดิม
+let _empListMissing = false;
 export async function getEmployees() {
+  if (!_empListMissing) {
+    const { data, error } = await supabase.rpc("employees_list", { p_token: authToken() });
+    if (!error) return Array.isArray(data) ? data : [];
+    if (!isMissingFnErr(error)) { console.warn("employees_list error", error); flagAuth(error); return []; }
+    _empListMissing = true;
+  }
   const { data, error } = await supabase
     .from("employees")
     .select("id, code, name, role, active, department_id, machine_id, operation_id, created_at")
@@ -1176,11 +1428,19 @@ export async function reportDeadLetter(items) {
       client_ts: String(it.rejectedAt || it.ts || Date.now()),
     };
   });
+  // ★ รอบ 12 (D): เดิมพลาดแล้วเงียบ → office ไม่เห็นงานค้างของเครื่องนี้จนกว่าจะเปิดหน้าใหม่ · ตอนนี้ลองใหม่เองอีกครั้ง (server กันซ้ำด้วย qid)
+  let ok = false;
   try {
     const { error } = await supabase.rpc("report_dead_letter", { p_token: authToken(), p_items: payload });
     if (error) console.warn("reportDeadLetter failed:", error.message || error);   // ★ supabase-js คืน error (ไม่ throw)
+    else ok = true;
   } catch (e) { console.warn("reportDeadLetter failed:", e?.message || e); }
+  if (!ok && typeof window !== "undefined" && !_dlRetry) {
+    _dlRetry = setTimeout(() => { _dlRetry = null; if (rjRead().length) reportDeadLetter(); }, 5 * 60 * 1000);
+  }
+  return ok;
 }
+let _dlRetry = null;
 // อ่าน dead-letter (admin) · ทำเครื่องหมายจัดการแล้ว (admin)
 export async function listDeadLetter(includeResolved = false) {
   const { data, error } = await supabase.rpc("authz_list_dead_letter", { p_token: authToken(), p_include_resolved: includeResolved });
@@ -1357,6 +1617,7 @@ export async function getUnitsByIds(ids) {
 
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
 // assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
+let _lapMissing = false;
 export async function listAssemblyParents(dept) {
   // แยกชนิดตามสเตชัน: แพ็ก/แพ็กแผง/แพ็กไซต์→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
   const packDepts = ["packing", "packpanel", "packsite"];
@@ -1365,6 +1626,18 @@ export async function listAssemblyParents(dept) {
     : dept === "assembly" ? ["subassembly"]
     : ["panel", "subassembly"];
   const wantPack = dept === "packpanel" ? "panel" : dept === "packsite" ? "site" : null;   // แพ็กแผง/ไซต์ = เฉพาะบั้งที่ติดป้ายตรงกัน (legacy packing = ทุกบั้ง)
+  // ★ รอบ 12 (B39): คัดฝั่ง server (ตัดโปรเจคปิด/ชนิดบั้ง/เสร็จแล้ว ก่อนจำกัดจำนวน · งานกำลังทำ + ใบใหม่ขึ้นก่อน)
+  //   เดิมดึง 600 แถวแรกแบบไม่เรียงแล้วค่อยกรอง → ปีหลังๆ เบอร์แม่ของโปรเจคที่เปิดอยู่หายจากตัวเลือก
+  if (!_lapMissing) {
+    const { data: d2, error: e2 } = await supabase.rpc("list_assembly_parents", { p_kinds: kinds, p_pack_type: wantPack, p_limit: 2000 });
+    if (!e2) {
+      return (Array.isArray(d2) ? d2 : []).map((u) => ({
+        id: u.id, qr_code: u.qr_code, status: u.status, part_no: u.part_no || u.qr_code, part_name: u.part_name || "",
+        kind: u.kind || "part", pack_type: u.pack_type || null, project_code: u.project_code || "", project_status: u.project_status || "",
+      }));
+    }
+    if (isMissingFnErr(e2)) _lapMissing = true; else { console.warn("list_assembly_parents error", e2); return []; }
+  }
   const { data, error } = await supabase
     .from("part_units")
     .select("id, qr_code, status, part_master!inner(part_no, part_name, kind, pkg_meta, projects(code, name, status))")
@@ -1402,8 +1675,23 @@ export async function setPkgManifest(pmId, manifest, meta) {
 
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
+// ★ รอบ 12 (C4): ขอ "ตั๋ว" ก่อนอัป (ต้องล็อกอิน) → อัปไปที่ <ตั๋ว>/ชื่อไฟล์ · ไฟล์ lockdown บังคับให้ต้องมีตั๋ว
+//   ยังไม่ติดตั้ง = อัปแบบเดิม (ไม่มีโฟลเดอร์)
+let _upTk = null, _upTkMissing = false;
+async function packingUploadTicket() {
+  if (_upTkMissing) return null;
+  if (_upTk && _upTk.exp - Date.now() > 90 * 1000) return _upTk.id;
+  const { data, error } = await supabase.rpc("packing_upload_ticket", { p_token: authToken() });
+  if (error) { if (isMissingFnErr(error)) _upTkMissing = true; else console.warn("packing_upload_ticket error", error); return null; }
+  if (!data || !data.ok || !data.ticket) return null;
+  const exp = new Date(data.expires_at).getTime();
+  _upTk = { id: data.ticket, exp: isFinite(exp) ? exp : Date.now() + 15 * 60 * 1000 };
+  return _upTk.id;
+}
 export async function uploadPackingPhoto(blob, keyHint = "pack") {
-  const path = `${keyHint}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const tk = await packingUploadTicket();
+  const file = `${keyHint}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const path = tk ? `${tk}/${file}` : file;
   const { data, error } = await supabase.storage.from("packing-photos").upload(path, blob, { contentType: "image/jpeg", upsert: false });
   if (error) { console.warn("uploadPackingPhoto error", error); throw error; }
   return data?.path || path;
@@ -1525,6 +1813,8 @@ export async function flushScanQueue() {
     if (authExpired && typeof window !== "undefined") {
       try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
     }
+    // ★ รอบ 13: งานซิงค์แล้ว → ส่งเหตุผลรอบช้า/แจ้งหยุดที่รออยู่ต่อทันที
+    if (!authExpired && evRead().length) setTimeout(() => { flushStationEvents(); }, 300);
   }
 }
 
@@ -1744,6 +2034,12 @@ export async function listReleaseIdsOfOrder(projectId, releaseOrder) {
 
 // เช็คว่ามี Release ที่ (โปรเจค + เลขที่ Release Order) นี้อยู่แล้วไหม — กันสร้าง/นำเข้าซ้ำตอน retry หลังเน็ตวูบ
 // (create_release_batch ไม่ idempotent) · เลข Order ว่าง = ระบุไม่ได้ ข้ามการเช็ค (fail-open) · เช็คไม่ได้ = ไม่บล็อก
+// ★ รอบ 12 (B33): เทียบแบบ "เลขเดียวกัน" — P-9 = P-09 = P-009 (ข้อมูลเก่าอาจสะกดต่างกัน) · ส่วนท้าย "(…)" ต้องตรงกัน
+export function releaseOrderKey(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  const m = s.match(/^P\s*-?\s*0*(\d+)\s*(\(.*\))?$/);
+  return m ? `P-${Number(m[1])}${m[2] ? m[2].replace(/\s+/g, "") : ""}` : s.replace(/\s+/g, "");
+}
 export async function releaseOrderExists(projectId, releaseOrder) {
   const ro = String(releaseOrder || "").trim();
   if (!projectId || !ro) return false;
@@ -1754,7 +2050,22 @@ export async function releaseOrderExists(projectId, releaseOrder) {
     .eq("release_order", ro)
     .limit(1);
   if (error) { console.warn("releaseOrderExists error", error); return false; }
-  return (data || []).length > 0;
+  if ((data || []).length > 0) return true;
+  // สะกดต่าง (P-9 / P-009) → ดูเลขใบทั้งหมดของโปรเจค (คอลัมน์เดียว · แบ่งหน้า)
+  const key = releaseOrderKey(ro);
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data: d2, error: e2 } = await supabase
+      .from("releases")
+      .select("release_order, part_master!inner(project_id)")
+      .eq("part_master.project_id", projectId)
+      .not("release_order", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (e2) { console.warn("releaseOrderExists error", e2); return false; }
+    if ((d2 || []).some((r) => releaseOrderKey(r.release_order) === key)) return true;
+    if (!d2 || d2.length < pageSize) return false;
+  }
 }
 
 // สร้าง/แก้ไขพนักงาน + ตั้งรหัสผ่าน โดย client ไม่ต้องแตะ hash (DB hash ด้วย bcrypt)
@@ -1798,6 +2109,18 @@ export const BACKUP_TABLES = [
   "machine_operations", "departments",
 ];
 
+// ★ รอบ 12 (B30): ตารางที่ไม่อยู่ในชุดเดิม (Modify · QR ที่ยกเลิก · Material · หยุดเครื่อง · BOM · การตั้งค่า …) — admin
+//   เก็บแยกใน dump.extra (import_backup เดิมไม่เห็น → ไม่กระทบ) · คืน null = ยังไม่ติดตั้ง/ไม่มีสิทธิ์
+export async function exportBackupExtra() {
+  const { data, error } = await supabase.rpc("backup_extra_export", { p_token: authToken() });
+  if (error) { if (!isMissingFnErr(error)) { console.warn("backup_extra_export error", error); throw error; } return null; }
+  return data || {};
+}
+export async function importBackupExtra(extra) {
+  const { data, error } = await supabase.rpc("backup_extra_import", { p_token: authToken(), p_data: extra });
+  if (error) { if (isMissingFnErr(error)) return { ok: false, missing: true }; console.warn("backup_extra_import error", error); throw error; }
+  return data || { ok: false };
+}
 export async function exportAllData(onProgress) {
   const tables = {};
   const counts = {};
@@ -1808,13 +2131,19 @@ export async function exportAllData(onProgress) {
     tables[t] = rows;
     counts[t] = rows.length;
   }
+  if (onProgress) onProgress({ table: "extra", index: BACKUP_TABLES.length - 1, total: BACKUP_TABLES.length });
+  const extra = await exportBackupExtra();   // พลาด = โยน error (backup ต้องครบ) · ยังไม่ติดตั้ง = null
+  const extraCounts = {};
+  if (extra) for (const [k, v] of Object.entries(extra)) extraCounts[k] = Array.isArray(v) ? v.length : 0;
   return {
+    ...(extra ? { extra } : {}),
     _meta: {
+      extraCounts: extra ? extraCounts : null,
       app: "machining-line-system",
       version: 1,
       exportedAt: new Date().toISOString(),
       counts,
-      totalRows: Object.values(counts).reduce((a, b) => a + b, 0),
+      totalRows: Object.values(counts).reduce((a, b) => a + b, 0) + Object.values(extraCounts).reduce((a, b) => a + b, 0),
     },
     tables,
   };
@@ -1859,6 +2188,12 @@ export async function getProjectSummary() {
   if (error) { console.warn("project_summary error", error); return []; }
   return data || [];
 }
+// ★ รอบ 12 (B15): ยอดเสร็จจากงานหน้าเครื่องต่อ Part { part_master_id: { finished, done } } · ยังไม่ติดตั้ง = null
+export async function getPartStationProgress() {
+  const { data, error } = await supabase.rpc("part_station_progress");
+  if (error) { if (!isMissingFnErr(error)) console.warn("part_station_progress error", error); return null; }
+  return data || {};
+}
 export async function getPartSummary() {
   const { data, error } = await supabase.rpc("part_summary");
   if (error) { console.warn("part_summary error", error); return []; }
@@ -1875,7 +2210,47 @@ function reportErr(name, error) {
   e.cause = error;
   return e;
 }
+// ★ รอบ 12 (C1): รายงานผ่านตัว _t (ต้องล็อกอิน · ช่วงไม่เกิน 400 วัน) · ยังไม่ติดตั้ง = ตัวเดิม
+const _rptTMissing = {};
+async function rpcReport(name, args) {
+  if (!_rptTMissing[name]) {
+    const r = await supabase.rpc(name + "_t", { p_token: authToken(), ...args });
+    if (!r.error) return r;
+    if (!isMissingFnErr(r.error)) { flagAuth(r.error); return r; }
+    _rptTMissing[name] = true;
+  }
+  return supabase.rpc(name, args);
+}
 export async function getScanLogsBetween(fromIso, toIso) {
+  // ช่วงยาวกว่า 1 ปี (เช่นช่วงเองแบบไม่ใส่วันเริ่ม) → ดึงทีละ ≤ 365 วัน แล้วต่อกัน (server จำกัด 400 วันต่อครั้ง)
+  const F = new Date(fromIso).getTime(), T = new Date(toIso).getTime();
+  const SPAN = 365 * 24 * 3600 * 1000;
+  if (isFinite(F) && isFinite(T) && T - F > SPAN) {
+    let out = [];
+    for (let to = T; to > F; ) {
+      const from = Math.max(F, to - SPAN);
+      const { data, error } = await rpcReport("report_logs", { p_from: new Date(from).toISOString(), p_to: new Date(to).toISOString() });
+      if (error) throw reportErr("report_logs", error);
+      // ขอบช่วงรวมทั้งสองด้าน → แถวที่เวลา "ตรงขอบพอดี" อยู่ในช่วงถัดไปแล้ว — ตัดออกจากช่วงเก่า (กันนับซ้ำ)
+      const rows = (data || []).filter((l) => to === T || new Date(l.scanned_at).getTime() !== to);
+      out = out.concat(rows);
+      to = from;
+    }
+    return out;
+  }
+  const { data, error } = await rpcReport("report_logs", { p_from: fromIso, p_to: toIso });
+  if (error) throw reportErr("report_logs", error);
+  return data || [];
+}
+// จอ TV (ไม่ล็อกอิน) — เฉพาะวันนี้ ไม่มีชื่อพนักงาน · ยังไม่ติดตั้ง = report_logs เดิม
+let _todayMissing = false;
+export async function getScanLogsToday(fromIso, toIso) {
+  if (!_todayMissing) {
+    const { data, error } = await supabase.rpc("report_logs_today");
+    if (!error) return data || [];
+    if (!isMissingFnErr(error)) throw reportErr("report_logs_today", error);
+    _todayMissing = true;
+  }
   const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
   if (error) throw reportErr("report_logs", error);
   return data || [];
@@ -1883,7 +2258,7 @@ export async function getScanLogsBetween(fromIso, toIso) {
 
 // เหตุผล "รอบช้า" (รายงานการทำงาน) ต่อการสแกน ในช่วงเวลา — ออฟฟิศเอาไปจับคู่กับแถวสแกน (part_unit + เวลา)
 export async function listScanSlow(fromIso, toIso) {
-  const { data, error } = await supabase.rpc("list_scan_slow", { p_from: fromIso, p_to: toIso });
+  const { data, error } = await rpcReport("list_scan_slow", { p_from: fromIso, p_to: toIso });
   if (error) {
     if (isMissingFnErr(error)) return [];          // ยังไม่ได้ติดตั้งรายงานเครื่อง → ไม่มีเหตุผลช้า (ไม่ใช่ error)
     throw reportErr("list_scan_slow", error);
@@ -1893,7 +2268,7 @@ export async function listScanSlow(fromIso, toIso) {
 
 // รายงานประกอบ/แพ็ก — ลูกที่ประกอบเข้าเบอร์แม่ทั้งช่วง (เบอร์แม่/ลูก + ความยาว + น้ำหนัก + ชนิด)
 export async function getAssemblyLogsBetween(fromIso, toIso) {
-  const { data, error } = await supabase.rpc("report_assembly", { p_from: fromIso, p_to: toIso });
+  const { data, error } = await rpcReport("report_assembly", { p_from: fromIso, p_to: toIso });
   if (error) {
     if (isMissingFnErr(error)) return [];
     throw reportErr("report_assembly", error);
