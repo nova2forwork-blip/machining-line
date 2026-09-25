@@ -186,3 +186,43 @@ body.dash-body {
 .dash-live.stale { color: #ffb020; }
 .dash-live.stale .dot { background: #ffb020; box-shadow: 0 0 0 .4vh rgba(255,176,32,.22); animation: none; }
 .dash-live-ago { font-size: .62em; font-weight: 500; letter-spacing: .04em; opacity: .75; }
+
+/* ── รอบ 12 (D): หลายเครื่อง — การ์ดเล็กลง + หมุนหน้า · กราฟรายชั่วโมงสูงอย่างน้อย 24vh (เดิมโดนการ์ดดันจนหาย) ── */
+.dash-main { grid-template-rows: minmax(0, auto) minmax(24vh, 1fr); }
+.dash-machines.dense { grid-template-columns: repeat(auto-fill, minmax(14vh, 1fr)); gap: .9vh; }
+.dash-machines.dense .dash-mach { padding: 1vh 1.2vh; }
+.dash-machines.dense .dash-mach .name { font-size: 1.5vh; margin-bottom: .5vh; }
+.dash-machines.dense .dash-mach .big { font-size: 2.5vh; }
+.dash-machines.dense .dash-mach .meta { font-size: 1.1vh; }
+.dash-mach.idle { opacity: .55; border-style: dashed; }
+.dash-mach.idle .big { color: var(--dash-ink-2); }
+.dash-idle-note { font-size: 1.2vh; color: var(--dash-ink-2); margin-top: .8vh; }
+@media (max-width: 1100px), (orientation: portrait) {
+  .dash-main { grid-template-rows: auto minmax(240px, auto); }
+  .dash-machines.dense { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .dash-machines.dense .dash-mach .name { font-size: 13px; }
+  .dash-machines.dense .dash-mach .big { font-size: 20px; }
+  .dash-machines.dense .dash-mach .meta { font-size: 11px; }
+  .dash-idle-note { font-size: 11px; }
+}
+
+/* ── รอบ 13: สถานะสดบนการ์ดเครื่อง ─────────────────────────────────────── */
+.dash-st { display: flex; align-items: center; gap: .6vh; margin-top: .7vh; font-size: 1.35vh; font-weight: 700; min-width: 0; white-space: nowrap; }
+.dash-st .ic { flex-shrink: 0; font-size: 1.2vh; }
+.dash-st .lb { flex-shrink: 0; }
+.dash-st .dt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; opacity: .9; }
+.dash-st .du { flex-shrink: 0; margin-left: auto; font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; opacity: .85; }
+.dash-st.st-running { color: var(--dash-green); }
+.dash-st.st-running .ic { animation: dashPulse 1.6s ease-in-out infinite; }
+.dash-st.st-stopped { color: #ff5b5b; }
+.dash-st.st-paused { color: #7fb4ff; }
+.dash-st.st-idle, .dash-st.st-off { color: var(--dash-ink-2); font-weight: 600; }
+.dash-mach.st-stopped { border-color: #ff5b5b; box-shadow: 0 0 0 1px rgba(255,91,91,.35), 0 0 18px -6px rgba(255,91,91,.7); animation: dashStop 2.4s ease-in-out infinite; }
+.dash-mach.st-paused { border-color: rgba(127,180,255,.6); }
+.dash-mach.st-off { opacity: .45; }
+.dash-sum-stop { color: #ff5b5b; }
+.dash-machines.dense .dash-st { font-size: 1.1vh; margin-top: .4vh; }
+@keyframes dashPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes dashStop { 0%, 100% { box-shadow: 0 0 0 1px rgba(255,91,91,.35), 0 0 10px -6px rgba(255,91,91,.5); } 50% { box-shadow: 0 0 0 2px rgba(255,91,91,.6), 0 0 22px -4px rgba(255,91,91,.8); } }
+@media (max-width: 900px) { .dash-st { font-size: 12px; } .dash-machines.dense .dash-st { font-size: 11px; } }
+@media (prefers-reduced-motion: reduce) { .dash-st.st-running .ic, .dash-mach.st-stopped { animation: none; } }
