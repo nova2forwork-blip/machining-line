@@ -20,11 +20,24 @@ const sec = (l) => Number(l?.process_seconds) || 0;
 //   • ถ้ามีค่า weight ที่บันทึกไว้ → ใช้เลย (report_logs คืน weight = น้ำหนักต่อชิ้น × quantity ของแถวนั้น)
 //   • ถ้าไม่มี weight (record เก่า/ยังไม่ปล่อยค่า) → fallback เป็น (น้ำหนักต่อชิ้น) × (quantity)
 //     ★ ต้องคูณ quantity ด้วย ไม่งั้นล็อตหลายชิ้นจะถูกนับต่ำกว่าจริง (เช่น 8 ชิ้นได้แค่ 1 ชิ้น)
+//   ★ รอบ 11 (B2): บันทึกไว้ 0 ทั้งที่มีจำนวน (ตอนสแกนยังไม่ได้ตั้งน้ำหนัก/ชิ้น) → ใช้น้ำหนักต่อชิ้น "ปัจจุบัน" แทน
+//     (ตั้งน้ำหนักทีหลังแล้วรายงานตรงทันที · เติมลงฐานข้อมูลถาวรด้วยปุ่ม "เติมน้ำหนักย้อนหลัง")
 export function logWeight(l) {
   const recorded = l?.weight;
-  if (recorded != null && recorded !== "") return Number(recorded) || 0;
-  const per = Number(l?.part_unit?.weight ?? l?.part_unit?.part_master?.unit_weight ?? 0) || 0;
-  return per * (Number(l?.quantity ?? 1) || 0);
+  const qty = Number(l?.quantity ?? 1) || 0;
+  if (recorded != null && recorded !== "") {
+    const n = Number(recorded) || 0;
+    if (n !== 0 || qty <= 0) return n;
+  }
+  const pu = l?.part_unit;
+  const per = Number((Number(pu?.weight) > 0 ? pu.weight : null) ?? pu?.part_master?.unit_weight ?? 0) || 0;
+  return per * qty;
+}
+// ชิ้นนี้ "ตั้งน้ำหนักแล้วแต่ฐานข้อมูลยังเก็บ 0" (แสดงผลถูกแล้ว แต่ยังควรกดเติมย้อนหลัง)
+export function logWeightNeedsBackfill(l) {
+  const qty = Number(l?.quantity ?? 1) || 0;
+  if (qty <= 0 || l?.weight == null || l.weight === "" || Number(l.weight) !== 0) return false;
+  return logWeight(l) > 0;
 }
 
 // จำนวนชิ้นรวมทั้งหมดในชุด logs (นับ quantity ของงานหน้าเครื่องด้วย)
@@ -45,14 +58,19 @@ export function processedWeight(logs) {
 // ── 2) per-unit จาก scan_logs: น้ำหนักวัสดุจริง (นับแต่ละชิ้นครั้งเดียว) ───
 // ใช้เมื่อข้อมูลต้นทางเป็น scan_logs แต่ต้องการน้ำหนักของ "ของ" ไม่ใช่ของ "งาน"
 // (เช่น ในหน้า Report ที่กรองตามช่วงเวลา แต่อยากรู้ว่ามีวัสดุจริงกี่ กก.)
+//   ★ รอบ 11: ต่อป้าย = รวมน้ำหนักต่อขั้นตอน แล้วเอาขั้นตอนที่มากสุด (เดิมเอาแถวแรก = แถว co-tick น้ำหนัก 0
+//     → ชิ้นที่ติ๊กหลายขั้นตอนได้ 0 กก. · ป้ายล็อตสแกนหลายรอบได้แค่รอบล่าสุด)
 export function materialWeight(logs) {
-  const seen = new Set();
-  let sum = 0;
+  const byUnit = new Map();
   for (const l of logs || []) {
-    if (!l.part_unit_id || seen.has(l.part_unit_id)) continue;
-    seen.add(l.part_unit_id);
-    sum += logWeight(l);
+    if (!l.part_unit_id || q(l) <= 0) continue;
+    const op = l.operation?.name || "?";
+    const m = byUnit.get(l.part_unit_id) || new Map();
+    m.set(op, (m.get(op) || 0) + logWeight(l));
+    byUnit.set(l.part_unit_id, m);
   }
+  let sum = 0;
+  for (const m of byUnit.values()) sum += Math.max(0, ...m.values());
   return sum;
 }
 
@@ -118,8 +136,8 @@ export function machineOpMatrix(logs, opOrder) {
   }
 
   for (const [, mv] of byMachineLogs) {
-    const entry = { name: mv.name, code: mv.code, total: { count: 0, weight: 0, seconds: 0 }, ops: {} };
-    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0 });
+    const entry = { name: mv.name, code: mv.code, total: { count: 0, weight: 0, seconds: 0 }, ops: {}, combos: {} };
+    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0, soloCount: 0, soloSeconds: 0, coCount: 0 });
 
     // 1) น้ำหนัก/เวลา/ยอดรวม — รวมจาก record จริงทุกแถว (co-tick มีค่า 0 อยู่แล้ว)
     for (const l of mv.rows) {
@@ -132,23 +150,39 @@ export function machineOpMatrix(logs, opOrder) {
     }
 
     // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
+    //    ★ รอบ 11 (B9): แยก cycle time — สแกนที่ทำขั้นตอนเดียว (solo) vs ทำหลายขั้นตอนพร้อมกัน (combos)
+    //      เดิม "วินาที/ชิ้น" ของขั้นตอนที่ติ๊กร่วม = 0 (เวลาทั้งหมดไปอยู่ที่ขั้นตอนหลัก)
     const asc = [...mv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
     let cur = null;
+    const flush = () => {
+      if (!cur) return;
+      const list = sortOpNames(cur.ops, opOrder);
+      if (list.length === 1) { const o = ensureOp(list[0]); o.soloCount += cur.qty; o.soloSeconds += cur.sec; }
+      else {
+        const key = list.join(" + ");
+        const c = entry.combos[key] = entry.combos[key] || { ops: list, count: 0, seconds: 0 };
+        c.count += cur.qty; c.seconds += cur.sec;
+        list.forEach((op) => { ensureOp(op).coCount += cur.qty; });
+      }
+    };
     for (const l of asc) {
       const op = l.operation?.name || "ไม่ระบุ";
       const qv = q(l);
       const puid = l.part_unit_id;
       const st = String(l.status || "").toLowerCase();
       if (qv > 0) {                                   // record หลัก → เริ่มสแกนใหม่ + เครดิตขั้นตอนหลัก
-        cur = { qty: qv, puid, st, ops: new Set([op]) };
+        flush();
+        cur = { qty: qv, puid, st, ops: new Set([op]), sec: sec(l) };
         entry.total.count += qv;
         ensureOp(op).count += qv;
       } else if (cur && cur.puid === puid && cur.st === st) {   // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
         if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
+        cur.sec += sec(l);
       } else {
         ensureOp(op);                                 // ติ๊กร่วมกำพร้า (ไม่มีตัวหลักคู่) → มีคอลัมน์ไว้ แต่ไม่เครดิต
       }
     }
+    flush();
     byMachine.set(mv.code || mv.name, entry);
   }
 
@@ -187,14 +221,17 @@ export function partOpMatrix(logs, opOrder) {
                     total: { count: 0, weight: 0, finished: 0 }, ops: {} };
     const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0 });
 
-    // 1) น้ำหนัก / finished / น้ำหนักรวม — รวมจาก record จริง (co-tick มีค่า 0 อยู่แล้ว)
+    // 1) น้ำหนัก / น้ำหนักรวม — รวมจาก record จริง (co-tick มีค่า 0 อยู่แล้ว)
     for (const l of kv.rows) {
       const op = l.operation?.name || "ไม่ระบุ";
       const wt = logWeight(l);
       ensureOp(op).weight += wt;
       entry.total.weight += wt;
-      entry.total.finished += (String(l.status).toLowerCase() === "finished" ? q(l) : 0);
     }
+    // ★ รอบ 11 (B1): "เสร็จ (ชิ้น)" = กติกาเดียวกับหน้า Release (release_finished_pieces v4)
+    //   ต่อป้าย: เครื่องที่กด Finished กับป้ายนั้นแล้ว → รวมจำนวนต่อขั้นตอน (ข้ามเครื่อง) → ขั้นตอนที่มากสุด
+    //   เดิมบวกจำนวนทุกแถว Finished ทุกเครื่อง/ทุกรอบ → ตัด+เจาะแยกเครื่องกด Finished = นับ 2 เท่า · รอบ In Process ไม่นับ
+    entry.total.finished = finishedPiecesV4(kv.rows);
 
     // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
     const asc = [...kv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
@@ -220,6 +257,29 @@ export function partOpMatrix(logs, opOrder) {
   parts.sort((a, b) => (a.releaseOrder || "").localeCompare(b.releaseOrder || "", undefined, { numeric: true })
                       || (b.total.count - a.total.count));
   return { parts, opNames: sortOpNames(opNames, opOrder) };
+}
+
+// ชิ้นที่เสร็จ (กติกา v4) จากชุด log ของ Release เดียว — ดู migration-audit-round11.sql (release_finished_pieces)
+export function finishedPiecesV4(rows) {
+  const finMachine = new Set();                   // `${ป้าย}|${เครื่อง}` ที่กด Finished แล้ว
+  for (const l of rows || []) {
+    if (String(l.status || "").toLowerCase() === "finished" && l.part_unit_id) {
+      finMachine.add(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`);
+    }
+  }
+  const byUnitOp = new Map();                     // ป้าย → (ขั้นตอน → จำนวนที่เครื่อง Finished ทำ)
+  for (const l of rows || []) {
+    const qv = q(l);
+    if (qv <= 0 || !l.part_unit_id) continue;
+    if (!finMachine.has(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`)) continue;
+    const op = l.operation?.name || "?";
+    const m = byUnitOp.get(l.part_unit_id) || new Map();
+    m.set(op, (m.get(op) || 0) + qv);
+    byUnitOp.set(l.part_unit_id, m);
+  }
+  let sum = 0;
+  for (const m of byUnitOp.values()) sum += Math.max(0, ...m.values());
+  return sum;
 }
 
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────
@@ -268,7 +328,7 @@ export function machineDailyMatrix(logs) {
     const day = bangkokDay(l.scanned_at);
     days.add(day);
     if (!byMachine.has(m)) {
-      byMachine.set(m, { name: mName, days: {}, total: { count: 0, weight: 0, seconds: 0 } });
+      byMachine.set(m, { name: mName, code: l.machine?.code || "", days: {}, total: { count: 0, weight: 0, seconds: 0 } });
     }
     const e = byMachine.get(m);
     e.days[day] = e.days[day] || { count: 0, weight: 0, seconds: 0 };
