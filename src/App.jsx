@@ -5,6 +5,7 @@ import {
   listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
+  setReleaseMdf, releaseMdf, listReleaseIdsOfOrder, recalcRecordWeights, countReleaseStationRecords, updatePartMaster,
   deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
   getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate, getReleaseMachineStatus,
@@ -516,8 +517,8 @@ function UndoHint() {
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
-  processedWeight, materialWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
-  machineDailyMatrix, missingWeightParts, logWeight,
+  processedWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
+  machineDailyMatrix, missingWeightParts, logWeight, logWeightNeedsBackfill, finishedPiecesV4,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
 import { askConfirm, ConfirmHost } from "./confirm.jsx";
@@ -612,8 +613,31 @@ function customRangeFor(fromStr, toStr) {
   const to = toStr ? new Date(`${toStr}T23:59:59.999`) : new Date();
   return { from: from.toISOString(), to: to.toISOString() };
 }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-function daysAgoStr(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
+// ★ รอบ 11 (B16): วันที่ "ตามเวลาเครื่อง" (ไทย) — เดิม toISOString() = วันที่ UTC → ก่อน 07:00 กลายเป็นเมื่อวาน
+//   (Release ใหม่บันทึกเป็นเมื่อวาน · รายงานตัดกะดึก · วันที่ 1 เลือกเดือนก่อน)
+function localYmd(d = new Date()) { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); }
+function todayStr() { return localYmd(); }
+function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localYmd(d); }
+// ★ รอบ 11 (B3): แถบสถานะโหลดรายงาน — กำลังโหลด / โหลดไม่สำเร็จ (ไม่โชว์ "0" หลอกว่าไม่มีงาน)
+function LoadStateBanner({ state, onRetry }) {
+  if (!state) return null;
+  if (state.error) {
+    return (
+      <div className="card" role="alert" style={{ background: "var(--danger-tint, #fff4f4)", borderColor: "var(--danger, #e11d1d)", color: "var(--danger-dk, #a01212)", fontSize: 12.5, padding: "10px 14px", marginBottom: 14, lineHeight: 1.6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <Icon name="warn" size={14} style={{ verticalAlign: "-2px", marginInlineEnd: 4 }} />
+          <b>โหลดข้อมูลไม่สำเร็จ</b> — ตัวเลขด้านล่างยังไม่ใช่ข้อมูลจริง (ไม่ใช่ว่าไม่มีงาน) · ลองใหม่อีกครั้ง หรือเลือกช่วงเวลาที่สั้นลง
+          <div style={{ fontSize: 11, opacity: .75, marginTop: 2 }}>{String(state.error).slice(0, 160)}</div>
+        </div>
+        {onRetry && <Btn variant="ghost" size="sm" onClick={onRetry}><Icon name="refresh" size={13} /> ลองใหม่</Btn>}
+      </div>
+    );
+  }
+  if (state.loading) {
+    return <div style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 2px 10px" }}>กำลังโหลดข้อมูล…</div>;
+  }
+  return null;
+}
 function PresetPicker({ value, onChange }) {
   return (
     <div className="chip-row">
@@ -838,6 +862,8 @@ function Login({ onLogin }) {
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  // ★ รอบ 11: ข้อความจากหน้าเครื่อง (ถูกเตะออก / เซสชันหมดอายุ) ที่ฝากไว้ก่อนเด้งมาหน้านี้
+  const [notice] = useState(() => { try { const m = sessionStorage.getItem("mls-login-notice"); if (m) sessionStorage.removeItem("mls-login-notice"); return m || ""; } catch { return ""; } });
   const [busy, setBusy] = useState(false);
 
   async function submit(e) {
@@ -888,6 +914,7 @@ function Login({ onLogin }) {
         <Field label="รหัสผ่าน">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </Field>
+        {notice && !err && <div style={{ color: "var(--alert, #b45309)", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{notice}</div>}
         {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
         <Btn variant="accent" size="lg" className="btn-block" disabled={busy}>
           {busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}
@@ -2238,17 +2265,31 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
         releasedBy: user.id, makeQr, rows,
       });
-      // เก็บ Modify (ทั้งใบ) → mdf_no ทุก Part ในใบนี้ · REV → ราย Part — เว้นว่าง = "0"
-      // (ต้องมีคอลัมน์ mdf_no / rev จาก migration-station.sql; ถ้ายังไม่มีจะข้ามเงียบๆ)
+      // เก็บ Modify (ทั้งใบ) + REV (ราย Part) — เว้นว่าง = "0"
+      // ★ รอบ 11 (A5/A6): MDF เก็บ "ต่อ Release" (releases.mdf_no) — ไม่ไปทับ MDF ของใบอื่นที่ใช้เบอร์เดียวกัน
+      //   REV ของ "เบอร์ที่มีอยู่แล้ว" เปลี่ยนเฉพาะเมื่อกรอก REV มา (เดิมช่องว่าง → "0" ทับ REV B ของใบเก่า
+      //   → หน้าเครื่องของใบเก่าโชว์ REV ผิด) · เบอร์ใหม่ = ค่าที่กรอก (ว่าง = "0") เหมือนเดิม
       const mdfVal = modify.trim() || "0";
+      let mdfPerRelease = false;
+      try {
+        const relIds = await listReleaseIdsOfOrder(projectId, ro);
+        const mr0 = await setReleaseMdf(relIds, mdfVal);
+        mdfPerRelease = !!(mr0 && mr0.ok);
+      } catch (_) { /* ยังไม่ได้รัน migration-audit-round11.sql → เก็บที่ part_master แบบเดิม */ }
+      const doneCodes = new Set();
       for (const r of validRows) {
         const code = r.code.trim();
-        if (!code) continue;
+        if (!code || doneCodes.has(code.toLowerCase())) continue;
+        doneCodes.add(code.toLowerCase());
+        const isNewPart = !existingPartFor(r);
+        const revTxt = (r.rev ?? "").toString().trim();
+        const patch = {};
+        if (isNewPart) patch.rev = revTxt || "0";
+        else if (revTxt) patch.rev = revTxt;
+        if (!mdfPerRelease) patch.mdf_no = mdfVal;          // DB เก่า: หน้าเครื่องอ่าน MDF จากเบอร์ (แบบเดิม)
+        if (!Object.keys(patch).length) continue;
         try {
-          await updateRows("part_master", { project_id: projectId, part_no: code }, {
-            mdf_no: mdfVal,
-            rev: (r.rev ?? "").toString().trim() || "0",
-          });
+          await updateRows("part_master", { project_id: projectId, part_no: code }, patch);
         } catch (_) { /* คอลัมน์อาจยังไม่มี — ไม่ให้ล้มทั้งใบ */ }
       }
       // ★ INV ที่ยังไม่มี (ทั้งในโปรเจคและ Center Stock) → บันทึกเข้า Material ของโปรเจคนี้ (พลาดไม่กระทบ Release ที่บันทึกแล้ว)
@@ -2668,7 +2709,7 @@ function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: ""
 
 function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => todayStr());
   const [projectId, setProjectId] = useState(projects[0]?.id || "");
   const [groups, setGroups] = useState([emptySubAsmGroup()]);
   const [busy, setBusy] = useState(false);
@@ -2979,7 +3020,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
 // ══════════════════════════════════════════════════════════════════════════
 function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
   const [releaseOrder, setReleaseOrder] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => todayStr());
   const [projectId, setProjectId] = useState(projects[0]?.id || "");
   const [packType, setPackType] = useState("panel");   // ชนิดการแพ็กของบั้งชุดนี้: panel (แพ็กแผง) / site (แพ็กไซต์ไอเทม) → pkg_meta.pack_type
   const [bunks, setBunks] = useState([]);      // [{ meta, units }]
@@ -5166,10 +5207,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   async function handleDelete(r) {
     setBusyId(r.id);
     try {
-      const units = await listRows("part_units", { filters: { release_id: r.id } });
+      // ★ รอบ 11 (A8): อ่านไม่ได้ = หยุด (เดิมถือว่า 0 → "ยังไม่มีการสแกน" แล้วลบประวัติทิ้ง) · นับงานหน้าเครื่องด้วย
+      const [units, stationRecs] = await Promise.all([
+        listRows("part_units", { filters: { release_id: r.id }, strict: true }),
+        countReleaseStationRecords(r.id),
+      ]);
       const scanned = units.filter((u) => u.status !== "released").length;
-      const msg = scanned > 0
-        ? `ล็อตนี้มี ${units.length} ชิ้น และมี ${scanned} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบ Release นี้จะลบ QR และประวัติสแกนของชิ้นทั้งหมดในล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
+      const msg = (scanned > 0 || stationRecs > 0)
+        ? `ล็อตนี้มี ${units.length} ชิ้น · มีประวัติการทำงานแล้ว${scanned > 0 ? ` (สแกน ${scanned} ชิ้น)` : ""}${stationRecs > 0 ? ` · บันทึกงานหน้าเครื่อง ${fmtNum(stationRecs)} รายการ` : ""}\n\nการลบ Release นี้จะลบ QR และประวัติการทำงานทั้งหมดของล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
         : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
       if (!(await askConfirm({ message: msg, tone: "danger", confirmText: "ลบ Release", cancelText: "ยกเลิก" }))) { setBusyId(null); return; }
       await deleteReleaseCascade(r.id);
@@ -5646,6 +5691,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       {editing && (
         <ReleaseEditModal
           release={editing}
+          modLocked={modList.length > 0}
           onClose={() => setEditing(null)}
           onSaved={afterEdit}
           onDelete={() => { const r = editing; setEditing(null); handleDelete(r); }}
@@ -5674,6 +5720,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         <ReleaseHeaderEditModal
           group={group}
           releases={releases}
+          projectId={projectId}
+          modLocked={modList.length > 0}
           curRO={hdr.ro}
           curDate={hdr.date}
           onClose={() => setEditHeader(false)}
@@ -5684,6 +5732,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               ...r,
               release_order: ro || null,
               release_date: dateIso || r.release_date,
+              mdf_no: mdf ?? r.mdf_no,
               part_master: r.part_master ? { ...r.part_master, mdf_no: mdf ?? r.part_master.mdf_no } : r.part_master,
             })));
             setEditHeader(false);
@@ -5744,6 +5793,7 @@ function ReleasePage({ user, goTo }) {
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
   const [allOpProg, setAllOpProg] = useState({});   // ความคืบหน้าแยกขั้นตอน (งานหน้าเครื่อง) ต่อ release — ใช้รวมกับ office
+  const [statsLoaded, setStatsLoaded] = useState(false);   // ★ โหลดสถิติเสร็จแล้ว (ใบที่ไม่มี QR ไม่ค้าง "—")
 
   // ── ค้นหา/กรองประวัติ: วันที่ (จาก–ถึง) · โปรเจค · เลข Release Order ──
   const [fromDate, setFromDate] = useState("");
@@ -5764,27 +5814,38 @@ function ReleasePage({ user, goTo }) {
       const ids = releases.map((r) => r.id);
       // โหลดทั้งสแกนออฟฟิศ + งานหน้าเครื่อง พร้อมกัน → คิด "เสร็จ" แบบ MAX(ออฟฟิศ, หน้าเครื่อง) ให้ตรงกับหน้ารายละเอียด
       Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids)])
-        .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); });
+        .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); setStatsLoaded(true); });
     }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // กรองที่ระดับ release ก่อน แล้วค่อยจัดกลุ่ม เพื่อให้ค้นหาครอบคลุมทั้งประวัติ (deptOfKind = ตัวกลาง)
-  const filteredReleases = recent.filter((r) => {
-    if (deptFilter && deptOfKind(r.part_master?.kind) !== deptFilter) return false;
+  // แยกแผนกที่ระดับ release (แท็บแผนก = คนละรายการ) → จัดกลุ่ม "ทั้งใบ" → ตัวกรองอื่นใช้เลือกว่า "ใบไหนแสดง"
+  //   ★ รอบ 11 (A4): เดิมกรองทีละ release ก่อนจัดกลุ่ม → ค้น AN04-001 แล้วกดเข้า P-009 เห็นแค่ 1 เบอร์
+  //     (KPI/สถานะ/รายการ Modify ผิด · "แก้หัวเอกสาร" แก้แค่เบอร์ที่เห็น → ใบแตกเป็น 2)
+  //     ตอนนี้: ใบที่มีอย่างน้อย 1 เบอร์ตรงเงื่อนไข = แสดงทั้งใบ (ทุกเบอร์ในแผนกนั้น)
+  const deptReleases = deptFilter ? recent.filter((r) => deptOfKind(r.part_master?.kind) === deptFilter) : recent;
+  const searchQ = orderSearch.trim().toLowerCase();
+  const matchRel = (r) => {
     if (projectFilter && r.part_master?.projects?.code !== projectFilter) return false;
     if (fromDate && new Date(r.release_date) < new Date(`${fromDate}T00:00:00`)) return false;
     if (toDate && new Date(r.release_date) > new Date(`${toDate}T23:59:59.999`)) return false;
-    if (orderSearch) {
-      const q = orderSearch.trim().toLowerCase();
-      const hay = [r.release_order, r.part_master?.part_no, r.part_master?.projects?.name, r.note]
-        .some((v) => (v || "").toLowerCase().includes(q));
+    if (searchQ) {
+      const hay = [r.release_order, r.part_master?.part_no, r.part_master?.projects?.name, r.part_master?.projects?.code, r.part_master?.material, r.note]
+        .some((v) => (v || "").toLowerCase().includes(searchQ));
       if (!hay) return false;
     }
     return true;
-  });
-  const groups = groupReleases(filteredReleases);
+  };
   const hasFilter = fromDate || toDate || projectFilter || orderSearch;
+  const groups = useMemo(() => {
+    const all = groupReleases(deptReleases);
+    if (!hasFilter) return all;
+    return all.filter((g) => g.releases.some(matchRel)).map((g) => {
+      const hits = g.releases.filter(matchRel).length;
+      return hits < g.releases.length ? { ...g, matchCount: hits } : g;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recent, deptFilter, projectFilter, fromDate, toDate, orderSearch]);
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
 
   if (viewGroup) {
@@ -5863,7 +5924,7 @@ function ReleasePage({ user, goTo }) {
             const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
             const gFinished = computeGroupProgress(g.releases, allUnitStats, allOpProg, gTotal).finished;
             const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
-            return { gTotal, gFinished, gPct, statsReady: g.releases.every((r) => r.id in allUnitStats) };
+            return { gTotal, gFinished, gPct, statsReady: statsLoaded || g.releases.every((r) => r.id in allUnitStats) };
           }}
           rowProps={(g) => ({ className: "release-row", onClick: () => setViewGroup(g) })}
           empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม")}
@@ -5871,7 +5932,9 @@ function ReleasePage({ user, goTo }) {
             { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
             { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-") },
-            { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
+            { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => (
+                <>{fmtNum(g.releases.length)} Part{g.matchCount ? <div style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>ตรงที่ค้น {fmtNum(g.matchCount)}</div> : null}</>
+              ) },
             { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
             { key: "progress", header: "ความคืบหน้า", sortKey: "progress", tdStyle: { whiteSpace: "nowrap" },
               cell: (g, i, c) => c.statsReady && c.gPct !== null ? <ProgressBar pct={c.gPct} finished={c.gFinished} total={c.gTotal} /> : <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span> },
@@ -6638,7 +6701,9 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
   const [err, setErr] = useState("");
   const sort = useTableSort();
   useEffect(() => { if (relsIn) setRels(relsIn); }, [relsIn]);
-  useEffect(() => { if (!relsIn) getReleasesFull().then(setRels).catch(() => setRels([])); }, [relsIn]);
+  // ★ รอบ 11 (B7): ผู้เรียกส่ง releases มา (แม้ยังเป็น null = กำลังโหลด) → รอของผู้เรียก ไม่โหลดซ้ำเอง
+  //   (เดิมหน้า Report โหลด releases ทั้งหมด 2 รอบ แล้วคิดยอด Finished ของทุก release ซ้ำ 2–3 ครั้ง)
+  useEffect(() => { if (relsIn === undefined) getReleasesFull().then(setRels).catch(() => setRels([])); }, [relsIn]);
   useEffect(() => {
     if (!rels) return;
     let alive = true;
@@ -6964,7 +7029,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           projectNumber: proj.code || "",
           projectName: proj.name || "",
           partNo: part.part_no || "",
-          mdfNo: part.mdf_no ?? "-",
+          mdfNo: releaseMdf(rel, part) ?? "-",   // ★ รอบ 11 (A6): MDF ของใบนี้ (ไม่ใช่ของเบอร์ที่อาจมาจากใบอื่น)
           relNo: rel.release_order || "",
           qtyText: effScope === "lot"
             ? (total != null ? `${total} PCS` : "")   // ป้ายรวมล็อต: โชว์จำนวนทั้งล็อต (อังกฤษ ให้ตรงกับ MDF/REL NO.)
@@ -7151,7 +7216,7 @@ function isoToDateInput(iso) {
 
 // ─── แก้หัวเอกสาร Release ทั้งใบ (Modify / เลขที่ Release Order / วันที่) — Admin เท่านั้น ───
 // ค่าทั้ง 3 เป็นระดับ "ทั้งใบ" → บันทึกทีเดียวเปลี่ยนครบทุก Part (ผ่าน RPC admin-gated)
-function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSaved }) {
+function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false, curRO, curDate, onClose, onSaved }) {
   const [modify, setModify] = useState("");
   const [releaseOrder, setReleaseOrder] = useState(curRO || "");
   const [date, setDate] = useState(() => isoToDateInput(curDate));
@@ -7160,10 +7225,13 @@ function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSa
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // ดึงค่า Modify ปัจจุบัน (เก็บที่ part_master — ตัวแทน 1 Part ในใบ, ปกติทั้งใบใช้ค่าเดียวกัน)
+  // ค่า Modify ปัจจุบัน — ★ รอบ 11: ของ "ใบนี้" (releases.mdf_no) ก่อน · ข้อมูลเก่า = ของเบอร์ (part_master)
   useEffect(() => {
     let alive = true;
-    const pmId = releases[0]?.part_master_id;
+    const r0 = releases[0];
+    const own = r0?.mdf_no;
+    if (own != null && String(own).trim() !== "") { const m = String(own); setModify(m); setOrigMdf(m); setLoading(false); return; }
+    const pmId = r0?.part_master_id;
     if (!pmId) { setLoading(false); return; }
     listRows("part_master", { filters: { id: pmId } })
       .then((rows) => { if (!alive) return; const m = (rows[0]?.mdf_no ?? "").toString(); setModify(m); setOrigMdf(m); })
@@ -7175,36 +7243,66 @@ function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSa
     const ro = normalizeReleaseOrder(releaseOrder);
     if (ro && !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009 (หรือเว้นว่าง)'); return; }
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    const roChanged = (ro || "") !== (curRO || "");
+    // ★ รอบ 11 (A7): ใบที่มีประวัติ Modify เปลี่ยนเลขไม่ได้ — ประวัติ M ผูกกับเลขเดิม (เปลี่ยนแล้วประวัติหลุด)
+    if (roChanged && modLocked) { setErr(`ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลข Release Order ไม่ได้ (ประวัติ M ผูกกับเลข ${curRO})`); return; }
     setBusy(true); setErr("");
     try {
+      // ★ รอบ 11 (A4): แก้ "ทั้งใบ" จริง — ทุก Release ของ (โปรเจค + เลขใบ) รวมทุกแผนก (ไม่ใช่แค่ที่เห็นในหน้านี้)
+      let ids = releases.map((r) => r.id);
+      if (curRO && projectId) {
+        try { const all = await listReleaseIdsOfOrder(projectId, curRO); if (all.length) ids = [...new Set([...ids, ...all])]; }
+        catch (_) { /* อ่านไม่ได้ → ใช้เท่าที่เห็น */ }
+      }
+      // เปลี่ยนเป็นเลขที่ "มีอยู่แล้ว" ในโปรเจคนี้ = รวมสองใบเข้าด้วยกัน → ถามก่อน
+      if (roChanged && ro && projectId) {
+        let exists = false;
+        try { exists = await releaseOrderExists(projectId, ro); } catch (_) { exists = false; }
+        if (exists) {
+          const ok = await askConfirm({
+            message: `Release Order "${ro}" มีอยู่แล้วในโปรเจคนี้\nบันทึกแล้วสองใบจะรวมเป็นใบเดียว — ยืนยันหรือไม่?`,
+            tone: "warn", confirmText: "รวมเป็นใบเดียว", cancelText: "ยกเลิก",
+          });
+          if (!ok) { setBusy(false); return; }
+        }
+      }
       const dateChanged = date !== isoToDateInput(curDate);
       const dateIso = dateChanged ? dateToIso(date) : null;
       const mdfTrim = modify.trim();
       const mdfChanged = mdfTrim !== (origMdf ?? "").trim();
       const mdfVal = mdfChanged ? (mdfTrim || "0") : null;
 
+      // MDF: เก็บต่อใบ (set_release_mdf) · ยังไม่ได้รัน migration รอบ 11 → ส่งให้ RPC หัวเอกสารแบบเดิม
+      let mdfForHeader = mdfVal;
+      if (mdfVal != null) {
+        try { const mr = await setReleaseMdf(ids, mdfVal); if (mr && mr.ok) mdfForHeader = null; }
+        catch (e) { setErr("บันทึก Modify ไม่สำเร็จ: " + (e?.message || e)); setBusy(false); return; }
+      }
       const res = await updateReleaseHeader({
-        releaseIds: releases.map((r) => r.id),
+        releaseIds: ids,
         releaseOrder: ro || null,
         releaseDate: dateIso,
-        mdfNo: mdfVal,
+        mdfNo: mdfForHeader,
       });
       if (!res?.ok) { setErr("บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : "")); setBusy(false); return; }
 
       auditRecord("edit_release_header", "release_group", group.releaseOrder || releases[0]?.id, {
-        project: group.projectCode, parts: releases.length,
+        project: group.projectCode, parts: ids.length,
         release_order: ro || null,
         mdf: mdfChanged ? (mdfTrim || "0") : undefined,
         date: dateChanged ? date : undefined,
       });
-      mlsToast(`บันทึกหัวเอกสารแล้ว — อัปเดต ${fmtNum(res.releases || releases.length)} Part`, "success");
+      mlsToast(`บันทึกหัวเอกสารแล้ว — อัปเดต ${fmtNum(res.releases || ids.length)} Part`, "success");
       onSaved({
         ro: ro || null,
         dateIso: dateChanged ? dateIso : curDate,
         mdf: mdfChanged ? (mdfTrim || "0") : origMdf,
       });
     } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
+      const msg = String(e?.message || e);
+      setErr(/ro_has_modify/.test(msg)
+        ? `ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลข Release Order ไม่ได้ (ประวัติ M ผูกกับเลข ${curRO})`
+        : "บันทึกไม่สำเร็จ: " + msg);
       setBusy(false);
     }
   }
@@ -7227,8 +7325,10 @@ function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSa
               <Input value={modify} onChange={(e) => setModify(e.target.value)} placeholder="เช่น M-001 (เว้นว่าง = 0)" />
             </Field>
             <Field label="เลขที่ Release Order">
-              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)}
+              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} disabled={modLocked}
+                title={modLocked ? "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้" : undefined}
                 onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
+              {modLocked && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลขไม่ได้ (ประวัติผูกกับเลขเดิม)</div>}
             </Field>
             <Field label="วันที่">
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -7254,7 +7354,7 @@ function ReleaseHeaderEditModal({ group, releases, curRO, curDate, onClose, onSa
 //                ลบต่ำกว่าจำนวนที่สแกนไปแล้วไม่ได้ เพื่อไม่ให้ประวัติการทำงานหาย
 // - แก้น้ำหนัก/ความยาว → จ่ายค่าลงทุกชิ้นในล็อตนี้ใหม่ (เหมือนตอน Release ครั้งแรก)
 // ลบทั้ง Release → ลบ QR (part_units) และประวัติสแกน (scan_logs) ของล็อตนั้นทั้งหมด
-function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
+function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDelete }) {
   const [qty, setQty] = useState(release.qty);
   const [unitWeight, setUnitWeight] = useState(release.unit_weight ?? "");
   const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
@@ -7273,6 +7373,7 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
   const [units, setUnits] = useState(null); // null = ยังโหลดไม่เสร็จ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [recalcW, setRecalcW] = useState(true);   // ★ รอบ 11 (B2): แก้น้ำหนัก/ชิ้น → คิดน้ำหนักในประวัติสแกนของ Part นี้ใหม่ด้วย
 
   // สถานะปัจจุบันของเครื่องหนึ่ง / ของฝั่งสำนักงาน (จากยอด finished vs done)
   const machStatus = (m) => (m && Number(m.done) > 0 && Number(m.finished) >= Number(m.done)) ? "finished" : "inprocess";
@@ -7330,8 +7431,40 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
     }
     const ro = normalizeReleaseOrder(releaseOrder);
     if (ro && !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009 (หรือเว้นว่าง)'); return; }
+    // ★ รอบ 11 (A7): ใบที่มีประวัติ Modify ย้าย Part ไปเลขอื่นไม่ได้ (ประวัติ M ผูกกับเลขเดิม)
+    if (modLocked && (ro || "") !== (release.release_order || "")) {
+      setErr(`ใบ ${release.release_order} มีประวัติ Modify แล้ว — เปลี่ยนเลข Release Order ของ Part นี้ไม่ได้`); return;
+    }
+    // ★ รอบ 11: ถามยืนยัน "ก่อน" เขียนอะไรทั้งหมด (เดิมบันทึกช่องอื่นไปแล้วค่อยถาม → กดยกเลิกก็บันทึกไปครึ่งหนึ่ง)
+    let doneChange = null;   // { tgt } ถ้ายืนยันเปลี่ยนยอดเสร็จของเครื่อง
+    if (selMachine && doneTarget !== "") {
+      const tgt = Math.max(0, Math.floor(Number(doneTarget) || 0));
+      const cur = curDoneOf(selMachine);
+      if (tgt !== cur) {
+        const diff = tgt - cur;
+        const mcode = (allMachines.find((m) => m.id === selMachine)?.code) || (machines.find((m) => m.machine_id === selMachine)?.code) || "";
+        const ok = await askConfirm({
+          message: diff > 0
+            ? `ยืนยันเพิ่มงานเครื่อง ${mcode} อีก ${fmtNum(diff)} ชิ้น?\nระบบจะสร้างบันทึกการทำ (สแกน) ให้ชิ้นที่ยังไม่ทำ`
+            : `ยืนยันเอางานเครื่อง ${mcode} ออก ${fmtNum(-diff)} ชิ้น?\nลบสแกนของเครื่องนี้ · ลบแล้วกู้คืนไม่ได้`,
+          tone: diff > 0 ? "warn" : "danger", confirmText: "ยืนยัน", cancelText: "ยกเลิก",
+        });
+        if (!ok) return;
+        doneChange = { tgt };
+      }
+    }
     setBusy(true); setErr("");
     try {
+      // ปรับยอดเสร็จของเครื่องก่อน — ไม่ผ่าน (เช่นป้ายล็อตลดให้ตรงไม่ได้) = หยุด ไม่บันทึกช่องอื่น
+      if (doneChange) {
+        try { await setReleaseMachineDone(release.id, selMachine, doneChange.tgt); }
+        catch (e) {
+          setErr(e?.code === "lot_partial"
+            ? `ลดยอดเครื่องนี้ให้ตรง ${fmtNum(doneChange.tgt)} ไม่ได้ — มีป้ายล็อต (สแกนทีละหลายชิ้น) · ใกล้สุด ${fmtNum(e.data?.nearest ?? 0)} · ถ้าต้องการตัวเลขนี้ ให้แก้จำนวนสแกนที่หน้า "สแกนของเครื่อง" (ยังไม่ได้บันทึกอะไร)`
+            : "ปรับยอดเสร็จไม่สำเร็จ: " + (e?.message || e) + " (ยังไม่ได้บันทึกช่องอื่น)");
+          setBusy(false); return;
+        }
+      }
       const patch = {
         qty: qtyNum,
         unit_weight: unitWeight === "" ? null : Number(unitWeight),
@@ -7342,8 +7475,16 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
       await updateRow("releases", release.id, patch);
 
       // ถ้าน้ำหนัก/ความยาวเปลี่ยน ให้จ่ายค่าลงทุกชิ้นของล็อตนี้ใหม่ทั้งหมด
-      if (patch.unit_weight !== (release.unit_weight ?? null) || patch.length_mm !== (release.length_mm ?? null)) {
+      const weightChanged = patch.unit_weight !== (release.unit_weight ?? null);
+      if (weightChanged || patch.length_mm !== (release.length_mm ?? null)) {
         await updateRows("part_units", { release_id: release.id }, { weight: patch.unit_weight, length_mm: patch.length_mm });
+      }
+      // ★ รอบ 11 (B2): น้ำหนักในประวัติสแกนของ Part นี้ = จำนวน × น้ำหนักใหม่ (รายงาน/Dashboard ตรงทันที)
+      if (weightChanged && recalcW && patch.unit_weight != null && patch.unit_weight > 0) {
+        try {
+          const rw = await recalcRecordWeights({ releaseIds: [release.id], onlyMissing: false });
+          if (rw && rw.ok && rw.rows) mlsToast(`คิดน้ำหนักในประวัติสแกนใหม่ ${fmtNum(rw.rows)} แถว`, "success");
+        } catch (_) { /* ไม่ให้การบันทึกหลักล้ม */ }
       }
 
       if (delta > 0) {
@@ -7383,23 +7524,6 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
           && !(matLens0.length === 1 && Number(matLen) === Number(matLens0[0]))) {
         await setReleaseMaterialLength(release.id, Number(matLen));
       }
-      // ── ปรับจำนวนที่ทำเสร็จ (done) ของเครื่องที่เลือก — เพิ่ม=สร้างงาน · ลด=เอาสแกนออก (แอดมิน) ──
-      if (selMachine && doneTarget !== "") {
-        const tgt = Math.max(0, Math.floor(Number(doneTarget) || 0));
-        const cur = curDoneOf(selMachine);
-        if (tgt !== cur) {
-          const diff = tgt - cur;
-          const mcode = (allMachines.find((m) => m.id === selMachine)?.code) || (machines.find((m) => m.machine_id === selMachine)?.code) || "";
-          const ok = await askConfirm({
-            message: diff > 0
-              ? `ยืนยันเพิ่มงานเครื่อง ${mcode} อีก ${fmtNum(diff)} ชิ้น?\nระบบจะสร้างบันทึกการทำ (สแกน) ให้ชิ้นที่ยังไม่ทำ`
-              : `ยืนยันเอางานเครื่อง ${mcode} ออก ${fmtNum(-diff)} ชิ้น?\nลบสแกนของเครื่องนี้ · ลบแล้วกู้คืนไม่ได้`,
-            tone: diff > 0 ? "warn" : "danger", confirmText: "ยืนยัน", cancelText: "ยกเลิก",
-          });
-          if (ok) await setReleaseMachineDone(release.id, selMachine, tgt);
-        }
-      }
-
       // ── เปลี่ยนสถานะการผลิต ──
       //   มีงานหน้าเครื่อง → เปลี่ยนสถานะของ "เครื่องที่เลือก" (machine_records)
       //   ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน (part_units): finished=ปิดงาน · inprocess=คำนวณใหม่จากสแกน
@@ -7458,11 +7582,19 @@ function ReleaseEditModal({ release, onClose, onSaved, onDelete }) {
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Change qty with <b style={{ color: "#6d4aff" }}>✎ Modify</b> (saved as a new M, previous values kept as evidence)</> : <>แก้จำนวนที่ปุ่ม <b style={{ color: "#6d4aff" }}>✎ Modify</b> (บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน)</>}</div>
             </Field>
             <Field label="เลขที่ Release Order">
-              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)}
+              <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} disabled={modLocked}
+                title={modLocked ? "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้" : undefined}
                 onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
+              {modLocked && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? "This order has Modify history — can’t change the number" : "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้"}</div>}
             </Field>
             <Field label="น้ำหนัก/ชิ้น (กก.)">
               <Input type="number" step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
+              {String(unitWeight) !== String(release.unit_weight ?? "") && unitWeight !== "" && Number(unitWeight) > 0 && (
+                <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.45, cursor: "pointer" }}>
+                  <input type="checkbox" checked={recalcW} onChange={(e) => setRecalcW(e.target.checked)} style={{ marginTop: 2 }} />
+                  <span>{lang === "en" ? "Also recalculate weight in this part’s scan history" : "คิดน้ำหนักในประวัติสแกนของ Part นี้ใหม่ด้วย (รายงานตรงทันที)"}</span>
+                </label>
+              )}
             </Field>
             <Field label="ความยาว/ชิ้น (มม.)">
               <Input type="number" step="0.1" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
@@ -7592,13 +7724,15 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
   const kindWord = parentKind === "package" ? "แพ็ก" : parentKind === "panel" ? "แผง" : "ซับ";
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(null);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    let alive = true; setLoading(true);
+    let alive = true; setLoading(true); setLoadErr(null);
     getAssemblyLogsBetween(from, to)
       .then((d) => { if (alive) { setLogs(Array.isArray(d) ? d : []); setLoading(false); } })
-      .catch(() => { if (alive) { setLogs([]); setLoading(false); } });
+      .catch((e) => { if (alive) { setLogs([]); setLoading(false); setLoadErr(e?.message || String(e)); } });
     return () => { alive = false; };
-  }, [from, to]);
+  }, [from, to, tick]);
 
   const kindTh = (k) => (k === "subassembly" ? "sub" : k === "panel" ? "แผง" : k === "package" ? "แพ็ก" : "part");
   const filtered = logs.filter((l) => {
@@ -7635,7 +7769,8 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
           {isPack ? "แต่ละแพ็กมีลูก/แผงอะไรบ้าง ยาวเท่าไร กี่ชิ้น" : "แต่ละเบอร์แม่มีเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม"}
         </div>
-        {loading ? <div style={{ color: "var(--muted)", padding: 12 }}>กำลังโหลด…</div>
+        {loadErr ? <LoadStateBanner state={{ error: loadErr }} onRetry={() => setTick((t) => t + 1)} />
+          : loading ? <div style={{ color: "var(--muted)", padding: 12 }}>กำลังโหลด…</div>
           : rows.length === 0 ? <div style={{ color: "var(--muted)", padding: 12 }}>ไม่มีข้อมูลในช่วงนี้</div>
           : (
             <DataTable id="assembly-report" wrapClass="table-wrap" wrapStyle={{ overflowX: "auto" }} tableClass="data-table" tableStyle={{ minWidth: 620 }}
@@ -7812,13 +7947,25 @@ function ReportPage({ goTo }) {
     });
   }, []);
 
+  // ★ รอบ 11: ช่วงเวลาคิดครั้งเดียวต่อการเปลี่ยนตัวเลือก (เดิมคิดใหม่ทุก render → "to = ตอนนี้" เปลี่ยนตลอด
+  //   → แท็บประกอบ/แพ็กโหลดซ้ำทุก render) · โหลดใหม่ = กดรีเฟรช / เปลี่ยนช่วง
+  const [reloadTick, setReloadTick] = useState(0);
+  const curRange = useMemo(() => (
+    rangeMode === "month" ? monthRangeFor(monthValue) :
+    rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
+    rangeFor(preset)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [rangeMode, preset, monthValue, customFrom, customTo, reloadTick]);
+  // ★ รอบ 11 (B3/B4): โหลดพลาด = แจ้ง (ไม่โชว์ 0 หลอก) · เปลี่ยนช่วงเร็วๆ ผลเก่าที่มาช้าไม่ทับผลใหม่
+  const [logsState, setLogsState] = useState({ loading: true, error: null });
   useEffect(() => {
-    const range =
-      rangeMode === "month" ? monthRangeFor(monthValue) :
-      rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
-      rangeFor(preset);
-    getScanLogsBetween(range.from, range.to).then(setLogs);
-  }, [rangeMode, preset, monthValue, customFrom, customTo]);
+    let alive = true;
+    setLogsState({ loading: true, error: null });
+    getScanLogsBetween(curRange.from, curRange.to)
+      .then((d) => { if (!alive) return; setLogs(Array.isArray(d) ? d : []); setLogsState({ loading: false, error: null }); })
+      .catch((e) => { if (!alive) return; setLogs([]); setLogsState({ loading: false, error: e?.message || String(e) }); });
+    return () => { alive = false; };
+  }, [curRange]);
 
   // อ่าน project ของแต่ละ log จาก release_id (เหมือน metrics.js) แล้วเทียบตัวกรอง
   const logProjectId = (l) => {
@@ -7827,31 +7974,32 @@ function ReportPage({ goTo }) {
   };
   // แม็ป operation → แผนก (จาก op_type: assembly/packing · อื่น ๆ = เครื่องจักร)
   const deptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "panel" : (ty === "packing" || ty === "pack_panel" || ty === "pack_site") ? "packing" : "machine");
-  const opTypeById = {}, opTypeByName = {};
-  operations.forEach((o) => { if (o.id != null) opTypeById[o.id] = o.op_type; if (o.name) opTypeByName[o.name] = o.op_type; });
-  const deptOfLog = (l) => deptOfOpType(
-    l.operation?.op_type ?? opTypeById[l.operation?.id] ?? opTypeById[l.operation_id] ?? opTypeByName[l.operation?.name]
-  );
-  const filteredLogs = logs.filter((l) => {
-    if (projectFilter && logProjectId(l) !== projectFilter) return false;
-    if (partFilter && l.part_unit?.part_master?.part_no !== partFilter) return false;
-    if (releaseFilter && String(l.release_order || "") !== releaseFilter) return false;   // กรอง Release Order (ตรงตัว)
-    if (deptFilter && deptOfLog(l) !== deptFilter) return false;
-    return true;
-  });
+  // ★ รอบ 11 (B7): กรอง + คิดตาราง "ครั้งเดียวต่อข้อมูลที่เปลี่ยน" (เดิมคิดใหม่ทุก render — ทุกคลิกเรียง/เปิดป็อปอัป/ติ๊ก export)
+  const filteredLogs = useMemo(() => {
+    const opTypeById = {}, opTypeByName = {};
+    operations.forEach((o) => { if (o.id != null) opTypeById[o.id] = o.op_type; if (o.name) opTypeByName[o.name] = o.op_type; });
+    const deptOfLog = (l) => deptOfOpType(
+      l.operation?.op_type ?? opTypeById[l.operation?.id] ?? opTypeById[l.operation_id] ?? opTypeByName[l.operation?.name]
+    );
+    return logs.filter((l) => {
+      if (projectFilter && logProjectId(l) !== projectFilter) return false;
+      if (partFilter && l.part_unit?.part_master?.part_no !== partFilter) return false;
+      if (releaseFilter && String(l.release_order || "") !== releaseFilter) return false;   // กรอง Release Order (ตรงตัว)
+      if (deptFilter && deptOfLog(l) !== deptFilter) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs, projectFilter, partFilter, releaseFilter, deptFilter, relProj, operations]);
 
-  // ช่วงเวลาปัจจุบัน (ใช้ส่งให้วิวประกอบ/แพ็ก) — คำนวณเดียวกับ effect โหลด logs
-  const curRange =
-    rangeMode === "month" ? monthRangeFor(monthValue) :
-    rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
-    rangeFor(preset);
   // Part ที่โชว์ในตัวกรอง — เลือกโปรเจคแล้วโชว์เฉพาะ Part ของโปรเจคนั้น
   const visibleParts = projectFilter ? parts.filter((p) => p.project_id === projectFilter) : parts;
   // รายการ Release Order สำหรับดรอปดาวน์ — เฉพาะที่มีงานสแกนในช่วงเวลานี้ · กรองตามโปรเจคที่เลือก
-  const releaseOrders = Array.from(new Set(
+  const releaseOrders = useMemo(() => Array.from(new Set(
     logs.filter((l) => !projectFilter || logProjectId(l) === projectFilter)
         .map((l) => l.release_order).filter(Boolean)
-  )).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  )).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  [logs, projectFilter, relProj]);
   // ตัวเลือกโปรเจค — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (มิเรอร์การ์ดล้างข้อมูลสแกน)
   const projectOptions = [...projects]
     .sort((a, b) => ((a.status === "closed") - (b.status === "closed"))
@@ -7859,27 +8007,33 @@ function ReportPage({ goTo }) {
     .map((p) => ({ value: p.id, label: `${p.code || "?"} — ${p.name || ""}${p.status === "closed" ? " (ปิดแล้ว)" : ""}` }));
   const selProj = projects.find((p) => p.id === projectFilter);
 
-  // แยกน้ำหนักเป็น 2 ตัวเลขคนละความหมาย (ดู metrics.js):
-  //   material  = น้ำหนักวัสดุจริง นับแต่ละชิ้นครั้งเดียว
-  //   processed = ปริมาณงานที่ประมวลผล นับทุกครั้งที่สแกน (ชิ้นผ่านหลายขั้น = นับหลายครั้ง)
-  const material = materialWeight(filteredLogs);
-  const processed = processedWeight(filteredLogs);
-  const distinctUnits = distinctUnitCount(filteredLogs);
   // ลำดับขั้นตอนตาม seq จากตาราง operations (ตัด→บาก→กัด→เจาะ…) → เรียงคอลัมน์ให้ตรงกระบวนการจริง
-  const opOrder = {};
-  operations.forEach((o) => { if (o && o.name != null) opOrder[o.name] = o.seq; });
-  const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
-  const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
+  const opOrder = useMemo(() => {
+    const o2 = {};
+    operations.forEach((o) => { if (o && o.name != null) o2[o.name] = o.seq; });
+    return o2;
+  }, [operations]);
+  const calc = useMemo(() => {
+    // processed = ปริมาณงานที่ประมวลผล นับทุกครั้งที่สแกน (ชิ้นผ่านหลายขั้น = นับหลายครั้ง) — ดู metrics.js
+    const processed = processedWeight(filteredLogs);
+    const distinctUnits = distinctUnitCount(filteredLogs);
+    const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
+    const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
+    // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
+    const chartData = matrix.opNames.map((op) => {
+      let count = 0, weight = 0;
+      matrix.machines.forEach((m) => { const c = m.ops[op]; if (c) { count += c.count || 0; weight += c.weight || 0; } });
+      return { name: op, count, weight };
+    });
+    const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
+    const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
+    const needBackfill = filteredLogs.reduce((n, l) => n + (logWeightNeedsBackfill(l) ? 1 : 0), 0);   // ตั้งน้ำหนักแล้ว แต่ฐานข้อมูลยังเก็บ 0
+    const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+    return { processed, distinctUnits, matrix, partMatrix, chartData, dailyMatrix, noWeight, needBackfill, totalSeconds };
+  }, [filteredLogs, opOrder]);
+  const { processed, distinctUnits, matrix, partMatrix, chartData, dailyMatrix, noWeight, needBackfill, totalSeconds } = calc;
   // คีย์จับคู่ log → แถวในตาราง Part (ต้องตรงกับ partOpMatrix เป๊ะ) สำหรับ drill-down
   const partKeyOf = (l) => `${(l.release_id || l.part_unit?.release_id) || (l.release_order || "—")}|${l.part_unit?.part_master?.part_no || "ไม่ระบุ"}`;
-  // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
-  //   เดิมบวก quantity ดิบ → ขั้นตอนที่ติ๊กร่วม (quantity 0) ได้ 0 เลยขึ้นแต่ Cut · ตอนนี้ทุกขั้นตอนโชว์ชิ้นที่ผ่านจริง
-  const chartData = matrix.opNames.map((op) => {
-    let count = 0, weight = 0;
-    matrix.machines.forEach((m) => { const c = m.ops[op]; if (c) { count += c.count || 0; weight += c.weight || 0; } });
-    return { name: op, count, weight };
-  });
-  const dailyMatrix = machineDailyMatrix(filteredLogs); // กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง
   // น้ำหนักเฉลี่ยต่อวันทำงาน = ปริมาณงานที่ประมวลผล (นับต่อขั้นตอน · co-tick เครื่องเดียวนับครั้งเดียวอยู่แล้ว) ÷ จำนวนวันที่มีงานจริง
   const activeDays = dailyMatrix.days.length;   // วันที่มีงานจริง (bucket เวลาไทย เหมือน 'เฉลี่ย/วัน' ในตารางด้านล่าง)
   const avgWeightPerDay = activeDays > 0 ? processed / activeDays : 0;
@@ -7887,12 +8041,13 @@ function ReportPage({ goTo }) {
   const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
   const sortW = useTableSort();   // ตารางปริมาณงานที่แต่ละเครื่องประมวลผล
   const sortP = useTableSort();   // ตาราง Release × Part × ขั้นตอน
-  const dmByName = (name) => dailyMatrix.machines.find((x) => x.name === name);
+  // ★ รอบ 11: จับคู่ค่าเฉลี่ย/วัน ด้วยรหัสเครื่อง (เครื่องชื่อซ้ำไม่ปนกัน) · ไม่มีรหัส = ใช้ชื่อ
+  const dmByName = (name, code) => dailyMatrix.machines.find((x) => (code ? x.code === code : x.name === name));
   const machineAcc = {
     code: (m) => m.code || "", name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
     time: (m) => m.total.seconds,
     secPer: (m) => (m.total.count > 0 ? m.total.seconds / m.total.count : 0),   // cycle-time วินาที/ชิ้น
-    avgKg: (m) => dmByName(m.name)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name)?.avg.count || 0,
+    avgKg: (m) => dmByName(m.name, m.code)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name, m.code)?.avg.count || 0,
   };
   matrix.opNames.forEach((op) => { machineAcc[`op:${op}`] = (m) => m.ops[op]?.count || 0; });
   const partAcc = {
@@ -7900,8 +8055,32 @@ function ReportPage({ goTo }) {
     total: (p) => p.total.count, weight: (p) => p.total.weight, finished: (p) => p.total.finished,
   };
   partMatrix.opNames.forEach((op) => { partAcc[`op:${op}`] = (p) => p.ops[op]?.count || 0; });
-  const noWeight = missingWeightParts(filteredLogs);     // Part ที่ยังไม่ตั้งน้ำหนัก → กก. = 0
-  const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
+
+  // ★ รอบ 11 (B2): เติมน้ำหนักย้อนหลังลงฐานข้อมูล (สแกนที่บันทึก 0 ตอนยังไม่ได้ตั้งน้ำหนัก)
+  const me = getSession();
+  const canBackfill = !!me && (me.role === "admin" || me.role === "office");
+  const [bfBusy, setBfBusy] = useState(false);
+  async function doBackfillWeights() {
+    if (bfBusy) return;
+    setBfBusy(true);
+    try {
+      const dry = await recalcRecordWeights({ dryRun: true });
+      if (dry && dry.missing) { mlsToast("ยังไม่ได้รัน migration-audit-round11.sql — เติมย้อนหลังไม่ได้", "warn"); return; }
+      if (!dry || !dry.ok) { mlsToast("ตรวจไม่สำเร็จ" + (dry?.reason ? ` (${dry.reason})` : ""), "error"); return; }
+      if (!dry.rows) { mlsToast(dry.cannot ? `ยังเติมไม่ได้ ${fmtNum(dry.cannot)} แถว — เบอร์ยังไม่มีน้ำหนัก/ชิ้น` : "ไม่มีแถวที่ต้องเติม", "info"); return; }
+      const ok = await askConfirm({
+        message: `เติมน้ำหนักให้สแกนที่บันทึกเป็น 0 กก. จำนวน ${fmtNum(dry.rows)} แถว (รวม ${fmtNum(dry.kg)} กก.)\nคิด = จำนวน × น้ำหนัก/ชิ้นปัจจุบันของป้าย/เบอร์${dry.cannot ? `\n\nยังเติมไม่ได้ ${fmtNum(dry.cannot)} แถว (เบอร์ยังไม่มีน้ำหนัก/ชิ้น)` : ""}`,
+        tone: "warn", confirmText: "เติมน้ำหนัก", cancelText: "ยกเลิก",
+      });
+      if (!ok) return;
+      const res = await recalcRecordWeights({});
+      auditRecord("recalc_weights", "machine_records", null, { rows: res?.rows || 0 });
+      mlsToast(`เติมน้ำหนักแล้ว ${fmtNum(res?.rows || 0)} แถว`, "success");
+      setReloadTick((t) => t + 1);
+    } catch (e) {
+      mlsToast("เติมน้ำหนักไม่สำเร็จ: " + (e?.message || e), "error");
+    } finally { setBfBusy(false); }
+  }
 
   // ── สร้างข้อมูลทุกตารางของหน้านี้ (คีย์ = ใช้กับกล่องเลือก · rows พร้อมเข้า exceljs) ──
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -7915,21 +8094,33 @@ function ReportPage({ goTo }) {
       row["น้ำหนัก (กก.)"] = round2(m.total.weight);
       row["เวลาเดินเครื่อง (วินาที)"] = Math.round(m.total.seconds || 0);
       row["วินาที/ชิ้น"] = m.total.count > 0 ? round2(m.total.seconds / m.total.count) : "";
-      const dm = dmByName(m.name);
+      const dm = dmByName(m.name, m.code);
       row["เฉลี่ย กก./วัน"] = dm ? round2(dm.avg.weight) : "";
       row["เฉลี่ย ชิ้น/วัน"] = dm ? round2(dm.avg.count) : "";
       return row;
     });
+    // ★ รอบ 11 (B9): cycle time แยก "ทำขั้นตอนเดียว" กับ "ทำหลายขั้นตอนพร้อมกันในสแกนเดียว"
+    //   (เดิมขั้นตอนที่ติ๊กร่วมได้ 0 วินาที/ชิ้น เพราะเวลาทั้งหมดไปอยู่ที่ขั้นตอนหลัก)
     const cycleRows = [];
-    matrix.machines.forEach((m) => mOps.forEach((op) => {
-      const c = m.ops[op];
-      if (!c || !c.count) return;
-      cycleRows.push({
-        "เครื่องจักร": m.name, "ขั้นตอน": op, "จำนวน (ชิ้น)": c.count,
-        "เวลา (วินาที)": Math.round(c.seconds || 0),
-        "วินาที/ชิ้น": c.count > 0 ? round2((c.seconds || 0) / c.count) : "",
+    matrix.machines.forEach((m) => {
+      mOps.forEach((op) => {
+        const c = m.ops[op];
+        if (!c || !c.soloCount) return;
+        cycleRows.push({
+          "เครื่องจักร": m.name, "ขั้นตอน": op, "แบบ": "ขั้นตอนเดียว", "จำนวน (ชิ้น)": c.soloCount,
+          "เวลา (วินาที)": Math.round(c.soloSeconds || 0),
+          "วินาที/ชิ้น": c.soloCount > 0 ? round2((c.soloSeconds || 0) / c.soloCount) : "",
+        });
       });
-    }));
+      Object.entries(m.combos || {}).forEach(([key, c]) => {
+        if (!c.count) return;
+        cycleRows.push({
+          "เครื่องจักร": m.name, "ขั้นตอน": key, "แบบ": "หลายขั้นตอนพร้อมกัน", "จำนวน (ชิ้น)": c.count,
+          "เวลา (วินาที)": Math.round(c.seconds || 0),
+          "วินาที/ชิ้น": c.count > 0 ? round2((c.seconds || 0) / c.count) : "",
+        });
+      });
+    });
     const pOps = partMatrix.opNames;
     const partRows = partMatrix.parts.map((p) => {
       const row = { "Release": p.releaseOrder, "Part No.": p.partNo, "ชื่อ Part": p.partName };
@@ -7956,7 +8147,10 @@ function ReportPage({ goTo }) {
       { key: "daily", name: "รายวันต่อเครื่อง", rows: dailyRows },
     ];
   }
-  const allSheets = buildAllSheets();
+  // ★ รอบ 11 (B7): สร้างข้อมูลชีตเฉพาะตอนเปิดหน้าต่างดาวน์โหลด (เดิมสร้างทั้ง 5 ชีตทุก render)
+  const allSheets = useMemo(() => (exportOpen ? buildAllSheets() : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [exportOpen, calc]);
   const pickedCount = allSheets.filter((s) => pick[s.key]).length;
 
   // ── ดาวน์โหลดเฉพาะตารางที่ติ๊กเลือก เป็นไฟล์ Excel มีสไตล์ (โหลด exceljs เฉพาะตอนกด) ──
@@ -8100,9 +8294,11 @@ function ReportPage({ goTo }) {
       {/* แยกดูตามแผนก — เครื่องจักร / แผง / ซับ / แพ็ก (กดสลับ · กรองทั้งรายงาน) */}
       <DeptTabs value={deptFilter} onChange={setDeptFilter} />
 
+      <LoadStateBanner state={logsState} onRetry={() => setReloadTick((t) => t + 1)} />
+
       {deptFilter === "machine" ? (
       <>
-      <div className="stat-row">
+      <div className="stat-row" style={logsState.loading ? { opacity: .45 } : undefined}>
         <StatCard label="จำนวนที่บันทึก · นับต่อขั้นตอน" value={totalPieces(filteredLogs).toLocaleString()} icon="scan" />
         <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
         <StatCard label={lang === "en" ? "Avg weight · per active day (kg)" : "น้ำหนักเฉลี่ย · ต่อวันทำงาน (กก.)"} value={fmtNum(avgWeightPerDay)} icon="weight" />
@@ -8114,7 +8310,16 @@ function ReportPage({ goTo }) {
         <div className="card" style={{ background: "var(--danger-tint, #fff4f4)", borderColor: "var(--danger, #e11d1d)", color: "var(--danger-dk, #a01212)", fontSize: 12.5, padding: "10px 14px", marginBottom: 14, lineHeight: 1.6 }}>
           <Icon name="warn" size={14} style={{ verticalAlign: "-2px", marginInlineEnd: 4 }} /><b>มี Part ที่ยังไม่ได้ตั้งน้ำหนัก/ชิ้น — น้ำหนักจะถูกนับเป็น 0 กก.</b><br />
           {noWeight.map((p) => `${p.partNo} (${fmtNum(p.pieces)} ชิ้น)`).join(" · ")}
-          <br /><span style={{ opacity: .8 }}>ไปตั้งค่าน้ำหนัก/ชิ้นที่ Setup → Part Master เพื่อให้ กก. ครบถ้วน</span>
+          <br /><span style={{ opacity: .8 }}>ตั้งน้ำหนัก/ชิ้นได้ที่ ✎ แก้ไข ในหน้า Release (หรือ Setup → Part Master) · ตั้งแล้วรายงานนับ กก. ให้ทันที{canBackfill ? " แล้วกด “เติมน้ำหนักย้อนหลัง” เพื่อบันทึกลงฐานข้อมูล" : ""}</span>
+        </div>
+      )}
+      {needBackfill > 0 && canBackfill && (
+        <div className="card" style={{ background: "var(--warn-tint, #fff8e6)", borderColor: "var(--alert, #d97a00)", fontSize: 12.5, padding: "10px 14px", marginBottom: 14, lineHeight: 1.6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <b>{fmtNum(needBackfill)} สแกนในช่วงนี้บันทึกไว้ 0 กก.</b> (ตอนสแกนยังไม่ได้ตั้งน้ำหนัก) — หน้านี้คิดจากน้ำหนัก/ชิ้นปัจจุบันให้แล้ว
+            แต่ยอดหน้าเครื่อง/ยอดรายวันยังเป็น 0 · กดเติมเพื่อบันทึกลงฐานข้อมูล
+          </div>
+          <Btn variant="accent" size="sm" onClick={doBackfillWeights} disabled={bfBusy}>{bfBusy ? "กำลังเติม..." : "เติมน้ำหนักย้อนหลัง"}</Btn>
         </div>
       )}
       <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
@@ -8241,11 +8446,13 @@ const SCAN_SLOW_REASONS = ["ปั้มลมมีปัญหา", "เคร
 function MachineScanDetail({ machine, onBack }) {
   const [lang] = useLang();
   const [rangeMode, setRangeMode] = useState("preset");
-  const [preset, setPreset] = useState("year");           // เริ่มต้น 12 เดือน = เห็นเกือบทั้งหมด
+  const [preset, setPreset] = useState("month");          // ★ รอบ 11 (B6): เริ่มต้น 30 วัน (เดิม 12 เดือน ทุกเครื่อง = หน้าค้าง)
   const [monthValue, setMonthValue] = useState(todayStr().slice(0, 7));
   const [customFrom, setCustomFrom] = useState(daysAgoStr(30));
   const [customTo, setCustomTo] = useState(todayStr());
   const [logs, setLogs] = useState(null);                 // null = กำลังโหลด
+  const [loadErr, setLoadErr] = useState(null);           // ★ รอบ 11 (B3): โหลดพลาด ≠ ไม่มีงาน
+  const [machDone, setMachDone] = useState({});           // release_id → ทำแล้ว "ทั้งหมด" ของเครื่องนี้ (กติกาเดียวกับหน้า Release)
   const sort = useTableSort("time", "desc");               // ค่าเริ่มต้น: วัน-เวลา ล่าสุดอยู่บนสุด
   const admin = isAdmin(getSession());                     // เฉพาะแอดมินถึงจะลบสแกนได้
   const [reloadTick, setReloadTick] = useState(0);         // บวกเพื่อโหลดใหม่หลังลบ
@@ -8270,10 +8477,10 @@ function MachineScanDetail({ machine, onBack }) {
       rangeMode === "month" ? monthRangeFor(monthValue) :
       rangeMode === "custom" ? customRangeFor(customFrom, customTo) :
       rangeFor(preset);
-    setLogs(null);
+    setLogs(null); setLoadErr(null);
     getScanLogsBetween(range.from, range.to)
       .then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); })
-      .catch(() => { if (alive) setLogs([]); });
+      .catch((e) => { if (alive) { setLogs([]); setLoadErr(e?.message || String(e)); } });
     listScanSlow(range.from, range.to)
       .then((d) => { if (alive) setSlowRows(Array.isArray(d) ? d : []); })
       .catch(() => { if (alive) setSlowRows([]); });
@@ -8296,11 +8503,22 @@ function MachineScanDetail({ machine, onBack }) {
       } })
       .catch(() => {});
     getReleaseMaterialLengths(ids).then((m) => { if (alive) setMatLenMap(m || {}); }).catch(() => {});
+    // ★ รอบ 11 (B8): "ทำแล้ว" ของเครื่องนี้ต่อ release แบบทั้งหมด (ไม่ขึ้นกับช่วงวันที่) + กติกาเดียวกับหน้า Release
+    //   (ต่อป้าย max ข้ามขั้นตอน) — เดิมบวกทุกสแกนในช่วง → ตัด 16 + เจาะ 16 แยกสแกน = "สแปร์ 16" หลอก
+    getReleaseMachineStatus(ids).then((r) => {
+      if (!alive || !r || !r.ok) return;
+      const out = {};
+      Object.entries(r.data || {}).forEach(([rid, arr]) => {
+        const hit = (arr || []).find((x) => (x.code && x.code === machine.code) || (!machine.code && x.name === machine.name));
+        if (hit) out[rid] = Number(hit.done) || 0;
+      });
+      setMachDone(out);
+    }).catch(() => {});
     return () => { alive = false; };
   }, [logs]);
 
   const mkey = machine.code || machine.name;              // คีย์เดียวกับ machineOpMatrix (code ก่อน ชื่อสำรอง)
-  const mine = (logs || []).filter((l) => (l.machine?.code || l.machine?.name) === mkey);
+  const mine = useMemo(() => (logs || []).filter((l) => (l.machine?.code || l.machine?.name) === mkey), [logs, mkey]);
 
   // ── จับกลุ่ม "1 การสแกน = 1 แถว" แล้วโชว์ทุกขั้นตอนที่ติ๊กในสแกนนั้น ──
   //    หน้าเครื่องบันทึกแบบ count-once: ขั้นตอนหลัก (ติ๊กตัวแรก) = จำนวนจริง · ขั้นตอนอื่นที่ติ๊ก = อีก record แต่จำนวน 0
@@ -8308,7 +8526,8 @@ function MachineScanDetail({ machine, onBack }) {
   //    จึงยุบ record จำนวน 0 (ขั้นตอนที่ติ๊กเพิ่ม) เข้ากับ record หลักของสแกนเดียวกัน แล้วโชว์ครบทุกขั้นตอน
   //    (ตัวหลักถูกบันทึกก่อนเสมอ → เรียงตามเวลา asc แล้วตัว 0 ที่ตามมา = ขั้นตอนเสริมของสแกนนั้น)
   const opOf = (l) => l.operation?.name || null;
-  const grouped = (() => {
+  // ★ รอบ 11 (B6): จับกลุ่ม + จับคู่เหตุผลช้า "ครั้งเดียวต่อข้อมูลที่เปลี่ยน" (เดิมทำใหม่ทุกครั้งที่พิมพ์ในหน้าต่างแก้)
+  const grouped = useMemo(() => {
     const asc = [...mine].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
     const out = [];
     let cur = null;
@@ -8345,20 +8564,25 @@ function MachineScanDetail({ machine, onBack }) {
     // จับคู่เหตุผล "รอบช้า" (รายงานการทำงาน) เข้าแต่ละสแกน — ตรง part_unit + เวลาใกล้กัน (±3 วิ)
     if (slowRows && slowRows.length) {
       const usedSlow = new Set();   // กันเหตุผลเดียวถูกจับไปหลายแถว (rescan ชิ้นเดิมเร็วๆ)
+      const byUnit = new Map();     // part_unit_id → [index ใน slowRows] (เดิมวนทุกแถว × ทุกเหตุผล)
+      slowRows.forEach((sr, si) => { const a = byUnit.get(sr.part_unit_id) || []; a.push(si); byUnit.set(sr.part_unit_id, a); });
       for (const g of out) {
+        const cand = byUnit.get(g.part_unit_id);
+        if (!cand) continue;
+        const gt = new Date(g.time).getTime();
         let best = null, bestDt = 3000, bestIdx = -1;
-        for (let si = 0; si < slowRows.length; si++) {
+        for (const si of cand) {
           if (usedSlow.has(si)) continue;
-          const s = slowRows[si];
-          if (s.part_unit_id !== g.part_unit_id) continue;
-          const dt = Math.abs(new Date(s.at) - new Date(g.time));
-          if (dt < bestDt) { best = s; bestDt = dt; bestIdx = si; }   // เลือกเวลาใกล้สุด — สแกนของเครื่องตัวเอง = 0 วิ → ไม่หยิบเหตุผลของเครื่องอื่น/รอบอื่น
+          const sr = slowRows[si];
+          const dt = Math.abs(new Date(sr.at).getTime() - gt);
+          if (dt < bestDt) { best = sr; bestDt = dt; bestIdx = si; }   // เลือกเวลาใกล้สุด — สแกนของเครื่องตัวเอง = 0 วิ → ไม่หยิบเหตุผลของเครื่องอื่น/รอบอื่น
         }
         if (best) { usedSlow.add(bestIdx); g.slow_reason = best.reason || ""; g.slow_note = best.note || ""; }
       }
     }
     return out;
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mine, slowRows]);
 
   const acc = {
     time: (g) => g.time || "",
@@ -8393,8 +8617,24 @@ function MachineScanDetail({ machine, onBack }) {
   };
 
   // ── จำนวนสั่ง/สแปร์ + เลือกหลายแถวเพื่อลบ (admin) ──
-  const scannedByRel = {};   // สแกนไปแล้วกี่ชิ้นต่อ release (เฉพาะเครื่องนี้) → เทียบจำนวนสั่งดูสแปร์
-  grouped.forEach((g) => { if (g.release_id) scannedByRel[g.release_id] = (scannedByRel[g.release_id] || 0) + (Number(g.qty) || 0); });
+  // ทำแล้วต่อ release (เครื่องนี้) → เทียบจำนวนสั่งดูสแปร์ · ★ รอบ 11 (B8): ใช้ยอดทั้งหมดจาก server (กติกาเดียวกับหน้า Release)
+  //   ยังไม่มี RPC → คิดจากข้อมูลในช่วงนี้แบบเดียวกัน (ต่อป้าย: รวมต่อขั้นตอน แล้วเอาขั้นตอนที่มากสุด)
+  const scannedByRel = useMemo(() => {
+    const perUnit = new Map();   // `${rid}|${unit}` → Map(op → qty)
+    for (const l of mine) {
+      const qv = Number(l.quantity) || 0;
+      if (qv <= 0 || !l.release_id) continue;
+      const k = `${l.release_id}|${l.part_unit_id || "?"}`;
+      const m = perUnit.get(k) || new Map();
+      const op = l.operation?.name || "?";
+      m.set(op, (m.get(op) || 0) + qv);
+      perUnit.set(k, m);
+    }
+    const out = {};
+    for (const [k, m] of perUnit) { const rid = k.split("|")[0]; out[rid] = (out[rid] || 0) + Math.max(0, ...m.values()); }
+    for (const [rid, d] of Object.entries(machDone)) out[rid] = d;
+    return out;
+  }, [mine, machDone]);
   const colCount = 9 + (admin ? 1 : 0);
   // ── ค่าระดับล็อต/พาร์ท (ต่อ release) สำหรับคอลัมน์ + ฟอร์มแก้ ──
   const partLenOf = (rid) => { const ri = relInfo[rid]; const v = ri?.length_mm ?? ri?.default_length_mm; return (v == null || v === "") ? null : v; };
@@ -8634,9 +8874,10 @@ function MachineScanDetail({ machine, onBack }) {
 
         {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: click a row to edit (quantity / weight / status / INV / lengths) or delete the whole scan" : "แอดมิน: กดที่แถวเพื่อแก้ไข (จำนวน / น้ำหนัก / สถานะ / INV / ความยาว) หรือ ลบทั้งแถว"}</div>}
 
+        {loadErr && <LoadStateBanner state={{ error: loadErr }} onRetry={() => setReloadTick((t) => t + 1)} />}
         <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" orderApiRef={colApi}
           rows={sorted} rowKey={(g) => g.key} sort={sort}
-          empty={logs === null ? (lang === "en" ? "Loading…" : "กำลังโหลด...") : (lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้")}
+          empty={logs === null ? (lang === "en" ? "Loading…" : "กำลังโหลด...") : loadErr ? (lang === "en" ? "Couldn’t load — try again" : "โหลดไม่สำเร็จ — ลองใหม่") : (lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้")}
           rowProps={admin ? (g) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => openEdit(g), title: lang === "en" ? "Click the row to edit / delete" : "กดที่แถวเพื่อแก้ไข / ลบ" }) : undefined}
           columns={[
             { key: "time", header: lang === "en" ? "Date · time" : "วัน · เวลา", sortKey: "time", tdStyle: { whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (g) => fmtDT(g.time) },
@@ -8823,7 +9064,7 @@ function MachineReportsPage() {
   useEffect(() => {
     let ok = true;
     setLoading(true); setErr("");
-    const since = new Date(Date.now() - 31 * 864e5).toISOString();   // ดึงกว้าง 31 วัน แล้วค่อยกรองในจอ
+    const since = new Date(Date.now() - 45 * 864e5).toISOString();   // ดึงกว้าง 45 วัน (รวมหยุดที่เริ่มก่อนช่วงแต่ยังค้างอยู่) แล้วค่อยกรองในจอ
     machineReportSummary(since).then((r) => {
       if (!ok) return;
       setData({ downtime: r.downtime || [], slow: r.slow || [] });
@@ -8833,8 +9074,18 @@ function MachineReportsPage() {
   }, []);
 
   const fmtMin = (m) => { m = Math.round(Number(m) || 0); if (m < 60) return m + " " + t("น.", "min"); const h = Math.floor(m / 60), mm = m % 60; return h + " " + t("ชม.", "h") + (mm ? " " + mm + " " + t("น.", "m") : ""); };
-  const sinceMs = range === "today" ? new Date().setHours(0, 0, 0, 0) : (range === "week" ? Date.now() - 7 * 864e5 : Date.now() - 31 * 864e5);
-  const down = (data.downtime || []).filter((d) => new Date(d.started_at).getTime() >= sinceMs && (!mFilter || d.machine === mFilter));
+  const sinceMs = range === "today" ? new Date().setHours(0, 0, 0, 0) : (range === "week" ? Date.now() - 7 * 864e5 : Date.now() - 30 * 864e5);
+  // ★ รอบ 11 (B12): นาทีหยุด "ตัดตามช่วงที่เลือก" — หยุดค้างข้ามวันหยุด (ศุกร์→จันทร์ 64 ชม.) ไม่ถูกนับเต็มในช่วง "วันนี้"
+  //   หยุดที่เริ่มก่อนช่วงแต่ยังคาบเกี่ยว = นับเฉพาะส่วนที่อยู่ในช่วง (เดิมหายไปเลย)
+  const nowMs = Date.now();
+  const clipMin = (d) => {
+    const st = new Date(d.started_at).getTime();
+    const en = d.ended_at ? new Date(d.ended_at).getTime() : nowMs;
+    return Math.max(0, (Math.min(en, nowMs) - Math.max(st, sinceMs)) / 60000);
+  };
+  const down = (data.downtime || [])
+    .filter((d) => { const st = new Date(d.started_at).getTime(); const en = d.ended_at ? new Date(d.ended_at).getTime() : nowMs; return en > sinceMs && st <= nowMs && (!mFilter || d.machine === mFilter); })
+    .map((d) => ({ ...d, fullMinutes: d.minutes, minutes: Math.round(clipMin(d)), clipped: new Date(d.started_at).getTime() < sinceMs }));
   const slow = (data.slow || []).filter((s) => new Date(s.recorded_at).getTime() >= sinceMs && (!mFilter || s.machine === mFilter));
 
   const totalMin = down.reduce((a, d) => a + (Number(d.minutes) || 0), 0);
@@ -8861,7 +9112,7 @@ function MachineReportsPage() {
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
         <div className="chip-row">
-          {[["today", t("วันนี้", "Today")], ["week", t("สัปดาห์นี้", "Week")], ["month", t("เดือนนี้", "Month")]].map(([k, lbl]) => (
+          {[["today", t("วันนี้", "Today")], ["week", t("7 วันล่าสุด", "Last 7 days")], ["month", t("30 วันล่าสุด", "Last 30 days")]].map(([k, lbl]) => (
             <button key={k} className={`chip${range === k ? " active" : ""}`} onClick={() => setRange(k)}>{lbl}</button>
           ))}
         </div>
@@ -9168,6 +9419,7 @@ function DailyReportPage() {
   const [q, setQ] = useState("");
   const [logs, setLogs] = useState(null);          // null = กำลังโหลด
   const [hist, setHist] = useState(null);          // สแกน 7 วันก่อนหน้า (ไว้เทียบ)
+  const [loadErr, setLoadErr] = useState(null);    // ★ รอบ 11 (B3): โหลดพลาด ≠ ไม่มีงาน
   const [slowRows, setSlowRows] = useState([]);
   const [stopsAll, setStopsAll] = useState(null);  // เครื่องหยุด 8 วัน (null = ไม่มีสิทธิ์ดู/โหลดไม่ได้)
   const [relInfo, setRelInfo] = useState({});
@@ -9196,9 +9448,9 @@ function DailyReportPage() {
     let alive = true;
     const { from, to } = customRangeFor(day, day);
     const h = customRangeFor(shiftDayStr(day, -7), shiftDayStr(day, -1));
-    setLogs(null); setHist(null);
-    getScanLogsBetween(from, to).then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setLogs([]); });
-    getScanLogsBetween(h.from, h.to).then((d) => { if (alive) setHist(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setHist([]); });
+    setLogs(null); setHist(null); setLoadErr(null);
+    getScanLogsBetween(from, to).then((d) => { if (alive) setLogs(Array.isArray(d) ? d : []); }).catch((e) => { if (alive) { setLogs([]); setLoadErr(e?.message || String(e)); } });
+    getScanLogsBetween(h.from, h.to).then((d) => { if (alive) setHist(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setHist(null); });
     listScanSlow(from, to).then((d) => { if (alive) setSlowRows(Array.isArray(d) ? d : []); }).catch(() => { if (alive) setSlowRows([]); });
     if (manage) {
       machineReportSummary(h.from)
@@ -9290,7 +9542,7 @@ function DailyReportPage() {
       ordered: r ? Number(r.qty) || 0 : null,
       part_len: r?.length_mm ?? pm.default_length_mm ?? g.unit_len ?? g.def_len ?? null,
       inv: pm.material || pm.inventory_code || "",
-      mdf: pm.mdf_no || "", rev: pm.rev || "",
+      mdf: releaseMdf(r, pm) || "", rev: pm.rev || "",
       project_code: pm.projects?.code || "",
       project_name: g.project_name || pm.projects?.name || "",
       mod: r?.mod_version || "",
@@ -9664,6 +9916,8 @@ function DailyReportPage() {
 
       {loading ? (
         <Card><div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div></Card>
+      ) : loadErr ? (
+        <LoadStateBanner state={{ error: loadErr }} onRetry={() => setReloadTick((t) => t + 1)} />
       ) : (
         <>
           {/* ── ชั้นที่ 1: ตัวชี้วัดหลัก 5 ตัว (สำคัญสุดซ้าย) · ทุกตัวมีสิ่งเทียบ ── */}
@@ -9831,13 +10085,21 @@ function MachinesSummaryPage() {
   const [preset, setPreset] = useState("week");
   const [logs, setLogs] = useState([]);
   const [viewMachine, setViewMachine] = useState(null);   // เจาะดูสแกนทั้งหมดของเครื่องที่เลือก
+  const [st, setSt] = useState({ loading: true, error: null });
+  const [tick, setTick] = useState(0);
+  // ★ รอบ 11 (B3/B4): ผลของช่วงเก่าที่มาช้า ไม่ทับช่วงใหม่ · โหลดพลาด = แจ้ง (ไม่โชว์ 0)
   useEffect(() => {
+    let alive = true;
     const { from, to } = rangeFor(preset);
-    getScanLogsBetween(from, to).then(setLogs);
-  }, [preset]);
+    setSt({ loading: true, error: null });
+    getScanLogsBetween(from, to)
+      .then((d) => { if (alive) { setLogs(Array.isArray(d) ? d : []); setSt({ loading: false, error: null }); } })
+      .catch((e) => { if (alive) { setLogs([]); setSt({ loading: false, error: e?.message || String(e) }); } });
+    return () => { alive = false; };
+  }, [preset, tick]);
 
   // per-scan = ภาระงานของเครื่อง (ถูกต้อง: เครื่องทำงานกับชิ้นนั้นจริงทุกครั้งที่สแกน)
-  const matrix = machineOpMatrix(logs);
+  const matrix = useMemo(() => machineOpMatrix(logs), [logs]);
   const rows = matrix.machines.map((m) => ({ name: m.code || m.name, count: m.total.count, weight: m.total.weight }));
 
   // เรียงลำดับตาราง (กดหัวคอลัมน์) — ต้องมี sort + accessor ของหน้านี้เอง (เดิมอ้างของ ReportPage → จอขาว)
@@ -9856,6 +10118,7 @@ function MachinesSummaryPage() {
         <div className="page-title">สรุปเครื่องจักร</div>
         <PresetPicker value={preset} onChange={setPreset} />
       </div>
+      <LoadStateBanner state={st} onRetry={() => setTick((t) => t + 1)} />
       <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           นับตามจำนวนชิ้นที่ทำในแต่ละขั้นตอน — ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ (งานหน้าเครื่องนับตามจำนวนที่กรอก)
@@ -10020,7 +10283,9 @@ function ProjectsPage({ user, goTo }) {
 
   async function openEdit(p) {
     if (!canEdit) return;
-    const impact = await getProjectImpact(p.id);
+    // ★ รอบ 11 (A8): อ่านจำนวนข้อมูลไม่ได้ → impact = null (ไม่ทราบ) → ลบต้องพิมพ์รหัสเสมอ (แก้ชื่อ/สถานะได้ตามปกติ)
+    let impact = null;
+    try { impact = await getProjectImpact(p.id); } catch (e) { mlsToast("อ่านจำนวนข้อมูลของโปรเจคไม่ได้ — การลบจะต้องพิมพ์รหัสยืนยัน", "warn"); }
     setEditing({ project: p, impact });
   }
 
@@ -10240,14 +10505,24 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
   }
 
   async function remove() {
-    const hasData = impact.partCount > 0;
-    const msg = impact.scannedCount > 0
-      ? `โปรเจคนี้มี ${impact.partCount} Part, ${impact.releaseCount} Release, ${impact.unitCount} ชิ้น (QR) และมี ${impact.scannedCount} ชิ้นที่สแกนไปแล้ว (มีประวัติการทำงาน)\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดนี้ทิ้งไปด้วย และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+    // ★ รอบ 11 (A8): impact ไม่ทราบ (อ่านพลาด) หรือมีงานหน้าเครื่อง → ต้องพิมพ์รหัสเสมอ
+    const unknown = !impact || impact.stationRecords == null;
+    const im = impact || { partCount: 0, releaseCount: 0, unitCount: 0, scannedCount: 0, stationRecords: null };
+    const hasData = im.partCount > 0;
+    const hasWork = im.scannedCount > 0 || (im.stationRecords || 0) > 0;
+    const strict = hasWork || (unknown && (hasData || !impact));
+    const workTxt = [im.scannedCount > 0 ? `สแกนแล้ว ${im.scannedCount} ชิ้น` : "", (im.stationRecords || 0) > 0 ? `บันทึกงานหน้าเครื่อง ${fmtNum(im.stationRecords)} รายการ` : ""].filter(Boolean).join(" · ");
+    const msg = !impact
+      ? `อ่านจำนวนข้อมูลของโปรเจคนี้ไม่ได้ (อาจมีประวัติการทำงาน)\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดทิ้ง และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+      : hasWork
+      ? `โปรเจคนี้มี ${im.partCount} Part, ${im.releaseCount} Release, ${im.unitCount} ชิ้น (QR) และมีประวัติการทำงาน (${workTxt})\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดนี้ทิ้งไปด้วย และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+      : strict
+      ? `โปรเจคนี้มี ${im.partCount} Part และ ${im.unitCount} ชิ้น (QR) · ตรวจงานหน้าเครื่องไม่ได้ (ยังไม่ได้อัปเดตฐานข้อมูล)\n\nการลบกู้คืนไม่ได้ — พิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
       : hasData
-      ? `โปรเจคนี้มี ${impact.partCount} Part และ ${impact.unitCount} ชิ้น (QR) แต่ยังไม่มีการสแกน\n\nต้องการลบโปรเจคนี้พร้อมข้อมูลทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`
+      ? `โปรเจคนี้มี ${im.partCount} Part และ ${im.unitCount} ชิ้น (QR) แต่ยังไม่มีการสแกน\n\nต้องการลบโปรเจคนี้พร้อมข้อมูลทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`
       : `ต้องการลบโปรเจค "${project.code} — ${project.name}" หรือไม่?`;
 
-    if (impact.scannedCount > 0) {
+    if (strict) {
       const typed = prompt(msg);
       if (typed !== project.code) { if (typed !== null) mlsToast("รหัสโปรเจคไม่ตรง ยกเลิกการลบ", "warn"); return; }
     } else if (!(await askConfirm({ message: msg, tone: "danger", confirmText: "ลบโปรเจค", cancelText: "ยกเลิก" }))) {
@@ -10272,8 +10547,11 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
         <Field label="ชื่อโปรเจค *"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
-        {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
+        {impact ? <>
+          ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
+          {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
+          {(impact.stationRecords || 0) > 0 && <> · งานหน้าเครื่อง {fmtNum(impact.stationRecords)} รายการ</>}
+        </> : <span style={{ color: "var(--alert, #d97a00)" }}>อ่านจำนวนข้อมูลใต้โปรเจคนี้ไม่ได้ (เน็ตสะดุด) — ลบได้แต่ต้องพิมพ์รหัสยืนยัน</span>}
       </div>
 
       {/* ปิด/เปิดโปรเจค (แอดมิน) — ย้ายมาจากปุ่มในแถว */}
@@ -12078,11 +12356,88 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
   );
 }
 
+// ★ รอบ 11 (B2): แก้ข้อมูลเบอร์ (ชื่อ · INV · น้ำหนัก/ชิ้น · ความยาว/ชิ้น) + เติมน้ำหนักให้สแกนที่บันทึก 0 กก.
+function PartMasterEditModal({ part, projectCode, onClose, onSaved }) {
+  const [f, setF] = useState({
+    part_name: part.part_name || "", material: part.material || "",
+    unit_weight: part.unit_weight == null ? "" : String(part.unit_weight),
+    default_length_mm: part.default_length_mm == null ? "" : String(part.default_length_mm),
+  });
+  const [backfill, setBackfill] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const num = (v) => (v === "" || v == null ? null : Number(String(v).replace(/,/g, "")));
+  async function save() {
+    const w = num(f.unit_weight), l = num(f.default_length_mm);
+    if (w != null && (!Number.isFinite(w) || w < 0)) { setErr("น้ำหนัก/ชิ้นไม่ถูกต้อง"); return; }
+    if (l != null && (!Number.isFinite(l) || l < 0)) { setErr("ความยาว/ชิ้นไม่ถูกต้อง"); return; }
+    const patch = {
+      part_name: f.part_name.trim() || part.part_no,
+      material: f.material.trim() || null,
+      unit_weight: w, default_length_mm: l,
+    };
+    setBusy(true); setErr("");
+    try {
+      await updatePartMaster(part.id, patch);
+      auditRecord("edit_part", "part_master", part.id, { part_no: part.part_no, before: { weight: part.unit_weight, length: part.default_length_mm, inv: part.material }, after: { weight: w, length: l, inv: patch.material } });
+      const wChanged = (w ?? null) !== (part.unit_weight ?? null);
+      if (wChanged && backfill && w > 0) {
+        try {
+          const ids = (await listRows("releases", { filters: { part_master_id: part.id }, strict: true })).map((r) => r.id);
+          if (ids.length) {
+            const rw = await recalcRecordWeights({ releaseIds: ids, onlyMissing: true });
+            if (rw && rw.ok && rw.rows) mlsToast(`เติมน้ำหนักให้สแกนเดิม ${fmtNum(rw.rows)} แถว`, "success");
+          }
+        } catch (_) { /* ไม่ให้การบันทึกหลักล้ม */ }
+      }
+      mlsToast(`บันทึก ${part.part_no} แล้ว`, "success");
+      onSaved({ ...part, ...patch });
+    } catch (e) {
+      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title={`แก้ไข Part ${part.part_no}`} sub={projectCode ? `โปรเจค ${projectCode}` : undefined} onClose={onClose} locked={busy}>
+      <div className="grid-2">
+        <Field label="ชื่อ Part"><Input value={f.part_name} onChange={(e) => setF({ ...f, part_name: e.target.value })} /></Field>
+        <Field label="INV Code / วัสดุ"><Input value={f.material} onChange={(e) => setF({ ...f, material: e.target.value })} /></Field>
+        <Field label="น้ำหนัก/ชิ้น (กก.)"><Input type="number" step="0.001" min="0" value={f.unit_weight} onChange={(e) => setF({ ...f, unit_weight: e.target.value })} /></Field>
+        <Field label="ความยาว/ชิ้น (มม.)"><Input type="number" step="0.1" min="0" value={f.default_length_mm} onChange={(e) => setF({ ...f, default_length_mm: e.target.value })} /></Field>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.6, margin: "-2px 0 10px" }}>
+        น้ำหนัก/ความยาวของเบอร์ = ค่าเริ่มต้น · Release ที่ตั้งน้ำหนักเองไว้ ใช้ค่าของ Release ก่อน (แก้ที่ ✎ แก้ไข ในหน้า Release)
+      </div>
+      {String(f.unit_weight) !== String(part.unit_weight ?? "") && num(f.unit_weight) > 0 && (
+        <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: "var(--muted)", marginBottom: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={backfill} onChange={(e) => setBackfill(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>เติมน้ำหนักให้สแกนเดิมของเบอร์นี้ที่บันทึกไว้ 0 กก. (ตอนสแกนยังไม่มีน้ำหนัก)</span>
+        </label>
+      )}
+      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      <div className="modal-actions">
+        <Btn variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function PartMasterCrud() {
   const [rows, setRows] = useState([]);
   const [projects, setProjects] = useState([]);
   const [bomParent, setBomParent] = useState(null);   // เบอร์ที่กำลังกำหนด BOM
   const [form, setForm] = useUndoable({ routing: [] });
+  // ★ รอบ 11 (B2/B18): กรองโปรเจค + ค้นหา + แก้น้ำหนัก/ความยาว/ชื่อ/INV ของเบอร์ได้ (เดิมแก้ไม่ได้เลย แต่หน้ารายงานบอกให้มาแก้ที่นี่)
+  const [pmProj, setPmProj] = useState("");
+  const [pmQ, setPmQ] = useState("");
+  const [pmEdit, setPmEdit] = useState(null);         // เบอร์ที่กำลังแก้
+  const projCode = useMemo(() => { const m = {}; projects.forEach((p) => { m[p.id] = p.code; }); return m; }, [projects]);
+  const shown = useMemo(() => {
+    const q = pmQ.trim().toLowerCase();
+    return rows.filter((r) => (!pmProj || r.project_id === pmProj)
+      && (!q || [r.part_no, r.part_name, r.material].some((v) => String(v || "").toLowerCase().includes(q))));
+  }, [rows, pmProj, pmQ]);
   const load = useCallback(async () => {
     setRows(await listRows("part_master", { order: "part_no" }));
     setProjects(await listRows("projects", { order: "code" }));
@@ -12091,16 +12446,24 @@ function PartMasterCrud() {
 
   async function add() {
     if (!form.part_no || !form.project_id) { mlsToast("กรอกโปรเจคและรหัส Part ให้ครบ", "warn"); return; }
-    await insertRow("part_master", {
-      project_id: form.project_id, part_no: form.part_no, part_name: form.part_name || form.part_no,
-      material: form.material, unit_weight: Number(form.unit_weight || 0),
-      default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
-      routing: form.routing || [], kind: form.kind || "part",
-    });
+    try {
+      await insertRow("part_master", {
+        project_id: form.project_id, part_no: form.part_no, part_name: form.part_name || form.part_no,
+        material: form.material, unit_weight: Number(form.unit_weight || 0),
+        default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
+        routing: form.routing || [], kind: form.kind || "part",
+      });
+    } catch (e) {
+      mlsToast(isDuplicateError(e) ? `มี Part "${form.part_no}" ในโปรเจคนี้แล้ว` : "เพิ่ม Part ไม่สำเร็จ: " + (e?.message || e), "error");
+      return;
+    }
     setForm({ routing: [] }); load();
   }
   // เปลี่ยนชนิดของเบอร์ที่มีอยู่ (พาร์ท ↔ ซับ/แผง/แพ็ก) — เบอร์ประกอบถึงจะกำหนด BOM ได้
   async function changeKind(id, kind) {
+    const r0 = rows.find((x) => x.id === id);
+    const lbl = (k) => PM_KINDS.find((x) => x.value === k)?.label || k;
+    if (!(await askConfirm({ message: `เปลี่ยนชนิดของ "${r0?.part_no || ""}" จาก ${lbl(r0?.kind || "part")} เป็น ${lbl(kind)}?\n(มีผลกับหน้าเครื่อง/ประกอบ/แพ็ก และ BOM)`, tone: "warn", confirmText: "เปลี่ยน", cancelText: "ยกเลิก" }))) return;
     try { await updateRow("part_master", id, { kind }); setRows((prev) => prev.map((r) => (r.id === id ? { ...r, kind } : r))); }
     catch (e) { mlsToast("เปลี่ยนชนิดไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
@@ -12110,10 +12473,14 @@ function PartMasterCrud() {
     let rels = [], units = [];
     try {
       [rels, units] = await Promise.all([
-        listRows("releases", { filters: { part_master_id: id } }),
-        listRows("part_units", { filters: { part_master_id: id } }),
+        listRows("releases", { filters: { part_master_id: id }, strict: true }),
+        listRows("part_units", { filters: { part_master_id: id }, strict: true }),
       ]);
-    } catch { /* ถ้าเช็คไม่ได้ ให้ทำ flow ปลอดภัยด้านล่างต่อ */ }
+    } catch {
+      // ★ รอบ 11 (A8): เช็คไม่ได้ = ไม่ลบ (เดิมเงียบแล้วไปขั้นยืนยันแบบ "ยังไม่มีอะไรผูก")
+      mlsToast("ตรวจข้อมูลที่ผูกกับ Part นี้ไม่ได้ — ลองใหม่อีกครั้ง (ยังไม่ได้ลบ)", "error");
+      return;
+    }
     if (rels.length > 0 || units.length > 0) {
       mlsToast(`ลบ Part "${r?.part_no || ""}" ไม่ได้ — ยังมี ${fmtNum(rels.length)} Release และ ${fmtNum(units.length)} ชิ้น (QR) ผูกอยู่ · ให้ลบ Release ของ Part นี้ก่อน (ที่หน้า "ปล่อยงาน (Release)") แล้วจึงลบ Part ได้`, "error");
       return;
@@ -12143,7 +12510,15 @@ function PartMasterCrud() {
         <b>ชนิด</b>: พาร์ท = ชิ้นส่วนปกติ · ซับ/แผง/แพ็ก = เบอร์ประกอบ (ประกอบจากลูก) — เลือกเป็นเบอร์ประกอบแล้วจะกำหนด BOM ได้ในตารางด้านล่าง
       </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
-      <DataTable id="partmaster-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "14px 0 8px" }}>
+        <select className="select" value={pmProj} onChange={(e) => setPmProj(e.target.value)} style={{ maxWidth: 260 }}>
+          <option value="">ทุกโปรเจค ({fmtNum(rows.length)})</option>
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+        </select>
+        <Input value={pmQ} onChange={(e) => setPmQ(e.target.value)} placeholder="ค้นหา Part No. / ชื่อ / INV" style={{ flex: "1 1 220px", minWidth: 180 }} />
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>แสดง {fmtNum(Math.min(shown.length, 500))} จาก {fmtNum(shown.length)}{shown.length > 500 ? " (กรอง/ค้นหาเพื่อดูเพิ่ม)" : ""}</span>
+      </div>
+      <DataTable id="partmaster-crud" wrapClass="table-wrap tall-scroll" tableClass="data-table" rows={shown.slice(0, 500)} rowKey={(r) => r.id}
         empty={
           <div className="empty-state" style={{ padding: "24px 0" }}>
             <Icon name="grid" size={30} />
@@ -12152,6 +12527,7 @@ function PartMasterCrud() {
           </div>
         }
         columns={[
+          { key: "project", header: "โปรเจค", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => projCode[r.project_id] || "-" },
           { key: "part_no", header: "Part No.", tdStyle: { whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontWeight: 600 }, cell: (r) => r.part_no },
           { key: "part_name", header: "ชื่อ", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_name },
           { key: "kind", header: "ชนิด", cell: (r) => (
@@ -12164,9 +12540,17 @@ function PartMasterCrud() {
           { key: "bom", header: "BOM", cell: (r) => (r.kind && r.kind !== "part")
             ? <Btn variant="ghost" size="sm" onClick={() => setBomParent(r)}><Icon name="grid" size={13} /> กำหนด BOM</Btn>
             : <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span> },
-          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+          { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => (
+            <span style={{ display: "inline-flex", gap: 12 }}>
+              <span onClick={() => setPmEdit(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
+              <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span>
+            </span>) },
         ]} />
     </Card>
+    {pmEdit && (
+      <PartMasterEditModal part={pmEdit} projectCode={projCode[pmEdit.project_id] || ""} onClose={() => setPmEdit(null)}
+        onSaved={(p2) => { setPmEdit(null); setRows((prev) => prev.map((r) => (r.id === p2.id ? { ...r, ...p2 } : r))); }} />
+    )}
     {bomParent && (
       <BomEditorModal parent={bomParent} allParts={rows} onClose={() => setBomParent(null)} onSaved={load} />
     )}
