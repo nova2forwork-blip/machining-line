@@ -66,7 +66,7 @@ export function SimpleBarChart({ data = [], color = "#10b981", height = 260 }) {
             return (
               <g key={"b" + i}>
                 <rect x={cx - barW / 2} y={by} width={barW} height={Math.max(0, bh)} rx={5} ry={5} fill={color}>
-                  <title>{`${d.name}: ${d.count}`}</title>
+                  <title>{`${d.name}: ${(Number(d.count) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</title>
                 </rect>
                 <text x={cx} y={ly} fontSize="12" fill="#6d7d76"
                   textAnchor={rot ? "end" : "middle"}
