@@ -673,6 +673,61 @@ function PresetPicker({ value, onChange }) {
   );
 }
 
+// ★ รอบ 20: เลือกช่วงเวลาแบบแถบเดียว (segmented) — ด่วน/รายเดือน/กำหนดเอง อยู่ในแถวเดียวกัน + โชว์ช่วงวันที่จริงเสมอ
+//   ใช้ในรายงานข้อมูลสแกน + รายการสแกนของเครื่อง (state เดิมของแต่ละหน้า: rangeMode/preset/monthValue/customFrom/customTo)
+function PeriodBar({ rangeMode, setRangeMode, preset, setPreset, monthValue, setMonthValue, customFrom, setCustomFrom, customTo, setCustomTo,
+  range, allowMonth = true, onRefresh, loading = false }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const opts = [
+    { k: "day", label: L("วันนี้", "Today") },
+    { k: "week", label: L("7 วันล่าสุด", "Last 7 days") },
+    { k: "month", label: L("30 วันล่าสุด", "Last 30 days") },
+    { k: "year", label: L("12 เดือนล่าสุด", "Last 12 months") },
+    ...(allowMonth ? [{ k: "m:month", label: L("รายเดือน", "By month") }] : []),
+    { k: "m:custom", label: L("กำหนดเอง", "Custom") },
+  ];
+  const cur = rangeMode === "preset" ? preset : "m:" + rangeMode;
+  const pick = (k) => { if (k.startsWith("m:")) setRangeMode(k.slice(2)); else { setPreset(k); setRangeMode("preset"); } };
+  const a = range ? fmtDFull(range.from) : "", b = range ? fmtDFull(range.to) : "";
+  const allTime = range && new Date(range.from).getFullYear() < 2000;
+  return (
+    <div className="pb">
+      <div className="pb-seg" role="radiogroup" aria-label={L("ช่วงเวลา", "Period")}>
+        {opts.map((o) => (
+          <button key={o.k} type="button" role="radio" aria-checked={cur === o.k} className={"pb-opt" + (cur === o.k ? " on" : "")} onClick={() => pick(o.k)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {rangeMode === "month" ? (
+        <input type="month" className="input pb-in" value={monthValue} onChange={(e) => e.target.value && setMonthValue(e.target.value)} aria-label={L("เดือน", "Month")} />
+      ) : null}
+      {rangeMode === "custom" ? (
+        <div className="pb-custom">
+          <input type="date" className="input pb-in" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} aria-label={L("จากวันที่", "From")} />
+          <span className="pb-dash">–</span>
+          <input type="date" className="input pb-in" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} aria-label={L("ถึงวันที่", "To")} />
+        </div>
+      ) : null}
+      {range ? (
+        <div className={"pb-range" + (loading ? " busy" : "") + (rangeMode === "custom" ? " only-btn" : "")} title={L("ช่วงวันที่ที่แสดงอยู่", "Dates shown")}>
+          {/* กำหนดเอง = วันที่อยู่ในช่องกรอกแล้ว → โชว์แค่ปุ่มโหลดใหม่ (ไม่ซ้ำ) */}
+          {rangeMode !== "custom" ? <>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+            <span>{allTime ? <>{L("ทั้งหมด ถึง", "All until")} <b>{b}</b></> : a === b ? <b>{a}</b> : <><b>{a}</b> – <b>{b}</b></>}</span>
+          </> : null}
+          {onRefresh ? (
+            <button type="button" className="pb-refresh" onClick={onRefresh} disabled={loading} title={L("โหลดข้อมูลล่าสุด", "Reload latest data")} aria-label={L("โหลดข้อมูลล่าสุด", "Reload latest data")}>
+              <Icon name="refresh" size={14} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ─── Routing helpers ─────────────────────────────────────────────────────────
 function progressFor(routing, doneOpNames) {
   const done = new Set(doneOpNames);
@@ -698,22 +753,24 @@ const Input = forwardRef(({ className = "", ...props }, ref) => (
 const NumField = forwardRef(({ className = "", strict = true, ...props }, ref) => (
   <NumInput {...props} strict={strict} ref={ref} className={`input ${className}`} />
 ));
-const Select = forwardRef(({ options, className = "", ...props }, ref) => (
+const Select = forwardRef(({ options, className = "", placeholder, ...props }, ref) => (
   <select {...props} ref={ref} className={`select ${className}`}>
-    <option value="">— เลือก —</option>
+    <option value="">{placeholder || "— เลือก —"}</option>
     {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
   </select>
 ));
 // ── ดรอปดาวน์ค้นหาได้ (พิมพ์เพื่อกรอง) — ใช้ตอนตัวเลือกเยอะ เช่น เลือกโปรเจคหน้า "ล้างข้อมูลสแกน" ──
-function SearchSelect({ value, onChange, options, placeholder = "— เลือก / พิมพ์เพื่อค้นหา —", className = "" }) {
+function SearchSelect({ value, onChange, options: opts0, placeholder = "— เลือก / พิมพ์เพื่อค้นหา —", className = "", allLabel }) {
+  // ★ รอบ 20: allLabel = มีตัวเลือกแรก "ทั้งหมด" (value "") ไว้ล้างค่ากลับ
+  const options = allLabel ? [{ value: "", label: allLabel }, ...opts0] : opts0;
   const [open, setOpen] = useState(false);
   const [touched, setTouched] = useState(false);   // เริ่มพิมพ์แล้วหรือยัง (พิมพ์ = โชว์คำค้น · ไม่พิมพ์ = โชว์ค่าที่เลือก)
   const [query, setQuery] = useState("");
   const wrapRef = useRef(null);
-  const selected = options.find((o) => String(o.value) === String(value)) || null;
+  const selected = (allLabel && !value) ? null : (options.find((o) => String(o.value) === String(value)) || null);
   const shown = touched ? query : (selected ? selected.label : "");
   const q = query.trim().toLowerCase();
-  const list = (touched && q) ? options.filter((o) => String(o.label).toLowerCase().includes(q)) : options;
+  const list = (touched && q) ? options.filter((o) => o.value !== "" && String(o.label).toLowerCase().includes(q)) : options;
 
   useEffect(() => {
     const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setTouched(false); setQuery(""); } };
@@ -2239,8 +2296,9 @@ function MaterialsPage({ user }) {
         return (
           <span className="mat-inv">
             <b>{m.inv_code}</b>
-            {m.source === "release" && <span className="mat-src rel" title={L("บันทึกอัตโนมัติตอนสร้าง Release", "added automatically when a release was created")}>{L("จาก Release", "from release")} {m.source_ref || ""}</span>}
-            {m.source === "backfill" && <span className="mat-src rel" title={L("ดึงจาก Release เดิม", "pulled from past releases")}>{L("จาก Release เดิม", "from past releases")}</span>}
+            {/* ★ รอบ 18: ป้ายสั้นลง (เดิม "จาก Release เดิม" / "from past releases") — ความหมายเต็มอยู่ใน tooltip */}
+            {m.source === "release" && <span className="mat-src rel" title={L(`บันทึกอัตโนมัติตอนสร้าง Release ${m.source_ref || ""}`, `added automatically when release ${m.source_ref || ""} was created`)}>REL{m.source_ref ? " " + m.source_ref : ""}</span>}
+            {m.source === "backfill" && <span className="mat-src rel" title={L("ดึงจาก Release เดิม", "pulled from past releases")}>REL</span>}
             {scope === "project" && e.center && <span className="mat-src ctr" title={L(`มีใน Center Stock ด้วย (W/M ${fmtDec(e.center.weight_per_m, 4) || "-"}) — ตอนสร้าง Release โปรเจคนี้ใช้ค่าของโปรเจคก่อน`, `Also in Center Stock (W/M ${fmtDec(e.center.weight_per_m, 4) || "-"}) — this project's value is used first`)}>Center</span>}
           </span>
         );
@@ -7626,11 +7684,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
 // ══════════════════════════════════════════════════════════════════════════
 // 5) REPORT
 // ══════════════════════════════════════════════════════════════════════════
-const RANGE_MODES = [
-  { value: "preset", label: "ช่วงเวลาด่วน" },
-  { value: "month", label: "รายเดือน" },
-  { value: "custom", label: "กำหนดเอง (จาก–ถึง)" },
-];
+// (รอบ 20: RANGE_MODES เดิมเลิกใช้ — แทนด้วย PeriodBar แถบเดียว)
 
 // ── วิวรายงาน "ประกอบ / แพ็ก" — ลูกที่ประกอบเข้าเบอร์แม่ (เบอร์ + ความยาว + จำนวน) จาก assembly_links ──
 //   แยกแพ็ก/ประกอบด้วยชนิดเบอร์แม่: package = แพ็ก · อื่น ๆ (sub/แผง) = ประกอบ
@@ -8374,67 +8428,53 @@ function ReportPage({ goTo }) {
         </Modal>
       )}
 
-      <Card title="ช่วงเวลาที่ต้องการดู">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 22, alignItems: "start" }}>
-          {/* ── ซ้าย: ช่วงเวลา (โหมด + ค่า เรียงชิดกัน) ── */}
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 9 }}>ช่วงเวลา</div>
-            <div className="chip-row" style={{ marginBottom: 12 }}>
-              {RANGE_MODES.map((m) => (
-                <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>
-                  {m.label}
-                </span>
-              ))}
-            </div>
-            <div>
-              {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
-              {rangeMode === "month" && (
-                <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 220 }} />
-              )}
-              {rangeMode === "custom" && (
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
-                  <span style={{ color: "var(--muted)" }}>–</span>
-                  <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
-                </div>
-              )}
-            </div>
-          </div>
-          {/* ── ขวา: กรองโปรเจค + Part (ป้ายบน · เต็มความกว้าง) ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>โปรเจค</div>
-              <Select value={projectFilter} style={{ width: "100%" }}
-                onChange={(e) => {
-                  const pid = e.target.value;
-                  setProjectFilter(pid);
-                  // ถ้า Part/Release ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรองนั้น
-                  if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
-                  if (pid && releaseFilter && !logs.some((l) => logProjectId(l) === pid && String(l.release_order || "") === releaseFilter)) setReleaseFilter("");
-                }}
-                options={projectOptions} />
-            </div>
-            {/* ── กลาง: เลือก Release (ดรอปดาวน์ · เฉพาะที่มีงานในช่วงเวลานี้) ── */}
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Release</div>
-              <Select value={releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} style={{ width: "100%" }}
-                options={releaseOrders.map((ro) => ({ value: ro, label: ro }))} />
-            </div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 6 }}>Part</div>
-              <Select value={partFilter} onChange={(e) => setPartFilter(e.target.value)} style={{ width: "100%" }}
-                options={partOptions} />
-            </div>
-            {(projectFilter || partFilter || releaseFilter) && (
-              <div>
-                <Btn variant="ghost" size="sm" onClick={() => { setProjectFilter(""); setPartFilter(""); setReleaseFilter(""); }}>
-                  <Icon name="close" size={13} /> {lang === "en" ? "Clear search" : "ล้างการค้นหา"}
-                </Btn>
-              </div>
-            )}
-          </div>
+      {/* ★ รอบ 20: แผงเลือกช่วงเวลา + ตัวกรอง — แถบเดียวเลือกช่วง (โชว์วันที่จริง) · ตัวกรอง 3 ช่องเรียงแถวเดียว · ช่องที่ใช้อยู่ขอบเขียว */}
+      <div className="card rf-card">
+        <div className="rf-row">
+          <div className="rf-lbl">{lang === "en" ? "Period" : "ช่วงเวลา"}</div>
+          <PeriodBar rangeMode={rangeMode} setRangeMode={setRangeMode} preset={preset} setPreset={setPreset}
+            monthValue={monthValue} setMonthValue={setMonthValue} customFrom={customFrom} setCustomFrom={setCustomFrom}
+            customTo={customTo} setCustomTo={setCustomTo} range={curRange}
+            onRefresh={() => setReloadTick((t) => t + 1)} loading={logsState.loading} />
         </div>
-      </Card>
+        <div className="rf-row rf-row-f">
+          <div className="rf-lbl">{lang === "en" ? "Filter" : "ตัวกรอง"}</div>
+          <FilterFold className="rf-fold" active={(projectFilter ? 1 : 0) + (releaseFilter ? 1 : 0) + (partFilter ? 1 : 0)}>
+            <div className="rf-filters">
+              <label className={"rf-f" + (projectFilter ? " on" : "")}>
+                <span className="rf-fl">{lang === "en" ? "Project" : "โปรเจค"}</span>
+                <Select value={projectFilter} placeholder={lang === "en" ? "All projects" : "ทุกโปรเจค"}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    setProjectFilter(pid);
+                    // ถ้า Part/Release ที่เลือกไว้ไม่ได้อยู่ในโปรเจคใหม่ → ล้างตัวกรองนั้น
+                    if (pid && partFilter && !parts.some((p) => p.project_id === pid && p.part_no === partFilter)) setPartFilter("");
+                    if (pid && releaseFilter && !logs.some((l) => logProjectId(l) === pid && String(l.release_order || "") === releaseFilter)) setReleaseFilter("");
+                  }}
+                  options={projectOptions} />
+              </label>
+              {/* Release: เฉพาะที่มีงานในช่วงเวลานี้ (ตามโปรเจคที่เลือก) */}
+              <label className={"rf-f" + (releaseFilter ? " on" : "")}>
+                <span className="rf-fl">Release{releaseOrders.length ? <em> · {nc(releaseOrders.length)}</em> : null}</span>
+                <Select value={releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} disabled={!releaseOrders.length && !releaseFilter}
+                  placeholder={releaseOrders.length ? (lang === "en" ? "All releases" : "ทุก Release") : (lang === "en" ? "No release in this period" : "ไม่มี Release ในช่วงนี้")}
+                  options={releaseOrders.map((ro) => ({ value: ro, label: ro }))} />
+              </label>
+              <div className={"rf-f" + (partFilter ? " on" : "")}>
+                <span className="rf-fl">Part</span>
+                <SearchSelect value={partFilter} onChange={(v) => setPartFilter(v)} options={partOptions}
+                  allLabel={lang === "en" ? "All parts" : "ทุก Part"}
+                  placeholder={lang === "en" ? "All parts · type to search" : "ทุก Part · พิมพ์เพื่อค้นหา"} />
+              </div>
+              {(projectFilter || partFilter || releaseFilter) ? (
+                <button type="button" className="rf-clear" onClick={() => { setProjectFilter(""); setPartFilter(""); setReleaseFilter(""); }}>
+                  <Icon name="close" size={13} /> {lang === "en" ? "Clear filters" : "ล้างตัวกรอง"}
+                </button>
+              ) : null}
+            </div>
+          </FilterFold>
+        </div>
+      </div>
 
       {/* แยกดูตามแผนก — เครื่องจักร / แผง / ซับ / แพ็ก (กดสลับ · กรองทั้งรายงาน) */}
       <DeptTabs value={deptFilter} onChange={setDeptFilter} />
@@ -8630,6 +8670,11 @@ function MachineScanDetail({ machine, onBack }) {
   const colApi = useRef(null);                          // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มา)
 
   useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setAllOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  // ช่วงวันที่ที่แสดงบนแถบเลือกช่วงเวลา (รอบ 20) — สูตรเดียวกับที่ใช้โหลดข้อมูลด้านล่าง
+  const shownRange = useMemo(() => (
+    rangeMode === "month" ? monthRangeFor(monthValue) : rangeMode === "custom" ? customRangeFor(customFrom, customTo) : rangeFor(preset)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [rangeMode, preset, monthValue, customFrom, customTo, reloadTick]);
 
   useEffect(() => {
     let alive = true;
@@ -8996,27 +9041,15 @@ function MachineScanDetail({ machine, onBack }) {
         </div>
       </div>
 
-      <Card title={lang === "en" ? "Period to view" : "ช่วงเวลาที่ต้องการดู"}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 9 }}>{lang === "en" ? "Period" : "ช่วงเวลา"}</div>
-        <div className="chip-row" style={{ marginBottom: 12 }}>
-          {RANGE_MODES.filter((m) => m.value !== "month").map((m) => (   // เอา "รายเดือน" ออกจากหน้ารายการสแกนของเครื่อง
-            <span key={m.value} className={`chip ${rangeMode === m.value ? "active" : ""}`} onClick={() => setRangeMode(m.value)}>{m.label}</span>
-          ))}
+      <div className="card rf-card">
+        <div className="rf-row">
+          <div className="rf-lbl">{lang === "en" ? "Period" : "ช่วงเวลา"}</div>
+          <PeriodBar rangeMode={rangeMode} setRangeMode={setRangeMode} preset={preset} setPreset={setPreset}
+            monthValue={monthValue} setMonthValue={setMonthValue} customFrom={customFrom} setCustomFrom={setCustomFrom}
+            customTo={customTo} setCustomTo={setCustomTo} range={shownRange} allowMonth={false}
+            onRefresh={() => setReloadTick((t) => t + 1)} loading={logs === null} />
         </div>
-        <div>
-          {rangeMode === "preset" && <PresetPicker value={preset} onChange={setPreset} />}
-          {rangeMode === "month" && (
-            <Input type="month" value={monthValue} onChange={(e) => setMonthValue(e.target.value)} style={{ maxWidth: 220 }} />
-          )}
-          {rangeMode === "custom" && (
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ maxWidth: 180 }} />
-              <span style={{ color: "var(--muted)" }}>–</span>
-              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ maxWidth: 180 }} />
-            </div>
-          )}
-        </div>
-      </Card>
+      </div>
 
       <Card title={lang === "en" ? `Scans — ${machine.code || machine.name}` : `รายการสแกน — ${machine.code || machine.name}`}
         right={
