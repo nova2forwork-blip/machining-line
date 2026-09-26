@@ -54,7 +54,7 @@ export function SimpleBarChart({ data = [], color = "#10b981", height = 260 }) {
             return (
               <g key={"t" + i}>
                 <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#e1e9e5" strokeDasharray="3 3" />
-                <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="12" fill="#6d7d76">{fmtTick(tk)}</text>
+                <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="12" fill="#5a6a63">{fmtTick(tk)}</text>
               </g>
             );
           })}
@@ -68,7 +68,7 @@ export function SimpleBarChart({ data = [], color = "#10b981", height = 260 }) {
                 <rect x={cx - barW / 2} y={by} width={barW} height={Math.max(0, bh)} rx={5} ry={5} fill={color}>
                   <title>{`${d.name}: ${(Number(d.count) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</title>
                 </rect>
-                <text x={cx} y={ly} fontSize="12" fill="#6d7d76"
+                <text x={cx} y={ly} fontSize="12" fill="#5a6a63"
                   textAnchor={rot ? "end" : "middle"}
                   transform={rot ? `rotate(-32 ${cx} ${ly})` : undefined}>{trunc(d.name, rot ? 12 : 14)}</text>
               </g>
