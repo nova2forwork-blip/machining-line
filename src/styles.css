@@ -523,6 +523,11 @@ input.err-flash, select.err-flash { animation: errFlashIn 1.5s ease; }
 .pa-item:disabled { opacity: .45; cursor: not-allowed; }
 .pa-ico { width: 22px; display: inline-flex; justify-content: center; color: var(--accent-dk); }
 .ffold.inline { display: contents; }
+/* ── รอบ 17: หน้าโปรเจค — จำนวนงานบนแท็บแผนก + แจ้งโปรเจคปิดแล้ว ── */
+.dept-count { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 7px; margin-left: 8px; border-radius: 99px;
+  font-size: 12px; font-weight: 800; background: var(--surface-3); color: var(--text); vertical-align: 2px; }
+.dept-count.zero { color: var(--muted-2); background: var(--surface-2); font-weight: 600; }
+.proj-closed-note { margin: -6px 0 14px; padding: 9px 13px; border-radius: 10px; background: #fff4e5; border: 1px solid #f5c98a; color: #8a5a00; font-size: 13px; }
 .ffold-btn {
   display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 6px 13px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text);
