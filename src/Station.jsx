@@ -965,7 +965,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   async function onScan() {
     if (hold) { flash(holdMsg(), "warn"); return; }
-    if (step === STEP.IDLE) { flash(t("กรอกความยาว แล้วกด START ก่อน", "Enter the length, then press START"), "warn"); return; }
+    if (step === STEP.IDLE) { flash(t("กรอกความยาว แล้วกด เริ่ม ก่อน", "Enter the length, then press START"), "warn"); return; }
     // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง (toggle) · งาน/เวลาที่เริ่มไว้ยังอยู่
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
     if (step === STEP.CANCEL) return;
@@ -1852,7 +1852,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       status={status} setStatus={setStatus} statusLock={statusLock} busy={busy}
       onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
       confirmCancel={confirmCancel} confirmPart={confirmPart}
-      closeScan={closeScan} rescan={backToRun} dupCount={dupCount}
+      closeScan={closeScan} rescan={backToRun} dupCount={dupCount} matReady={matReady}
       isAsm={isAsm} asmType={dept} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
       asmParentQty={asmParentQty} setAsmParentQty={setAsmParentQty} asmAutoIn={asmAutoIn}
       asmQtyLocked={asmQtyLocked} setAsmQtyLocked={setAsmQtyLocked}
@@ -2174,7 +2174,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close")
                   : step === STEP.REC ? (unit ? t("② สแกนเมื่อทำเสร็จ", "② scan when done") : t("① สแกนเพื่อเริ่ม", "① scan to start"))
                   : step === STEP.PART ? <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>
-                  : t("กด START ก่อน", "press START first")}</div>
+                  : t("กด เริ่ม ก่อน", "press START first")}</div>
               </button>
               {/* ปุ่มรายงานปัญหา — เดินเครื่องอยู่ = รายงานการทำงาน · ยังไม่เริ่ม = แจ้งเครื่องหยุด */}
               <button className={`stn-ctl-btn stn-scan-cell stn-report${slowArmed ? " armed" : ""}`} onClick={openReport} disabled={busy || !!hold}>
@@ -2858,7 +2858,7 @@ function modNoteText(note, lang) {
     .replace(/\(QR เดิม\)/g, "(same QR)")
     .replace(/เพิ่มจำนวน/g, "Qty increased").replace(/ลดจำนวน/g, "Qty reduced").replace(/ยกเลิก Part/g, "Part cancelled");
 }
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0,
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0, matReady = false,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
   asmUndo = null, asmUndoRemove,
   asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
@@ -2908,15 +2908,25 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
   }
 
   if (step === STEP.IDLE) {
+    // ★ รอบ 16: ขั้นตอนเป็นลำดับตัวใหญ่ + ติ๊กถูกเมื่อทำแล้ว (เดิมข้อความเล็ก 2 บรรทัด · กลางจอว่าง)
+    const steps = [
+      { k: "len", done: matReady, th: <>กรอก <b>ความยาววัสดุ</b></>, en: <>Enter <b>material length</b></>, subTh: "ช่องขวามือ (มม.)", subEn: "right panel (mm)" },
+      { k: "start", done: false, th: <>กด <b>เริ่ม</b></>, en: <>Press <b>START</b></>, subTh: "เปิดกล้องสแกน", subEn: "opens the scanner" },
+      { k: "scan", done: false, th: <>สแกน QR ชิ้นงาน</>, en: <>Scan the piece QR</>, subTh: "เวลาเริ่มนับตอนสแกน", subEn: "the timer starts on scan" },
+      { k: "fin", done: false, th: <>ทำเสร็จ → สแกนอีกครั้ง → <b>OK</b></>, en: <>Done → scan again → <b>OK</b></>, subTh: "ใส่จำนวน + เลือกสถานะ", subEn: "enter qty + status" },
+    ];
+    const cur = steps.findIndex((x) => !x.done);
     return (
-      <div className="stn-hint">
-        <div style={{ marginBottom: 8 }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b6bcc4" strokeWidth="1.6"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
-        </div>
-        {t(<>พร้อมเริ่มงาน — กรอก <b>MATERIAL LENGTH</b> แล้วกด <b>START</b> เพื่อเปิดสแกน<br />
-             <span style={{ fontSize: "0.85em", opacity: 0.8 }}>สแกนชิ้นงาน = เริ่มจับเวลา · ทำเสร็จแล้วสแกนอีกครั้ง = จบงาน</span></>,
-           <>Ready — enter <b>MATERIAL LENGTH</b>, then press <b>START</b> to open the scanner<br />
-             <span style={{ fontSize: "0.85em", opacity: 0.8 }}>scan the piece = timer starts · scan again when done = finish</span></>)}
+      <div className="stn-idle">
+        <div className="stn-idle-title">{t("พร้อมเริ่มงาน", "Ready to start")}</div>
+        <ol className="stn-steps">
+          {steps.map((x, i) => (
+            <li key={x.k} className={x.done ? "done" : i === cur ? "cur" : ""}>
+              <span className="n" aria-hidden="true">{x.done ? "✓" : i + 1}</span>
+              <span className="tx"><span className="m">{lang === "en" ? x.en : x.th}</span><small>{lang === "en" ? x.subEn : x.subTh}</small></span>
+            </li>
+          ))}
+        </ol>
       </div>
     );
   }
@@ -2936,8 +2946,10 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const rel = unit.release || {};
     const total = progress?.total ?? rel.qty ?? null;
     const done = progress?.done ?? 0;
+    const showOf = !progress?.noOp && total != null;
+    const pct = showOf && Number(total) > 0 ? Math.max(0, Math.min(100, (Number(done) / Number(total)) * 100)) : null;
     return (
-      <div>
+      <div className="stn-run-view">
         <div className="stn-part-label" style={{ marginBottom: 8 }}>
           <div className="stn-lbl-qr" />
           <div className="stn-lbl-body">
@@ -2954,7 +2966,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
                 <span className="k">REL NO.</span><span className="v">{rel.release_order || "-"}</span>
                 {p.rev ? <><span className="k">REV.</span><span className="v">{p.rev}</span></> : null}
               </div>
-              {!progress?.noOp && total != null ? (
+              {showOf ? (
                 <div className="stn-lbl-of">
                   <span style={{ fontSize: "0.62em", opacity: 0.7, fontWeight: 400, letterSpacing: 0 }}>{t("ทำแล้ว", "Done")} </span>
                   {progress?.offline ? "~" : ""}{fmt(done)} of {fmt(total)}
@@ -2963,6 +2975,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             </div>
           </div>
         </div>
+        {pct != null ? (
+          <div className="stn-run-prog" role="progressbar" aria-valuemin={0} aria-valuemax={Number(total)} aria-valuenow={Number(done)}
+            title={t(`ทำแล้ว ${fmt(done)} จาก ${fmt(total)}`, `${fmt(done)} of ${fmt(total)} done`)}>
+            <i style={{ width: `${pct}%` }} />
+          </div>
+        ) : null}
         <StationAnim />
         <div className="stn-hint">
           <div className="big">{t("● กำลังทำงาน — จับเวลาอยู่", "● Working — timer running")}</div>
