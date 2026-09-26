@@ -689,8 +689,6 @@ function PeriodBar({ rangeMode, setRangeMode, preset, setPreset, monthValue, set
   ];
   const cur = rangeMode === "preset" ? preset : "m:" + rangeMode;
   const pick = (k) => { if (k.startsWith("m:")) setRangeMode(k.slice(2)); else { setPreset(k); setRangeMode("preset"); } };
-  const a = range ? fmtDFull(range.from) : "", b = range ? fmtDFull(range.to) : "";
-  const allTime = range && new Date(range.from).getFullYear() < 2000;
   return (
     <div className="pb">
       <div className="pb-seg" role="radiogroup" aria-label={L("ช่วงเวลา", "Period")}>
@@ -710,18 +708,12 @@ function PeriodBar({ rangeMode, setRangeMode, preset, setPreset, monthValue, set
           <input type="date" className="input pb-in" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} aria-label={L("ถึงวันที่", "To")} />
         </div>
       ) : null}
-      {range ? (
-        <div className={"pb-range" + (loading ? " busy" : "") + (rangeMode === "custom" ? " only-btn" : "")} title={L("ช่วงวันที่ที่แสดงอยู่", "Dates shown")}>
-          {/* กำหนดเอง = วันที่อยู่ในช่องกรอกแล้ว → โชว์แค่ปุ่มโหลดใหม่ (ไม่ซ้ำ) */}
-          {rangeMode !== "custom" ? <>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
-            <span>{allTime ? <>{L("ทั้งหมด ถึง", "All until")} <b>{b}</b></> : a === b ? <b>{a}</b> : <><b>{a}</b> – <b>{b}</b></>}</span>
-          </> : null}
-          {onRefresh ? (
-            <button type="button" className="pb-refresh" onClick={onRefresh} disabled={loading} title={L("โหลดข้อมูลล่าสุด", "Reload latest data")} aria-label={L("โหลดข้อมูลล่าสุด", "Reload latest data")}>
-              <Icon name="refresh" size={14} />
-            </button>
-          ) : null}
+      {/* ★ รอบ 21: ไม่แสดงช่วงวันที่ (ผู้ใช้ขอ) — เหลือปุ่มโหลดข้อมูลล่าสุดอย่างเดียว */}
+      {onRefresh ? (
+        <div className={"pb-range only-btn" + (loading ? " busy" : "")}>
+          <button type="button" className="pb-refresh" onClick={onRefresh} disabled={loading} title={L("โหลดข้อมูลล่าสุด", "Reload latest data")} aria-label={L("โหลดข้อมูลล่าสุด", "Reload latest data")}>
+            <Icon name="refresh" size={14} />
+          </button>
         </div>
       ) : null}
     </div>
