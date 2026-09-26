@@ -38,6 +38,7 @@ const STR = {
     booting: "กำลังเชื่อมต่อสายการผลิต…",
     stRunning: "กำลังทำ", stStopped: "หยุด", stPaused: "พัก", stIdle: "ว่าง", stOff: "ไม่มีสัญญาณ", min: "น.",
     sumRunning: "เดิน", sumStopped: "หยุด", sumIdle: "ว่าง/ปิด",
+    stripOk: "ไม่มีเครื่องหยุด", stripStopped: "เครื่องที่หยุดอยู่", stripMore: "เครื่อง", stripActive: "เครื่องที่มีงานวันนี้",
   },
   en: {
     subtitle: "Live Production Monitor", live: "LIVE",
@@ -53,6 +54,7 @@ const STR = {
     booting: "Connecting to the production line…",
     stRunning: "Running", stStopped: "Stopped", stPaused: "Break", stIdle: "Idle", stOff: "No signal", min: "m",
     sumRunning: "running", sumStopped: "stopped", sumIdle: "idle/off",
+    stripOk: "No machine stopped", stripStopped: "Stopped now", stripMore: "more", stripActive: "Machines with work today",
   },
 };
 
@@ -412,8 +414,9 @@ export default function Dashboard() {
         <Kpi label={t.kpiScans} value={scanCount} format={fmtInt} unit={t.unitTimes} flash={!!kpiHit.scans} />
       </div>
 
-      {/* ── แถบอนิเมชันสายการผลิต (เหนือ Machines) ── */}
-      <MachineLine />
+      {/* ── แถบสายการผลิต (รอบ 16): อนิเมชันเล็กลง + สรุปสถานะ + เครื่องที่หยุดอยู่ (เดิมสูง 15% จอแต่ไม่มีข้อมูล) ── */}
+      <LineStrip t={t} stSum={stSum} stopped={machines.filter((m) => m.st && m.st.state === "stopped")}
+        activeCount={activeCount} total={machines.length} />
 
       {/* ── main: machine cards + chart ── */}
       <div className="dash-main">
@@ -600,11 +603,17 @@ const MLINE_SVG = `
 </svg>`;
 
 // ★ รอบ 13: แถบสถานะบนการ์ดเครื่อง · นาทีนับจาก "since" (เวลาเริ่มงาน/เริ่มหยุด/เริ่มพัก)
-function MachineState({ st, t }) {
+function useTick(ms) {
   const [, force] = useState(0);
-  useEffect(() => { const i = setInterval(() => force((n) => n + 1), 30000); return () => clearInterval(i); }, []);
-  const mins = st.since ? Math.max(0, Math.floor((Date.now() - new Date(st.since).getTime()) / 60000)) : null;
-  const dur = mins != null ? (mins >= 60 ? `${Math.floor(mins / 60)}:${pad(mins % 60)} ${t.min === "m" ? "h" : "ชม."}` : `${mins} ${t.min}`) : "";
+  useEffect(() => { const i = setInterval(() => force((n) => n + 1), ms); return () => clearInterval(i); }, [ms]);
+}
+function sinceText(since, t) {
+  const mins = since ? Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 60000)) : null;
+  return mins != null ? (mins >= 60 ? `${Math.floor(mins / 60)}:${pad(mins % 60)} ${t.min === "m" ? "h" : "ชม."}` : `${mins} ${t.min}`) : "";
+}
+function MachineState({ st, t }) {
+  useTick(30000);
+  const dur = sinceText(st.since, t);
   const label = { running: t.stRunning, stopped: t.stStopped, paused: t.stPaused, idle: t.stIdle, off: t.stOff }[st.state] || st.state;
   const icon = { running: "●", stopped: "■", paused: "❚❚", idle: "○", off: "◌" }[st.state] || "•";
   const detail = st.state === "stopped" ? (st.reason || "") : st.state === "running" ? (st.part_no || "") : "";
@@ -617,8 +626,58 @@ function MachineState({ st, t }) {
   );
 }
 
-function MachineLine() {
-  return <div className="dash-panel dash-line" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
+// อนิเมชันสายพาน — หยุดนิ่งเมื่อไม่มีเครื่องไหนเดินอยู่ (ไม่หลอกว่าไลน์กำลังทำงาน)
+function MachineLine({ still }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const svg = ref.current && ref.current.querySelector("svg");
+    if (!svg) return;
+    try { if (still) svg.pauseAnimations(); else svg.unpauseAnimations(); } catch { /* ignore */ }
+  }, [still]);
+  return <div ref={ref} className={"dash-line-anim" + (still ? " still" : "")} aria-hidden="true" dangerouslySetInnerHTML={{ __html: MLINE_SVG }} />;
+}
+
+// ★ รอบ 16: แถบสาย: [อนิเมชันเล็ก] [● เดิน · ■ หยุด · ○ ว่าง] [เครื่องที่หยุด + เหตุผล + นานเท่าไหร่]
+function LineStrip({ t, stSum, stopped, activeCount, total }) {
+  useTick(30000);
+  const MAX = 4;
+  const shown = stopped.slice(0, MAX);
+  const more = stopped.length - shown.length;
+  return (
+    <div className={"dash-panel dash-line" + (stopped.length ? " has-stop" : "")}>
+      <MachineLine still={!!stSum && stSum.run === 0} />
+      {stSum ? (
+        <>
+          <div className="dash-strip-sum">
+            <span className="s-run"><b className="dash-num">{stSum.run}</b> {t.sumRunning}</span>
+            <span className={"s-stop" + (stSum.stop ? " on" : "")}><b className="dash-num">{stSum.stop}</b> {t.sumStopped}</span>
+            <span className="s-idle"><b className="dash-num">{stSum.other}</b> {t.sumIdle}</span>
+          </div>
+          <div className="dash-strip-stops">
+            {stopped.length === 0 ? (
+              <span className="dash-strip-ok">✓ {t.stripOk}</span>
+            ) : (
+              <>
+                <span className="dash-strip-lbl">■ {t.stripStopped}</span>
+                {shown.map((m) => (
+                  <span key={m.code || m.name} className="dash-stop-pill" title={[m.code || m.name, m.st.reason, sinceText(m.st.since, t)].filter(Boolean).join(" · ")}>
+                    <b>{m.code || m.name}</b>
+                    {m.st.reason ? <span className="r">{m.st.reason}</span> : null}
+                    {m.st.since ? <span className="d dash-num">{sinceText(m.st.since, t)}</span> : null}
+                  </span>
+                ))}
+                {more > 0 ? <span className="dash-stop-more">+{more} {t.stripMore}</span> : null}
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="dash-strip-sum">
+          <span className="s-run"><b className="dash-num">{activeCount}</b> / {total} · {t.stripActive}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Kpi({ label, value, format, unit, flash }) {
