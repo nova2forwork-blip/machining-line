@@ -1943,18 +1943,29 @@ export async function getMaterials(projectId = null) {
 }
 const matTxt = (v) => (v == null ? null : String(v).trim() === "" ? null : String(v).trim());
 // เพิ่ม (id=null · projectId=null = Center Stock) / แก้ (id) 1 รายการ → { ok, row } | { ok:false, reason }
-export async function saveMaterial({ id = null, projectId = null, inv, wpm, len, qty, note }) {
-  const { data, error } = await supabase.rpc("material_save", {
+//   ★ รอบ 14: desc (Description) — undefined = ไม่แตะค่าเดิม · "" = ล้าง · DB ยังไม่รัน migration-round14.sql → บันทึกแบบเดิม (ไม่มี desc) + descMissing
+export async function saveMaterial({ id = null, projectId = null, inv, wpm, len, qty, note, desc }) {
+  const base = {
     p_token: authToken(), p_id: id || null, p_project_id: projectId || null, p_inv: String(inv || "").trim(),
     p_wpm: matTxt(wpm), p_len: matTxt(len), p_qty: matTxt(qty), p_note: matTxt(note),
-  });
-  return matRes(data, error, "material_save");
+  };
+  if (desc !== undefined && !_matDescMissing) {
+    const { data, error } = await supabase.rpc("material_save", { ...base, p_desc: String(desc ?? "").trim() });
+    if (!(error && isMissingFnErr(error))) return matRes(data, error, "material_save");
+    _matDescMissing = true;
+  }
+  const { data, error } = await supabase.rpc("material_save", base);
+  const r = matRes(data, error, "material_save");
+  if (r && r.ok && desc !== undefined && String(desc ?? "").trim()) r.descMissing = true;
+  return r;
 }
+let _matDescMissing = false;
+export const materialDescMissing = () => _matDescMissing;
 // เพิ่มหลายรายการ (วางจาก Excel) · onDup: "skip" | "update" → { ok, added, updated, skipped:[{inv, reason}] }
 export async function upsertMaterials(projectId, items, onDup = "skip") {
   const { data, error } = await supabase.rpc("materials_upsert_many", {
     p_token: authToken(), p_project_id: projectId || null, p_on_dup: onDup,
-    p_items: (items || []).map((it) => ({ inv: String(it.inv || "").trim(), wpm: matTxt(it.wpm), len: matTxt(it.len), qty: matTxt(it.qty), note: matTxt(it.note) })),
+    p_items: (items || []).map((it) => ({ inv: String(it.inv || "").trim(), desc: matTxt(it.desc), wpm: matTxt(it.wpm), len: matTxt(it.len), qty: matTxt(it.qty), note: matTxt(it.note) })),
   });
   return matRes(data, error, "materials_upsert_many");
 }
