@@ -200,7 +200,13 @@ function mergeColOrder(saved, keys) {
   if (!saved || !saved.length) return keys.slice();
   const set = new Set(keys);
   const out = saved.filter((k) => set.has(k));
-  keys.forEach((k) => { if (!out.includes(k)) out.push(k); });
+  // ★ รอบ 14: คอลัมน์ใหม่ (ไม่อยู่ในลำดับที่บันทึกไว้) → แทรกต่อจากคอลัมน์ที่อยู่ก่อนหน้าในค่าเริ่มต้น (เดิมไปต่อท้ายสุด)
+  keys.forEach((k, i) => {
+    if (out.includes(k)) return;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) { const p = out.indexOf(keys[j]); if (p >= 0) { at = p + 1; break; } }
+    out.splice(at, 0, k);
+  });
   return out;
 }
 function useColOrder(id, keys, defaultHidden = null) {
@@ -530,7 +536,7 @@ import {
   machineDailyMatrix, missingWeightParts, logWeight, logWeightNeedsBackfill, finishedPiecesV4,
 } from "./metrics.js";
 import Icon from "./icons.jsx";
-import { askConfirm, ConfirmHost } from "./confirm.jsx";
+import { askConfirm, askChoice, ConfirmHost, NumInput, groupNum, nc } from "./confirm.jsx";
 import { SimpleBarChart } from "./svgcharts.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
@@ -680,12 +686,16 @@ const Btn = ({ children, variant = "default", size, className = "", ...rest }) =
 const Input = forwardRef(({ className = "", ...props }, ref) => (
   <input {...props} ref={ref} className={`input ${className}`} />
 ));
-const Select = ({ options, className = "", ...props }) => (
-  <select {...props} className={`select ${className}`}>
+// ★ รอบ 14: ช่องตัวเลขหน้าตาเหมือน Input + ใส่ "," หลักพันให้เอง (แทน type="number" ที่ใส่คอมมาไม่ได้)
+const NumField = forwardRef(({ className = "", strict = true, ...props }, ref) => (
+  <NumInput {...props} strict={strict} ref={ref} className={`input ${className}`} />
+));
+const Select = forwardRef(({ options, className = "", ...props }, ref) => (
+  <select {...props} ref={ref} className={`select ${className}`}>
     <option value="">— เลือก —</option>
     {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
   </select>
-);
+));
 // ── ดรอปดาวน์ค้นหาได้ (พิมพ์เพื่อกรอง) — ใช้ตอนตัวเลือกเยอะ เช่น เลือกโปรเจคหน้า "ล้างข้อมูลสแกน" ──
 function SearchSelect({ value, onChange, options, placeholder = "— เลือก / พิมพ์เพื่อค้นหา —", className = "" }) {
   const [open, setOpen] = useState(false);
@@ -735,8 +745,12 @@ function SearchSelect({ value, onChange, options, placeholder = "— เลื�
     </div>
   );
 }
-const Field = ({ label, children }) => (
-  <div className="field"><div className="label-el">{label}</div>{children}</div>
+// err: true = ไฮไลต์แดง · ข้อความ = ไฮไลต์ + บอกเหตุผลใต้ช่อง (★ รอบ 14)
+const Field = ({ label, children, err, className = "" }) => (
+  <div className={`field${err ? " fld-err" : ""}${className ? " " + className : ""}`}>
+    <div className="label-el">{label}</div>{children}
+    {err && typeof err === "string" ? <div className="fld-err-msg">{err}</div> : null}
+  </div>
 );
 const Card = ({ title, right, children, className = "" }) => (
   <div className={`card ${className}`}>
@@ -773,6 +787,7 @@ const StatCard = ({ label, value, icon }) => (
 // Generic modal shell used by the quick-create Project / Part popups.
 // closeOnBackdrop: false = คลิกพื้นที่ว่างรอบๆ จะไม่ปิด (ต้องกด X หรือปุ่มยกเลิกเท่านั้น)
 // locked: true = ล็อกเต็มรูปแบบชั่วคราว (ปิดไม่ได้เลยแม้กด X/Esc) — ใช้ตอนกำลังประมวลผล/นำเข้าอยู่
+// wide: true = 900px · "lg" = 1120px · "xl" = เกือบเต็มจอ (ตารางกรอกหลายคอลัมน์ เช่น เพิ่ม Release)
 function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked = false, wide = false }) {
   const [shake, setShake] = useState(false);
 
@@ -803,7 +818,7 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
 
   return (
     <div className="modal-backdrop" onMouseDown={handleBackdropClick}>
-      <div className={`modal${wide ? " modal-wide" : ""}${shake ? " modal-shake" : ""}`}>
+      <div className={`modal${wide ? " modal-wide" : ""}${wide === "lg" ? " modal-lg" : ""}${wide === "xl" ? " modal-xl" : ""}${shake ? " modal-shake" : ""}`}>
         <div className="modal-head">
           <div>
             <div className="modal-title">{title}</div>
@@ -1399,10 +1414,10 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
             <Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} />
           </Field>
           <Field label="น้ำหนัก/ชิ้น (กก.)">
-            <Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} />
+            <NumField step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} />
           </Field>
           <Field label="ความยาว/ชิ้น (มม.)">
-            <Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} />
+            <NumField step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} />
           </Field>
         </div>
         <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
@@ -1477,11 +1492,11 @@ const matReasonText = (r, L) => ({
 }[r] || L("บันทึกไม่สำเร็จ", "Save failed") + (r ? ` (${r})` : ""));
 
 // ── แก้ 1 รายการ ──
-function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
+function MaterialEditModal({ row, scopeLabel, descOk = true, onClose, onSaved }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const [f, setF] = useState(() => ({
-    inv: row?.inv_code || "", wpm: row?.weight_per_m ?? "", len: row?.length_mm ?? "", qty: row?.qty ?? "", note: row?.note || "",
+    inv: row?.inv_code || "", desc: row?.description || "", wpm: row?.weight_per_m ?? "", len: row?.length_mm ?? "", qty: row?.qty ?? "", note: row?.note || "",
   }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1495,10 +1510,11 @@ function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
         tone: "warn", confirmText: L("บันทึกตามนี้", "Save anyway"), cancelText: L("กลับไปแก้", "Go back") }))) return;
     }
     setBusy(true); setErr("");
-    const r = await saveMaterial({ id: row.id, inv: f.inv, wpm: String(f.wpm ?? "").replace(/,/g, ""), len: String(f.len ?? "").replace(/,/g, ""), qty: String(f.qty ?? "").replace(/,/g, ""), note: f.note });
+    const r = await saveMaterial({ id: row.id, inv: f.inv, desc: f.desc, wpm: String(f.wpm ?? "").replace(/,/g, ""), len: String(f.len ?? "").replace(/,/g, ""), qty: String(f.qty ?? "").replace(/,/g, ""), note: f.note });
     setBusy(false);
     if (!r || !r.ok) { setErr(matReasonText(r?.reason, L)); return; }
-    auditRecord("material_update", "material", row.id, { inv: f.inv.trim(), scope: scopeLabel, before: { inv: row.inv_code, wpm: row.weight_per_m, len: row.length_mm, qty: row.qty }, after: { wpm: f.wpm, len: f.len, qty: f.qty } });
+    auditRecord("material_update", "material", row.id, { inv: f.inv.trim(), scope: scopeLabel, before: { inv: row.inv_code, desc: row.description || "", wpm: row.weight_per_m, len: row.length_mm, qty: row.qty }, after: { desc: f.desc, wpm: f.wpm, len: f.len, qty: f.qty } });
+    if (r.descMissing) mlsToast(L("Description ยังไม่ถูกบันทึก — ต้องรัน migration-round14.sql ใน Supabase ก่อน", "Description wasn't saved — run migration-round14.sql in Supabase first"), "warn");
     onSaved && onSaved(r.row);
   }
   return (
@@ -1506,13 +1522,17 @@ function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
       <form onSubmit={save}>
         <div className="grid-2">
           <Field label="INV Code *"><Input autoFocus value={f.inv} onChange={set("inv")} /></Field>
+          <Field label="Description">
+            <Input value={f.desc} onChange={set("desc")} placeholder={L("เช่น อลูมิเนียมโปรไฟล์ 40x40", "e.g. Aluminium profile 40x40")} />
+            {!descOk && <div className="mat-sub" style={{ marginTop: 4, color: "var(--warning)" }}>{L("ยังบันทึก Description ไม่ได้ — รัน migration-round14.sql ก่อน", "Can't save Description yet — run migration-round14.sql first")}</div>}
+          </Field>
           <Field label={L("น้ำหนักต่อเมตร (กก./ม.)", "Weight/M (kg/m)")}>
             {isScrapInv(f.inv)
               ? <Input value="" disabled placeholder={L("เศษ — ไม่บันทึก (กรอกเองตอนสร้าง Release)", "Scrap — not stored (type it when creating a release)")} />
-              : <Input value={f.wpm} onChange={set("wpm")} inputMode="decimal" placeholder="เช่น 1.845" />}
+              : <NumField strict={false} value={f.wpm} onChange={set("wpm")} placeholder={L("เช่น 1.845", "e.g. 1.845")} />}
           </Field>
-          <Field label={L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}><Input value={f.len} onChange={set("len")} inputMode="decimal" placeholder="เช่น 6000" /></Field>
-          <Field label={L("จำนวน (เส้น)", "Qty (bars)")}><Input value={f.qty} onChange={set("qty")} inputMode="numeric" /></Field>
+          <Field label={L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}><NumField strict={false} value={f.len} onChange={set("len")} placeholder={L("เช่น 6,000", "e.g. 6,000")} /></Field>
+          <Field label={L("จำนวน (เส้น)", "Qty (bars)")}><NumField strict={false} value={f.qty} onChange={set("qty")} inputMode="numeric" /></Field>
         </div>
         <Field label={L("หมายเหตุ", "Note")}><Input value={f.note} onChange={set("note")} /></Field>
         <div className="mat-preview">
@@ -1535,17 +1555,19 @@ function MaterialEditModal({ row, scopeLabel, onClose, onSaved }) {
 //   วาง (Ctrl+V) ได้ทุกที่ในหน้าต่าง · ก็อปมาหลายคอลัมน์ → จับคอลัมน์จากหัวตาราง หรือเดาจากข้อมูล (INV/ความยาว/Weight/M/จำนวน/หมายเหตุ)
 //     แล้วขึ้นแถบให้เปลี่ยนได้ว่าแต่ละคอลัมน์ลงช่องไหน · คอลัมน์เดียว = ลงช่องที่คลิก ไล่ลงไป
 //   INV ที่มีในตารางอยู่ก่อนแล้ว = อัปเดตแถวนั้น (ช่องว่างที่วางมาไม่ลบค่าเดิม) · นอกนั้นลงแถวว่างถัดไป (ซ้ำกันเอง = แยกแถว ขึ้นป้าย "ซ้ำ")
-const MAT_COLS = ["inv", "wpm", "len", "qty", "note"];
+// ★ รอบ 14: + desc (Description — แสดงข้าง INV Code)
+const MAT_COLS = ["inv", "desc", "wpm", "len", "qty", "note"];
+const MAT_TEXT = new Set(["inv", "desc", "note"]);
 const matRid = () => Math.random().toString(36).slice(2);
-const MAT_BLANK = () => ({ key: matRid(), id: null, inv: "", wpm: "", len: "", qty: "", note: "", orig: null });
+const MAT_BLANK = () => ({ key: matRid(), id: null, inv: "", desc: "", wpm: "", len: "", qty: "", note: "", orig: null });
 const matStr = (v) => (v == null ? "" : String(v));
 const matRowFrom = (m) => {
-  const o = { inv: matStr(m.inv_code), wpm: matStr(m.weight_per_m), len: matStr(m.length_mm), qty: matStr(m.qty), note: matStr(m.note) };
+  const o = { inv: matStr(m.inv_code), desc: matStr(m.description), wpm: matStr(m.weight_per_m), len: matStr(m.length_mm), qty: matStr(m.qty), note: matStr(m.note) };
   return { key: matRid(), id: m.id, ...o, orig: o };
 };
 const matBlank = (r) => MAT_COLS.every((k) => !String(r[k] ?? "").trim());
 const matNormNum = (v) => { const t = String(v ?? "").trim(); if (!t) return ""; const n = gnum(t); return n == null ? t : String(n); };
-const matCellChanged = (r, k) => !!r.orig && (k === "inv" || k === "note" ? String(r[k] ?? "").trim() !== String(r.orig[k] ?? "").trim() : matNormNum(r[k]) !== matNormNum(r.orig[k]));
+const matCellChanged = (r, k) => !!r.orig && (MAT_TEXT.has(k) ? String(r[k] ?? "").trim() !== String(r.orig[k] ?? "").trim() : matNormNum(r[k]) !== matNormNum(r.orig[k]));
 const matRowChanged = (r) => !!r.orig && MAT_COLS.some((k) => matCellChanged(r, k));
 const matBadNum = (v, int) => { const t = String(v ?? "").trim(); if (!t) return false; const n = gnum(t); return n == null || n < 0 || (int && !Number.isInteger(n)); };
 // ★ รอบ 13: ค่าที่ "น่าจะพิมพ์ผิด" (ไม่บล็อก แต่ถามก่อนบันทึก) — Weight/M เกิน 100 กก./ม. · ความยาวน้อยกว่า 10 มม.
@@ -1554,7 +1576,7 @@ const oddWpm = (v) => { const t = String(v ?? "").trim(); if (!t) return false; 
 const oddLen = (v) => { const t = String(v ?? "").trim(); if (!t) return false; const n = gnum(t); return n != null && n >= 0 && n < ODD_LEN_MIN; };
 function oddMsg(list, L) {   // list = [{ name, wpm?, len? }]
   const lines = list.slice(0, 8).map((x) => `• ${x.name}: ${[x.wpm != null ? `Weight/M ${x.wpm}` : "", x.len != null ? L(`ความยาว ${x.len} มม.`, `length ${x.len} mm`) : ""].filter(Boolean).join(" · ")}`);
-  return L(`ค่าที่ดูผิดปกติ (Weight/M เกิน ${ODD_WPM_MAX} กก./ม. หรือความยาวน้อยกว่า ${ODD_LEN_MIN} มม.) — พิมพ์ผิดหน่วยหรือเปล่า?\n\n`, `Unusual values (Weight/M over ${ODD_WPM_MAX} kg/m or length under ${ODD_LEN_MIN} mm) — wrong unit?\n\n`)
+  return L(`ค่าที่ดูผิดปกติ (Weight/M เกิน ${nc(ODD_WPM_MAX)} กก./ม. หรือความยาวน้อยกว่า ${ODD_LEN_MIN} มม.) — พิมพ์ผิดหน่วยหรือเปล่า?\n\n`, `Unusual values (Weight/M over ${nc(ODD_WPM_MAX)} kg/m or length under ${ODD_LEN_MIN} mm) — wrong unit?\n\n`)
     + lines.join("\n") + (list.length > 8 ? `\n… (+${list.length - 8})` : "");
 }
 // ข้อความที่ก็อปจาก Excel → ตาราง [[cell]] — รองรับเซลล์ในเครื่องหมายคำพูด (มีขึ้นบรรทัด/แท็บในเซลล์) · CRLF / CR / LF
@@ -1581,16 +1603,18 @@ function matParseTsv(text) {
   return rows.slice(a, b);
 }
 const MAT_HEADER = {
+  // ★ รอบ 14: desc ตรวจก่อน inv ("Material Description" = คำอธิบาย ไม่ใช่ INV)
+  desc: [/desc/i, /รายละเอียด/i, /คำอธิบาย/i, /^ชื่อ/],
   inv: [/\binv/i, /inventory/i, /material/i, /\bcode\b/i, /item\s*no/i, /รหัส/i, /วัสดุ/i],
   wpm: [/weight\s*\/?\s*m\b/i, /\bw\s*\/\s*m\b/i, /kg\s*\/\s*m/i, /กก\.?\s*\/\s*ม/i, /น้ำหนัก.*(เมตร|ม\.)/i, /unit\s*weight/i],
   len: [/length/i, /\blen\b/i, /ยาว/i],
   qty: [/q'?ty/i, /quantity/i, /จำนวน/i, /\bpcs\b/i, /^bars?$/i, /เส้น$/],
-  note: [/remark/i, /note/i, /หมายเหตุ/i, /desc/i, /รายละเอียด/i],
+  note: [/remark/i, /note/i, /หมายเหตุ/i],
 };
 const matIsNumTxt = (v) => /^-?[\d,]*\.?\d+$/.test(String(v).replace(/\s/g, ""));
 const matHeaderOf = (c) => Object.keys(MAT_HEADER).find((k) => MAT_HEADER[k].some((re) => re.test(c))) || null;
 // เดาว่าคอลัมน์ไหนคืออะไรจาก "ข้อมูล" (ไม่มีหัวตาราง): INV = รหัส (ไม่ใช่ตัวเลขล้วน/ไม่ใช่ภาษาไทย) · ความยาว = ตัวเลข ≥300
-//   · Weight/M = ทศนิยม <100 · จำนวน = จำนวนเต็ม · หมายเหตุ = ข้อความที่เหลือ · เลขลำดับ 1,2,3… = ไม่ใช้
+//   · Weight/M = ทศนิยม <100 · จำนวน = จำนวนเต็ม · ข้อความถัดไป = Description · ข้อความที่เหลือ = หมายเหตุ · เลขลำดับ 1,2,3… = ไม่ใช้
 function matGuessMap(grid) {
   const n = Math.max(0, ...grid.map((r) => r.length));
   const st = [];
@@ -1615,6 +1639,7 @@ function matGuessMap(grid) {
   take("wpm", numCols().find((x) => x.hasDec && x.med != null && x.med < 100));
   take("qty", numCols().find((x) => x.allInt));
   take("wpm", numCols().find((x) => x.med != null && x.med < 100));
+  take("desc", free().find((x) => x.numRatio < 0.5));
   take("note", free().find((x) => x.numRatio < 0.5));
   return map;
 }
@@ -1667,21 +1692,61 @@ function matApplyPaste(base, clip, startRow) {
   });
   return next;
 }
-const MAT_FIELD_LABEL = (k, L) => ({ inv: "INV Code", wpm: "Weight/M", len: L("ความยาว/เส้น", "Length/bar"), qty: L("จำนวน", "Qty"), note: L("หมายเหตุ", "Note") }[k] || k);
+const MAT_FIELD_LABEL = (k, L) => ({ inv: "INV Code", desc: "Description", wpm: "Weight/M", len: L("ความยาว/เส้น", "Length/bar"), qty: L("จำนวน", "Qty"), note: L("หมายเหตุ", "Note") }[k] || k);
+// ★ รอบ 14: INV ที่มีอยู่แล้ว — ค่าที่กรอกใหม่ต่างจากเดิมตรงไหน (ไว้โชว์ตอนถาม "ทับ / ข้าม")
+function matDupDiff(r, ex, L) {
+  if (!ex) return "";
+  const out = [];
+  const t = (k, lab, oldV) => { const nv = String(r[k] ?? "").trim(); if (nv && nv !== String(oldV ?? "").trim()) out.push(`${lab} ${String(oldV ?? "").trim() || L("(ว่าง)", "(empty)")} → ${nv}`); };
+  const n = (k, lab, oldV, d) => { const nv = gnum(r[k]); if (nv == null) return; const ov = matNum(oldV); if (ov == null || Math.abs(ov - nv) > 1e-9) out.push(`${lab} ${ov == null ? L("(ว่าง)", "(empty)") : fmtDec(ov, d)} → ${fmtDec(nv, d)}`); };
+  t("desc", "Description", ex.description);
+  if (!isScrapInv(r.inv)) n("wpm", "W/M", ex.weight_per_m, 4);
+  n("len", L("ยาว", "length"), ex.length_mm, 2);
+  n("qty", L("จำนวน", "qty"), ex.qty, 0);
+  t("note", L("หมายเหตุ", "note"), ex.note);
+  return out.length ? out.join(" · ") : L("ค่าเหมือนเดิม / ไม่ได้กรอกค่าใหม่", "same values / nothing new entered");
+}
+// ★ รอบ 14: เลื่อนไปที่ช่องที่ผิด + โฟกัส + กระพริบ (ใช้ทั้งตาราง Material และ เพิ่ม Release)
+function flashFocus(el) {
+  if (!el) return false;
+  try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }); } catch { /* ignore */ }
+  const input = el.matches && el.matches("input,select,textarea") ? el : el.querySelector && el.querySelector("input,select,textarea");
+  const box = (input && (input.closest("td") || input)) || el;   // เซลล์ตาราง = กระพริบทั้งเซลล์ · ช่องฟอร์ม = กระพริบเฉพาะช่องกรอก
+  try { (input || el).focus({ preventScroll: true }); } catch { /* ignore */ }
+  box.classList.remove("err-flash"); void box.offsetWidth; box.classList.add("err-flash");
+  setTimeout(() => { try { box.classList.remove("err-flash"); } catch { /* ignore */ } }, 1600);
+  return true;
+}
+// แถบรายการจุดที่ต้องแก้ — กดแล้วไปที่ช่องนั้น · items: [{ key, label, go, warn? }]
+function ProblemBar({ title, items, max = 14 }) {
+  const [lang] = useLang();
+  if (!items || !items.length) return null;
+  const shown = items.slice(0, max);
+  return (
+    <div className="prob-bar" role="alert">
+      <b>{title}</b>
+      {shown.map((it) => (
+        <button key={it.key} type="button" className={"prob-chip" + (it.warn ? " warn" : "")} onClick={it.go}>{it.label}</button>
+      ))}
+      {items.length > max && <span className="prob-more">{lang === "en" ? `+${items.length - max} more` : `+ อีก ${items.length - max}`}</span>}
+    </div>
+  );
+}
 
-function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existing = [], onClose, onSaved }) {
+function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existing = [], descOk = true, onClose, onSaved }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const edit = mode === "edit";
   const [rows, setRows] = useState(() => (edit ? [...existing.map(matRowFrom), ...Array.from({ length: 3 }, MAT_BLANK)] : Array.from({ length: 5 }, MAT_BLANK)));
-  const [updateDup, setUpdateDup] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tried, setTried] = useState(false);      // ★ รอบ 14: กดบันทึกแล้ว → โชว์รายการจุดที่ต้องแก้
   const [err, setErr] = useState("");
   const [flash, setFlash] = useState("");
   const [pinfo, setPinfo] = useState(null);      // การวางล่าสุด (ไว้เปลี่ยนคอลัมน์): { base, clip, startRow }
   const wrapRef = useRef(null);
   const firstRef = useRef(null);
   const inScope = (inv) => { const e = index && index.get(matKey(inv)); return !!(e && (projectId ? e.proj : e.center)); };
+  const scopeRow = (inv) => { const e = index && index.get(matKey(inv)); return (e && (projectId ? e.proj : e.center)) || null; };
   const setCell = (key, k, v) => { setPinfo(null); setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [k]: v } : r))); };
   // โฟกัสช่อง INV ของแถวว่างแรก → เปิดหน้าต่างแล้วกด Ctrl+V ได้ทันที
   useEffect(() => { const t = setTimeout(() => { try { firstRef.current && firstRef.current.focus(); } catch { /* ignore */ } }, 60); return () => clearTimeout(t); }, []);
@@ -1695,7 +1760,7 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
     const sr = startRow == null ? firstBlank(base) : startRow;
     setRows(matApplyPaste(base, clip, sr));
     setPinfo(clip.how === "single" ? null : { base, clip, startRow: sr });
-    setFlash(L(`วางแล้ว ${clip.grid.length} แถว`, `Pasted ${clip.grid.length} row(s)`));
+    setFlash(L(`วางแล้ว ${nc(clip.grid.length)} แถว`, `Pasted ${nc(clip.grid.length)} row(s)`));
     setTimeout(() => setFlash(""), 2600);
     return true;
   }
@@ -1739,13 +1804,53 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
   const dupInGrid = (r) => (keyCount.get(matKey(r.inv)) || 0) > 1;
   const dupDb = edit ? [] : newRows.filter((r) => inScope(r.inv));
   const nWork = edit ? changedRows.length + newRows.length : newRows.length;
-  const clean = (x) => ({ inv: String(x.inv).trim(), wpm: isScrapInv(x.inv) ? "" : String(x.wpm ?? "").replace(/,/g, ""), len: String(x.len ?? "").replace(/,/g, ""), qty: String(x.qty ?? "").replace(/,/g, ""), note: x.note });
+  const clean = (x) => ({ inv: String(x.inv).trim(), desc: String(x.desc ?? "").trim(), wpm: isScrapInv(x.inv) ? "" : String(x.wpm ?? "").replace(/,/g, ""), len: String(x.len ?? "").replace(/,/g, ""), qty: String(x.qty ?? "").replace(/,/g, ""), note: x.note });
+  // ★ รอบ 14: จุดที่ต้องแก้ (ต่อช่อง) → ไฮไลต์แดง + แถบรายการ กดแล้วไปที่ช่องนั้น
+  const goCell = (i, k) => () => flashFocus(wrapRef.current && wrapRef.current.querySelector(`[data-row="${i}"][data-col="${k}"]`));
+  const problems = [];
+  rows.forEach((r, i) => {
+    if (matBlank(r)) return;
+    const n = i + 1;
+    if (!String(r.inv).trim()) problems.push({ key: `inv${i}`, label: L(`แถว ${n}: ไม่มี INV Code`, `Row ${n}: no INV Code`), go: goCell(i, "inv") });
+    else if (dupInGrid(r)) problems.push({ key: `dup${i}`, label: L(`แถว ${n}: INV ซ้ำในตาราง`, `Row ${n}: INV repeated`), go: goCell(i, "inv") });
+    [["wpm", "Weight/M"], ["len", L("ความยาว", "Length")], ["qty", L("จำนวน", "Qty")]].forEach(([k, lab]) => {
+      if (k === "wpm" && isScrapInv(r.inv)) return;
+      if (matBadNum(r[k], k === "qty")) problems.push({ key: `${k}${i}`, label: L(`แถว ${n}: ${lab} ไม่ใช่ตัวเลข${k === "qty" ? "เต็ม" : ""}`, `Row ${n}: ${lab} is not a ${k === "qty" ? "whole " : ""}number`), go: goCell(i, k) });
+    });
+  });
+  function focusFirstProblem() { if (problems.length) setTimeout(() => problems[0].go(), 30); }
 
   async function save() {
-    if (noInv.length) { setErr(L(`มี ${noInv.length} แถวที่ยังไม่มี INV Code`, `${noInv.length} row(s) have no INV Code`)); return; }
-    if (badRows.length) { setErr(L(`ตัวเลขไม่ถูกต้อง ${badRows.length} แถว (ช่องสีแดง)`, `${badRows.length} row(s) have invalid numbers (red cells)`)); return; }
-    if (filled.some(dupInGrid)) { setErr(L("มี INV ซ้ำกันในตาราง (ป้าย \"ซ้ำ\") — ลบหรือแก้ให้เหลือแถวเดียว", "The same INV appears twice (\"dup\" tag) — keep one row")); return; }
+    setTried(true);
+    if (noInv.length) { setErr(L(`มี ${nc(noInv.length)} แถวที่ยังไม่มี INV Code (ช่องสีแดง)`, `${nc(noInv.length)} row(s) have no INV Code (red cells)`)); focusFirstProblem(); return; }
+    if (badRows.length) { setErr(L(`ตัวเลขไม่ถูกต้อง ${nc(badRows.length)} แถว (ช่องสีแดง)`, `${nc(badRows.length)} row(s) have invalid numbers (red cells)`)); focusFirstProblem(); return; }
+    if (filled.some(dupInGrid)) { setErr(L("มี INV ซ้ำกันในตาราง (ป้าย \"ซ้ำ\") — ลบหรือแก้ให้เหลือแถวเดียว", "The same INV appears twice (\"dup\" tag) — keep one row")); focusFirstProblem(); return; }
     if (!nWork) { setErr(edit ? L("ยังไม่ได้แก้อะไร", "Nothing changed") : L("กรอกอย่างน้อย 1 INV", "Enter at least one INV")); return; }
+    // ★ รอบ 14: INV ที่มีอยู่แล้ว → ถามก่อน: ทับค่าเดิม / ข้ามตัวที่ซ้ำ / กลับไปแก้
+    let onDup = "skip";
+    if (!edit && dupDb.length) {
+      const list = dupDb.map((r) => ({ head: String(r.inv).trim(), text: matDupDiff(r, scopeRow(r.inv), L) }));
+      const nNew = newRows.length - dupDb.length;
+      const pick = await askChoice({
+        tone: "warn", wide: true,
+        title: L(`INV ซ้ำกับที่มีอยู่แล้ว ${nc(dupDb.length)} รายการ`, `${dupDb.length} INV already exist`),
+        message: L(`INV เหล่านี้มีอยู่แล้วใน${projectId ? "โปรเจคนี้" : " Center Stock"} — จะทับค่าเดิม หรือข้ามไป?`, `These INV are already in ${projectId ? "this project" : "Center Stock"} — overwrite or skip them?`),
+        list,
+        foot: L(`ทับ = ใช้ค่าที่กรอกใหม่แทนค่าเดิม (ช่องที่เว้นว่างไม่ลบค่าเดิม) · ข้าม = ไม่บันทึกแถวที่ซ้ำ${nNew > 0 ? ` (INV ใหม่ ${nc(nNew)} รายการยังบันทึกตามปกติ)` : ""}`,
+          `Overwrite = replace the saved values with what you entered (blank cells keep the old value) · Skip = don't save the repeated rows${nNew > 0 ? ` (the ${nNew} new INV are still saved)` : ""}`),
+        cancelText: L("กลับไปแก้", "Go back"),
+        choices: [
+          { value: "update", label: L(`ทับค่าเดิม (${dupDb.length})`, `Overwrite (${dupDb.length})`), tone: "warn" },
+          { value: "skip", label: L("ข้ามตัวที่ซ้ำ", "Skip duplicates"), primary: true },
+        ],
+      });
+      if (!pick) return;
+      onDup = pick;
+      if (onDup === "skip" && nNew === 0) {
+        mlsToast(L(`ข้าม ${nc(dupDb.length)} รายการที่มีอยู่แล้ว — ไม่มี INV ใหม่ให้บันทึก`, `Skipped ${dupDb.length} existing — nothing new to save`), "warn");
+        return;
+      }
+    }
     {
       const work = edit ? [...changedRows, ...newRows] : newRows;
       const odd = work.filter((r) => (!isScrapInv(r.inv) && oddWpm(r.wpm)) || oddLen(r.len))
@@ -1764,7 +1869,7 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
     }
     // 2) เพิ่มรายการใหม่ (ทีเดียว)
     if (newRows.length) {
-      const res = await upsertMaterials(projectId, newRows.map(clean), updateDup ? "update" : "skip");
+      const res = await upsertMaterials(projectId, (onDup === "skip" ? newRows.filter((r) => !inScope(r.inv)) : newRows).map(clean), onDup);
       if (res && res.ok) {
         nAdd = res.added || 0; nUpdDup = res.updated || 0;
         const why = { exists: L("มีแล้ว", "exists"), dup_in_list: L("ซ้ำในรายการ", "repeated"), bad_inv: L("ไม่มี INV", "no INV"), bad_number: L("ตัวเลขผิด", "bad number") };
@@ -1778,11 +1883,12 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
     }
     setBusy(false);
     auditRecord(edit ? "material_bulk_edit" : "material_add", "material", null, { scope: scopeLabel, updated: nUpd + nUpdDup, added: nAdd, failed: fails.length });
+    if (onDup === "skip" && !edit) dupDb.forEach((r) => { if (!skippedExisting.includes(String(r.inv).trim())) skippedExisting.push(String(r.inv).trim()); });
     const msg = [nUpd + nUpdDup ? L(`แก้ ${nUpd + nUpdDup}`, `updated ${nUpd + nUpdDup}`) : "", nAdd ? L(`เพิ่ม ${nAdd}`, `added ${nAdd}`) : "",
       skippedExisting.length ? L(`ข้าม ${skippedExisting.length} ที่มีแล้ว (${skippedExisting.slice(0, 4).join(", ")}${skippedExisting.length > 4 ? " …" : ""})`, `skipped ${skippedExisting.length} existing (${skippedExisting.slice(0, 4).join(", ")}${skippedExisting.length > 4 ? " …" : ""})`) : ""].filter(Boolean).join(" · ");
     if (fails.length) {
       // เก็บแถวที่บันทึกไม่ผ่านไว้ให้แก้ต่อ · แถวที่ผ่านแล้วถือเป็นค่าเดิมใหม่ (กดบันทึกซ้ำไม่ส่งซ้ำ)
-      setRows((rs) => rs.map((r) => (doneKeys.has(r.key) ? (r.id ? { ...r, orig: { inv: r.inv, wpm: r.wpm, len: r.len, qty: r.qty, note: r.note } } : MAT_BLANK()) : r)));
+      setRows((rs) => rs.map((r) => (doneKeys.has(r.key) ? (r.id ? { ...r, orig: { inv: r.inv, desc: r.desc, wpm: r.wpm, len: r.len, qty: r.qty, note: r.note } } : MAT_BLANK()) : r)));
       setErr(L(`บันทึกไม่ผ่าน ${fails.length}: `, `${fails.length} not saved: `) + fails.slice(0, 5).join(" · ") + (fails.length > 5 ? " …" : ""));
       if (msg) mlsToast(msg, "success");
       if (doneKeys.size) onSaved && onSaved({ keepOpen: true });
@@ -1796,11 +1902,11 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
   const title = edit ? L("แก้ไข Material (ทั้งตาราง)", "Edit materials (whole table)") : L("เพิ่ม Material", "Add materials");
   let firstAssigned = false;
   return (
-    <Modal title={title} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide>
+    <Modal title={title} sub={scopeLabel} onClose={onClose} closeOnBackdrop={false} locked={busy} wide="lg">
       {pinfo && (
         <div className="mat-mapbar">
           <div className="mat-mapbar-h">
-            <b>{L(`วางแล้ว ${pinfo.clip.grid.length} แถว — ตรวจว่าแต่ละคอลัมน์ลงช่องถูก`, `Pasted ${pinfo.clip.grid.length} row(s) — check where each column goes`)}</b>
+            <b>{L(`วางแล้ว ${nc(pinfo.clip.grid.length)} แถว — ตรวจว่าแต่ละคอลัมน์ลงช่องถูก`, `Pasted ${nc(pinfo.clip.grid.length)} row(s) — check where each column goes`)}</b>
             <span>{pinfo.clip.how === "header" ? L("(จับจากหัวตาราง)", "(matched by header)") : L("(เดาจากข้อมูล — เปลี่ยนได้)", "(guessed from the data — change if needed)")}</span>
             <button type="button" className="mat-link" onClick={() => setPinfo(null)}>{L("ตกลง", "OK")}</button>
           </div>
@@ -1821,10 +1927,12 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
           </div>
         </div>
       )}
-      <div className="pgrid-wrap" style={{ maxHeight: "48vh" }} ref={wrapRef}>
-        <table className="pgrid" style={{ minWidth: 660 }}>
+      {!descOk && <div className="mat-sub" style={{ margin: "0 0 8px", color: "var(--warning)" }}>{L("ช่อง Description ยังบันทึกไม่ได้ — รัน migration-round14.sql ใน Supabase ก่อน (ช่องอื่นบันทึกได้ตามปกติ)", "Description can't be saved yet — run migration-round14.sql in Supabase first (other columns save normally)")}</div>}
+      <div className="pgrid-wrap" style={{ maxHeight: "52vh" }} ref={wrapRef}>
+        <table className="pgrid" style={{ minWidth: 860 }}>
           <thead><tr>
             <th style={{ width: 34 }}>#</th><th style={{ minWidth: 160 }}>INV Code *</th>
+            <th style={{ minWidth: 200 }}>Description</th>
             <th style={{ width: 110 }}>{L("Weight/M (กก./ม.)", "Weight/M (kg/m)")}</th><th style={{ width: 110 }}>{L("ความยาว/เส้น (มม.)", "Length/bar (mm)")}</th>
             <th style={{ width: 90 }}>{L("จำนวน (เส้น)", "Qty (bars)")}</th><th style={{ width: 96, textAlign: "right" }}>{L("น้ำหนักรวม", "Total kg")}</th>
             <th style={{ minWidth: 120 }}>{L("หมายเหตุ", "Note")}</th><th style={{ width: 30 }}></th>
@@ -1839,18 +1947,20 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
               return (
                 <tr key={r.key} className={r.id ? "mat-row-existing" : undefined}>
                   <td className="pgrid-idx">{i + 1}</td>
-                  {["inv", "wpm", "len", "qty", "note"].map((k) => {
+                  {MAT_COLS.map((k) => {
                     if (k === "wpm" && scrap) return (
                       <td key={k} className="mat-cell-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>
                         <input value="" disabled placeholder={L("เศษ · ไม่บันทึก", "scrap · not stored")} />
                       </td>
                     );
-                    const inputEl = <input ref={k === "inv" && isFirst ? firstRef : undefined} data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.key, k, e.target.value)} inputMode={k === "inv" || k === "note" ? undefined : "decimal"} />;
+                    const inputEl = MAT_TEXT.has(k)
+                      ? <input ref={k === "inv" && isFirst ? firstRef : undefined} data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.key, k, e.target.value)} placeholder={k === "desc" && !r.id && !String(r[k] ?? "").trim() && String(r.inv).trim() && dupDbRow && scopeRow(r.inv)?.description ? scopeRow(r.inv).description : undefined} />
+                      : <NumInput data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.key, k, e.target.value)} inputMode={k === "qty" ? "numeric" : "decimal"} />;
                     const cells = [];
                     if (k === "note") cells.push(<td key="tot" className="pgrid-ro">{tot != null ? fmtDec(tot, 2) : "-"}</td>);
                     cells.push(
                       <td key={k} className={cellCls(r, k)}
-                        title={k === "inv" && dupDbRow ? L("มีแล้วในรายการนี้ — จะข้าม (หรือติ๊ก \"อัปเดตทับ\")", "Already in this list — skipped (or tick \"update\")") : k === "inv" && dupG ? L("INV ซ้ำกันในตาราง", "Same INV twice in the table") : (r.id && matCellChanged(r, k) ? L(`เดิม: ${r.orig[k] || "(ว่าง)"}`, `was: ${r.orig[k] || "(empty)"}`) : undefined)}>
+                        title={k === "inv" && dupDbRow ? L(`มีแล้วในรายการนี้${scopeRow(r.inv)?.description ? ` (${scopeRow(r.inv).description})` : ""} — ตอนบันทึกจะถามว่าทับค่าเดิมหรือข้าม`, `Already in this list${scopeRow(r.inv)?.description ? ` (${scopeRow(r.inv).description})` : ""} — you'll be asked to overwrite or skip`) : k === "inv" && dupG ? L("INV ซ้ำกันในตาราง", "Same INV twice in the table") : (r.id && matCellChanged(r, k) ? L(`เดิม: ${r.orig[k] || "(ว่าง)"}`, `was: ${r.orig[k] || "(empty)"}`) : undefined)}>
                         {inputEl}
                         {k === "inv" && dupG ? <span className="pg-tag dup">{L("ซ้ำ", "dup")}</span> : k === "inv" && dupDbRow ? <span className="pg-tag dup">{L("มีแล้ว", "exists")}</span> : null}
                       </td>
@@ -1873,14 +1983,10 @@ function MaterialGridModal({ mode = "add", projectId, scopeLabel, index, existin
           {dupDb.length ? <span style={{ color: "var(--warning)" }}> · {L(`มีแล้ว ${dupDb.length}`, `${dupDb.length} already exist`)}</span> : null}
         </span>
         {flash && <span className="mat-flash">✓ {flash}</span>}
-        {dupDb.length > 0 && (
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={updateDup} onChange={(e) => setUpdateDup(e.target.checked)} />
-            {L("INV ที่มีแล้ว: อัปเดตค่าที่กรอก (ช่องว่างไม่ทับ)", "Existing INV: update with what's entered (blanks don't overwrite)")}
-          </label>
-        )}
+        {dupDb.length > 0 && <span className="mat-sub">{L("ตอนบันทึกจะถามว่า ทับค่าเดิม หรือ ข้าม", "you'll be asked to overwrite or skip when saving")}</span>}
       </div>
       {err && <div className="mat-err">{err}</div>}
+      {tried && <ProblemBar title={L("ต้องแก้:", "To fix:")} items={problems} />}
       <div className="modal-actions">
         <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ปิด", "Close")}</Btn>
         <Btn type="button" variant="accent" onClick={save} disabled={busy || !nWork}>
@@ -1940,11 +2046,13 @@ function MaterialsPage({ user }) {
   const incomplete = (m) => matMissing(m).length > 0;
   const fromRel = (m) => m.source === "release" || m.source === "backfill";
   const qq = q.trim().toLowerCase();
-  const shown = list.filter((m) => (!qq || String(m.inv_code).toLowerCase().includes(qq) || String(m.note || "").toLowerCase().includes(qq))
+  // ★ รอบ 14: DB ยังไม่รัน migration-round14.sql = รายการไม่มีคีย์ description → ช่อง Description ยังบันทึกไม่ได้
+  const descOk = !(res && res.ok) || [...(res.project || []), ...(res.center || [])].length === 0 || [...(res.project || []), ...(res.center || [])].some((m) => Object.prototype.hasOwnProperty.call(m, "description"));
+  const shown = list.filter((m) => (!qq || String(m.inv_code).toLowerCase().includes(qq) || String(m.description || "").toLowerCase().includes(qq) || String(m.note || "").toLowerCase().includes(qq))
     && (chip === "all" || (chip === "incomplete" ? incomplete(m) : fromRel(m))));
   const totalKg = list.reduce((s, m) => s + (matTotKg(m) || 0), 0);
   const sortAccessors = {
-    inv: (m) => String(m.inv_code || ""), wpm: (m) => matNum(m.weight_per_m), len: (m) => matNum(m.length_mm), qty: (m) => matNum(m.qty),
+    inv: (m) => String(m.inv_code || ""), desc: (m) => String(m.description || ""), wpm: (m) => matNum(m.weight_per_m), len: (m) => matNum(m.length_mm), qty: (m) => matNum(m.qty),
     bar: (m) => matBarKg(m), tot: (m) => matTotKg(m), used: (m) => Number(m.used_parts) || 0, upd: (m) => m.updated_at || "",
   };
   const miss = <span className="mat-miss">{L("ยังไม่กรอก", "not set")}</span>;
@@ -1961,8 +2069,8 @@ function MaterialsPage({ user }) {
     const items = list.filter((m) => sel.has(m.id));
     if (!items.length || bulkBusy) return;
     const names = items.slice(0, 10).map((m) => m.inv_code).join(", ") + (items.length > 10 ? ` … (+${items.length - 10})` : "");
-    if (!(await askConfirm({ message: L(`ลบ ${items.length} รายการออกจาก${scope === "center" ? " Center Stock" : "โปรเจคนี้"}?\n\n${names}\n\n(ไม่กระทบ Release/Part ที่ใช้ INV เหล่านี้อยู่)`,
-      `Delete ${items.length} item(s) from ${scope === "center" ? "Center Stock" : "this project"}?\n\n${names}\n\n(Releases/parts using these INV are not affected)`), tone: "danger", confirmText: L(`ลบ ${items.length} รายการ`, `Delete ${items.length}`), cancelText: L("ยกเลิก", "Cancel") }))) return;
+    if (!(await askConfirm({ message: L(`ลบ ${nc(items.length)} รายการออกจาก${scope === "center" ? " Center Stock" : "โปรเจคนี้"}?\n\n${names}\n\n(ไม่กระทบ Release/Part ที่ใช้ INV เหล่านี้อยู่)`,
+      `Delete ${nc(items.length)} item(s) from ${scope === "center" ? "Center Stock" : "this project"}?\n\n${names}\n\n(Releases/parts using these INV are not affected)`), tone: "danger", confirmText: L(`ลบ ${nc(items.length)} รายการ`, `Delete ${items.length}`), cancelText: L("ยกเลิก", "Cancel") }))) return;
     setBulkBusy(true);
     let okN = 0; const failed = [];
     for (const m of items) {
@@ -1973,13 +2081,13 @@ function MaterialsPage({ user }) {
     auditRecord("material_delete_bulk", "material", null, { scope: scopeLabel, count: okN, inv: items.map((m) => m.inv_code).slice(0, 200), failed });
     setSel(new Set());
     mlsToast(failed.length ? L(`ลบแล้ว ${okN} · ไม่สำเร็จ ${failed.length} (${failed.slice(0, 5).join(", ")})`, `Deleted ${okN} · failed ${failed.length} (${failed.slice(0, 5).join(", ")})`)
-      : L(`ลบแล้ว ${okN} รายการ`, `Deleted ${okN} item(s)`), failed.length ? "warn" : "success");
+      : L(`ลบแล้ว ${nc(okN)} รายการ`, `Deleted ${nc(okN)} item(s)`), failed.length ? "warn" : "success");
     load();
   }
   // ★ รอบ 13: ดาวน์โหลด Excel (ตามตัวกรอง/การค้นหาที่แสดงอยู่)
   async function doExport() {
     const rows = shown.map((m) => ({
-      "INV Code": m.inv_code, [L("Weight/M (กก./ม.)", "Weight/M (kg/m)")]: m.weight_per_m != null ? Number(m.weight_per_m) : "",
+      "INV Code": m.inv_code, Description: m.description || "", [L("Weight/M (กก./ม.)", "Weight/M (kg/m)")]: m.weight_per_m != null ? Number(m.weight_per_m) : "",
       [L("ความยาว/เส้น (มม.)", "Length/bar (mm)")]: m.length_mm != null ? Number(m.length_mm) : "", [L("จำนวน (เส้น)", "Qty (bars)")]: m.qty != null ? Number(m.qty) : "",
       [L("น้ำหนัก/เส้น (กก.)", "Weight/bar (kg)")]: matBarKg(m) != null ? Math.round(matBarKg(m) * 1000) / 1000 : "",
       [L("น้ำหนักรวม (กก.)", "Total weight (kg)")]: matTotKg(m) != null ? Math.round(matTotKg(m) * 100) / 100 : "",
@@ -1993,7 +2101,7 @@ function MaterialsPage({ user }) {
   async function doBackfill() {
     if (!bf || !bf.count || bfBusy) return;
     const sample = (bf.items || []).slice(0, 8).map((x) => `${x.inv}${x.wpm != null ? ` (${fmtDec(x.wpm, 3)} ${L("กก./ม.", "kg/m")})` : ""}`).join("\n");
-    if (!(await askConfirm({ message: L(`ดึง INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ (${bf.count} รายการ)\n\n${sample}${bf.count > 8 ? "\n…" : ""}\n\nWeight/M คิดจาก น้ำหนัก/ชิ้น ÷ ความยาว ของ Release เดิม (ใส่ให้เฉพาะที่ทุก Release ตรงกัน) · ความยาว/จำนวนเส้น กรอกเองต่อ`,
+    if (!(await askConfirm({ message: L(`ดึง INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ (${nc(bf.count)} รายการ)\n\n${sample}${bf.count > 8 ? "\n…" : ""}\n\nWeight/M คิดจาก น้ำหนัก/ชิ้น ÷ ความยาว ของ Release เดิม (ใส่ให้เฉพาะที่ทุก Release ตรงกัน) · ความยาว/จำนวนเส้น กรอกเองต่อ`,
       `Add the INV codes this project's parts use but aren't listed yet (${bf.count})\n\n${sample}${bf.count > 8 ? "\n…" : ""}\n\nWeight/M is derived from weight/pc ÷ length of past releases (only when they all agree) · fill length/qty yourself`), confirmText: L("ดึงเข้ารายการ", "Add them"), cancelText: L("ยกเลิก", "Cancel") }))) return;
     setBfBusy(true);
     const r = await backfillMaterials(projectId, false);
@@ -2019,6 +2127,7 @@ function MaterialsPage({ user }) {
           </span>
         );
       } },
+    { key: "desc", header: "Description", sortKey: "desc", tdStyle: { minWidth: 160, maxWidth: 340 }, cell: (m) => (m.description ? <span className="mat-desc">{m.description}</span> : <span className="mat-sub">-</span>) },
     { key: "wpm", header: L("Weight/M (กก./ม.)", "Weight/M (kg/m)"), sortKey: "wpm", align: "right",
       cell: (m) => (isScrapInv(m.inv_code) ? <span className="mat-scrap" title={L("เศษ (OFF CUT) — ไม่บันทึกน้ำหนัก · กรอก Weight/M เองตอนสร้าง Release", "Scrap (OFF CUT) — weight isn't stored · type Weight/M when creating a release")}>{L("เศษ · กรอกเอง", "scrap · manual")}</span>
         : m.weight_per_m != null ? fmtDec(m.weight_per_m, 4) : miss) },
@@ -2085,7 +2194,7 @@ function MaterialsPage({ user }) {
         )}
         <div className="mat-search">
           <Icon name="search" size={14} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา INV / หมายเหตุ", "Search INV / note")} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา INV / Description / หมายเหตุ", "Search INV / description / note")} />
         </div>
       </div>
       <div className="mat-hint">
@@ -2134,8 +2243,8 @@ function MaterialsPage({ user }) {
         )}
       </Card>
 
-      {edit && <MaterialEditModal row={edit} scopeLabel={scopeLabel} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); mlsToast(L("บันทึกแล้ว", "Saved"), "success"); load(); }} />}
-      {grid && <MaterialGridModal mode={grid} projectId={scope === "center" ? null : projectId} scopeLabel={scopeLabel} index={index} existing={list}
+      {edit && <MaterialEditModal row={edit} scopeLabel={scopeLabel} descOk={descOk} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); mlsToast(L("บันทึกแล้ว", "Saved"), "success"); load(); }} />}
+      {grid && <MaterialGridModal mode={grid} projectId={scope === "center" ? null : projectId} scopeLabel={scopeLabel} index={index} existing={list} descOk={descOk}
         onClose={() => { setGrid(null); load(); }} onSaved={(o) => { if (!o || !o.keepOpen) setGrid(null); load(); }} />}
     </div>
   );
@@ -2166,6 +2275,9 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
+  const [tried, setTried] = useState(false);       // ★ รอบ 14: กดบันทึกแล้ว → ไฮไลต์ช่องที่ยังไม่กรอก/ผิด
+  const [roTaken, setRoTaken] = useState("");      // เลข Release Order ที่ DB บอกว่ามีแล้ว (ไฮไลต์ช่อง)
+  const roRef = useRef(null), dateRef = useRef(null), projRef = useRef(null);
   const [undoCount, setUndoCount] = useState(0); // แสดงตัวเลขย้อนกลับล่าสุด (feedback เล็กๆ)
 
   // ── ★ รอบ 13: ร่างอัตโนมัติ — กรอกค้างแล้วปิด/เน็ตหลุด/รีเฟรช → เปิดใหม่กู้คืนได้ (เก็บในเครื่อง ต่อบัญชี · 14 วัน) ──
@@ -2367,12 +2479,52 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const isNewPartRow = (row) => row.code.trim() && !existingPartFor(row);
   const newPartCount = validRows.filter(isNewPartRow).length;
 
+  // ── ★ รอบ 14: ตรวจทั้งใบ → ไฮไลต์ช่องที่ผิด (แดง) / ที่ควรดู (เหลือง) + รายการ กดแล้วไปที่ช่องนั้น ──
+  const qtyBad = (r) => { const raw = String(r.qty ?? "").trim(); if (!raw) return false; const q = gnum(raw); return q == null || !Number.isInteger(q) || q < 1 || q > 1000000; };
+  const numBad = (r, k) => { const raw = String(r[k] ?? "").trim(); if (!raw) return false; const n = gnum(raw); return n == null || !isFinite(n) || n < 0; };
+  const rowHasData = (r) => ["qty", "length_mm", "weight_per_m", "material", "remark", "rev"].some((k) => String(r[k] ?? "").trim());
+  const noCodeRow = (r) => !r.code.trim() && rowHasData(r);
+  const codeCount = new Map();
+  validRows.forEach((r) => { const k = r.code.trim().toLowerCase(); codeCount.set(k, (codeCount.get(k) || 0) + 1); });
+  const dupCode = (r) => !!r.code.trim() && (codeCount.get(r.code.trim().toLowerCase()) || 0) > 1;
+  const roNorm = normalizeReleaseOrder(releaseOrder);
+  const hdrErr = {
+    ro: !roNorm ? L("กรอกเลข Release Order", "Enter the release order no.") : !RELEASE_ORDER_RE.test(roNorm) ? L("รูปแบบ P-ตัวเลข เช่น P-009", "Format P-number, e.g. P-009") : roTaken && roTaken === roNorm ? L("เลขนี้มีอยู่แล้วในโปรเจคนี้", "Already used in this project") : "",
+    project: !projectId ? L("เลือกโปรเจค", "Choose a project") : "",
+    date: !date ? L("เลือกวันที่", "Choose a date") : "",
+  };
+  const rowsWrapCell = (i, k) => rowsScrollRef.current && rowsScrollRef.current.querySelector(`[data-row="${i}"][data-col="${k}"]`);
+  const cellProblem = (r, k) => {                      // "err" | "warn" | null
+    if (k === "qty") return qtyBad(r) ? "err" : null;
+    if (k === "length_mm" || k === "weight_per_m") return numBad(r, k) ? "err" : null;
+    if (k === "code") return noCodeRow(r) ? (tried ? "err" : null) : dupCode(r) ? "warn" : null;
+    return null;
+  };
+  const problems = [];
+  if (hdrErr.ro) problems.push({ key: "ro", label: L("เลขที่ Release Order", "Release order no."), go: () => flashFocus(roRef.current) });
+  if (hdrErr.project) problems.push({ key: "project", label: L("โปรเจค", "Project"), go: () => flashFocus(projRef.current) });
+  if (hdrErr.date) problems.push({ key: "date", label: L("วันที่", "Date"), go: () => flashFocus(dateRef.current) });
+  const COLNAME = { code: "Part No.", qty: L("จำนวน", "Qty"), length_mm: "Length", weight_per_m: "Weight/M" };
+  rows.forEach((r, i) => {
+    ["code", "qty", "length_mm", "weight_per_m"].forEach((k) => {
+      const pr = cellProblem(r, k);
+      if (!pr || (k === "code" && pr === "warn")) return;
+      if (k !== "code" && !r.code.trim()) return;          // แถวที่ไม่มี Part No. ไม่ถูกบันทึกอยู่แล้ว → แจ้งที่ Part No. ทีเดียว
+      problems.push({ key: `${k}${i}`, label: L(`แถว ${i + 1} · ${COLNAME[k]}${k === "code" ? " ว่าง" : ""}`, `Row ${i + 1} · ${COLNAME[k]}${k === "code" ? " empty" : ""}`), go: () => flashFocus(rowsWrapCell(i, k)) });
+    });
+  });
+  const blocking = problems.filter((p) => p.key === "ro" || p.key === "project" || p.key === "date" || /^(qty|length_mm|weight_per_m)\d/.test(p.key));
+  function goFirst(list) { if (list && list.length) setTimeout(() => list[0].go(), 40); }
+
   async function doSave() {
     const ro = normalizeReleaseOrder(releaseOrder);
-    if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009'); return; }
-    if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
-    if (!date) { setErr("กรุณาเลือกวันที่"); return; }
-    if (validRows.length === 0) { setErr("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Code)"); return; }
+    setTried(true);
+    // ★ รอบ 14: บอกทุกจุดที่ต้องแก้พร้อมกัน (ไฮไลต์แดง + รายการด้านบน) แล้วพาไปที่จุดแรก — เดิมบอกทีละข้อ
+    if (blocking.length) {
+      setErr(L(`ยังบันทึกไม่ได้ — มี ${nc(problems.length)} จุดที่ต้องแก้ (ช่องสีแดง · กดชื่อในรายการเพื่อไปที่ช่องนั้น)`, `Can't save yet — ${nc(problems.length)} thing(s) to fix (red cells · click an item to jump there)`));
+      goFirst(blocking); return;
+    }
+    if (validRows.length === 0) { setErr(L("กรุณากรอกอย่างน้อย 1 Part (ต้องมีรหัส Part No.)", "Enter at least one part (Part No. is required)")); goFirst([{ go: () => flashFocus(rowsWrapCell(0, "code")) }]); return; }
     // กันจำนวนติดลบ/ทศนิยม/ใหญ่ผิดปกติ (เว้นว่าง = 1) — จำนวนชิ้นต้องเป็นจำนวนเต็มบวก
     const badRow = validRows.find((r) => {
       const raw = String(r.qty ?? "").trim();
@@ -2380,19 +2532,20 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       const q = gnum(raw);                        // ใช้ gnum → รองรับคอมมา "1,200" เหมือนตอนบันทึก
       return !Number.isInteger(q) || q < 1 || q > 1000000;
     });
-    if (badRow) { setErr(`จำนวนของ Part "${badRow.code || "-"}" ไม่ถูกต้อง — ต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป`); return; }
+    if (badRow) { setErr(`จำนวนของ Part "${badRow.code || "-"}" ไม่ถูกต้อง — ต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป`); goFirst(problems.filter((p) => p.key.startsWith("qty"))); return; }
     // ★ รอบ 12 (D): ตัวเลขผิด (ความยาว/Weight/M เป็นตัวอักษร/ติดลบ) · แถวมีข้อมูลแต่ไม่มี Part No. · Part No. ซ้ำในใบ → เตือนก่อนบันทึก
     const badNum = validRows.find((r) => ["length_mm", "weight_per_m"].some((k) => {
       const raw = String(r[k] ?? "").trim(); if (!raw) return false; const n = gnum(raw); return n == null || !isFinite(n) || n < 0;
     }));
-    if (badNum) { setErr(`ตัวเลขของ Part "${badNum.code}" ไม่ถูกต้อง (ความยาว / Weight/M ต้องเป็นตัวเลข ≥ 0)`); return; }
+    if (badNum) { setErr(`ตัวเลขของ Part "${badNum.code}" ไม่ถูกต้อง (ความยาว / Weight/M ต้องเป็นตัวเลข ≥ 0)`); goFirst(problems); return; }
     const noCode = rows.filter((r) => !r.code.trim() && ["qty", "length_mm", "weight_per_m", "material", "remark"].some((k) => String(r[k] ?? "").trim())).length;
     const dupMap = new Map();
     validRows.forEach((r) => { const k = r.code.trim().toLowerCase(); dupMap.set(k, (dupMap.get(k) || 0) + 1); });
     const dups = [...dupMap.entries()].filter(([, n]) => n > 1).map(([k]) => validRows.find((r) => r.code.trim().toLowerCase() === k).code.trim());
     if (noCode || dups.length) {
+      goFirst(noCode ? problems.filter((p) => p.key.startsWith("code")) : [{ go: () => { const i = rows.findIndex(dupCode); if (i >= 0) flashFocus(rowsWrapCell(i, "code")); } }]);
       const ok = await askConfirm({
-        message: (noCode ? `มี ${noCode} แถวที่กรอกข้อมูลแต่ไม่มี Part No. — แถวเหล่านี้จะไม่ถูกบันทึก\n` : "")
+        message: (noCode ? `มี ${nc(noCode)} แถวที่กรอกข้อมูลแต่ไม่มี Part No. — แถวเหล่านี้จะไม่ถูกบันทึก\n` : "")
           + (dups.length ? `Part No. ซ้ำในใบนี้: ${dups.slice(0, 8).join(", ")}${dups.length > 8 ? " …" : ""} — จะรวมเป็น Part เดียวกัน (จำนวนแยกเป็นหลายล็อต)\n` : "")
           + "\nบันทึกต่อหรือไม่?",
         tone: "warn", confirmText: "บันทึกต่อ", cancelText: "กลับไปแก้",
@@ -2423,6 +2576,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       // ★ กัน Release ซ้ำ: ถ้า (โปรเจค+เลข Order) นี้มีแล้ว (เช่นกดแล้วเน็ตวูบตอนตอบกลับ) อย่าสร้างซ้ำ
       if (await releaseOrderExists(projectId, ro)) {
         setErr(`Release Order "${ro}" มีอยู่แล้วในโปรเจคนี้ — ถ้าเพิ่งกดแล้วเน็ตหลุด อาจบันทึกไปแล้ว · รีเฟรช/ตรวจในรายการ Release ก่อนกดซ้ำ (กันบันทึกซ้ำ)`);
+        setRoTaken(ro); goFirst([{ go: () => flashFocus(roRef.current) }]);
         setBusy(false); setProgress(""); return;
       }
       const res = await createReleaseBatch({
@@ -2490,13 +2644,23 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     rev: { header: "REV.", thStyle: { width: 64 } },
     wpcs: { header: L("น้ำหนัก/ชิ้น", "Weight/pc"), thStyle: { width: 92, textAlign: "right" } },
   };
-  const inp = (r, i, k, extra = {}) => (
-    <input value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => handlePaste(e, i, k)} {...extra} />
+  // ★ รอบ 14: ช่องตัวเลข = NumInput (ใส่ , หลักพันให้เอง) · ทุกช่องมี data-row/data-col ไว้พาไปช่องที่ผิด
+  const NUM_KEYS = new Set(["qty", "length_mm", "weight_per_m"]);
+  const inp = (r, i, k, extra = {}) => (NUM_KEYS.has(k)
+    ? <NumInput data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => handlePaste(e, i, k)} {...extra} />
+    : <input data-row={i} data-col={k} value={r[k]} onChange={(e) => setCell(r.id, k, e.target.value)} onPaste={(e) => handlePaste(e, i, k)} {...extra} />
   );
+  const errCls = (r, k) => { const pr = cellProblem(r, k); return pr === "err" ? " pg-err" : pr === "warn" ? " pg-dupcode" : ""; };
+  const errTip = (r, k) => {
+    const pr = cellProblem(r, k); if (!pr) return undefined;
+    if (k === "code") return pr === "err" ? L("แถวนี้มีข้อมูลแต่ไม่มี Part No. — จะไม่ถูกบันทึก", "This row has data but no Part No. — it won't be saved") : L("Part No. ซ้ำในใบนี้ — จะรวมเป็น Part เดียวกัน (แยกล็อต)", "Part No. repeated in this release — merged into one part (separate lots)");
+    if (k === "qty") return L("จำนวนต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป", "Qty must be a whole number ≥ 1");
+    return L("ต้องเป็นตัวเลข ≥ 0", "Must be a number ≥ 0");
+  };
   function cellFor(k, r, i) {
-    if (k === "code") return <td key={k}>{inp(r, i, "code", { placeholder: "AN04-001-01" })}</td>;
-    if (k === "qty") return <td key={k}>{inp(r, i, "qty", { inputMode: "numeric" })}</td>;
-    if (k === "length_mm") return <td key={k} className={oddLen(r.length_mm) ? "pg-odd" : undefined} title={oddLen(r.length_mm) ? L(`ความยาวน้อยกว่า ${ODD_LEN_MIN} มม. — พิมพ์เป็นเมตรหรือเปล่า?`, `Under ${ODD_LEN_MIN} mm — typed in metres?`) : undefined}>{inp(r, i, "length_mm", { inputMode: "decimal" })}</td>;
+    if (k === "code") return <td key={k} className={errCls(r, k).trim() || undefined} title={errTip(r, k)}>{inp(r, i, "code", { placeholder: "AN04-001-01" })}</td>;
+    if (k === "qty") return <td key={k} className={errCls(r, k).trim() || undefined} title={errTip(r, k)}>{inp(r, i, "qty", { inputMode: "numeric" })}</td>;
+    if (k === "length_mm") return <td key={k} className={((oddLen(r.length_mm) ? "pg-odd" : "") + errCls(r, k)).trim() || undefined} title={errTip(r, k) || (oddLen(r.length_mm) ? L(`ความยาวน้อยกว่า ${ODD_LEN_MIN} มม. — พิมพ์เป็นเมตรหรือเปล่า?`, `Under ${ODD_LEN_MIN} mm — typed in metres?`) : undefined)}>{inp(r, i, "length_mm", { inputMode: "decimal" })}</td>;
     if (k === "rev") return <td key={k}>{inp(r, i, "rev", { placeholder: "0" })}</td>;
     if (k === "remark") return <td key={k}>{inp(r, i, "remark")}</td>;
     if (k === "weight_per_m") {
@@ -2506,8 +2670,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         : w.auto ? L(`เติมอัตโนมัติจาก ${w.lk.row?.inv_code || r.material} (${src}) — พิมพ์ทับได้`, `Auto-filled from ${w.lk.row?.inv_code || r.material} (${src}) — type to override`)
         : w.warn ? L(`ไม่ตรงกับที่บันทึกไว้ของ ${w.lk.row?.inv_code || r.material}: ${fmtDec(w.lk.wpm, 4)} (${src}) — ใช้ค่าในแถวนี้`, `Differs from the saved value of ${w.lk.row?.inv_code || r.material}: ${fmtDec(w.lk.wpm, 4)} (${src}) — this row's value is used`) : undefined;
       return (
-        <td key={k} className={"pg-wpm" + (w.auto ? " auto" : "") + (w.warn ? " warn" : "") + (w.scrap && w.need ? " need" : "") + (w.eff != null && w.eff > ODD_WPM_MAX ? " pg-odd" : "")}
-          title={w.eff != null && w.eff > ODD_WPM_MAX ? L(`Weight/M เกิน ${ODD_WPM_MAX} กก./ม. — ผิดหน่วยหรือเปล่า?`, `Weight/M over ${ODD_WPM_MAX} kg/m — wrong unit?`) + (tip ? ` · ${tip}` : "") : tip}>
+        <td key={k} className={"pg-wpm" + (w.auto ? " auto" : "") + (w.warn ? " warn" : "") + (w.scrap && w.need ? " need" : "") + (w.eff != null && w.eff > ODD_WPM_MAX ? " pg-odd" : "") + errCls(r, k)}
+          title={errTip(r, k) ? errTip(r, k) : w.eff != null && w.eff > ODD_WPM_MAX ? L(`Weight/M เกิน ${nc(ODD_WPM_MAX)} กก./ม. — ผิดหน่วยหรือเปล่า?`, `Weight/M over ${nc(ODD_WPM_MAX)} kg/m — wrong unit?`) + (tip ? ` · ${tip}` : "") : tip}>
           {inp(r, i, "weight_per_m", { inputMode: "decimal", placeholder: w.auto ? fmtDec(w.eff, 4) : w.scrap && w.need ? L("กรอกเอง", "type it") : "" })}
           {w.auto || w.warn ? <span className="pg-corner" aria-hidden="true" /> : null}
         </td>
@@ -2517,8 +2681,8 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       const st = invState(r);
       const lk = st ? matLookup(matIdx, r.material) : null;
       const tip = st === "scrap" ? L("เศษ (OFF CUT) — ไม่บันทึกเข้า Material · กรอก Weight/M เอง", "Scrap (OFF CUT) — not added to Materials · type Weight/M yourself")
-        : st === "proj" ? L(`มีในบันทึก Material ของโปรเจคนี้${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · ยังไม่มี W/M"}`, `In this project's materials${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · no W/M yet"}`)
-        : st === "center" ? L(`มีใน Center Stock${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`, `In Center Stock${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`)
+        : st === "proj" ? L(`มีในบันทึก Material ของโปรเจคนี้${lk?.row?.description ? ` · ${lk.row.description}` : ""}${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · ยังไม่มี W/M"}`, `In this project's materials${lk?.row?.description ? ` · ${lk.row.description}` : ""}${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : " · no W/M yet"}`)
+        : st === "center" ? L(`มีใน Center Stock${lk?.row?.description ? ` · ${lk.row.description}` : ""}${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`, `In Center Stock${lk?.row?.description ? ` · ${lk.row.description}` : ""}${lk?.wpm != null ? ` · W/M ${fmtDec(lk.wpm, 4)}` : ""}`)
         : st === "new" ? L("INV ใหม่ — จะบันทึกเข้า Material ของโปรเจคนี้หลังบันทึก Release", "New INV — will be added to this project's materials when the release is saved") : undefined;
       return (
         <td key={k} className={st ? "pg-inv has-tag" : undefined} title={tip}>
@@ -2536,14 +2700,15 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     for (const [, e] of matIdx) {
       const m = e.proj || e.center;
       const w = matLookup(matIdx, m.inv_code).wpm;
-      out.push({ v: m.inv_code, label: `${e.proj ? L("โปรเจค", "project") : "Center"}${w != null ? ` · ${fmtDec(w, 4)} ${L("กก./ม.", "kg/m")}` : ""}` });
+      const d = (e.proj && e.proj.description) || (e.center && e.center.description) || "";
+      out.push({ v: m.inv_code, label: `${d ? `${d} · ` : ""}${e.proj ? L("โปรเจค", "project") : "Center"}${w != null ? ` · ${fmtDec(w, 4)} ${L("กก./ม.", "kg/m")}` : ""}` });
     }
     return out;
   }, [matIdx, lang]);
 
   return (
     <Modal
-      title="เพิ่ม Release" wide
+      title="เพิ่ม Release" wide="xl"
       sub="กรอกหัวเอกสาร แล้ววางข้อมูล Part จาก Excel ลงตารางได้เลย (Ctrl+V)"
       onClose={onClose} closeOnBackdrop={false} locked={busy}
     >
@@ -2564,21 +2729,21 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </div>
       )}
 
-      <div className="release-header-fields" style={{ marginBottom: 12 }}>
+      <div className="release-header-fields" style={{ marginBottom: (tried && (hdrErr.ro || hdrErr.date || hdrErr.project)) || (roTaken && hdrErr.ro) ? 28 : 12 }}>
         <Field label="Modify (Release)">
           <Input value={modify} placeholder="เช่น M-001"
             onChange={(e) => setModify(e.target.value)} />
         </Field>
-        <Field label="เลขที่ Release Order *">
-          <Input value={releaseOrder} placeholder="เช่น P-009"
-            onChange={(e) => setReleaseOrder(e.target.value)}
+        <Field label="เลขที่ Release Order *" err={(tried || roTaken) && hdrErr.ro}>
+          <Input ref={roRef} value={releaseOrder} placeholder="เช่น P-009"
+            onChange={(e) => { setReleaseOrder(e.target.value); setRoTaken(""); }}
             onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} />
         </Field>
-        <Field label="วันที่ *">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <Field label="วันที่ *" err={tried && hdrErr.date}>
+          <Input ref={dateRef} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
-        <Field label="โปรเจค *">
-          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+        <Field label="โปรเจค *" err={tried && hdrErr.project}>
+          <Select ref={projRef} value={projectId} onChange={(e) => { setProjectId(e.target.value); setRoTaken(""); }}
             options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
         </Field>
         <Btn type="button" variant="ghost" className="icon-btn-add" title="สร้างโปรเจคใหม่"
@@ -2608,6 +2773,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </Btn>
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      {tried && <ProblemBar title={L("ต้องแก้:", "To fix:")} items={problems} />}
       {busy && progress && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{progress}</div>}
       {projectId && (mat.state === "ok" || mat.state === "not_installed") && (autoCount > 0 || warnRows.length > 0 || newInvs.length > 0 || scrapRows.length > 0 || mat.state === "not_installed") && (
         <div className="pg-matbar">
@@ -2615,21 +2781,21 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
             <span className="pg-mb muted">{L("ยังไม่ได้ติดตั้ง \"บันทึก Material\" (รัน migration-materials.sql) — Weight/M ไม่เติมอัตโนมัติ", "\"Materials\" isn't installed (run migration-materials.sql) — Weight/M isn't auto-filled")}</span>
           ) : (
             <>
-              {autoCount > 0 && <span className="pg-mb auto">{L(`Weight/M เติมอัตโนมัติ ${autoCount} แถว`, `Weight/M auto-filled on ${autoCount} row(s)`)}</span>}
-              {warnRows.length > 0 && <span className="pg-mb warn" title={warnRows.slice(0, 8).map((r) => `${r.code}: ${r.weight_per_m} ≠ ${fmtDec(wpmInfo(r).lk.wpm, 4)} (${r.material})`).join("\n")}>{L(`Weight/M ไม่ตรงกับที่บันทึกไว้ ${warnRows.length} แถว — ใช้ค่าในแถว`, `Weight/M differs from the saved value on ${warnRows.length} row(s) — the row's value is used`)}</span>}
+              {autoCount > 0 && <span className="pg-mb auto">{L(`Weight/M เติมอัตโนมัติ ${nc(autoCount)} แถว`, `Weight/M auto-filled on ${nc(autoCount)} row(s)`)}</span>}
+              {warnRows.length > 0 && <span className="pg-mb warn" title={warnRows.slice(0, 8).map((r) => `${r.code}: ${r.weight_per_m} ≠ ${fmtDec(wpmInfo(r).lk.wpm, 4)} (${r.material})`).join("\n")}>{L(`Weight/M ไม่ตรงกับที่บันทึกไว้ ${nc(warnRows.length)} แถว — ใช้ค่าในแถว`, `Weight/M differs from the saved value on ${nc(warnRows.length)} row(s) — the row's value is used`)}</span>}
               {scrapRows.length > 0 && <span className={"pg-mb " + (scrapNeed.length ? "warn" : "muted")} title={scrapNeed.map((r) => r.code).join(", ") || undefined}>
-                {scrapNeed.length ? L(`OFF CUT (เศษ) ${scrapRows.length} แถว — ยังไม่กรอก Weight/M ${scrapNeed.length} แถว (กรอกเอง ไม่บันทึกเข้า Material)`, `OFF CUT (scrap) ${scrapRows.length} row(s) — ${scrapNeed.length} without Weight/M (type it · not stored in Materials)`)
-                  : L(`OFF CUT (เศษ) ${scrapRows.length} แถว — กรอก Weight/M เอง ไม่บันทึกเข้า Material`, `OFF CUT (scrap) ${scrapRows.length} row(s) — Weight/M typed · not stored in Materials`)}
+                {scrapNeed.length ? L(`OFF CUT (เศษ) ${nc(scrapRows.length)} แถว — ยังไม่กรอก Weight/M ${nc(scrapNeed.length)} แถว (กรอกเอง ไม่บันทึกเข้า Material)`, `OFF CUT (scrap) ${nc(scrapRows.length)} row(s) — ${scrapNeed.length} without Weight/M (type it · not stored in Materials)`)
+                  : L(`OFF CUT (เศษ) ${nc(scrapRows.length)} แถว — กรอก Weight/M เอง ไม่บันทึกเข้า Material`, `OFF CUT (scrap) ${nc(scrapRows.length)} row(s) — Weight/M typed · not stored in Materials`)}
               </span>}
-              {newInvs.length > 0 && <span className="pg-mb new" title={newInvs.join(", ")}>{L(`INV ใหม่ ${newInvs.length} รายการ — จะบันทึกเข้า Material ของโปรเจคนี้`, `${newInvs.length} new INV — will be added to this project's materials`)}</span>}
+              {newInvs.length > 0 && <span className="pg-mb new" title={newInvs.join(", ")}>{L(`INV ใหม่ ${nc(newInvs.length)} รายการ — จะบันทึกเข้า Material ของโปรเจคนี้`, `${newInvs.length} new INV — will be added to this project's materials`)}</span>}
             </>
           )}
         </div>
       )}
 
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
-        {L(<>วางจาก Excel ได้ทั้งบล็อก — <b>เรียงตามคอลัมน์บนจอ</b> เริ่มจากช่องที่คลิก (ลากหัวคอลัมน์ ⠿ ให้ตรงกับไฟล์ Excel ได้ · มีหัวตาราง = จับจากชื่อหัว) · คอลัมน์ที่ระบบคำนวณ (Total Kg · น้ำหนัก/ชิ้น) ข้ามค่าที่วางมา · น้ำหนัก/ชิ้น = (Length ÷ 1000) × Weight/M</>,
-           <>Paste a whole block from Excel — <b>it follows the column order on screen</b>, starting at the clicked cell (drag ⠿ headers to match your Excel file · with a header row, columns are matched by name) · calculated columns (Total Kg · Weight/pc) ignore pasted values · Weight/pc = (Length ÷ 1000) × Weight/M</>)}
+        {L(<>วางจาก Excel ได้ทั้งบล็อก — <b>เรียงตามคอลัมน์บนจอ</b> เริ่มจากช่องที่คลิก (ลากหัวคอลัมน์ ⠿ ให้ตรงกับไฟล์ Excel ได้ · มีหัวตาราง = จับจากชื่อหัว) · คอลัมน์ที่ระบบคำนวณ (Total Kg · น้ำหนัก/ชิ้น) ข้ามค่าที่วางมา · น้ำหนัก/ชิ้น = (Length ÷ 1,000) × Weight/M</>,
+           <>Paste a whole block from Excel — <b>it follows the column order on screen</b>, starting at the clicked cell (drag ⠿ headers to match your Excel file · with a header row, columns are matched by name) · calculated columns (Total Kg · Weight/pc) ignore pasted values · Weight/pc = (Length ÷ 1,000) × Weight/M</>)}
         <br />{L(<>Weight/M เว้นว่าง = เติมจาก <b>บันทึก Material</b> ตาม INV (โปรเจคนี้ก่อน → Center Stock) · <b>OFF CUT (เศษ) กรอก Weight/M เอง</b> ไม่เติม/ไม่บันทึก · จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ</>,
            <>Empty Weight/M = filled from <b>Materials</b> by INV (this project first → Center Stock) · <b>OFF CUT (scrap): type Weight/M yourself</b> — never filled or stored · empty Qty = 1 · steps depend on the machine that does the work</>)}
       </div>
@@ -2791,7 +2957,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
       if (mat.state !== "not_installed") {
         try {
           const mr = await addMaterialsFromRelease(projectId, roN, rowsPreview.filter((r) => r.invState !== "scrap").map((r) => ({ inv: r.material, wpm: r.fileWpm })));   // ★ เศษไม่บันทึก
-          if (mr && mr.ok && (mr.added || []).length) mlsToast(L(`บันทึก INV ใหม่ ${mr.added.length} รายการเข้า Material ของโปรเจค — กรอกความยาว/จำนวนได้ที่เมนู "บันทึก Material"`, `${mr.added.length} new INV added to the project's materials — fill length/qty in "Materials"`), "success");
+          if (mr && mr.ok && (mr.added || []).length) mlsToast(L(`บันทึก INV ใหม่ ${nc(mr.added.length)} รายการเข้า Material ของโปรเจค — กรอกความยาว/จำนวนได้ที่เมนู "บันทึก Material"`, `${mr.added.length} new INV added to the project's materials — fill length/qty in "Materials"`), "success");
         } catch (_) { /* ignore */ }
       }
       onImported({ releaseOrder: roN, ...res });
@@ -2846,9 +3012,9 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
           )}
 
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-            พบ {rowsPreview.length} รายการ Part · รวม {fmtNum(totalUnits)} ชิ้น
-            {newPartCount > 0 && <> · <b style={{ color: "var(--accent-dk)" }}>{newPartCount} Part จะถูกสร้างใหม่อัตโนมัติ</b></>}
-            {newInvCount > 0 && <> · <b style={{ color: "#6d4aff" }}>{L(`INV ใหม่ ${newInvCount} รายการ → บันทึกเข้า Material ของโปรเจค`, `${newInvCount} new INV → added to the project's materials`)}</b></>}
+            พบ {nc(rowsPreview.length)} รายการ Part · รวม {fmtNum(totalUnits)} ชิ้น
+            {newPartCount > 0 && <> · <b style={{ color: "var(--accent-dk)" }}>{nc(newPartCount)} Part จะถูกสร้างใหม่อัตโนมัติ</b></>}
+            {newInvCount > 0 && <> · <b style={{ color: "#6d4aff" }}>{L(`INV ใหม่ ${nc(newInvCount)} รายการ → บันทึกเข้า Material ของโปรเจค`, `${newInvCount} new INV → added to the project's materials`)}</b></>}
           </div>
           {/* ★ รอบ 12 (D): เอาคำเตือน Routing ออก — ระบบไม่ใช้ Routing แล้ว (ขั้นตอนขึ้นกับเครื่องที่ทำ) */}
 
@@ -3071,7 +3237,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
     let done = 0;
     try {
       for (const g of clean) {
-        setProgress(`กำลังบันทึก ${g.parentCode} (${done + 1}/${clean.length})...`);
+        setProgress(`กำลังบันทึก ${g.parentCode} (${nc(done + 1)}/${nc(clean.length)})...`);
         await saveOneGroup(g, ro);
         done++;
       }
@@ -3156,11 +3322,11 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
                     onChange={(e) => setParent(gi, "parentDesc", e.target.value)} /></Field>
                 </div>
                 <div style={{ flex: "0 0 80px" }}>
-                  <Field label="L (มม.)"><Input value={g.parentLen} inputMode="decimal"
+                  <Field label="L (มม.)"><NumField strict={false} value={g.parentLen} inputMode="decimal"
                     onChange={(e) => setParent(gi, "parentLen", e.target.value)} /></Field>
                 </div>
                 <div style={{ flex: "0 0 90px" }}>
-                  <Field label="จำนวนแม่ *"><Input value={g.parentQty} inputMode="numeric"
+                  <Field label="จำนวนแม่ *"><NumField strict={false} value={g.parentQty} inputMode="numeric"
                     onChange={(e) => setParent(gi, "parentQty", e.target.value)} /></Field>
                 </div>
                 <Btn type="button" variant="ghost" size="sm" title="ลบเบอร์แม่นี้" onClick={() => removeGroup(gi)}>
@@ -3185,8 +3351,8 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
                         <tr key={ci}>
                           <td><Input value={c.code} title={c.code} placeholder="AN04-001A" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
                           <td><Input value={c.desc} title={c.desc} placeholder="ANCHOR BASE PLATE" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
-                          <td><Input value={c.len} title={c.len} inputMode="decimal" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
-                          <td><Input value={c.perSet} inputMode="numeric" placeholder="ใส่จำนวน" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "perSet", e.target.value)} /></td>
+                          <td><NumField strict={false} value={c.len} title={c.len} inputMode="decimal" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
+                          <td><NumField strict={false} value={c.perSet} inputMode="numeric" placeholder="ใส่จำนวน" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "perSet", e.target.value)} /></td>
                           <td style={{ textAlign: "center", color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{totalTxt}</td>
                           <td style={{ textAlign: "center" }}>
                             <span onClick={() => removeChild(gi, ci)} title="ลบลูก" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span>
@@ -3372,7 +3538,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
     setBusy(true); setErr(""); let done = 0; const allCreated = new Set();
     try {
       for (const b of bunks) {
-        setProgress(`กำลังบันทึกบั้ง ${b.meta.bunk_no} (${done + 1}/${bunks.length})...`);
+        setProgress(`กำลังบันทึกบั้ง ${b.meta.bunk_no} (${nc(done + 1)}/${nc(bunks.length)})...`);
         const { createdUnits } = await saveOneBunk(b, ro);
         (createdUnits || []).forEach((u) => allCreated.add(u));
         done++;
@@ -3674,7 +3840,7 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
           }}>
             <span style={{ fontSize: 16 }}>{result.ok ? "✓ ทำถูกและครบตามแผน" : result.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด/เกิน)" : result.hasOver ? "⚠ มีชิ้นเกินจำนวนที่แผนกำหนด" : "◐ ยังไม่ครบตามแผน"}</span>
             {result.madeQty > 1 ? <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontWeight: 700, opacity: .9 }}>ทำเบอร์แม่ {result.madeQty} ตัว · แผน = ต่อชุด×{result.madeQty}</span> : null}
-            <span style={{ marginLeft: result.madeQty > 1 ? 0 : "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {result.scannedTotal}/{result.plannedTotal} ชิ้น</span>
+            <span style={{ marginLeft: result.madeQty > 1 ? 0 : "auto", fontFamily: "var(--font-mono)", fontWeight: 800 }}>สแกนแล้ว {nc(result.scannedTotal)}/{nc(result.plannedTotal)} ชิ้น</span>
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -3863,7 +4029,7 @@ function ProgressBar({ pct, finished, total }) {
         {label}
       </span>
       <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-        ({finished}/{total})
+        ({nc(finished)}/{nc(total)})
       </span>
     </div>
   );
@@ -4158,10 +4324,10 @@ function modErrText(res, lang = "th") {
     case "project_closed": return E("โปรเจคนี้ปิดแล้ว — เปิดโปรเจคก่อนถึงแก้ได้", "This project is closed — reopen it first");
     case "version_used": return E(`เลข ${modVer(a)} มีอยู่แล้ว — ใช้เลขอื่น`, `${modVer(a)} already exists — use another number`);
     case "bad_version": return E("เลข M ไม่ถูกต้อง", "Invalid M number");
-    case "below_produced": return E(`${a}: ลดต่ำกว่าจำนวนที่ทำไปแล้ว (${b} ชิ้น) ไม่ได้`, `${a}: can't go below the ${b} pcs already made`);
+    case "below_produced": return E(`${a}: ลดต่ำกว่าจำนวนที่ทำไปแล้ว (${nc(b)} ชิ้น) ไม่ได้`, `${a}: can't go below the ${nc(b)} pcs already made`);
     case "use_cancel": return E(`${a}: ลดจนเหลือ 0 ไม่ได้ — ใช้ “ยกเลิก Part” แทน`, `${a}: can't reduce to 0 — use “Cancel part” instead`);
     case "not_enough_free": return E(`${a}: QR ที่ยังไม่ถูกใช้มีแค่ ${b} ใบ (ใบที่สแกนแล้วยกเลิก/ย้ายไม่ได้)`, `${a}: only ${b} unused QR left (scanned QR can't be cancelled/moved)`);
-    case "transfer_produced": return E(`${a}: ย้ายได้เฉพาะชิ้นที่ยังไม่ทำ (สูงสุด ${b} ชิ้น)`, `${a}: only unmade pieces can be moved (max ${b})`);
+    case "transfer_produced": return E(`${a}: ย้ายได้เฉพาะชิ้นที่ยังไม่ทำ (สูงสุด ${nc(b)} ชิ้น)`, `${a}: only unmade pieces can be moved (max ${b})`);
     case "release_cancelled": return E(`${a}: Part นี้ถูกยกเลิกไปแล้ว`, `${a}: this part is already cancelled`);
     case "target_cancelled": return E(`${a}: เบอร์ปลายทางถูกยกเลิกไปแล้ว`, `${a}: the target part is cancelled`);
     case "same_target": return E(`${a}: ปลายทางต้องต่างจากเบอร์เดิม`, `${a}: target must differ from the current part`);
@@ -4181,11 +4347,11 @@ function modErrText(res, lang = "th") {
     case "target_reverted": return E(`${a} ถูกยกเลิกแล้ว — ย้อนกลับไปเวอร์ชันที่ถูกยกเลิกไม่ได้ เลือกเวอร์ชันอื่น`, `${a} is cancelled — you can't roll back to a cancelled version`);
     case "nothing_to_revert": return E(`ไม่มี M ที่ใหม่กว่า ${a} ให้ยกเลิก — ตอนนี้เป็น ${a} อยู่แล้ว`, `Nothing newer than ${a} to cancel — it's already ${a}`);
     case "revert_conflict": return E(`${a}: M ที่บันทึกหลังจากนี้ (${b}) แก้ Part เดียวกัน — ต้องยกเลิก ${b} ก่อน หรือใช้ “ย้อนกลับ” ทั้งช่วง`, `${a}: a later M (${b}) changed the same part — cancel ${b} first, or roll back the whole range`);
-    case "revert_used": return E(`${a}: ชิ้นงาน ${b} ชิ้นที่มาจาก M นี้ถูกสแกน/ใช้ไปแล้ว — ยกเลิกไม่ได้ เพื่อไม่ให้งานที่ทำไปแล้วหาย (ถ้าจำเป็นให้ Modify ใหม่ เช่น ลดจำนวน)`, `${a}: ${b} piece(s) from this M were already scanned/used — can't cancel, so finished work isn't lost (make a new Modify instead, e.g. reduce qty)`);
+    case "revert_used": return E(`${a}: ชิ้นงาน ${nc(b)} ชิ้นที่มาจาก M นี้ถูกสแกน/ใช้ไปแล้ว — ยกเลิกไม่ได้ เพื่อไม่ให้งานที่ทำไปแล้วหาย (ถ้าจำเป็นให้ Modify ใหม่ เช่น ลดจำนวน)`, `${a}: ${b} piece(s) from this M were already scanned/used — can't cancel, so finished work isn't lost (make a new Modify instead, e.g. reduce qty)`);
     case "revert_inv_changed": return E(`${a}: INV ถูกแก้ต่อจากที่อื่นแล้ว (ตอนนี้ ${b}) — ยกเลิกไม่ได้`, `${a}: INV was changed elsewhere afterwards (now ${b}) — can't cancel`);
     case "revert_state_changed": return E(`${a}: Part นี้ถูกแก้หลัง M นี้แล้ว — ยกเลิกไม่ได้`, `${a}: this part changed after this M — can't cancel`);
     case "revert_missing": return E(`${a}: ไม่พบ Part/Release นี้แล้ว (อาจถูกลบ) — ยกเลิกไม่ได้`, `${a}: this part/release no longer exists — can't cancel`);
-    case "revert_qr_missing": return E(`${a}: QR ${b} ใบไม่อยู่ในระบบแล้ว — ยกเลิกไม่ได้`, `${a}: ${b} QR no longer exist — can't cancel`);
+    case "revert_qr_missing": return E(`${a}: QR ${b} ใบไม่อยู่ในระบบแล้ว — ยกเลิกไม่ได้`, `${a}: ${nc(b)} QR no longer exist — can't cancel`);
     case "revert_qr_exists": return E(`${a}: QR ${b} มีอยู่แล้ว — คืนซ้ำไม่ได้`, `${a}: QR ${b} already exists`);
     case "revert_target_locked": return E(`${a}: Release ปลายทางมีงานผูกอยู่ — ย้ายกลับไม่ได้`, `${a}: the target release has linked work — can't move back`);
     default: return (res?.message || d || res?.reason || E("บันทึกไม่สำเร็จ", "Save failed"));
@@ -4290,7 +4456,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     if (l.key === "qty-") return L(`${fmtNum(b.qty)} → ${fmtNum(a.qty)} ชิ้น (−${n}) · ยกเลิก QR ที่ยังไม่ใช้ ${n} ใบ (เก็บเป็นหลักฐาน)`, `${fmtNum(b.qty)} → ${fmtNum(a.qty)} pcs (−${n}) · cancel ${n} unused QR (kept as evidence)`);
     if (l.key === "inv") return L(`INV ${b.inv || "-"} → ${String(l.inv || "").trim()} · จำนวน/QR ไม่เปลี่ยน (มีผลทุก Release ของเบอร์นี้)`, `INV ${b.inv || "-"} → ${String(l.inv || "").trim()} · qty/QR unchanged (applies to every release of this part)`);
     if (l.key === "cancel") return L(`ยกเลิก QR ที่ยังไม่ใช้ ${fmtNum(b.free)} ใบ`, `cancel ${fmtNum(b.free)} unused QR`) + (b.produced > 0 ? L(` · ทำแล้ว ${fmtNum(b.produced)} ชิ้น → ${l.keep === "scrap" ? "ทิ้ง (scrap)" : "เก็บเป็นสแปร์"}`, ` · ${fmtNum(b.produced)} made → ${l.keep === "scrap" ? "scrap" : "keep as spare"}`) : L(" · ยกเลิกทั้ง Part", " · whole part cancelled"));
-    if (l.key === "transfer") { const tro = troOf(l); return L(`ย้าย ${n} ชิ้น → ${String(l.tn || "").trim()} · ${tro === releaseOrder ? "Release Order นี้" : tro} · เหลือ ${fmtNum(a.qty)} · QR เดิม`, `move ${n} pcs → ${String(l.tn || "").trim()} · ${tro === releaseOrder ? "this Release Order" : tro} · ${fmtNum(a.qty)} left · same QR`); }
+    if (l.key === "transfer") { const tro = troOf(l); return L(`ย้าย ${nc(n)} ชิ้น → ${String(l.tn || "").trim()} · ${tro === releaseOrder ? "Release Order นี้" : tro} · เหลือ ${fmtNum(a.qty)} · QR เดิม`, `move ${nc(n)} pcs → ${String(l.tn || "").trim()} · ${tro === releaseOrder ? "this Release Order" : tro} · ${fmtNum(a.qty)} left · same QR`); }
     return "";
   }
 
@@ -4321,7 +4487,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     });
     setLines(next);
     const qkLabel = modActLabel(qk, (MOD_ACTS.find((a) => a[0] === qk) || [])[1], lang);
-    mlsToast(L(`ตั้ง “${qkLabel}” ให้ ${done} Part`, `Set “${qkLabel}” on ${done} part(s)`) + (skip ? L(` · ข้าม ${skip} Part (ชนกับการแก้อื่น)`, ` · skipped ${skip} (conflicts with another change)`) : ""), "info");
+    mlsToast(L(`ตั้ง “${qkLabel}” ให้ ${nc(done)} Part`, `Set “${qkLabel}” on ${done} part(s)`) + (skip ? L(` · ข้าม ${nc(skip)} Part (ชนกับการแก้อื่น)`, ` · skipped ${skip} (conflicts with another change)`) : ""), "info");
   }
 
   // ── สรุป / ปุ่มบันทึก ──
@@ -4334,8 +4500,8 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
   const dateWarn = !dateErr && relDay && docDate < relDay ? L(`ก่อนวันปล่อยงาน (${fmtYmd(relDay)})`, `before the release date (${fmtYmd(relDay)})`) : "";
   const canSave = !busy && sim.length > 0 && !nInc && !nErr && reasonOk && !verErr && !dateErr;
   const footHint = !sel.length ? L("เลือก Part อย่างน้อย 1 เบอร์", "Pick at least one part")
-    : nErr ? L(`มี ${nErr} รายการไม่ถูกต้อง (แดง) — แก้ก่อนบันทึก`, `${nErr} invalid row(s) (red) — fix before saving`)
-    : nInc ? L(`ยังกรอกไม่ครบ ${nInc} แถว — กรอกให้ครบ หรือกด ✕ เอาเบอร์ที่ไม่แก้ออก`, `${nInc} row(s) incomplete — fill them in or press ✕ to remove`)
+    : nErr ? L(`มี ${nc(nErr)} รายการไม่ถูกต้อง (แดง) — แก้ก่อนบันทึก`, `${nErr} invalid row(s) (red) — fix before saving`)
+    : nInc ? L(`ยังกรอกไม่ครบ ${nc(nInc)} แถว — กรอกให้ครบ หรือกด ✕ เอาเบอร์ที่ไม่แก้ออก`, `${nc(nInc)} row(s) incomplete — fill them in or press ✕ to remove`)
     : !reasonOk ? L("ใส่เหตุผลก่อนบันทึก", "Enter a reason before saving")
     : verErr ? L("เลข M ใช้ไม่ได้", "M number not allowed")
     : dateErr ? dateErr : "";
@@ -4353,7 +4519,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     const qrOut = good.reduce((s, x) => s + (x.l.key === "qty-" ? num(x.l) : x.l.key === "cancel" ? x.b.free : 0), 0);
     const moved = good.filter((x) => x.l.key === "transfer").reduce((s, x) => s + num(x.l), 0);
     const ok = await askConfirm({
-      message: L(`บันทึก ${chosen} · ${good.length} รายการ (${new Set(good.map((x) => x.l.rid)).size} Part) · วันที่ M ${fmtYmd(docDate)}`, `Save ${chosen} · ${good.length} change(s) (${new Set(good.map((x) => x.l.rid)).size} part(s)) · M date ${fmtYmd(docDate)}`)
+      message: L(`บันทึก ${chosen} · ${nc(good.length)} รายการ (${new Set(good.map((x) => x.l.rid)).size} Part) · วันที่ M ${fmtYmd(docDate)}`, `Save ${chosen} · ${good.length} change(s) (${new Set(good.map((x) => x.l.rid)).size} part(s)) · M date ${fmtYmd(docDate)}`)
         + (qrOut ? L(`\n• ยกเลิก QR ที่ยังไม่ใช้ ${fmtNum(qrOut)} ใบ (เก็บเป็นหลักฐาน · หน้าเครื่องสแกนแล้วจะแจ้งว่ายกเลิก)`, `\n• Cancel ${fmtNum(qrOut)} unused QR (kept as evidence · stations will show them as cancelled)`) : "")
         + (moved ? L(`\n• ย้าย ${fmtNum(moved)} ชิ้นไปเบอร์ใหม่ (QR เดิม)`, `\n• Move ${fmtNum(moved)} pcs to a new part no. (same QR)`) : "")
         + L(`\n\nค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า · ถ้าผิด ยกเลิก ${chosen} ได้ภายหลังจากประวัติการแก้ไข`, `\n\nThe previous values stay in the earlier M · if it's wrong you can cancel ${chosen} later from the history`),
@@ -4368,7 +4534,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     setBusy(false);
     if (!res || !res.ok) { setErr(modErrText(res, lang)); return; }
     auditRecord("release_modify", "release_order", releaseOrder, { version: res.version, items, project_id: projectId, doc_date: docDate });
-    mlsToast(L(`บันทึก ${fmtM(res.version)} แล้ว (${items.length} รายการ) · ของเดิมเก็บเป็นหลักฐาน`, `Saved ${fmtM(res.version)} (${items.length} change(s)) · previous values kept as evidence`), "ok");
+    mlsToast(L(`บันทึก ${fmtM(res.version)} แล้ว (${nc(items.length)} รายการ) · ของเดิมเก็บเป็นหลักฐาน`, `Saved ${fmtM(res.version)} (${items.length} change(s)) · previous values kept as evidence`), "ok");
     onSaved(res);
   }
 
@@ -4402,7 +4568,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
           {" · "}<span style={{ color: dateErr ? "var(--danger)" : dateWarn ? "#b45309" : "var(--muted)" }}>{dateErr ? "⚠ " + dateErr : docDate !== todayYmd() ? L(`วันที่ M ${fmtYmd(docDate)} · ลงแอปวันนี้`, `M date ${fmtYmd(docDate)} · entered today`) : L("วันที่ M = วันนี้ (เปลี่ยนได้ถ้าเอกสารลงวันอื่น)", "M date = today (change it if the document has another date)")}{dateWarn ? " · ⚠ " + dateWarn : ""}</span></span>
       </div>
 
-      {secH(1, L("เลือก Part (เลือกได้หลาย Part)", "Pick parts (multiple allowed)"), sel.length ? L(`เลือกแล้ว ${sel.length} Part`, `${sel.length} selected`) : "")}
+      {secH(1, L("เลือก Part (เลือกได้หลาย Part)", "Pick parts (multiple allowed)"), sel.length ? L(`เลือกแล้ว ${nc(sel.length)} Part`, `${sel.length} selected`) : "")}
       <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("🔍 พิมพ์ค้นหาเบอร์ Part / INV Code…", "🔍 Search part no. / INV Code…")} />
       <div style={{ border: "1px solid var(--border)", borderRadius: 12, maxHeight: 220, overflow: "auto", marginTop: 8 }}>
         {pickList.length === 0 && <div style={{ padding: "10px 12px", color: "var(--muted)", fontSize: 13 }}>{L("ไม่พบ Part ที่ค้นหา", "No matching parts")}</div>}
@@ -4419,7 +4585,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
         })}
       </div>
 
-      {secH(2, <>{L("แต่ละเบอร์แก้อะไร", "What to change on each part")} <span style={{ fontWeight: 500, color: "var(--muted)", fontSize: 12 }}>{L("(เลือกแยกกันอิสระ)", "(independent per part)")}</span></>, sel.length ? L(`${sel.length} Part`, `${sel.length} part(s)`) : "")}
+      {secH(2, <>{L("แต่ละเบอร์แก้อะไร", "What to change on each part")} <span style={{ fontWeight: 500, color: "var(--muted)", fontSize: 12 }}>{L("(เลือกแยกกันอิสระ)", "(independent per part)")}</span></>, sel.length ? L(`${nc(sel.length)} Part`, `${sel.length} part(s)`) : "")}
       {!sel.length ? (
         <div style={{ fontSize: 12.5, color: "var(--muted)", padding: 12, border: "1px dashed var(--border)", borderRadius: 11, textAlign: "center" }}>{L("เลือก Part ในข้อ 1 ก่อน — แล้วเลือกการแก้ไขท้ายแต่ละเบอร์ (เบอร์ไหนแก้อะไรก็ได้)", "Pick parts in step 1 first — then choose a change after each part (any mix)")}</div>
       ) : (
@@ -4430,7 +4596,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
               <option value="">{L("— การแก้ไข —", "— change —")}</option>
               {MOD_ACTS.map(([v, t]) => <option key={v} value={v}>{modActLabel(v, t, lang)}</option>)}
             </select>
-            {(qk === "qty+" || qk === "qty-" || qk === "transfer") && <Input type="number" min="1" value={qv} onChange={(e) => setQv(e.target.value)} placeholder="0" style={{ width: 80 }} />}
+            {(qk === "qty+" || qk === "qty-" || qk === "transfer") && <NumField min="1" value={qv} onChange={(e) => setQv(e.target.value)} placeholder="0" style={{ width: 80 }} />}
             {qk === "inv" && <Input value={qv} onChange={(e) => setQv(e.target.value)} placeholder={L("INV Code ใหม่", "New INV Code")} style={{ width: 160 }} />}
             <Btn size="sm" variant="ghost" onClick={quickApply} disabled={!qk}>{L("ใช้กับทุก Part", "Apply to all")}</Btn>
             <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("แล้วค่อยแก้เบอร์ที่ต่างออกไปทีละแถว", "then adjust the different ones row by row")}</span>
@@ -4464,7 +4630,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
                             return <option key={v} value={v} disabled={dis}>{modActLabel(v, t, lang)}{v === "cancel" && pl.length > 1 ? L(" (มีการแก้อื่นอยู่)", " (other changes exist)") : ""}</option>;
                           })}
                         </select>
-                        {(l.key === "qty+" || l.key === "qty-") && <><Input type="number" min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> {L("ชิ้น", "pcs")}</>}
+                        {(l.key === "qty+" || l.key === "qty-") && <><NumField min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> {L("ชิ้น", "pcs")}</>}
                         {l.key === "inv" && <>
                           <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("เดิม", "now")}</span>
                           <b style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{b?.inv || "-"}</b>
@@ -4479,7 +4645,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
                             </select></>}
                         </>}
                         {l.key === "transfer" && <>
-                          <Input type="number" min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> {L("ชิ้น", "pcs")} →
+                          <NumField min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> {L("ชิ้น", "pcs")} →
                           <Input value={l.tro} onChange={(e) => setL(l.id, { tro: e.target.value })} placeholder={releaseOrder} title={L("Release Order ปลายทาง (ว่าง = ใบนี้)", "Target Release Order (blank = this one)")} style={{ width: 120 }} />
                           <Input value={l.tn} onChange={(e) => setL(l.id, { tn: e.target.value })} list={`relmod-dl-${l.id}`} placeholder={L("เบอร์ปลายทาง", "Target part no.")} style={{ width: 150 }} />
                           <datalist id={`relmod-dl-${l.id}`}>{releases.filter((x) => x.id !== rid && !isCancelled(x)).map((x) => <option key={x.id} value={x.part_master?.part_no || ""} />)}</datalist>
@@ -4498,7 +4664,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
         </>
       )}
 
-      {secH(3, L(`สรุปก่อนบันทึก — ${chosen}`, `Summary before saving — ${chosen}`), good.length ? L(`${good.length} รายการ · ${new Set(good.map((x) => x.l.rid)).size} Part`, `${good.length} change(s) · ${new Set(good.map((x) => x.l.rid)).size} part(s)`) : "")}
+      {secH(3, L(`สรุปก่อนบันทึก — ${chosen}`, `Summary before saving — ${chosen}`), good.length ? L(`${nc(good.length)} รายการ · ${new Set(good.map((x) => x.l.rid)).size} Part`, `${good.length} change(s) · ${new Set(good.map((x) => x.l.rid)).size} part(s)`) : "")}
       {!sel.length ? (
         <div style={{ fontSize: 12.5, color: "var(--muted)", padding: 12, border: "1px dashed var(--border)", borderRadius: 11, textAlign: "center" }}>{L("1 M แก้ได้หลายอย่าง: เบอร์หนึ่งเพิ่มจำนวน อีกเบอร์ยกเลิก อีกเบอร์แก้ INV ก็ได้ แล้วบันทึกทีเดียว", "One M can hold many changes: add qty on one part, cancel another, change INV on a third — then save once")}</div>
       ) : (
@@ -4538,7 +4704,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
         <span style={{ fontSize: 12, fontWeight: footHint ? 700 : 400, color: footHint ? (nErr ? "var(--danger)" : "var(--warning, #b45309)") : "var(--muted)" }}>{footHint || L("🔒 ของเดิม (ก่อนแก้) เก็บไว้ใน M ก่อนหน้า · QR ชิ้นเดิมไม่เปลี่ยน", "🔒 Previous values stay in the earlier M · existing QR codes don't change")}</span>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
-          <Btn variant="danger" onClick={submit} disabled={!canSave}>{busy ? L("กำลังบันทึก…", "Saving…") : L(`ยืนยัน · บันทึก ${chosen}${good.length ? ` (${good.length} รายการ)` : ""}`, `Confirm · save ${chosen}${good.length ? ` (${good.length})` : ""}`)}</Btn>
+          <Btn variant="danger" onClick={submit} disabled={!canSave}>{busy ? L("กำลังบันทึก…", "Saving…") : L(`ยืนยัน · บันทึก ${chosen}${good.length ? ` (${nc(good.length)} รายการ)` : ""}`, `Confirm · save ${chosen}${good.length ? ` (${good.length})` : ""}`)}</Btn>
         </div>
       </div>
     </Modal>
@@ -4684,7 +4850,7 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose, ca
   return (
     <Modal wide onClose={onClose}
       title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><ModVerPill v={mod.version} gray={!!mod.reverted} />{mod.reverted ? <span className="relmod-xchip">{L("ยกเลิกแล้ว", "Cancelled")}</span> : null}{types.map((t) => <ModChip key={t} type={t} />)}</span>}
-      sub={L(`${(mod.items || []).length} รายการ · ${partOrder.length} Part · เทียบกับ ${prevVersion} (ค่าก่อนแก้)`, `${(mod.items || []).length} change(s) · ${partOrder.length} part(s) · compared with ${prevVersion} (before)`)}>
+      sub={L(`${nc((mod.items || []).length)} รายการ · ${nc(partOrder.length)} Part · เทียบกับ ${prevVersion} (ค่าก่อนแก้)`, `${(mod.items || []).length} change(s) · ${partOrder.length} part(s) · compared with ${prevVersion} (before)`)}>
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: "var(--muted)", margin: "4px 0 10px" }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>📅 {L("วันที่ M:", "M date:")} <b style={{ color: "var(--text)" }}>{fmtYmd(modDocDate(mod))}</b>
           {!mod.doc_date && <span style={{ fontSize: 11.5 }}>{L("(ไม่ได้ระบุ = วันที่ลงแอป)", "(not set = entry date)")}</span>}
@@ -4976,9 +5142,9 @@ function ReleaseRevertModal({ mode, version, projectId, releaseOrder, mods, curr
             ))}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "10px 0 4px", fontSize: 12.5 }}>
-            {pv.restored_qr > 0 && <span className="relmod-rv-chip">{L(`คืน QR ${pv.restored_qr} ใบ`, `${pv.restored_qr} QR restored`)}</span>}
-            {pv.cancelled_qr > 0 && <span className="relmod-rv-chip bad">{L(`ยกเลิก QR ${pv.cancelled_qr} ใบ`, `${pv.cancelled_qr} QR cancelled`)}</span>}
-            {pv.moved_back > 0 && <span className="relmod-rv-chip">{L(`ย้ายกลับ ${pv.moved_back} ชิ้น`, `${pv.moved_back} pcs moved back`)}</span>}
+            {pv.restored_qr > 0 && <span className="relmod-rv-chip">{L(`คืน QR ${pv.restored_qr} ใบ`, `${nc(pv.restored_qr)} QR restored`)}</span>}
+            {pv.cancelled_qr > 0 && <span className="relmod-rv-chip bad">{L(`ยกเลิก QR ${pv.cancelled_qr} ใบ`, `${nc(pv.cancelled_qr)} QR cancelled`)}</span>}
+            {pv.moved_back > 0 && <span className="relmod-rv-chip">{L(`ย้ายกลับ ${nc(pv.moved_back)} ชิ้น`, `${nc(pv.moved_back)} pcs moved back`)}</span>}
             <span className="relmod-rv-chip now">{L("ตอนนี้", "Now")} {fmtM(current)} → <b>{fmtM(pv.current)}</b></span>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 12px", lineHeight: 1.55 }}>
@@ -5220,7 +5386,7 @@ async function pmExportExcel({ rows, lang, ro, isAsm, filterKeys, fileName, item
   const fDesc = filterKeys && filterKeys.length ? filterKeys.map((k) => PM_ST[k]).join(", ") : L("ทั้งหมด (ไม่กรอง)", "all (no filter)");
   const notes = [
     [L(`Export — รายละเอียดแต่ละ Part × เครื่องจักร${ro ? " (Release Order " + ro + ")" : ""}`, `Export — each Part × machine${ro ? " (Release Order " + ro + ")" : ""}`), true],
-    [L(`สร้างเมื่อ ${fmtDT(new Date(nowMs).toISOString())} · ตัวกรองสถานะ: ${fDesc} · ${rows.length} เบอร์ · ${out.length} แถว`, `Created ${fmtDT(new Date(nowMs).toISOString())} · status filter: ${fDesc} · ${rows.length} parts · ${out.length} rows`), false],
+    [L(`สร้างเมื่อ ${fmtDT(new Date(nowMs).toISOString())} · ตัวกรองสถานะ: ${fDesc} · ${rows.length} เบอร์ · ${nc(out.length)} แถว`, `Created ${fmtDT(new Date(nowMs).toISOString())} · status filter: ${fDesc} · ${rows.length} parts · ${nc(out.length)} rows`), false],
     ["", false],
     [L("1 แถว = 1 เบอร์ + 1 เครื่อง · เบอร์ที่ผ่าน 2 เครื่อง = 2 แถว (ข้อมูลของเบอร์ซ้ำในทุกแถว → sort / filter ใน Excel ได้ทันที)", "1 row = 1 part + 1 machine · a part on 2 machines = 2 rows (part data repeats on every row → sort / filter in Excel directly)"), false],
     [L("เบอร์ที่ยังไม่มีเครื่องเริ่ม = 1 แถว ช่องเครื่องว่าง", "A part with no machine yet = 1 row with empty machine columns"), false],
@@ -5456,8 +5622,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       ]);
       const scanned = units.filter((u) => u.status !== "released").length;
       const msg = (scanned > 0 || stationRecs > 0)
-        ? `ล็อตนี้มี ${units.length} ชิ้น · มีประวัติการทำงานแล้ว${scanned > 0 ? ` (สแกน ${scanned} ชิ้น)` : ""}${stationRecs > 0 ? ` · บันทึกงานหน้าเครื่อง ${fmtNum(stationRecs)} รายการ` : ""}\n\nการลบ Release นี้จะลบ QR และประวัติการทำงานทั้งหมดของล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
-        : `ล็อตนี้มี ${units.length} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
+        ? `ล็อตนี้มี ${nc(units.length)} ชิ้น · มีประวัติการทำงานแล้ว${scanned > 0 ? ` (สแกน ${nc(scanned)} ชิ้น)` : ""}${stationRecs > 0 ? ` · บันทึกงานหน้าเครื่อง ${fmtNum(stationRecs)} รายการ` : ""}\n\nการลบ Release นี้จะลบ QR และประวัติการทำงานทั้งหมดของล็อตนี้ไปด้วย และกู้คืนไม่ได้\n\nยืนยันที่จะลบหรือไม่?`
+        : `ล็อตนี้มี ${nc(units.length)} ชิ้น (ยังไม่มีการสแกน)\n\nต้องการลบ Release นี้พร้อม QR ทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`;
       if (!(await askConfirm({ message: msg, tone: "danger", confirmText: "ลบ Release", cancelText: "ยกเลิก" }))) { setBusyId(null); return; }
       await deleteReleaseCascade(r.id);
       auditRecord("delete_release", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty, project: r.part_master?.projects?.code });
@@ -5688,7 +5854,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         )}
         <Card>
           <div className="label-el">Part No.</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{releases.length} Part</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{nc(releases.length)} Part</div>
         </Card>
         <Card>
           <div className="label-el" style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -5749,7 +5915,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                               {rv ? <span className="relmod-xchip">{lang === "en" ? "Cancelled" : "ยกเลิกแล้ว"}</span> : (m.version === curVersion ? <span className="relmod-nowchip">{lang === "en" ? "now" : "ตอนนี้"}</span> : null)}
                               {types.map((t) => <ModChip key={t} type={t} />)}<span className={rv ? "relmod-strike-txt" : ""}>{pns.join(", ")}</span>
                             </div>
-                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {pns.length} Part · {m.actor_name || "-"} · {m.reason}</div>
+                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {nc(pns.length)} Part · {m.actor_name || "-"} · {m.reason}</div>
                             {rv && <div style={{ fontSize: 11.5, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⊘ {lang === "en" ? "Cancelled" : "ยกเลิก"} <b>{fmtYmd(revDocDate(rv))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(rv.at)} · {rv.actor_name || "-"}{rv.mode === "rollback" ? (lang === "en" ? ` · rolled back to ${rv.target_version || M0}` : ` · ย้อนกลับเป็น ${rv.target_version || M0}`) : ""} · {rv.reason}</div>}
                           </div>
                           <button type="button" className="relmod-dl" title={lang === "en" ? `Export ${m.version} (Excel)` : `Export ${m.version} (Excel)`} disabled={modExporting}
@@ -6206,9 +6372,9 @@ function ReleasePage({ user, goTo }) {
             setShowAdd(false);
             await load();
             mlsToast(
-              `บันทึก ${releaseOrder} สำเร็จ: ${releasesCreated} รายการ Part` +
+              `บันทึก ${releaseOrder} สำเร็จ: ${nc(releasesCreated)} รายการ Part` +
               (unitsCreated ? ` · สร้าง QR ${unitsCreated} ใบ` : "") +
-              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ` : ""),
+              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ` : ""),
               "success"
             );
           }}
@@ -6224,9 +6390,9 @@ function ReleasePage({ user, goTo }) {
           onImported={async ({ unitsCreated, releasesCreated, partsCreated }) => {
             await load();
             mlsToast(
-              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${unitsCreated} QR)` +
+              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${nc(unitsCreated)} QR)` +
               (partsCreated > 0
-                ? ` · สร้าง Part ใหม่ ${partsCreated} รายการ · ⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
+                ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ · ⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
                 : ""),
               partsCreated > 0 ? "warn" : "success"
             );
@@ -6263,7 +6429,7 @@ function ReleasePage({ user, goTo }) {
             if (existing.length) mlsToast(`${existing.length} บั้งมีอยู่แล้ว — อัปเดตรายการในบั้งเท่านั้น ไม่ได้สร้าง QR ใหม่ (${existing.slice(0, 5).join(", ")}${existing.length > 5 ? " …" : ""})`, "warn");
             mlsToast(
               `นำเข้าบั้งสำเร็จ: ${bunks} บั้ง (${releaseOrder})` +
-              (warn ? ` · ⚠ สร้างยูนิตใหม่ ${createdUnits.length} รายการที่ยังไม่มีในระบบ (ยังไม่มี QR ให้สแกน) — ${createdUnits.slice(0, 8).join(", ")}${createdUnits.length > 8 ? "…" : ""} · ปล่อยงานยูนิตเหล่านี้ก่อนถึงจะสแกนแพ็กได้` : ""),
+              (warn ? ` · ⚠ สร้างยูนิตใหม่ ${nc(createdUnits.length)} รายการที่ยังไม่มีในระบบ (ยังไม่มี QR ให้สแกน) — ${createdUnits.slice(0, 8).join(", ")}${createdUnits.length > 8 ? "…" : ""} · ปล่อยงานยูนิตเหล่านี้ก่อนถึงจะสแกนแพ็กได้` : ""),
               warn ? "warn" : "success"
             );
           }}
@@ -6684,7 +6850,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           </Field>
           <Field label={`Part${hasFilter ? ` (${filteredReleases.length})` : ""}`}>
             <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
-              options={filteredReleases.map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${r.qty} ชิ้น` }))} />
+              options={filteredReleases.map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${nc(r.qty)} ชิ้น` }))} />
           </Field>
         </div>
 
@@ -6740,8 +6906,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             </Field>
             {labelPreset === "custom" && (
               <>
-                <Field label="กว้าง (มม.)"><Input type="number" value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 78 }} /></Field>
-                <Field label="สูง (มม.)"><Input type="number" value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 78 }} /></Field>
+                <Field label="กว้าง (มม.)"><NumField value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 78 }} /></Field>
+                <Field label="สูง (มม.)"><NumField value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 78 }} /></Field>
               </>
             )}
             <Field label="รูปแบบการพิมพ์">
@@ -6913,11 +7079,11 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
   return (
     <Modal
       title="แก้ไขหัวเอกสาร Release"
-      sub={`${group.projectCode} — ${group.projectName} · ${releases.length} Part ในใบนี้`}
+      sub={`${group.projectCode} — ${group.projectName} · ${nc(releases.length)} Part ในใบนี้`}
       onClose={onClose} locked={busy}
     >
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.6 }}>
-        แก้ค่าหัวเอกสารที่ใช้ “ทั้งใบ” — บันทึกครั้งเดียวจะเปลี่ยนให้ครบทุก Part ({releases.length} รายการ) ในใบนี้พร้อมกัน
+        แก้ค่าหัวเอกสารที่ใช้ “ทั้งใบ” — บันทึกครั้งเดียวจะเปลี่ยนให้ครบทุก Part ({nc(releases.length)} รายการ) ในใบนี้พร้อมกัน
       </div>
       {loading ? (
         <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
@@ -7020,11 +7186,11 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
     if (!units) return;
     if (qtyNum < 1) { setErr("จำนวนต้องมากกว่า 0"); return; }
     if (qtyNum < scannedCount) {
-      setErr(`ลดจำนวนต่ำกว่านี้ไม่ได้ — มีชิ้นที่สแกนไปแล้ว ${scannedCount} ชิ้นในล็อตนี้`);
+      setErr(`ลดจำนวนต่ำกว่านี้ไม่ได้ — มีชิ้นที่สแกนไปแล้ว ${nc(scannedCount)} ชิ้นในล็อตนี้`);
       return;
     }
     if (delta < 0 && Math.abs(delta) > releasedCount) {
-      setErr(`ลบได้สูงสุด ${releasedCount} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
+      setErr(`ลบได้สูงสุด ${nc(releasedCount)} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
       return;
     }
     // ลดจำนวน = ลบ QR ชิ้นที่ยังไม่สแกนออกถาวร → ต้องเตือนก่อนเสมอ (กันลบพลาด)
@@ -7190,7 +7356,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
           <div className="grid-2">
             <Field label="จำนวน (ชิ้น)">
               {/* ★ แก้จำนวนย้ายไปที่ปุ่ม Modify (เก็บของเดิมเป็นหลักฐาน M-xx + QR ที่ยกเลิก) — ที่นี่ล็อกไว้ ไม่ให้ลบ QR เงียบๆ */}
-              <Input type="number" value={qty} readOnly disabled title={lang === "en" ? "Change qty with ✎ Modify on the Release Order page" : "แก้จำนวนที่ปุ่ม ✎ Modify หน้า Release Order"} />
+              <NumField value={qty} readOnly disabled title={lang === "en" ? "Change qty with ✎ Modify on the Release Order page" : "แก้จำนวนที่ปุ่ม ✎ Modify หน้า Release Order"} />
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Change qty with <b style={{ color: "#6d4aff" }}>✎ Modify</b> (saved as a new M, previous values kept as evidence)</> : <>แก้จำนวนที่ปุ่ม <b style={{ color: "#6d4aff" }}>✎ Modify</b> (บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน)</>}</div>
             </Field>
             <Field label="เลขที่ Release Order">
@@ -7200,7 +7366,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
               {modLocked && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? "This order has Modify history — can’t change the number" : "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้"}</div>}
             </Field>
             <Field label="น้ำหนัก/ชิ้น (กก.)">
-              <Input type="number" step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
+              <NumField step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
               {String(unitWeight) !== String(release.unit_weight ?? "") && unitWeight !== "" && Number(unitWeight) > 0 && (
                 <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.45, cursor: "pointer" }}>
                   <input type="checkbox" checked={recalcW} onChange={(e) => setRecalcW(e.target.checked)} style={{ marginTop: 2 }} />
@@ -7209,7 +7375,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
               )}
             </Field>
             <Field label="ความยาว/ชิ้น (มม.)">
-              <Input type="number" step="0.1" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
+              <NumField step="0.1" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
             </Field>
           </div>
 
@@ -7222,7 +7388,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
               {modLocked && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Has Modify history — change INV with <b style={{ color: "#6d4aff" }}>✎ Modify</b></> : <>ใบนี้มีประวัติ Modify — แก้ INV ที่ <b style={{ color: "#6d4aff" }}>✎ Modify</b> (จะได้เก็บเป็น M ใหม่)</>}</div>}
             </Field>
             <Field label={lang === "en" ? "Material len (mm)" : "ความยาว material (มม.)"}>
-              <Input type="number" step="0.1" min="0" value={matLen} onChange={(e) => setMatLen(e.target.value)}
+              <NumField step="0.1" min="0" value={matLen} onChange={(e) => setMatLen(e.target.value)}
                 placeholder={matLens0.length > 1
                   ? (lang === "en" ? `multiple: ${matLens0.map(fmtNum).join(" · ")}` : `หลายค่า: ${matLens0.map(fmtNum).join(" · ")}`)
                   : (matLens0.length === 0 ? (lang === "en" ? "no scans yet" : "ยังไม่มีสแกน") : "")} />
@@ -7252,7 +7418,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
           </Field>
           <div className="grid-2">
             <Field label={lang === "en" ? "Finished (pcs)" : "ทำเสร็จ (ชิ้น)"}>
-              <Input type="number" min={0} value={doneTarget} onChange={(e) => setDoneTarget(e.target.value)}
+              <NumField min={0} value={doneTarget} onChange={(e) => setDoneTarget(e.target.value)}
                 disabled={!selMachine} placeholder={selMachine ? "" : (lang === "en" ? "pick a machine first" : "เลือกเครื่องก่อน")} />
             </Field>
             <Field label={lang === "en" ? "Status" : "สถานะ"}>
@@ -7283,7 +7449,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
                     ? `Set machine ${selM.code || ""} to “${prodStatus === "finished" ? "Finished" : "In Process"}”`
                     : `เปลี่ยนสถานะเครื่อง ${selM.code || ""} เป็น “${prodStatus === "finished" ? "เสร็จแล้ว" : "กำลังทำ"}”`)
                 : (prodStatus === "finished"
-                    ? (lang === "en" ? `Close — count all ${units.length} pcs as Finished` : `ปิดงาน — นับทุกชิ้น (${units.length}) เป็นเสร็จ`)
+                    ? (lang === "en" ? `Close — count all ${nc(units.length)} pcs as Finished` : `ปิดงาน — นับทุกชิ้น (${units.length}) เป็นเสร็จ`)
                     : (lang === "en" ? "Reopen — recompute from actual scans" : "เปิดงานต่อ — คำนวณสถานะใหม่จากงานที่สแกนจริง"))}
             </div>
           )}
@@ -8040,7 +8206,7 @@ function ReportPage({ goTo }) {
         <Modal title="เลือกตารางที่จะดาวน์โหลด" sub="ติ๊กเฉพาะตารางที่ต้องการ แล้วดาวน์โหลดเป็นไฟล์ Excel (.xlsx)"
           onClose={() => { if (!exporting) setExportOpen(false); }} locked={exporting}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>เลือกแล้ว {pickedCount}/{allSheets.length} ตาราง</span>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>เลือกแล้ว {nc(pickedCount)}/{nc(allSheets.length)} ตาราง</span>
             <div style={{ display: "flex", gap: 6 }}>
               <Btn variant="ghost" onClick={() => setPick({ op: true, machine: true, cycle: true, part: true, daily: true })} disabled={exporting}>เลือกทั้งหมด</Btn>
               <Btn variant="ghost" onClick={() => setPick({ op: false, machine: false, cycle: false, part: false, daily: false })} disabled={exporting}>ล้าง</Btn>
@@ -8807,17 +8973,17 @@ function MachineScanDetail({ machine, onBack }) {
               <Input type="datetime-local" value={edForm.dt} onChange={(e) => setEdForm((f) => ({ ...f, dt: e.target.value }))} disabled={nq === 0} />
             </Field>
             <Field label={lang === "en" ? "Quantity (0 = delete row)" : "จำนวน (0 = ลบทั้งแถว)"}>
-              <Input type="number" min={0} value={newQty} onChange={(e) => setNewQty(e.target.value)} />
+              <NumField min={0} value={newQty} onChange={(e) => setNewQty(e.target.value)} />
             </Field>
             <Field label={lang === "en" ? "Weight (kg) — blank = auto" : "น้ำหนัก (กก.) — เว้นว่าง = auto"}>
-              <Input type="number" step="0.01" min="0" value={edForm.weight} onChange={(e) => setEdForm((f) => ({ ...f, weight: e.target.value }))} disabled={nq === 0}
+              <NumField step="0.01" min="0" value={edForm.weight} onChange={(e) => setEdForm((f) => ({ ...f, weight: e.target.value }))} disabled={nq === 0}
                 placeholder={editRow.weight ? `${lang === "en" ? "now" : "ปัจจุบัน"} ${fmtNum(editRow.weight)}` : (lang === "en" ? "auto from qty" : "คิดจากจำนวน")} />
             </Field>
             <Field label={lang === "en" ? "Run time (min)" : "เวลาเดินเครื่อง (นาที)"}>
-              <Input type="number" min={0} value={edForm.runMin} onChange={(e) => setEdForm((f) => ({ ...f, runMin: e.target.value }))} disabled={nq === 0} />
+              <NumField min={0} value={edForm.runMin} onChange={(e) => setEdForm((f) => ({ ...f, runMin: e.target.value }))} disabled={nq === 0} />
             </Field>
             <Field label={lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)"}>
-              <Input type="number" step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
+              <NumField step="0.1" min="0" value={edForm.matLen} onChange={(e) => setEdForm((f) => ({ ...f, matLen: e.target.value }))} disabled={nq === 0}
                 placeholder={mls0.length > 1 ? `${lang === "en" ? "release has" : "ในล็อตมี"}: ${mls0.map(fmtNum).join(" · ")}` : ""} />
             </Field>
             <Field label={lang === "en" ? "Status" : "สถานะ"}>
@@ -8874,13 +9040,13 @@ function MachineScanDetail({ machine, onBack }) {
               <Input value={edForm.releaseOrder} onChange={(e) => setEdForm((f) => ({ ...f, releaseOrder: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. P-184" : "เช่น P-184"} />
             </Field>
             <Field label={lang === "en" ? "Ordered (pcs)" : "จำนวนสั่ง (ชิ้น)"}>
-              <Input type="number" min={0} value={edForm.ordered} onChange={(e) => setEdForm((f) => ({ ...f, ordered: e.target.value }))} disabled={nq === 0} />
+              <NumField min={0} value={edForm.ordered} onChange={(e) => setEdForm((f) => ({ ...f, ordered: e.target.value }))} disabled={nq === 0} />
             </Field>
             <Field label="INV Code">
               <Input value={edForm.mat} onChange={(e) => setEdForm((f) => ({ ...f, mat: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. 23AN01600C" : "เช่น 23AN01600C"} />
             </Field>
             <Field label={lang === "en" ? "Part length (mm)" : "ความยาวพาร์ท (มม.)"}>
-              <Input type="number" step="0.1" min="0" value={edForm.partLen} onChange={(e) => setEdForm((f) => ({ ...f, partLen: e.target.value }))} disabled={nq === 0} />
+              <NumField step="0.1" min="0" value={edForm.partLen} onChange={(e) => setEdForm((f) => ({ ...f, partLen: e.target.value }))} disabled={nq === 0} />
             </Field>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 14px", lineHeight: 1.6 }}>
@@ -9155,9 +9321,9 @@ function DrHourlyChart({ data, targetPerHour, breakHours = [], lang, height = 23
     const ro = new ResizeObserver(upd); ro.observe(el); return () => ro.disconnect();
   }, []);
   const L = (th, en) => (lang === "en" ? en : th);
-  const padL = 34, padR = 12, padT = 16, padB = 26;
-  const iw = Math.max(0, w - padL - padR), ih = height - padT - padB;
   const maxV = Math.max(1, ...data.map((d) => d.pcs), targetPerHour || 0);
+  const padL = maxV >= 9000 ? 46 : maxV >= 900 ? 40 : 34, padR = 12, padT = 16, padB = 26;   // ★ รอบ 14: ป้าย 1,000 / 10,000 กว้างขึ้น
+  const iw = Math.max(0, w - padL - padR), ih = height - padT - padB;
   const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
   const stepN = [1, 2, 5, 10].map((k) => k * mag).find((s) => maxV / s <= 5) || mag * 10;
   const top = Math.ceil(maxV / stepN) * stepN;
@@ -9172,7 +9338,7 @@ function DrHourlyChart({ data, targetPerHour, breakHours = [], lang, height = 23
           {ticks.map((t) => (
             <g key={t}>
               <line x1={padL} x2={w - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft, #e6ece9)" strokeWidth="1" />
-              <text x={padL - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted, #6d7d76)">{t}</text>
+              <text x={padL - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted, #6d7d76)">{nc(t)}</text>
             </g>
           ))}
           {data.map((d, i) => {
@@ -9260,7 +9426,7 @@ function DrSettingsModal({ cfg, machines, onClose, onSaved, lang }) {
         <label style={{ fontSize: 12.5 }}>{L("เริ่ม", "Start")}<br /><input type="time" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} style={inp} /></label>
         <label style={{ fontSize: 12.5 }}>{L("เลิก", "End")}<br /><input type="time" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} style={inp} /></label>
         <label style={{ fontSize: 12.5 }}>{L("พักเริ่ม", "Break at")}<br /><input type="time" value={f.breakStart} onChange={(e) => setF({ ...f, breakStart: e.target.value })} style={inp} /></label>
-        <label style={{ fontSize: 12.5 }}>{L("พัก (นาที)", "Break (min)")}<br /><input type="number" min="0" value={f.breakMin} onChange={(e) => setF({ ...f, breakMin: e.target.value })} style={{ ...inp, width: 90 }} /></label>
+        <label style={{ fontSize: 12.5 }}>{L("พัก (นาที)", "Break (min)")}<br /><NumInput strict min="0" value={f.breakMin} onChange={(e) => setF({ ...f, breakMin: e.target.value })} style={{ ...inp, width: 90 }} /></label>
         <div style={{ fontSize: 13, color: "var(--muted)", paddingBottom: 8 }}>= {fmtDur(planned, lang)} {L("ต่อเครื่องต่อวัน", "per machine per day")}</div>
       </div>
       <div style={{ fontWeight: 700, margin: "16px 0 8px" }}>{L("เป้าต่อเครื่องต่อวัน (เว้นว่าง = ไม่มีเป้า)", "Daily target per machine (blank = no target)")}</div>
@@ -9273,8 +9439,8 @@ function DrSettingsModal({ cfg, machines, onClose, onSaved, lang }) {
               return (
                 <tr key={m.code}>
                   <td><b style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{m.code}</b> <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{m.name && m.name !== m.code ? m.name : ""}</span></td>
-                  <td style={{ textAlign: "right" }}><input type="number" min="0" value={t.pcs ?? ""} onChange={(e) => setT(m.code, "pcs", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า ชิ้น/วัน", "target pcs/day")}`} /></td>
-                  <td style={{ textAlign: "right" }}><input type="number" min="0" value={t.kg ?? ""} onChange={(e) => setT(m.code, "kg", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า กก./วัน", "target kg/day")}`} /></td>
+                  <td style={{ textAlign: "right" }}><NumInput strict min="0" value={t.pcs ?? ""} onChange={(e) => setT(m.code, "pcs", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า ชิ้น/วัน", "target pcs/day")}`} /></td>
+                  <td style={{ textAlign: "right" }}><NumInput strict min="0" value={t.kg ?? ""} onChange={(e) => setT(m.code, "kg", e.target.value)} style={{ ...inp, width: "min(110px, 22vw)", textAlign: "right" }} aria-label={`${m.code} ${L("เป้า กก./วัน", "target kg/day")}`} /></td>
                 </tr>
               );
             })}
@@ -9595,7 +9761,7 @@ function DailyReportPage() {
       if (st.some((s) => s.open)) flags.push({ tone: "bad", t: L("⛔ หยุดอยู่", "⛔ stopped now") });
       if (tp > 0 && e.scans > 0 && e.pcs < paceP * 0.9) flags.push({ tone: "warn", t: L("▼ ต่ำกว่าเป้า", "▼ below target") });
       if (e.scans === 0 && !st.length) flags.push({ tone: "warn", t: L("ยังไม่มีงาน", "no work yet") });
-      if (st.length && !st.some((s) => s.open)) flags.push({ tone: "warn", t: L(`หยุด ${st.length} ครั้ง`, `${st.length} stop(s)`) });
+      if (st.length && !st.some((s) => s.open)) flags.push({ tone: "warn", t: L(`หยุด ${nc(st.length)} ครั้ง`, `${st.length} stop(s)`) });
       if (e.slow) flags.push({ tone: "warn", t: L(`รอบช้า ${e.slow}`, `${e.slow} slow`) });
       return {
         ...e, empText: [...e.emps].join(", "), nParts: e.parts.size, cycle: e.pcs > 0 ? runM / e.pcs : null,
@@ -9655,7 +9821,7 @@ function DailyReportPage() {
       cell: (m) => (m.util != null ? <>{pctTxt(m.util)} <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{fmtDur(m.runMin, lang)}</span></> : "—"), exp: (m) => (m.util != null ? Math.round(m.util * 100) : "") },
     { key: "cycle", header: L("นาที/ชิ้น", "Min/pc"), sortKey: "cycle", align: "right", cell: (m) => (m.cycle != null ? fmtKpi(m.cycle) : "—"), exp: (m) => (m.cycle != null ? Math.round(m.cycle * 10) / 10 : "") },
     ...(manage ? [{ key: "stops", header: L("เวลาหยุด", "Downtime"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap" },
-      cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }}>{fmtDur(m.stopMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${Math.round(m.stopMin)} min · ${m.stops}×` : "") }] : []),
+      cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }}>{fmtDur(m.stopMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${nc(Math.round(m.stopMin))} min · ${m.stops}×` : "") }] : []),
     { key: "idle", header: L("ว่าง/อื่นๆ", "Idle/other"), sortKey: "idle", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)" }, cell: (m) => fmtDur(m.idleMin, lang), exp: (m) => Math.round(m.idleMin) },
     { key: "scans", header: L("สแกน", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
     { key: "fin", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "fin", align: "right", cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
@@ -9729,7 +9895,7 @@ function DailyReportPage() {
         ["Part", nParts], ["Release", nRel], [L("รายงานการทำงาน", "Work reports"), nSlow],
         [L("เทียบวันก่อน", "Previous working day"), prevDay || ""], [L("ชิ้นงาน วันก่อน", "Pieces prev day"), prev ? prev.pcs : ""],
         [L("ชิ้นงาน เฉลี่ย 7 วัน", "Pieces 7-day avg"), avg ? Math.round(avg.pcs * 10) / 10 : ""],
-        [L("เวลากะ", "Shift"), `${cfg.start}–${cfg.end} · ${L("พัก", "break")} ${cfg.breakStart} ${cfg.breakMin} min`],
+        [L("เวลากะ", "Shift"), `${cfg.start}–${cfg.end} · ${L("พัก", "break")} ${cfg.breakStart} ${nc(cfg.breakMin)} min`],
       ].map(([k, v]) => ({ [L("หัวข้อ", "Item")]: k, [L("ค่า", "Value")]: v }));
       const { downloadSheets } = await import("./excelExport.js");
       await downloadSheets(`daily-report-${day}.xlsx`, [
@@ -9827,12 +9993,12 @@ function DailyReportPage() {
               sub={L("เวลาเดินเครื่อง ÷ ชิ้นงาน (น้อย = เร็ว)", "run time ÷ pieces (lower = faster)")}
               info={L("เฉลี่ยทุกเครื่อง · ดูรายเครื่องในตารางด้านล่าง", "All machines average · see per machine below")} />
             <DrKpi label={L("เวลาหยุดเครื่อง", "Downtime")} value={manage && stopsAll ? fmtDur(stopMin, lang) : "—"}
-              sub={manage && stopsAll ? L(`${stopsF.length} ครั้ง${openStops.length ? ` · หยุดอยู่ ${openStops.length} เครื่อง` : ""}`, `${stopsF.length} stop(s)${openStops.length ? ` · ${openStops.length} stopped now` : ""}`) : L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}
+              sub={manage && stopsAll ? L(`${nc(stopsF.length)} ครั้ง${openStops.length ? ` · หยุดอยู่ ${openStops.length} เครื่อง` : ""}`, `${stopsF.length} stop(s)${openStops.length ? ` · ${openStops.length} stopped now` : ""}`) : L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}
               alert={openStops.length ? L(`⛔ ${openStops.map((s) => s.machine).join(", ")} หยุดอยู่ตอนนี้`, `⛔ ${openStops.map((s) => s.machine).join(", ")} stopped now`) : null}
               info={L("จากการกด \"แจ้งเครื่องหยุด\" ที่หน้าเครื่อง จนกด \"พร้อมทำงาน\"", "From \"machine stop\" on the terminal until \"ready\"")} />
           </div>
           <div className="dr-context">
-            {L("สแกน", "Scans")} <b>{fmtNum(rows.length)}</b> · {L("เครื่องทำงาน", "machines working")} <b>{activeMachines.length}</b>{machinesAll.length ? <>/{machinesAll.length}</> : null}
+            {L("สแกน", "Scans")} <b>{fmtNum(rows.length)}</b> · {L("เครื่องทำงาน", "machines working")} <b>{activeMachines.length}</b>{machinesAll.length ? <>/{nc(machinesAll.length)}</> : null}
             {" · "}{L("พนักงาน", "operators")} <b>{nEmp}</b> · Part <b>{nParts}</b> · Release <b>{nRel}</b>
             {" · "}{L("รายงานการทำงาน", "work reports")} <b>{nSlow}</b>
             {rows.length ? <> · {L("สแกนแรก", "first")} <b className="mono">{fmtClock(firstT)}</b> {L("ล่าสุด", "last")} <b className="mono">{fmtClock(lastT)}</b></> : null}
@@ -10022,9 +10188,9 @@ function MachinesSummaryPage() {
             { key: "name", header: "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
             ...matrix.opNames.map((op) => ({
               key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
-              cell: (m) => { const cell = m.ops[op]; return cell ? <span>{cell.count} ชิ้น</span> : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+              cell: (m) => { const cell = m.ops[op]; return cell ? <span>{nc(cell.count)} ชิ้น</span> : <span style={{ color: "var(--surface-3)" }}>—</span>; },
             })),
-            { key: "total", header: "รวมทุกขั้นตอน", sortKey: "total", align: "right", tdStyle: { fontWeight: 600 }, cell: (m) => `${m.total.count} ชิ้น` },
+            { key: "total", header: "รวมทุกขั้นตอน", sortKey: "total", align: "right", tdStyle: { fontWeight: 600 }, cell: (m) => `${nc(m.total.count)} ชิ้น` },
             { key: "weight", header: "น้ำหนักรวม (กก.)", sortKey: "weight", align: "right", tdStyle: { fontWeight: 600, color: "var(--accent-dk)" }, cell: (m) => m.total.weight ? fmtNum(m.total.weight) : "—" },
             { key: "time", header: "เวลาเดินเครื่อง", sortKey: "time", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
           ]} />
@@ -10343,7 +10509,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
   async function deleteOrder(g) {
     if (delKey) return;
     const ok = await askConfirm({
-      message: `ลบ Release Order "${g.order}" ทั้งชุด?\n(${g.parts} Part · ${fmtNum(g.qty)} ชิ้น)\n\nจะลบ QR และประวัติสแกนของทุกชิ้นในชุดนี้ไปด้วย · กู้คืนไม่ได้`,
+      message: `ลบ Release Order "${g.order}" ทั้งชุด?\n(${nc(g.parts)} Part · ${fmtNum(g.qty)} ชิ้น)\n\nจะลบ QR และประวัติสแกนของทุกชิ้นในชุดนี้ไปด้วย · กู้คืนไม่ได้`,
       tone: "danger", confirmText: "ลบ Release", cancelText: "ยกเลิก",
     });
     if (!ok) return;
@@ -10367,7 +10533,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
         ? `บัญชีนี้ยังไม่มีสิทธิ์ลบ Release ฝั่งเซิร์ฟเวอร์ (RPC จำกัดเฉพาะแอดมิน) — แจ้งผู้ดูแลให้เปิดสิทธิ์ให้ออฟฟิศ`
         : `ลบไม่ครบ — สำเร็จ ${done} · ไม่สำเร็จ ${failed} · ลองอีกครั้งได้`);
       mlsToast(forbidden ? "ออฟฟิศยังไม่มีสิทธิ์ลบ Release (ต้องปรับ RPC)" : `ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn");
-    } else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${done} รายการ)`, "success");
+    } else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${nc(done)} รายการ)`, "success");
   }
 
   async function save() {
@@ -10409,15 +10575,15 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
     const hasData = im.partCount > 0;
     const hasWork = im.scannedCount > 0 || (im.stationRecords || 0) > 0;
     const strict = hasWork || (unknown && (hasData || !impact));
-    const workTxt = [im.scannedCount > 0 ? `สแกนแล้ว ${im.scannedCount} ชิ้น` : "", (im.stationRecords || 0) > 0 ? `บันทึกงานหน้าเครื่อง ${fmtNum(im.stationRecords)} รายการ` : ""].filter(Boolean).join(" · ");
+    const workTxt = [im.scannedCount > 0 ? `สแกนแล้ว ${nc(im.scannedCount)} ชิ้น` : "", (im.stationRecords || 0) > 0 ? `บันทึกงานหน้าเครื่อง ${fmtNum(im.stationRecords)} รายการ` : ""].filter(Boolean).join(" · ");
     const msg = !impact
       ? `อ่านจำนวนข้อมูลของโปรเจคนี้ไม่ได้ (อาจมีประวัติการทำงาน)\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดทิ้ง และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
       : hasWork
-      ? `โปรเจคนี้มี ${im.partCount} Part, ${im.releaseCount} Release, ${im.unitCount} ชิ้น (QR) และมีประวัติการทำงาน (${workTxt})\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดนี้ทิ้งไปด้วย และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+      ? `โปรเจคนี้มี ${nc(im.partCount)} Part, ${nc(im.releaseCount)} Release, ${nc(im.unitCount)} ชิ้น (QR) และมีประวัติการทำงาน (${workTxt})\n\nการลบโปรเจคจะลบข้อมูลทั้งหมดนี้ทิ้งไปด้วย และกู้คืนไม่ได้\n\nพิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
       : strict
-      ? `โปรเจคนี้มี ${im.partCount} Part และ ${im.unitCount} ชิ้น (QR) · ตรวจงานหน้าเครื่องไม่ได้ (ยังไม่ได้อัปเดตฐานข้อมูล)\n\nการลบกู้คืนไม่ได้ — พิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
+      ? `โปรเจคนี้มี ${nc(im.partCount)} Part และ ${nc(im.unitCount)} ชิ้น (QR) · ตรวจงานหน้าเครื่องไม่ได้ (ยังไม่ได้อัปเดตฐานข้อมูล)\n\nการลบกู้คืนไม่ได้ — พิมพ์รหัสโปรเจค "${project.code}" เพื่อยืนยันการลบ`
       : hasData
-      ? `โปรเจคนี้มี ${im.partCount} Part และ ${im.unitCount} ชิ้น (QR) แต่ยังไม่มีการสแกน\n\nต้องการลบโปรเจคนี้พร้อมข้อมูลทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`
+      ? `โปรเจคนี้มี ${nc(im.partCount)} Part และ ${nc(im.unitCount)} ชิ้น (QR) แต่ยังไม่มีการสแกน\n\nต้องการลบโปรเจคนี้พร้อมข้อมูลทั้งหมดหรือไม่? การลบกู้คืนไม่ได้`
       : `ต้องการลบโปรเจค "${project.code} — ${project.name}" หรือไม่?`;
 
     if (strict) {
@@ -10446,8 +10612,8 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         {impact ? <>
-          ใต้โปรเจคนี้มี {impact.partCount} Part · {impact.releaseCount} Release · {impact.unitCount} ชิ้น (QR)
-          {impact.scannedCount > 0 && <> · สแกนไปแล้ว {impact.scannedCount} ชิ้น</>}
+          ใต้โปรเจคนี้มี {nc(impact.partCount)} Part · {nc(impact.releaseCount)} Release · {nc(impact.unitCount)} ชิ้น (QR)
+          {impact.scannedCount > 0 && <> · สแกนไปแล้ว {nc(impact.scannedCount)} ชิ้น</>}
           {(impact.stationRecords || 0) > 0 && <> · งานหน้าเครื่อง {fmtNum(impact.stationRecords)} รายการ</>}
         </> : <span style={{ color: "var(--alert, #d97a00)" }}>อ่านจำนวนข้อมูลใต้โปรเจคนี้ไม่ได้ (เน็ตสะดุด) — ลบได้แต่ต้องพิมพ์รหัสยืนยัน</span>}
       </div>
@@ -10500,11 +10666,11 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
                 columns={[
                   { key: "date", header: "วันที่", cell: (g) => fmtD(g.date) },
                   { key: "order", header: "Release Order", cell: (g) => g.order },
-                  { key: "parts", header: "Part No.", align: "right", cell: (g) => `${g.parts} Part` },
+                  { key: "parts", header: "Part No.", align: "right", cell: (g) => `${nc(g.parts)} Part` },
                   { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => `${fmtNum(g.qty)} ชิ้น` },
                   ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
                     cell: (g) => delKey === g.key
-                      ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {delProg}/{g.ids.length}…</span>
+                      ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {nc(delProg)}/{nc(g.ids.length)}…</span>
                       : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด" style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span> }] : []),
                 ]} />
             )}
@@ -10559,7 +10725,7 @@ function StationHealthCard({ compact = false }) {
     if (r.rejected_count > 0) out.push({ k: "rej", t: L("มีงานซิงค์ไม่สำเร็จ", "failed items") });
     if (r.events_pending > 0 && seen != null && seen >= 5) out.push({ k: "ev", t: L("แจ้งหยุด/พร้อมยังไม่ส่ง", "stop/ready not sent") });
     if ((r.job_started_at || r.state === "running") && (seen == null || seen >= 10)) out.push({ k: "sig", t: L("มีงานค้างแต่ไม่มีสัญญาณ", "job open, no signal") });
-    if (r.clock_skew_sec != null && Math.abs(r.clock_skew_sec) > 120) out.push({ k: "clk", t: L(`นาฬิกาเครื่องเพี้ยน ${Math.round(r.clock_skew_sec / 60)} นาที`, `clock off by ${Math.round(r.clock_skew_sec / 60)} min`) });
+    if (r.clock_skew_sec != null && Math.abs(r.clock_skew_sec) > 120) out.push({ k: "clk", t: L(`นาฬิกาเครื่องเพี้ยน ${nc(Math.round(r.clock_skew_sec / 60))} นาที`, `clock off by ${nc(Math.round(r.clock_skew_sec / 60))} min`) });
     if (r.app_version && myBuild && myBuild !== "dev" && r.app_version !== myBuild && seen != null && seen < 60) out.push({ k: "ver", t: L("แอปรุ่นเก่า", "old app version") });
     return out;
   };
@@ -10995,7 +11161,7 @@ function ClearScansCard() {
         // รวมผลตรวจของทุกชุดในโปรเจค (แต่ละชุดแยกกันตาม release_order → บวกกันได้)
         let mr = 0, sl = 0, un = 0, rp = 0, i = 0;
         for (const g of groups) {
-          i += 1; setProgress(`กำลังตรวจ ${i}/${groups.length}`);
+          i += 1; setProgress(`กำลังตรวจ ${i}/${nc(groups.length)}`);
           const p = await clearScansReleaseGroup(projId, g.releaseOrder, { preview: true });
           mr += p.machine_records || 0; sl += p.scan_logs || 0; un += p.units || 0; rp += p.releases || 0;
         }
@@ -11022,13 +11188,13 @@ function ClearScansCard() {
     const total = (preview?.machine_records || 0) + (preview?.scan_logs || 0);
     const scopeLabel = scope === "project" ? `ทั้งโปรเจค “${proj?.name || ""}”`
       : scope === "group" ? "ชุด Release นี้" : scope === "part" ? "Part นี้" : "ชิ้นนี้";
-    if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scopeLabel} (${total} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
+    if (!(await askConfirm({ message: `ยืนยันลบข้อมูลสแกนของ${scopeLabel} (${nc(total)} รายการ)?\nลบแล้วกู้คืนไม่ได้ — แนะนำสำรองข้อมูลก่อน`, tone: "danger", confirmText: "ลบข้อมูลสแกน", cancelText: "ยกเลิก" }))) return;
     setBusy(true); setProgress("");
     let mr = 0, sl = 0, doneGroups = 0;
     try {
       if (scope === "project") {
         for (const g of groups) {
-          setProgress(`กำลังลบ ${doneGroups + 1}/${groups.length}`);
+          setProgress(`กำลังลบ ${nc(doneGroups + 1)}/${nc(groups.length)}`);
           const res = await clearScansReleaseGroup(projId, g.releaseOrder, {});
           mr += res.machine_records || 0; sl += res.scan_logs || 0; doneGroups += 1;
         }
@@ -11048,7 +11214,7 @@ function ClearScansCard() {
     } catch (e) {
       // ★ whole-project วนลบทีละชุด (ไม่ atomic) — ถ้าพังกลางคัน บอกว่าลบไปแล้วกี่ชุด กด "ลบ" ซ้ำลบต่อได้
       const partial = (scope === "project" && doneGroups > 0)
-        ? ` (ลบไปแล้ว ${doneGroups}/${groups.length} ชุด — กด “ลบข้อมูลสแกน” ซ้ำเพื่อลบส่วนที่เหลือ)` : "";
+        ? ` (ลบไปแล้ว ${nc(doneGroups)}/${nc(groups.length)} ชุด — กด “ลบข้อมูลสแกน” ซ้ำเพื่อลบส่วนที่เหลือ)` : "";
       setMsg({ ok: false, text: "ลบไม่สำเร็จ: " + (e?.message || e) + partial });
     }
     finally { setBusy(false); setProgress(""); }
@@ -11068,7 +11234,7 @@ function ClearScansCard() {
           placeholder="พิมพ์ชื่อ/รหัสโปรเจคเพื่อค้นหา…"
           options={projects.map((p) => ({
             value: p.id,
-            label: `${p.name}${p.code ? " (" + p.code + ")" : ""} — ${p.parts} Part × ${fmtNum(p.qty)} ชิ้น${p.status === "closed" ? " · ปิดแล้ว" : ""}`,
+            label: `${p.name}${p.code ? " (" + p.code + ")" : ""} — ${nc(p.parts)} Part × ${fmtNum(p.qty)} ชิ้น${p.status === "closed" ? " · ปิดแล้ว" : ""}`,
           }))} />
       </Field>
 
@@ -11085,14 +11251,14 @@ function ClearScansCard() {
 
           {scope === "project" && (
             <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
-              จะลบข้อมูลสแกนของ <b>ทุก Part / ทุกชุด</b> ในโปรเจคนี้ — {groups.length} ชุด · {proj?.parts || 0} Part × {fmtNum(proj?.qty || 0)} ชิ้น
+              จะลบข้อมูลสแกนของ <b>ทุก Part / ทุกชุด</b> ในโปรเจคนี้ — {nc(groups.length)} ชุด · {proj?.parts || 0} Part × {fmtNum(proj?.qty || 0)} ชิ้น
             </div>
           )}
           {scope === "group" && (
             <Field label="เลือกชุด Release">
               <Select value={grpKey} onChange={(e) => { setGrpKey(e.target.value); setPreview(null); }}
                 options={[{ value: "", label: "— เลือกชุด —" }, ...groups.map((g, i) => ({
-                  value: String(i), label: `${g.releaseOrder || "(ไม่มีเลข)"} — ${g.parts} Part × ${fmtNum(g.qty)} ชิ้น`,
+                  value: String(i), label: `${g.releaseOrder || "(ไม่มีเลข)"} — ${nc(g.parts)} Part × ${fmtNum(g.qty)} ชิ้น`,
                 }))]} />
             </Field>
           )}
@@ -11101,7 +11267,7 @@ function ClearScansCard() {
               <SearchSelect value={relId} onChange={(v) => { setRelId(v); setPreview(null); }}
                 placeholder="พิมพ์เบอร์พาร์ทเพื่อค้นหา…"
                 options={scannedReleases.map((r) => ({
-                  value: r.id, label: `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""} × ${r.qty} ชิ้น`,
+                  value: r.id, label: `${r.part_master?.part_no || "-"}${r.release_order ? " · " + r.release_order : ""} × ${nc(r.qty)} ชิ้น`,
                 }))} />
               {scanned && scannedReleases.length === 0 && (
                 <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>ไม่มี Part ที่มีข้อมูลสแกนในโปรเจคนี้</div>
@@ -11497,7 +11663,7 @@ function BackupCard() {
           else if (rx && rx.ok) {
             let failed = 0;
             for (const [t, r] of Object.entries(rx.tables || {})) { byTable[t] = Number(r.inserted) || 0; failed += Number(r.failed) || 0; }
-            if (failed) extraNote = `ตารางเสริมนำเข้าไม่ได้ ${failed} แถว (ข้อมูลอ้างอิงไม่ครบ) — ส่วนอื่นนำเข้าแล้ว`;
+            if (failed) extraNote = `ตารางเสริมนำเข้าไม่ได้ ${nc(failed)} แถว (ข้อมูลอ้างอิงไม่ครบ) — ส่วนอื่นนำเข้าแล้ว`;
           }
         } catch (ex) { extraNote = "นำเข้าตารางเสริมไม่สำเร็จ: " + (ex?.message || ex); }
       }
@@ -11548,7 +11714,7 @@ function BackupCard() {
         <Btn variant="accent" onClick={download} disabled={busy}>
           <Icon name="box" size={15} />
           {busy
-            ? (progress ? `กำลังดึง ${progress.table} (${progress.index + 1}/${progress.total})...` : "กำลังเตรียมข้อมูล...")
+            ? (progress ? `กำลังดึง ${progress.table} (${nc(progress.index + 1)}/${nc(progress.total)})...` : "กำลังเตรียมข้อมูล...")
             : "ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)"}
         </Btn>
 
@@ -11990,7 +12156,7 @@ function OperationsCrud() {
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-start" }}>
         <Field label="ชื่อขั้นตอน"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น ตัด / ประกอบ / แพ็ก" /></Field>
-        <Field label="ลำดับ"><Input type="number" value={form.seq ?? ""} onChange={(e) => setForm({ ...form, seq: e.target.value })} style={{ maxWidth: 90 }} /></Field>
+        <Field label="ลำดับ"><NumField value={form.seq ?? ""} onChange={(e) => setForm({ ...form, seq: e.target.value })} style={{ maxWidth: 90 }} /></Field>
         <div style={{ minWidth: 200 }}>
           <Field label="ประเภทงาน"><Select value={form.op_type || "machining"} onChange={(e) => setForm({ ...form, op_type: e.target.value })}
             options={OP_TYPES.map((o) => ({ value: o.value, label: o.label }))} /></Field>
@@ -12384,7 +12550,7 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
                   options={avail.map((c) => ({ value: c.id, label: `${c.part_no} — ${c.part_name || ""}${c.kind && c.kind !== "part" ? " [" + kindLabel(c.kind) + "]" : ""}` }))} />
               </Field>
             </div>
-            <Field label="จำนวน/ชุด"><Input type="number" min="1" value={pickQty} onChange={(e) => setPickQty(e.target.value)} style={{ maxWidth: 100 }} /></Field>
+            <Field label="จำนวน/ชุด"><NumField min="1" value={pickQty} onChange={(e) => setPickQty(e.target.value)} style={{ maxWidth: 100 }} /></Field>
             <Btn variant="ghost" onClick={addChild} disabled={!pick}><Icon name="plus" size={14} /> เพิ่มลูก</Btn>
           </div>
 
@@ -12400,7 +12566,7 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
                       <td style={{ fontFamily: "var(--font-mono)", fontWeight: 600, whiteSpace: "nowrap" }}>{r.part_no}</td>
                       <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{r.part_name}</td>
                       <td style={{ fontSize: 12.5 }}>{kindLabel(r.kind)}</td>
-                      <td><Input type="number" min="1" value={r.qty} onChange={(e) => setQty(r.child_pm_id, e.target.value)} style={{ maxWidth: 80 }} /></td>
+                      <td><NumField min="1" value={r.qty} onChange={(e) => setQty(r.child_pm_id, e.target.value)} style={{ maxWidth: 80 }} /></td>
                       <td><span onClick={() => removeChild(r.child_pm_id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
                     </tr>
                   ))}
@@ -12465,8 +12631,8 @@ function PartMasterEditModal({ part, projectCode, onClose, onSaved }) {
       <div className="grid-2">
         <Field label="ชื่อ Part"><Input value={f.part_name} onChange={(e) => setF({ ...f, part_name: e.target.value })} /></Field>
         <Field label="INV Code / วัสดุ"><Input value={f.material} onChange={(e) => setF({ ...f, material: e.target.value })} /></Field>
-        <Field label="น้ำหนัก/ชิ้น (กก.)"><Input type="number" step="0.001" min="0" value={f.unit_weight} onChange={(e) => setF({ ...f, unit_weight: e.target.value })} /></Field>
-        <Field label="ความยาว/ชิ้น (มม.)"><Input type="number" step="0.1" min="0" value={f.default_length_mm} onChange={(e) => setF({ ...f, default_length_mm: e.target.value })} /></Field>
+        <Field label="น้ำหนัก/ชิ้น (กก.)"><NumField step="0.001" min="0" value={f.unit_weight} onChange={(e) => setF({ ...f, unit_weight: e.target.value })} /></Field>
+        <Field label="ความยาว/ชิ้น (มม.)"><NumField step="0.1" min="0" value={f.default_length_mm} onChange={(e) => setF({ ...f, default_length_mm: e.target.value })} /></Field>
       </div>
       <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.6, margin: "-2px 0 10px" }}>
         น้ำหนัก/ความยาวของเบอร์ = ค่าเริ่มต้น · Release ที่ตั้งน้ำหนักเองไว้ ใช้ค่าของ Release ก่อน (แก้ที่ ✎ แก้ไข ในหน้า Release)
@@ -12564,8 +12730,8 @@ function PartMasterCrud() {
         <Field label="รหัส Part"><Input value={form.part_no || ""} onChange={(e) => setForm({ ...form, part_no: e.target.value })} /></Field>
         <Field label="ชื่อ Part"><Input value={form.part_name || ""} onChange={(e) => setForm({ ...form, part_name: e.target.value })} /></Field>
         <Field label="วัสดุ"><Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} /></Field>
-        <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><Input type="number" step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
-        <Field label="ความยาวโดยประมาณ/ชิ้น (มม.)"><Input type="number" step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} /></Field>
+        <Field label="น้ำหนักโดยประมาณ/ชิ้น (กก.)"><NumField step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} /></Field>
+        <Field label="ความยาวโดยประมาณ/ชิ้น (มม.)"><NumField step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} /></Field>
         <Field label="ชนิด">
           <Select value={form.kind || "part"} onChange={(e) => setForm({ ...form, kind: e.target.value })}
             options={PM_KINDS.map((k) => ({ value: k.value, label: k.label }))} />
@@ -12589,7 +12755,7 @@ function PartMasterCrud() {
               แสดง {fmtNum(shown.length ? pg * 500 + 1 : 0)}–{fmtNum(Math.min(shown.length, (pg + 1) * 500))} จาก {fmtNum(shown.length)}
               {pages > 1 && <>
                 <Btn variant="ghost" size="sm" disabled={pg === 0} onClick={() => setPmPage(pg - 1)}>‹ ก่อนหน้า</Btn>
-                <span>หน้า {pg + 1}/{pages}</span>
+                <span>หน้า {nc(pg + 1)}/{nc(pages)}</span>
                 <Btn variant="ghost" size="sm" disabled={pg >= pages - 1} onClick={() => setPmPage(pg + 1)}>ถัดไป ›</Btn>
               </>}
             </span>
