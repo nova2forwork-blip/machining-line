@@ -17,7 +17,7 @@ import {
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { askConfirm, ConfirmHost } from "./confirm.jsx";
+import { askConfirm, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
 import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
@@ -1156,7 +1156,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       const totQ = unit?.release?.qty ?? null;
       const projQ = (Number(progress?.done) || 0) + (Number(qty) || 0);
       if (totQ != null && projQ < totQ) {
-        flash(t(`ยังไม่ครบจำนวน (${projQ}/${totQ}) — เลือก Finished ได้เมื่อครบ`, `Not complete yet (${projQ}/${totQ}) — Finished unlocks when complete`), "warn"); return;
+        flash(t(`ยังไม่ครบจำนวน (${nc(projQ)}/${nc(totQ)}) — เลือก Finished ได้เมื่อครบ`, `Not complete yet (${nc(projQ)}/${nc(totQ)}) — Finished unlocks when complete`), "warn"); return;
       }
     }
     if (qty <= 0) { flash("ระบุจำนวนมากกว่า 0", "warn"); return; }
@@ -1178,9 +1178,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       durWarnedRef.current = startTsRef.current;
       const typ = iss.median ? t(` · ปกติ ~${hms(Math.round(iss.median))} ต่อชิ้น`, ` · usually ~${hms(Math.round(iss.median))} per piece`) : "";
       const msg = iss.kind === "fast"
-        ? t(`⏱ เวลาเร็วผิดปกติ: ${hms(iss.secs)} สำหรับ ${qty} ชิ้น${typ}\n\nลืมสแกนรอบแรกตอนเริ่มงาน หรือใส่จำนวนผิดหรือเปล่า?`,
+        ? t(`⏱ เวลาเร็วผิดปกติ: ${hms(iss.secs)} สำหรับ ${nc(qty)} ชิ้น${typ}\n\nลืมสแกนรอบแรกตอนเริ่มงาน หรือใส่จำนวนผิดหรือเปล่า?`,
             `⏱ Unusually fast: ${hms(iss.secs)} for ${qty} pc${typ}\n\nDid you forget the first scan at the start, or enter the wrong quantity?`)
-        : t(`⏱ เวลานานผิดปกติ: ${hms(iss.secs)} สำหรับ ${qty} ชิ้น${typ}\n\nลืมกด "พักงาน/แจ้งหยุด" หรือเปล่า? ถ้ารอบนี้ช้าจริง กด "กลับไปตรวจ" แล้วใช้ปุ่ม แจ้งปัญหา → ใส่เหตุผล`,
+        : t(`⏱ เวลานานผิดปกติ: ${hms(iss.secs)} สำหรับ ${nc(qty)} ชิ้น${typ}\n\nลืมกด "พักงาน/แจ้งหยุด" หรือเปล่า? ถ้ารอบนี้ช้าจริง กด "กลับไปตรวจ" แล้วใช้ปุ่ม แจ้งปัญหา → ใส่เหตุผล`,
             `⏱ Unusually long: ${hms(iss.secs)} for ${qty} pc${typ}\n\nDid you forget "Break/Stop"? If this round really was slow, press "Go back" and use REPORT → reason`);
       if (!(await askConfirm({ title: t("ตรวจเวลาก่อนบันทึก", "Check the time"), message: msg, tone: "warn",
         confirmText: t("บันทึกตามนี้", "Save anyway"), cancelText: t("กลับไปตรวจ", "Go back") }))) return;
@@ -1287,8 +1287,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       okBeep();                // ★ เสียง+สั่นยืนยันสำเร็จ (เดิมสำเร็จเงียบ คนงานไม่รู้ว่าบันทึกแล้ว)
       // แจ้งผลจำนวนขั้นตอนที่บันทึก — โชว์บนจอ (เห็นบนแท็บเล็ตโดยไม่ต้องเปิด DevTools)
       if (opIds.length > 1 && coFail > 0) {
-        flash(t(`บันทึก ${savedSteps}/${opIds.length} ขั้นตอน · พลาด ${coFail} (${reasonText(coReason, t)})${coParked ? " — เก็บไว้ที่ \"ซิงค์ไม่สำเร็จ\" แล้ว" : ""}`,
-                `Saved ${savedSteps}/${opIds.length} steps · ${coFail} failed (${reasonText(coReason, t)})${coParked ? " — kept under “failed to sync”" : ""}`), "warn");
+        flash(t(`บันทึก ${nc(savedSteps)}/${nc(opIds.length)} ขั้นตอน · พลาด ${coFail} (${reasonText(coReason, t)})${coParked ? " — เก็บไว้ที่ \"ซิงค์ไม่สำเร็จ\" แล้ว" : ""}`,
+                `Saved ${nc(savedSteps)}/${nc(opIds.length)} steps · ${coFail} failed (${reasonText(coReason, t)})${coParked ? " — kept under “failed to sync”" : ""}`), "warn");
       } else {
         // โชว์จำนวนขั้นตอนเสมอ (ต่างจากข้อความเดิม) → ถ้ายังเห็น "บันทึกแล้ว ✓ พร้อมงานถัดไป" = แท็บเล็ตยังรันโค้ดเก่า (แคช)
         flash(t(`บันทึกครบ ${savedSteps} ขั้นตอน ✓`, `Saved ${savedSteps} step(s) ✓`), "ok");
@@ -1580,7 +1580,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (!inBom) { errorBeep(); flash(t("ชิ้นนี้ไม่อยู่ในรายการบั้ง", "not in this bunk list"), "warn"); return false; }
       const have = asmHave(u.part_master_id);
       if (have >= inBom.qty) { flash(t(`${inBom.part_no} ครบแล้ว`, `${inBom.part_no} already complete`), "warn"); return false; }
-      tickBeep(); flash(`+ ${inBom.part_no} (${have + 1}/${inBom.qty})`, "ok");
+      tickBeep(); flash(`+ ${inBom.part_no} (${nc(have + 1)}/${nc(inBom.qty)})`, "ok");
       // ★ รอบ 11 (A2): เช็กซ้ำใน updater ด้วย (สถานะล่าสุดจริง) — ป้ายเดียวกันเข้ารายการได้ครั้งเดียว
       setAsmChildren((prev) => (prev.some((c) => c.unit_id === u.id) ? prev : [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: inBom.part_no }]));
       return true;
@@ -1646,7 +1646,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: doneCount, isPack, isSub: dept === "assembly", queued: true });
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
-          flash(t(`✓ เก็บเข้าคิว ${asmChildren.length} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ`, `✓ Queued ${asmChildren.length} — will sync`) + photoNote, "ok");
+          flash(t(`✓ เก็บเข้าคิว ${nc(asmChildren.length)} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ`, `✓ Queued ${asmChildren.length} — will sync`) + photoNote, "ok");
           setAsmParent((p) => (p ? { ...p, installed: newInstalled } : p));
           setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         }
@@ -1667,7 +1667,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
           const added = res.added ?? asmChildren.length;
-          flash(t(`✓ บันทึกแล้ว ${added} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
+          flash(t(`✓ บันทึกแล้ว ${nc(added)} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
           // อัปเดต "ที่ติดแล้ว" แบบ optimistic ก่อน แล้ว reconcile กับเซิร์ฟเวอร์ · เก็บ length_mm/kind ที่เติมตอนสแกนไว้ (get_assembly_state ไม่คืนมา → กันคอลัมน์ขนาด/ยาวหาย)
           const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1 }));
           let st = null;
@@ -1876,7 +1876,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           <div className="stn-rejected" style={{ background: "#7c3aed" }}
             title={t("งานเหล่านี้จะซิงค์ในชื่อเจ้าของงานเท่านั้น (ไม่ลงชื่อบัญชีนี้)", "These jobs only sync under their owner's account")}>
             <Icon name="warn" size={15} className="stn-ico" />
-            {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${f.count} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
+            {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${nc(f.count)} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
             {" — "}{t("ให้เจ้าของล็อกอินที่แท็บเล็ตนี้เพื่อส่ง", "have the owner log in on this tablet to send them")}
           </div>
         )}
@@ -1964,7 +1964,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         <div className="stn-rejected" style={{ background: "#7c3aed" }}
           title={t("งานเหล่านี้จะซิงค์ในชื่อเจ้าของงานเท่านั้น (ไม่ลงชื่อบัญชีนี้)", "These jobs only sync under their owner's account")}>
           <Icon name="warn" size={15} className="stn-ico" />
-          {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${f.count} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
+          {foreign.map((f) => t(`งานของ ${f.name || f.code || "บัญชีอื่น"}${f.machineCode ? ` (${f.machineCode})` : ""} ${nc(f.count)} รายการ รอซิงค์`, `${f.count} job(s) of ${f.name || f.code || "another account"}${f.machineCode ? ` (${f.machineCode})` : ""} waiting`)).join(" · ")}
           {" — "}{t("ให้เจ้าของล็อกอินที่แท็บเล็ตนี้เพื่อส่ง", "have the owner log in on this tablet to send them")}
         </div>
       )}
@@ -2147,7 +2147,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               <div className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
                 <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· กรอกก่อน", "· fill first") : ""}</div>
-                <input
+                <NumInput
                   inputMode="numeric" disabled={recording}
                   value={materialLen} placeholder="0"
                   onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
@@ -2332,14 +2332,14 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
         {/* สแกนเบอร์เดิมซ้ำ — บอกว่ามีอยู่แล้วเท่าไร แล้วให้กรอก "จำนวนที่จะเพิ่ม" */}
         {has > 0 ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "#e6c67a", fontWeight: 700, margin: "0 0 12px", padding: "8px 10px", background: "#241f10", border: "1px solid #5c4a1f", borderRadius: 10 }}>
-            {t(`เบอร์นี้มีอยู่แล้ว ${has} ชิ้น — กรอกจำนวนที่จะเพิ่ม`, `already ${has} pcs — enter amount to add`)}
+            {t(`เบอร์นี้มีอยู่แล้ว ${nc(has)} ชิ้น — กรอกจำนวนที่จะเพิ่ม`, `already ${nc(has)} pcs — enter amount to add`)}
           </div>
         ) : null}
         {/* กรอกจำนวน (มีปุ่ม +/− ให้กดง่ายบนแท็บเล็ต) */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, margin: "4px 0 16px" }}>
           <span style={{ fontSize: 14, color: "#cfe7dc", fontWeight: 600 }}>{t("จำนวน", "Qty")}</span>
           <button type="button" onClick={() => setQ(String(Math.max(1, nq - 1)))} disabled={busy} style={stepBtn}>−</button>
-          <input type="number" inputMode="numeric" min={1} value={q} disabled={busy}
+          <NumInput strict inputMode="numeric" min={1} value={q} disabled={busy}
             onFocus={(e) => e.target.select()}
             onChange={(e) => setQ(e.target.value.replace(/[^0-9]/g, ""))}
             style={{ width: 96, padding: "10px", fontSize: 26, fontWeight: 800, textAlign: "center", borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
@@ -2397,7 +2397,7 @@ function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 12.5, color: "#9fd8bf", marginBottom: 5 }}>{t("จำนวนที่จะทำ", "Qty to make")}</div>
-          <input type="number" inputMode="numeric" min={1} value={qty} disabled={busy}
+          <NumInput strict inputMode="numeric" min={1} value={qty} disabled={busy}
             onChange={(e) => { firedRef.current = false; setQty(e.target.value.replace(/[^0-9]/g, "")); }}
             style={{ ...inStyle, width: 120, fontSize: 22 }} />
         </div>
@@ -2426,12 +2426,12 @@ function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
                   <td className="c-pn">{b.part_no}{b.part_name ? <div style={{ fontSize: 11, color: "#7fa694" }}>{b.part_name}</div> : null}</td>
                   <td className="c-len">{nd}<span className="u"> {t("ชิ้น", "pcs")}</span></td>
                   <td className="c-qty">
-                    <input type="number" inputMode="numeric" min={0} disabled={busy}
+                    <NumInput strict inputMode="numeric" min={0} disabled={busy}
                       value={got[b.child_pm_id] ?? ""} placeholder="0"
                       onChange={(e) => { firedRef.current = false; setGot((s) => ({ ...s, [b.child_pm_id]: e.target.value.replace(/[^0-9]/g, "") })); }}
                       style={inStyle} />
                   </td>
-                  <td className="c-prog" style={{ textAlign: "center", fontWeight: 800, color: ok ? "#43d693" : "#e0a44a" }}>{ok ? "✓" : `${g}/${nd}`}</td>
+                  <td className="c-prog" style={{ textAlign: "center", fontWeight: 800, color: ok ? "#43d693" : "#e0a44a" }}>{ok ? "✓" : `${g}/${nc(nd)}`}</td>
                 </tr>
               );
             })}
@@ -2481,7 +2481,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           <div style={{ fontSize: 12.5, color: "#7fa694", marginBottom: 18 }}>{t("ใส่จำนวนก่อน แล้วค่อยสแกนลูก", "set the quantity, then scan children")}</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
             <button type="button" aria-label="minus" onClick={() => setParentQty && setParentQty(Math.max(1, pq - 1))} disabled={busy} style={stepBtn}>−</button>
-            <input type="number" inputMode="numeric" min={1} value={pq} disabled={busy}
+            <NumInput strict inputMode="numeric" min={1} value={pq} disabled={busy}
               onFocus={(e) => e.target.select()}
               onChange={(e) => setParentQty && setParentQty(Math.max(1, Math.floor(Number(String(e.target.value).replace(/[^0-9]/g, "")) || 1)))}
               style={{ width: 130, padding: "12px", fontSize: 40, fontWeight: 800, textAlign: "center", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
@@ -2489,7 +2489,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           </div>
           <button type="button" onClick={() => setQtyLocked && setQtyLocked(true)} disabled={busy}
             style={{ marginTop: 22, width: "100%", padding: "15px", borderRadius: 12, border: "none", background: "#2f9e64", color: "#fff", fontSize: 18, fontWeight: 800, cursor: "pointer" }}>
-            {t(`เริ่มสแกนลูก (จะทำ ${pq} ชิ้น)`, `Start scanning (make ${pq})`)}
+            {t(`เริ่มสแกนลูก (จะทำ ${nc(pq)} ชิ้น)`, `Start scanning (make ${pq})`)}
           </button>
         </div>
       </div>
@@ -2544,7 +2544,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
   // ยกเลิก/ย้อนกลับ — เคลียร์เบอร์แม่ กลับไปหน้าสแกน · กันเผลอทิ้งที่สแกนค้างไว้รอบนี้
   const asmBack = () => {
     if (asmChildren.length > 0 && !window.confirm(
-      t(`ทิ้ง${childWord}ที่สแกนไว้รอบนี้ ${asmChildren.length} ชิ้น แล้วย้อนกลับ?`,
+      t(`ทิ้ง${childWord}ที่สแกนไว้รอบนี้ ${nc(asmChildren.length)} ชิ้น แล้วย้อนกลับ?`,
         `Discard ${asmChildren.length} scanned ${childWord}(s) this round and go back?`))) return;
     asmReset();
   };
@@ -2561,7 +2561,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
           <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
         </div>
-        <div className="asw-scount"><b>{free ? scannedCount : `${doneUnits}/${totalUnits}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
+        <div className="asw-scount"><b>{free ? scannedCount : `${nc(doneUnits)}/${nc(totalUnits)}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
         <button className="asw-change" onClick={asmBack}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>
       </div>
 
@@ -2633,7 +2633,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
                   <td className="c-desc">{r.name || "—"}</td>
                   <td className="c-len">{r.measure != null ? <>{fmtNum(r.measure, measDigits)}<span className="u"> {measUnit}</span></> : "—"}</td>
                   <td className="c-qty">{r.qty}</td>
-                  <td className="c-prog"><span className="chk">{done ? "✓" : partial ? "◐" : "○"}</span>{r.have}/{r.qty}</td>
+                  <td className="c-prog"><span className="chk">{done ? "✓" : partial ? "◐" : "○"}</span>{nc(r.have)}/{nc(r.qty)}</td>
                 </tr>
               );
             })}
@@ -2702,7 +2702,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
                 ? t(`✓ ยืนยัน + ปิดงาน (${asmChildren.length})`, `✓ Confirm & finish (${asmChildren.length})`)
                 : asmComplete
                   ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
-                  : t(`✓ ${confirmVerb} (${asmChildren.length} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
+                  : t(`✓ ${confirmVerb} (${nc(asmChildren.length)} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
           </button>
         )}
       </div>
@@ -3059,7 +3059,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
         <div className="stn-qty-lbl">{t("จำนวน", "QUANTITY")}</div>
         <div className="stn-qty-stepper">
           <button onClick={() => setQty(Math.max(0, qty - 1))}>−</button>
-          <input inputMode="numeric" value={qty}
+          <NumInput strict inputMode="numeric" value={qty}
             onChange={(e) => setQty(Math.min(100000, Math.max(0, parseInt(e.target.value || "0", 10) || 0)))} />
           <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
@@ -3578,7 +3578,7 @@ export default function StationApp({ dept = "machine" } = {}) {
     let running = false;
     try { const d = JSON.parse(localStorage.getItem(draftKeyFor(user?.id)) || "null"); running = !!(d && d.step && d.step !== "idle"); } catch { /* ignore */ }
     const parts = [];
-    if (pending > 0) parts.push(t(`ยังมีงานค้างซิงค์ ${pending} ชิ้น — จะซิงค์อัตโนมัติเมื่อบัญชีนี้ล็อกอินอีกครั้ง (ข้อมูลไม่หาย)`, `${pending} job(s) still waiting to sync — they'll sync when this account logs in again`));
+    if (pending > 0) parts.push(t(`ยังมีงานค้างซิงค์ ${nc(pending)} ชิ้น — จะซิงค์อัตโนมัติเมื่อบัญชีนี้ล็อกอินอีกครั้ง (ข้อมูลไม่หาย)`, `${pending} job(s) still waiting to sync — they'll sync when this account logs in again`));
     if (running) parts.push(t("มีงานที่กำลังทำอยู่ (ยังไม่กด OK) — เก็บไว้ให้บัญชีนี้ทำต่อ · เวลาเดินเครื่องยังนับต่อ ถ้าไม่ได้ทำต่อให้กดยกเลิกงานก่อนออก", "A job is in progress (OK not pressed) — kept for this account · its timer keeps running; cancel the job first if you won't continue"));
     const msg = parts.length ? parts.join("\n\n") + "\n\n" + t("ออกจากระบบและปิดแอป?", "Log out and close?") : t("ออกจากระบบและปิดแอป?", "Log out and close?");
     if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
