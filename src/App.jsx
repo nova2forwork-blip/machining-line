@@ -2086,8 +2086,9 @@ function MaterialsPage({ user }) {
   }
   // ★ รอบ 13: ดาวน์โหลด Excel (ตามตัวกรอง/การค้นหาที่แสดงอยู่)
   async function doExport() {
-    const rows = shown.map((m) => ({
-      "INV Code": m.inv_code, Description: m.description || "", [L("Weight/M (กก./ม.)", "Weight/M (kg/m)")]: m.weight_per_m != null ? Number(m.weight_per_m) : "",
+    // ★ รอบ 14: เรียงตามที่เห็นบนจอ + คอลัมน์ Item (ลำดับ 1, 2, 3 …)
+    const rows = sort.sortRows(shown, sortAccessors).map((m, i) => ({
+      Item: i + 1, "INV Code": m.inv_code, Description: m.description || "", [L("Weight/M (กก./ม.)", "Weight/M (kg/m)")]: m.weight_per_m != null ? Number(m.weight_per_m) : "",
       [L("ความยาว/เส้น (มม.)", "Length/bar (mm)")]: m.length_mm != null ? Number(m.length_mm) : "", [L("จำนวน (เส้น)", "Qty (bars)")]: m.qty != null ? Number(m.qty) : "",
       [L("น้ำหนัก/เส้น (กก.)", "Weight/bar (kg)")]: matBarKg(m) != null ? Math.round(matBarKg(m) * 1000) / 1000 : "",
       [L("น้ำหนักรวม (กก.)", "Total weight (kg)")]: matTotKg(m) != null ? Math.round(matTotKg(m) * 100) / 100 : "",
@@ -2112,6 +2113,8 @@ function MaterialsPage({ user }) {
     load();
   }
   const cols = [
+    // ★ รอบ 14: Item = เลขลำดับตามที่แสดง (หลังกรอง/เรียง) — ไม่ได้เก็บใน DB
+    { key: "item", header: "Item", align: "center", thStyle: { width: 56 }, tdStyle: { color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 12.5, whiteSpace: "nowrap" }, cell: (m, i) => nc(i + 1) },
     ...(canEdit ? [{ key: "sel", header: L("เลือก", "Select"), lockCol: true, thStyle: { width: 40 }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
       cell: (m) => <input type="checkbox" aria-label={L("เลือก", "Select") + " " + m.inv_code} checked={sel.has(m.id)} style={{ width: 17, height: 17, accentColor: "var(--accent)" }}
         onChange={(e) => setSel((p) => { const n = new Set(p); if (e.target.checked) n.add(m.id); else n.delete(m.id); return n; })} /> }] : []),
