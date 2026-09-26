@@ -97,6 +97,7 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
     /* dvh/dvw = ขนาดจอจริง (หักแถบ URL) → หมุนแล้วขอบไม่โดนแถบบราวเซอร์ตัด (เดิม 100vh/100vw ล้น) */
     width: 100vh; height: 100vw;
     width: 100dvh; height: 100dvw;
+    max-width: none; max-height: none;   /* ★ รอบ 15: .stn-shell ปกติจำกัด max-width 100vw → หมุนแล้วเหลือแค่สี่เหลี่ยมจัตุรัส (จอล่างดำ · คอลัมน์ขวาหาย) */
     transform-origin: top left;
     transform: rotate(90deg) translateY(-100%);
     -webkit-transform-origin: top left;
@@ -242,6 +243,17 @@ table.stn-rec th {
 }
 table.stn-rec td { padding: 3px 6px; text-align: center; border-bottom: 1px solid #e6e9ee; color: #1a1d22; }
 table.stn-rec td.l { text-align: left; }
+/* ★ รอบ 15: ตารางงานล่าสุดตัวใหญ่ขึ้นบนจอที่กว้างพอ (ยังแสดงครบทุกคอลัมน์ — ผู้ใช้ต้องการให้เหมือนคอม)
+   จอแคบกว่า 1200 px คงขนาดเดิม (ไม่ให้ต้องเลื่อนซ้ายขวามากขึ้น) */
+@media (min-width: 1200px) and (orientation: landscape) and (min-height: 601px) {
+  table.stn-rec { font-size: 13.5px; }
+  table.stn-rec th { font-size: 11.5px; padding: 4px 4px; }
+  table.stn-rec td { padding: 4px 5px; }
+}
+@media (min-width: 1600px) and (orientation: landscape) and (min-height: 601px) {
+  table.stn-rec { font-size: 15px; }
+  table.stn-rec th { font-size: 12.5px; }
+}
 table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background: var(--st-tint); }
 .stn-st-fin { color: var(--st-green); font-weight: 600; }
 .stn-st-inp { color: #1a1d22; }
@@ -300,6 +312,23 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-scan-cell .qty b { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: var(--st-ink); }
 .stn-scan-cell.armed { border-color: var(--st-red); color: var(--st-red); }
 .stn-scan-cell.armed .qty b { color: var(--st-red); }
+/* ★ รอบ 15: ปุ่ม "ขั้นถัดไป" = สีทึบ + เรืองแสงเบาๆ (เริ่ม → สแกน → OK) */
+.stn-ctl-btn.next, .stn-ctl-btn.stn-scan-cell.next {
+  background: var(--st-red); border-color: var(--st-red); color: #fff;
+  animation: stnNextGlow 2s ease-in-out infinite;
+}
+.stn-ctl-btn.next:hover { background: var(--st-red-dk); }
+.stn-ctl-btn.next .qty, .stn-ctl-btn.next .qty b, .stn-ctl-btn.next .row1 span { color: #fff; }
+.stn-ctl-btn.next .stn-rec-dot { background: #fff; border-color: #fff; }
+.stn-pill.ok.next { animation: stnNextGlow 2s ease-in-out infinite; }
+@keyframes stnNextGlow {
+  0%, 100% { box-shadow: 0 10px 22px -10px rgba(67, 97, 238, .75), 0 0 0 0 rgba(67, 97, 238, .35); }
+  50% { box-shadow: 0 10px 22px -10px rgba(67, 97, 238, .75), 0 0 0 7px rgba(67, 97, 238, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .stn-ctl-btn.next, .stn-pill.ok.next { animation: none; } }
+/* หน้าจำนวน: ยังไม่เลือกสถานะ → ปุ่มสถานะขอบประ + ข้อความบอก */
+.stn-status-row.pick .stn-pill:not(:disabled) { border: 2px dashed var(--st-red); }
+.stn-status-hint.need { font-size: 13px; color: var(--st-red-dk); text-align: center; margin-top: 2px; line-height: 1.5; font-weight: 600; }
 .stn-save-btn.armed { border-color: var(--st-red); color: var(--st-red); font-weight: 700; }
 /* ปุ่มออกจากระบบ — แถบเต็มความกว้าง ชิดขอบล่างสุดของจอ โทนแดงอ่อน */
 .stn-exit {
