@@ -541,7 +541,7 @@ import { SimpleBarChart } from "./svgcharts.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
 const CHART = {
-  grid: "#e1e9e5", muted: "#6d7d76", tooltipBg: "#ffffff", tooltipBorder: "#e1e9e5",
+  grid: "#e1e9e5", muted: "#5a6a63", tooltipBg: "#ffffff", tooltipBorder: "#e1e9e5",
   text: "#142420", accent: "#10b981", success: "#22c55e",
 };
 
@@ -553,8 +553,8 @@ function LangToggle() {
       title="สลับภาษา / Switch language"
       style={{ appearance: "none", cursor: "pointer", fontFamily: "inherit",
         fontSize: 13, fontWeight: 800, lineHeight: 1, letterSpacing: ".03em",
-        padding: "5px 12px", borderRadius: 8,
-        border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent, #10b981)" }}>
+        padding: "7px 12px", borderRadius: 8,
+        border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent-dk, #0a8a60)" }}>
       {lang === "th" ? "ไทย" : "EN"}
     </button>
   );
@@ -947,7 +947,7 @@ function Login({ onLogin }) {
         <Btn variant="accent" size="lg" className="btn-block" disabled={busy}>
           {busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}
         </Btn>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 18, lineHeight: 1.7, textAlign: "center" }}>
           ลืมรหัสผ่าน? ติดต่อผู้ดูแลระบบ
         </div>
       </form>
@@ -2796,7 +2796,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </div>
       )}
 
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
         {L(<>วางจาก Excel ได้ทั้งบล็อก — <b>เรียงตามคอลัมน์บนจอ</b> เริ่มจากช่องที่คลิก (ลากหัวคอลัมน์ ⠿ ให้ตรงกับไฟล์ Excel ได้ · มีหัวตาราง = จับจากชื่อหัว) · คอลัมน์ที่ระบบคำนวณ (Total Kg · น้ำหนัก/ชิ้น) ข้ามค่าที่วางมา · น้ำหนัก/ชิ้น = (Length ÷ 1,000) × Weight/M</>,
            <>Paste a whole block from Excel — <b>it follows the column order on screen</b>, starting at the clicked cell (drag ⠿ headers to match your Excel file · with a header row, columns are matched by name) · calculated columns (Total Kg · Weight/pc) ignore pasted values · Weight/pc = (Length ÷ 1,000) × Weight/M</>)}
         <br />{L(<>Weight/M เว้นว่าง = เติมจาก <b>บันทึก Material</b> ตาม INV (โปรเจคนี้ก่อน → Center Stock) · <b>OFF CUT (เศษ) กรอก Weight/M เอง</b> ไม่เติม/ไม่บันทึก · จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ</>,
@@ -2836,7 +2836,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       </div>
 
       <div className="pgrid-foot">
-        <span style={{ fontSize: 11.5, color: "var(--muted)", userSelect: "none" }} title="กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง">
+        <span style={{ fontSize: 12, color: "var(--muted)", userSelect: "none" }} title="กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง">
           <Icon name="refresh" size={12} style={{ verticalAlign: "-2px", marginRight: 3 }} />Ctrl+Z ย้อนกลับได้
           {historyRef.current.length > 0 && (
             <span style={{ marginLeft: 4, color: "var(--accent-dk)", fontWeight: 600 }}>({historyRef.current.length})</span>
@@ -2845,7 +2845,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         {undoCount > 0 && (
           <span style={{ fontSize: 11.5, color: "var(--success)", fontWeight: 600 }}>↩ ย้อนกลับแล้ว</span>
         )}
-        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
           {makeQr ? "เปิดสร้าง QR — จะได้ป้ายทุกชิ้นอัตโนมัติ" : "ปิดสร้าง QR — บันทึกแค่ยอด Release"}
         </span>
         {!colDefault && (
@@ -2997,7 +2997,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
             <Field label="เลขที่ Release Order *">
               <Input value={ro} placeholder="เช่น P-009" onChange={(e) => setRo(e.target.value)} onBlur={(e) => setRo(normalizeReleaseOrder(e.target.value))} />
               {parsed.releaseOrder && normalizeReleaseOrder(parsed.releaseOrder) !== String(parsed.releaseOrder).trim() && (
-                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>ในไฟล์เขียน “{parsed.releaseOrder}” → จัดรูปแบบเป็น {normalizeReleaseOrder(parsed.releaseOrder)}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>ในไฟล์เขียน “{parsed.releaseOrder}” → จัดรูปแบบเป็น {normalizeReleaseOrder(parsed.releaseOrder)}</div>
               )}
             </Field>
             <Field label="วันที่ปล่อยงาน *">
@@ -4031,7 +4031,7 @@ function ProgressBar({ pct, finished, total }) {
       <span style={{ fontSize: 12, fontWeight: 600, color, whiteSpace: "nowrap", minWidth: 44, textAlign: "right" }}>
         {label}
       </span>
-      <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
         ({nc(finished)}/{nc(total)})
       </span>
     </div>
@@ -4058,7 +4058,7 @@ function PartProgressModal({ release, user, goTo, onClose }) {
 
   // สไตล์การ์ดสรุป (ใช้ซ้ำหลายจุด)
   const cellStyle = { flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
-  const cellLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const cellLbl = { fontSize: 12, color: "var(--muted)" };
   const cellVal = { fontSize: 16, fontWeight: 700 };
 
   useEffect(() => {
@@ -4169,7 +4169,7 @@ function PartProgressModal({ release, user, goTo, onClose }) {
           <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>
             {lang === "en" ? "Work by machine" : "งานแยกตามเครื่องจักร"}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
             {lang === "en"
               ? <>Which machine made this part, doing which step — <b>Done</b> = all statuses · <b>finished</b> = pressed Finished · vs order {fmtNum(totalUnits)} pcs</>
               : <>พาร์ทนี้ทำจากเครื่องไหน ขั้นตอนไหนบ้าง — <b>ทำแล้ว</b> = ทุกสถานะ · <b>เสร็จ</b> = กด Finished · เทียบกับจำนวนสั่ง {fmtNum(totalUnits)} ชิ้น</>}
@@ -4602,7 +4602,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
             {(qk === "qty+" || qk === "qty-" || qk === "transfer") && <NumField min="1" value={qv} onChange={(e) => setQv(e.target.value)} placeholder="0" style={{ width: 80 }} />}
             {qk === "inv" && <Input value={qv} onChange={(e) => setQv(e.target.value)} placeholder={L("INV Code ใหม่", "New INV Code")} style={{ width: 160 }} />}
             <Btn size="sm" variant="ghost" onClick={quickApply} disabled={!qk}>{L("ใช้กับทุก Part", "Apply to all")}</Btn>
-            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("แล้วค่อยแก้เบอร์ที่ต่างออกไปทีละแถว", "then adjust the different ones row by row")}</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{L("แล้วค่อยแก้เบอร์ที่ต่างออกไปทีละแถว", "then adjust the different ones row by row")}</span>
           </div>
           {sel.map((rid) => {
             const r = byId[rid]; const pl = lines.filter((l) => l.rid === rid); const Lm = limits[rid] || {};
@@ -4615,7 +4615,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
                     {r?.part_master?.part_no || "-"}
                     <button type="button" style={lx} onClick={() => toggle(rid)} title={L("ไม่แก้เบอร์นี้ (เอาออก)", "Don't change this part (remove)")}>✕</button>
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>qty {fmtNum(r?.qty)} · {L("ทำแล้ว", "made")} {fmtNum(Lm.produced || 0)} · {L("QR ยังไม่ใช้", "unused QR")} {fmtNum(Lm.free_qr ?? r?.qty)}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>qty {fmtNum(r?.qty)} · {L("ทำแล้ว", "made")} {fmtNum(Lm.produced || 0)} · {L("QR ยังไม่ใช้", "unused QR")} {fmtNum(Lm.free_qr ?? r?.qty)}</div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
                   {pl.map((l) => {
@@ -4635,7 +4635,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
                         </select>
                         {(l.key === "qty+" || l.key === "qty-") && <><NumField min="1" value={l.n} onChange={(e) => setL(l.id, { n: e.target.value })} placeholder="0" style={{ width: 80 }} /> {L("ชิ้น", "pcs")}</>}
                         {l.key === "inv" && <>
-                          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("เดิม", "now")}</span>
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>{L("เดิม", "now")}</span>
                           <b style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{b?.inv || "-"}</b>
                           <span style={{ color: "var(--muted-2)" }}>→</span>
                           <Input value={l.inv} onChange={(e) => setL(l.id, { inv: e.target.value })} placeholder={L("INV Code ใหม่", "New INV Code")} style={{ width: 160 }} />
@@ -4687,7 +4687,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
                 </div>
                 {rows.map(({ l, b, a, s }) => (
                   <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0 3px 10px", fontSize: 12.5 }}>
-                    {s.ok ? <ModChip type={modTypeOf(l.key)} /> : <span style={{ fontSize: 11, color: "var(--muted)" }}>{l.key ? modTL(modTypeOf(l.key), lang) : L("ยังไม่เลือก", "not chosen")}</span>}
+                    {s.ok ? <ModChip type={modTypeOf(l.key)} /> : <span style={{ fontSize: 12, color: "var(--muted)" }}>{l.key ? modTL(modTypeOf(l.key), lang) : L("ยังไม่เลือก", "not chosen")}</span>}
                     <span style={{ color: s.ok ? "var(--text)" : s.err ? "var(--danger)" : "var(--muted)" }}>{s.ok ? descLine(l, b, a) : s.err ? "⚠ " + s.err : L("ยังไม่ครบ — ", "incomplete — ") + s.inc}</span>
                   </div>
                 ))}
@@ -4696,7 +4696,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
           })}
         </div>
       )}
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>{L("🔒 ค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า (ย้อนดูได้) · ทุกรายการบันทึกรวมเป็น ", "🔒 Previous values stay in the earlier M (viewable) · every change is saved together as ")}<b>{chosen}</b>{L(" ครั้งเดียว · บันทึกงานที่ทำไปแล้วไม่ถูกลบ · QR ชิ้นเดิมไม่เปลี่ยน", " · recorded work is never deleted · existing QR codes don't change")}</div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>{L("🔒 ค่าก่อนแก้เก็บไว้ใน M ก่อนหน้า (ย้อนดูได้) · ทุกรายการบันทึกรวมเป็น ", "🔒 Previous values stay in the earlier M (viewable) · every change is saved together as ")}<b>{chosen}</b>{L(" ครั้งเดียว · บันทึกงานที่ทำไปแล้วไม่ถูกลบ · QR ชิ้นเดิมไม่เปลี่ยน", " · recorded work is never deleted · existing QR codes don't change")}</div>
 
       {secH(4, L("เหตุผล (จำเป็น · ใช้กับทั้ง M)", "Reason (required · for the whole M)"))}
       <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
@@ -4844,11 +4844,11 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose, ca
   const items = (mod.items || []).slice().sort((a, b) => partOrder.indexOf(a.part_no) - partOrder.indexOf(b.part_no) || a.seq - b.seq);
   const ba = (it) => it.type === "inv"
     ? <><span style={{ color: "var(--muted)", textDecoration: "line-through", fontFamily: "var(--font-mono)", fontSize: 12 }}>{it.before?.inv || "-"}</span><span style={{ color: "var(--muted-2)", margin: "0 4px" }}>→</span><b style={{ color: "var(--accent-dk)" }}>{it.after?.inv || "-"}</b></>
-    : <><span style={{ color: "var(--muted)", textDecoration: "line-through" }}>{fmtNum(it.before?.qty)}</span><span style={{ color: "var(--muted-2)", margin: "0 4px" }}>→</span><b style={{ color: "var(--accent-dk)" }}>{fmtNum(it.after?.qty)}</b> <span style={{ fontSize: 11, color: "var(--muted)" }}>{L("ชิ้น", "pcs")}</span></>;
+    : <><span style={{ color: "var(--muted)", textDecoration: "line-through" }}>{fmtNum(it.before?.qty)}</span><span style={{ color: "var(--muted-2)", margin: "0 4px" }}>→</span><b style={{ color: "var(--accent-dk)" }}>{fmtNum(it.after?.qty)}</b> <span style={{ fontSize: 12, color: "var(--muted)" }}>{L("ชิ้น", "pcs")}</span></>;
   const qrText = (it) => {
     const a = Array.isArray(it.after?.qr) ? it.after.qr : [];
     if (!a.length) return null;
-    return <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, fontFamily: "var(--font-mono)" }} title={a.join("\n")}>QR: {a.slice(0, 3).join(", ")}{a.length > 3 ? ` … (+${a.length - 3})` : ""}</div>;
+    return <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, fontFamily: "var(--font-mono)" }} title={a.join("\n")}>QR: {a.slice(0, 3).join(", ")}{a.length > 3 ? ` … (+${a.length - 3})` : ""}</div>;
   };
   return (
     <Modal wide onClose={onClose}
@@ -4877,7 +4877,7 @@ function ReleaseModDetailModal({ mod, origin, prevVersion, releases, onClose, ca
           ))}</tbody>
         </table>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12 }}>🔒 {L(`${prevVersion} (ค่าก่อนแก้) ยังเก็บอยู่ ลบทับไม่ได้ · บันทึกงานหน้าเครื่องที่ทำไปแล้วจำค่าตอนที่ทำ · QR ของชิ้นเดิมไม่เปลี่ยน`, `${prevVersion} (before) is still kept and can't be overwritten · station records keep the values from when they were made · existing QR codes don't change`)}</div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 12 }}>🔒 {L(`${prevVersion} (ค่าก่อนแก้) ยังเก็บอยู่ ลบทับไม่ได้ · บันทึกงานหน้าเครื่องที่ทำไปแล้วจำค่าตอนที่ทำ · QR ของชิ้นเดิมไม่เปลี่ยน`, `${prevVersion} (before) is still kept and can't be overwritten · station records keep the values from when they were made · existing QR codes don't change`)}</div>
       <ModDetailActions version={mod.version} canRevert={canRevert && !mod.reverted} canCancel canRollback={hasNewer} onRevert={onRevert} onExport={onExport} exporting={exporting} />
     </Modal>
   );
@@ -5150,7 +5150,7 @@ function ReleaseRevertModal({ mode, version, projectId, releaseOrder, mods, curr
             {pv.moved_back > 0 && <span className="relmod-rv-chip">{L(`ย้ายกลับ ${nc(pv.moved_back)} ชิ้น`, `${nc(pv.moved_back)} pcs moved back`)}</span>}
             <span className="relmod-rv-chip now">{L("ตอนนี้", "Now")} {fmtM(current)} → <b>{fmtM(pv.current)}</b></span>
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 12px", lineHeight: 1.55 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px", lineHeight: 1.55 }}>
             {L("QR ที่คืน = ป้ายเดิมสแกนได้ต่อ · QR ที่ถูกยกเลิก = ถ้าพิมพ์ป้ายไปแล้ว ให้แยกป้าย/ชิ้นนั้นออก (หน้าเครื่องจะแจ้งว่าถูกยกเลิก) · งานที่บันทึกไปแล้วไม่ถูกแตะ",
                "Restored QR = the old labels scan again · Cancelled QR = if labels were printed, set them aside (the station will say they're cancelled) · recorded work is not touched")}
           </div>
@@ -5175,7 +5175,7 @@ function ReleaseRevertModal({ mode, version, projectId, releaseOrder, mods, curr
           </Btn>
         )}
       </div>
-      {ok && !reason.trim() && <div style={{ textAlign: "right", fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>{L("ใส่เหตุผลก่อนยืนยัน", "Enter a reason to confirm")}</div>}
+      {ok && !reason.trim() && <div style={{ textAlign: "right", fontSize: 12, color: "var(--muted)", marginTop: 6 }}>{L("ใส่เหตุผลก่อนยืนยัน", "Enter a reason to confirm")}</div>}
     </Modal>
   );
 }
@@ -5877,12 +5877,12 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 </div>
               )}
               {stationDrove && (
-                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
                   {lang === "en" ? "* Counts pieces the machine terminal marked Finished (each machine’s own route)" : "* นับชิ้นที่หน้าเครื่องกด Finished (ตามรูทของเครื่อง)"}
                 </div>
               )}
               {totalInProgress > 0 && (
-                <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 3 }}>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
                   กำลังทำ: {fmtNum(totalInProgress)} ชิ้น
                 </div>
               )}
@@ -5904,7 +5904,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? (lang === "en" ? "Modify isn't installed — run migration-release-modify.sql in Supabase" : "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase") : (lang === "en" ? "Couldn't load history" : "โหลดประวัติไม่สำเร็จ")}</div>
               : (
                 <>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>{lang === "en" ? "What changed · in which M · click an M for details · previous values are kept as evidence" : "แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้"}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{lang === "en" ? "What changed · in which M · click an M for details · previous values are kept as evidence" : "แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้"}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 236, overflow: "auto" }}>
                     {modList.map((m) => {
                       const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));
@@ -5918,7 +5918,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                               {rv ? <span className="relmod-xchip">{lang === "en" ? "Cancelled" : "ยกเลิกแล้ว"}</span> : (m.version === curVersion ? <span className="relmod-nowchip">{lang === "en" ? "now" : "ตอนนี้"}</span> : null)}
                               {types.map((t) => <ModChip key={t} type={t} />)}<span className={rv ? "relmod-strike-txt" : ""}>{pns.join(", ")}</span>
                             </div>
-                            <div style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {nc(pns.length)} Part · {m.actor_name || "-"} · {m.reason}</div>
+                            <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {nc(pns.length)} Part · {m.actor_name || "-"} · {m.reason}</div>
                             {rv && <div style={{ fontSize: 11.5, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⊘ {lang === "en" ? "Cancelled" : "ยกเลิก"} <b>{fmtYmd(revDocDate(rv))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(rv.at)} · {rv.actor_name || "-"}{rv.mode === "rollback" ? (lang === "en" ? ` · rolled back to ${rv.target_version || M0}` : ` · ย้อนกลับเป็น ${rv.target_version || M0}`) : ""} · {rv.reason}</div>}
                           </div>
                           <button type="button" className="relmod-dl" title={lang === "en" ? `Export ${m.version} (Excel)` : `Export ${m.version} (Excel)`} disabled={modExporting}
@@ -5931,7 +5931,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                       <ModVerPill v={M0} gray />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{lang === "en" ? "Original — before any change" : "ต้นฉบับ — ก่อนการแก้ไข"}</div>
-                        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{(() => { const rd = releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]; return rd ? <>📅 {lang === "en" ? "released" : "ปล่อยงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(rd)}</b> · </> : null; })()}{modInfo.origin ? `🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{(() => { const rd = releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]; return rd ? <>📅 {lang === "en" ? "released" : "ปล่อยงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(rd)}</b> · </> : null; })()}{modInfo.origin ? `🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
                       </div>
                       <button type="button" className="relmod-dl" title={`Export ${M0} (Excel)`} disabled={modExporting}
                         onClick={(e) => { e.stopPropagation(); exportMod(M0); }}><Icon name="grid" size={13} /></button>
@@ -6008,7 +6008,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                     </div>
                   )}
                   {c.inProgress > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
+                    <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}
                       title={lang === "en" ? "Started but not marked Finished yet" : "เริ่มทำแล้วแต่ยังไม่ได้กด Finished"}>
                       +{fmtNum(c.inProgress)} {lang === "en" ? "in progress" : "กำลังทำ"}
                     </div>
@@ -6354,7 +6354,7 @@ function ReleasePage({ user, goTo }) {
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
             { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-") },
             { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => (
-                <>{fmtNum(g.releases.length)} Part{g.matchCount ? <div style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>ตรงที่ค้น {fmtNum(g.matchCount)}</div> : null}</>
+                <>{fmtNum(g.releases.length)} Part{g.matchCount ? <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>ตรงที่ค้น {fmtNum(g.matchCount)}</div> : null}</>
               ) },
             { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
             { key: "progress", header: "ความคืบหน้า", sortKey: "progress", tdStyle: { whiteSpace: "nowrap" },
@@ -6559,7 +6559,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
         <StatCard label={L("Release ที่ทำครบแล้ว", "Releases complete")} value={loading ? "…" : `${fmtNum(fullRel)} / ${fmtNum(rows.length)}`} icon="check" />
       </div>
       <Card title={L("รายการชิ้นงานที่เสร็จ (ต่อ Release)", "Finished pieces (per Release)")}>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           {L(<><b>เสร็จ</b> = ชิ้นที่หน้าเครื่องกด <b>Finished</b> ตามรูทของเครื่อง (เครื่องติ๊กขั้นตอนไหนไว้ก็ตามนั้น) · ชิ้นเดียวกันกด Finished หลายเครื่อง/หลายครั้ง นับครั้งเดียว · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์) · ยอด<b>สะสมทั้งหมด</b> ไม่ขึ้นกับช่วงเวลาด้านบน · กรองตามโปรเจค / Part / Release ที่เลือก</>,
              <><b>Finished</b> = pieces the machine terminal marked <b>Finished</b>, following each machine’s own route (whatever steps it ticked) · a piece finished on several machines/scans counts once · capped at the ordered qty (extra = spare) · <b>cumulative</b>, not limited to the period above · filtered by the selected project / Part / Release</>)}
         </div>
@@ -6608,7 +6608,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", opacity: (Number(m.finished) || 0) > 0 ? 1 : 0.6 }}>
                         <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }} title={m.name || ""}>{m.code || m.name || "?"}</span>
                         {(m.ops || []).map((o, oi) => <span key={oi} style={chip}>{opLabel(o, lang)}</span>)}
-                        <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }}>{L(`เสร็จ ${fmtNum(m.finished || 0)}`, `${fmtNum(m.finished || 0)} finished`)}</span>
+                        <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>{L(`เสร็จ ${fmtNum(m.finished || 0)}`, `${fmtNum(m.finished || 0)} finished`)}</span>
                       </div>
                     ))}
                   </div>
@@ -6886,7 +6886,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               <span className={`chip ${effScope === "lot" ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)</span>
             </div>
           </Field>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 2px 12px", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", margin: "6px 2px 12px", lineHeight: 1.6 }}>
             {effScope === "unit"
               ? (multi
                   ? `ป้ายรายชิ้น (รันเบอร์) — ทุกพาร์ทที่เลือก (${fmtNum(lotReps.length)} พาร์ท) จะได้ป้ายครบทุกชิ้น เลขวิ่ง 1 OF N แยกตามแต่ละพาร์ท`
@@ -7097,13 +7097,13 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
               {/* ★ รอบ 12 (B35): มีประวัติ Modify แล้ว = เลข M มาจากระบบ Modify เท่านั้น (พิมพ์เองเช่น M-005 ตอนประวัติอยู่ M-002 → ครั้งหน้ากระโดดเป็น M-006) */}
               <Input value={modify} onChange={(e) => setModify(e.target.value)} placeholder="เช่น M-001 (เว้นว่าง = 0)" disabled={modLocked}
                 title={modLocked ? "ใบนี้มีประวัติ Modify — เลข M เปลี่ยนตามการ Modify/ยกเลิก เท่านั้น" : undefined} />
-              {modLocked && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>เลข M ตั้งโดยระบบ Modify — แก้ไม่ได้ที่นี่</div>}
+              {modLocked && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>เลข M ตั้งโดยระบบ Modify — แก้ไม่ได้ที่นี่</div>}
             </Field>
             <Field label="เลขที่ Release Order">
               <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} disabled={modLocked}
                 title={modLocked ? "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้" : undefined}
                 onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
-              {modLocked && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลขไม่ได้ (ประวัติผูกกับเลขเดิม)</div>}
+              {modLocked && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลขไม่ได้ (ประวัติผูกกับเลขเดิม)</div>}
             </Field>
             <Field label="วันที่">
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -7360,18 +7360,18 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
             <Field label="จำนวน (ชิ้น)">
               {/* ★ แก้จำนวนย้ายไปที่ปุ่ม Modify (เก็บของเดิมเป็นหลักฐาน M-xx + QR ที่ยกเลิก) — ที่นี่ล็อกไว้ ไม่ให้ลบ QR เงียบๆ */}
               <NumField value={qty} readOnly disabled title={lang === "en" ? "Change qty with ✎ Modify on the Release Order page" : "แก้จำนวนที่ปุ่ม ✎ Modify หน้า Release Order"} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Change qty with <b style={{ color: "#6d4aff" }}>✎ Modify</b> (saved as a new M, previous values kept as evidence)</> : <>แก้จำนวนที่ปุ่ม <b style={{ color: "#6d4aff" }}>✎ Modify</b> (บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน)</>}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Change qty with <b style={{ color: "#6d4aff" }}>✎ Modify</b> (saved as a new M, previous values kept as evidence)</> : <>แก้จำนวนที่ปุ่ม <b style={{ color: "#6d4aff" }}>✎ Modify</b> (บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน)</>}</div>
             </Field>
             <Field label="เลขที่ Release Order">
               <Input value={releaseOrder} onChange={(e) => setReleaseOrder(e.target.value)} disabled={modLocked}
                 title={modLocked ? "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้" : undefined}
                 onBlur={(e) => setReleaseOrder(normalizeReleaseOrder(e.target.value))} placeholder="เช่น P-009 (ไม่บังคับ)" />
-              {modLocked && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? "This order has Modify history — can’t change the number" : "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้"}</div>}
+              {modLocked && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? "This order has Modify history — can’t change the number" : "ใบนี้มีประวัติ Modify — เปลี่ยนเลขไม่ได้"}</div>}
             </Field>
             <Field label="น้ำหนัก/ชิ้น (กก.)">
               <NumField step="0.01" value={unitWeight} onChange={(e) => setUnitWeight(e.target.value)} />
               {String(unitWeight) !== String(release.unit_weight ?? "") && unitWeight !== "" && Number(unitWeight) > 0 && (
-                <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11.5, color: "var(--muted)", marginTop: 4, lineHeight: 1.45, cursor: "pointer" }}>
+                <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: "var(--muted)", marginTop: 4, lineHeight: 1.45, cursor: "pointer" }}>
                   <input type="checkbox" checked={recalcW} onChange={(e) => setRecalcW(e.target.checked)} style={{ marginTop: 2 }} />
                   <span>{lang === "en" ? "Also recalculate weight in this part’s scan history" : "คิดน้ำหนักในประวัติสแกนของ Part นี้ใหม่ด้วย (รายงานตรงทันที)"}</span>
                 </label>
@@ -7388,7 +7388,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
                 title={modLocked ? (lang === "en" ? "This order uses Modify — change INV with ✎ Modify" : "ใบนี้ใช้ระบบ Modify — แก้ INV ที่ปุ่ม ✎ Modify") : undefined}
                 placeholder={lang === "en" ? "e.g. 23AN01600C (optional)" : "เช่น 23AN01600C (ไม่บังคับ)"} />
               {/* ★ รอบ 12 (B36): ใบที่มีประวัติ Modify — แก้ INV ตรงนี้จะไม่มีบันทึก M (ประวัติเพี้ยน) → ให้แก้ผ่าน Modify */}
-              {modLocked && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Has Modify history — change INV with <b style={{ color: "#6d4aff" }}>✎ Modify</b></> : <>ใบนี้มีประวัติ Modify — แก้ INV ที่ <b style={{ color: "#6d4aff" }}>✎ Modify</b> (จะได้เก็บเป็น M ใหม่)</>}</div>}
+              {modLocked && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>{lang === "en" ? <>Has Modify history — change INV with <b style={{ color: "#6d4aff" }}>✎ Modify</b></> : <>ใบนี้มีประวัติ Modify — แก้ INV ที่ <b style={{ color: "#6d4aff" }}>✎ Modify</b> (จะได้เก็บเป็น M ใหม่)</>}</div>}
             </Field>
             <Field label={lang === "en" ? "Material len (mm)" : "ความยาว material (มม.)"}>
               <NumField step="0.1" min="0" value={matLen} onChange={(e) => setMatLen(e.target.value)}
@@ -7398,7 +7398,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
             </Field>
           </div>
 
-          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-4px 0 12px", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", margin: "-4px 0 12px", lineHeight: 1.6 }}>
             {lang === "en"
               ? <><b>Part No. / INV Code</b> apply to every release of this part (QR already printed still scans) · <b>Material len</b> sets one value on all scans of this lot (doesn’t affect weight/qty)</>
               : <><b>Part No. / INV Code</b> มีผลกับทุก Release ของพาร์ทนี้ (QR ที่พิมพ์แล้วยังสแกนได้) · <b>ความยาว material</b> ตั้งค่าเดียวให้ทุกสแกนของล็อตนี้ (ไม่กระทบน้ำหนัก/จำนวน)</>}
@@ -7571,7 +7571,7 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
       </div>
       <Card title={`รายการ${kindWord} — เบอร์ลูกที่ใส่เข้าแต่ละเบอร์แม่`}
         right={<Btn variant="ghost" size="sm" onClick={doExport} disabled={!rows.length || exporting}><Icon name="grid" size={14} /> {exporting ? "กำลังสร้างไฟล์…" : "ดาวน์โหลด Excel"}</Btn>}>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
           {isPack ? "แต่ละแพ็กมีลูก/แผงอะไรบ้าง ยาวเท่าไร กี่ชิ้น" : "แต่ละเบอร์แม่มีเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม"}
         </div>
         {loadErr ? <LoadStateBanner state={{ error: loadErr }} onRetry={() => setTick((t) => t + 1)} />
@@ -7591,7 +7591,7 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
                 { key: "parent", header: "เบอร์แม่", cell: (r) => (
                   <>
                     <span style={{ fontWeight: 700, color: goTo ? "var(--accent-dk, #0e9d63)" : "inherit" }}>{r.parent_no}</span>
-                    <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace" }}>{r.parent_qr}</div>
                   </>
                 ) },
                 { key: "child", header: "เบอร์ลูก", cell: (r) => r.child_no },
@@ -7660,7 +7660,7 @@ function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onCl
   const showPart = mode === "machine";
   const colCount = 5 + (showMachine ? 1 : 0) + (showPart ? 1 : 0);
   const statCell = { flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
-  const statLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const statLbl = { fontSize: 12, color: "var(--muted)" };
   const pill = (st) => {
     const fin = String(st).toLowerCase() === "finished";
     return (
@@ -7752,7 +7752,7 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
   return (
     <>
       <Card title={L("รายพนักงาน", "By employee")} right={<Btn variant="ghost" size="sm" onClick={doExport} disabled={!rows.length}><Icon name="grid" size={14} /> {L("ดาวน์โหลด Excel", "Download Excel")}</Btn>}>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
           {L(`${rangeLabel || ""} · สรุปจากฐานข้อมูลโดยตรง (เร็ว — ไม่ต้องโหลดสแกนทุกแถว) · จำนวน = ชิ้นที่บันทึก (ขั้นตอนที่ติ๊กร่วมไม่นับซ้ำ) · ชิ้น/ชม. คิดจากเวลาเดินเครื่องที่จับจากหน้าเครื่อง · แตะแถวเพื่อดูรายวัน`,
              `${rangeLabel || ""} · summarised in the database (fast) · pieces = recorded pieces (co-ticked steps not double counted) · pcs/h uses machine time captured at the station · tap a row for the daily breakdown`)}
         </div>
@@ -7872,7 +7872,7 @@ function TrendView({ filters }) {
         <div className="chip-row">{TREND_H.map((x) => <span key={x.v} className={`chip ${hz === x.v ? "active" : ""}`} onClick={() => setHz(x.v)}>{lang === "en" ? x.en : x.th}</span>)}</div>
         <div className="chip-row">{[["kg", L("น้ำหนัก", "Weight")], ["qty", L("จำนวนชิ้น", "Pieces")], ["hrs", L("ชั่วโมงเครื่อง", "Machine hours")]].map(([k, t]) => <span key={k} className={`chip ${metric === k ? "active" : ""}`} onClick={() => setMetric(k)}>{t}</span>)}</div>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         {L("ไม่ขึ้นกับช่วงเวลาด้านบน (ใช้ตัวกรองโปรเจค/Part/Release/แผนก เดียวกัน) · สัปดาห์เริ่มวันจันทร์ · ช่วงล่าสุดยังไม่จบ", "Independent of the date range above (same project/part/release/department filters) · weeks start Monday · the latest period isn't over yet")}
       </div>
       {res === null ? <div style={{ color: "var(--muted)", padding: 8 }}>{L("กำลังโหลด…", "Loading…")}</div>
@@ -8227,7 +8227,7 @@ function ReportPage({ goTo }) {
                   style={{ accentColor: "var(--accent)", width: 16, height: 16, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>{s.name}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
                     {s.rows.length ? `${s.rows.length.toLocaleString()} แถว` : "ไม่มีข้อมูลในช่วงนี้"}
                   </div>
                 </div>
@@ -8351,7 +8351,7 @@ function ReportPage({ goTo }) {
           <Btn variant="accent" size="sm" onClick={doBackfillWeights} disabled={bfBusy}>{bfBusy ? "กำลังเติม..." : "เติมน้ำหนักย้อนหลัง"}</Btn>
         </div>
       )}
-      <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
         {lang === "en"
           ? <><b>Avg weight · per active day</b> = processed workload ÷ days that had work · a piece doing several ops in one machine at once counts once ·{" "}
               <b>Processed workload</b> = every scan summed; a piece through several separate operations is counted per operation (production-line load)</>
@@ -8363,7 +8363,7 @@ function ReportPage({ goTo }) {
       </Card>
 
       <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)">
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           {lang === "en"
             ? <>How much each machine did per operation (pcs·kg) + machine time + avg/day, all in one table · <b>Avg/day</b> is based on days with activity only</>
             : <>แต่ละเครื่องทำขั้นตอนอะไรไปเท่าไร (ชิ้น·กก.) + เวลาเดินเครื่อง + เฉลี่ย/วัน ในตารางเดียว · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง</>}
@@ -8401,7 +8401,7 @@ function ReportPage({ goTo }) {
                 cell: (m, i, c) => c.dm ? <span>{fmtNum(c.dm.avg.count)} ชิ้น{c.dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(c.dm.avg.seconds)}</span> : null}</span> : "—" },
             ]} />
         )}
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
           {lang === "en"
             ? <>Numbers are workload (counted per scan), not material quantity · <b>Machine time</b> = time captured between START–SAVE on the terminal (not the machine's actual power-on time)</>
             : <>ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)</>}
@@ -8409,7 +8409,7 @@ function ReportPage({ goTo }) {
       </Card>
 
       <Card title={lang === "en" ? "Release × Part × Operation" : "Release × Part × ขั้นตอน"}>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           {lang === "en"
             ? <>Each row = a Part in each Release · Operation columns = pieces that passed that operation · <b>Weight</b> in its own column · <b>Finished</b> = pieces marked Finished</>
             : <>แต่ละแถว = Part ในแต่ละ Release · คอลัมน์ขั้นตอน = จำนวนชิ้นที่ผ่านขั้นตอนนั้น · <b>น้ำหนัก</b> แยกคอลัมน์ · <b>เสร็จ</b> = ชิ้นที่กด Finished</>}
@@ -8633,7 +8633,7 @@ function MachineScanDetail({ machine, onBack }) {
   const totSec = mine.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
 
   const statCell = { flex: 1, minWidth: 140, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
-  const statLbl = { fontSize: 11.5, color: "var(--muted)" };
+  const statLbl = { fontSize: 12, color: "var(--muted)" };
   const pill = (st) => {
     const fin = String(st).toLowerCase() === "finished";
     return (
@@ -8918,7 +8918,7 @@ function MachineScanDetail({ machine, onBack }) {
           { k: "secs", label: lang === "en" ? "Run time" : "เวลาเดินเครื่อง" },
         ]} />
 
-        {admin && <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: click a row to edit (quantity / weight / status / INV / lengths) or delete the whole scan" : "แอดมิน: กดที่แถวเพื่อแก้ไข (จำนวน / น้ำหนัก / สถานะ / INV / ความยาว) หรือ ลบทั้งแถว"}</div>}
+        {admin && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Admin: click a row to edit (quantity / weight / status / INV / lengths) or delete the whole scan" : "แอดมิน: กดที่แถวเพื่อแก้ไข (จำนวน / น้ำหนัก / สถานะ / INV / ความยาว) หรือ ลบทั้งแถว"}</div>}
 
         {loadErr && <LoadStateBanner state={{ error: loadErr }} onRetry={() => setReloadTick((t) => t + 1)} />}
         <DataTable id="machine-scans" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" orderApiRef={colApi}
@@ -9052,7 +9052,7 @@ function MachineScanDetail({ machine, onBack }) {
               <NumField step="0.1" min="0" value={edForm.partLen} onChange={(e) => setEdForm((f) => ({ ...f, partLen: e.target.value }))} disabled={nq === 0} />
             </Field>
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 14px", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", margin: "-2px 0 14px", lineHeight: 1.6 }}>
             ⚠️ {lang === "en" ? "These 5 fields change the whole Release/part (every scan), not just this row" : "5 ช่องนี้มีผลกับทั้ง Release/พาร์ท (ทุกสแกน) ไม่ใช่แค่แถวนี้"}
           </div>
 
@@ -9341,7 +9341,7 @@ function DrHourlyChart({ data, targetPerHour, breakHours = [], lang, height = 23
           {ticks.map((t) => (
             <g key={t}>
               <line x1={padL} x2={w - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft, #e6ece9)" strokeWidth="1" />
-              <text x={padL - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted, #6d7d76)">{nc(t)}</text>
+              <text x={padL - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted, #5a6a63)">{nc(t)}</text>
             </g>
           ))}
           {data.map((d, i) => {
@@ -9353,12 +9353,12 @@ function DrHourlyChart({ data, targetPerHour, breakHours = [], lang, height = 23
             return (
               <g key={d.h}>
                 {isBreak && <rect x={x0 + 1} y={padT} width={Math.max(0, bw - 2)} height={ih} fill="var(--surface-2, #f1f5f3)" />}
-                {isBreak && <text x={x0 + bw / 2} y={padT + 12} textAnchor="middle" fontSize="10.5" fill="var(--muted, #6d7d76)">{L("พัก", "break")}</text>}
+                {isBreak && <text x={x0 + bw / 2} y={padT + 12} textAnchor="middle" fontSize="10.5" fill="var(--muted, #5a6a63)">{L("พัก", "break")}</text>}
                 {d.pcs > 0 && (
                   <path d={`M${bx},${y(0)} V${y(d.pcs) + r} Q${bx},${y(d.pcs)} ${bx + r},${y(d.pcs)} H${bx + barW - r} Q${bx + barW},${y(d.pcs)} ${bx + barW},${y(d.pcs) + r} V${y(0)} Z`}
                     fill={hov === i ? "var(--dr-data-dk, #3d6a5b)" : "var(--dr-data, #5f8a7b)"} />
                 )}
-                <text x={x0 + bw / 2} y={height - 8} textAnchor="middle" fontSize="11" fill="var(--muted, #6d7d76)">{String(d.h).padStart(2, "0")}</text>
+                <text x={x0 + bw / 2} y={height - 8} textAnchor="middle" fontSize="11" fill="var(--muted, #5a6a63)">{String(d.h).padStart(2, "0")}</text>
                 <rect x={x0} y={padT} width={bw} height={ih} fill="transparent" onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} />
               </g>
             );
@@ -9791,7 +9791,7 @@ function DailyReportPage() {
 
   const loading = logs === null;
   const statusPill = (g) => {
-    if (g.office) return <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{L("สแกนสำนักงาน", "office scan")}</span>;
+    if (g.office) return <span style={{ fontSize: 12, color: "var(--muted)" }}>{L("สแกนสำนักงาน", "office scan")}</span>;
     const fin = String(g.status).toLowerCase() === "finished";
     return (
       <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
@@ -10175,7 +10175,7 @@ function MachinesSummaryPage() {
       </div>
       <LoadStateBanner state={st} onRetry={() => setTick((t) => t + 1)} />
       <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
           นับตามจำนวนชิ้นที่ทำในแต่ละขั้นตอน — ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ (งานหน้าเครื่องนับตามจำนวนที่กรอก)
           <br />{lang === "en" ? "Tip: click a machine row to see all its scans (with date · time)." : "เคล็ดลับ: แตะแถวเครื่องเพื่อดูการสแกนทั้งหมดของเครื่องนั้น (พร้อมวัน · เวลา)"}
         </div>
@@ -10673,7 +10673,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
                   { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => `${fmtNum(g.qty)} ชิ้น` },
                   ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
                     cell: (g) => delKey === g.key
-                      ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>กำลังลบ {nc(delProg)}/{nc(g.ids.length)}…</span>
+                      ? <span style={{ fontSize: 12, color: "var(--muted)" }}>กำลังลบ {nc(delProg)}/{nc(g.ids.length)}…</span>
                       : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด" style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span> }] : []),
                 ]} />
             )}
@@ -10784,7 +10784,7 @@ function StationHealthCard({ compact = false }) {
                 { key: "seen", header: L("ติดต่อล่าสุด", "Last seen"), tdStyle: { whiteSpace: "nowrap", fontSize: 12.5 }, cell: (r) => (r.last_seen ? fmtAge(ageMin(r.last_seen)) + (ageMin(r.last_seen) >= 1 ? L("ที่แล้ว", " ago") : "") : "—") },
                 { key: "rec", header: L("บันทึกงานล่าสุด", "Last record"), tdStyle: { whiteSpace: "nowrap", fontSize: 12.5, color: "var(--muted)" }, cell: (r) => (r.last_record_at ? fmtDT(r.last_record_at) : "—") },
                 { key: "iss", header: L("ต้องดู", "Check"), tdStyle: { whiteSpace: "normal", minWidth: 200 }, cell: (r) => r.issues.length ? r.issues.map((i) => <span key={i.k} className={`sh-iss ${i.k}`}>{i.t}</span>) : <span style={{ color: "var(--success, #16a34a)" }}>✓</span> },
-                { key: "ver", header: L("รุ่นแอป", "App"), tdStyle: { fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }, cell: (r) => r.app_version || "—" },
+                { key: "ver", header: L("รุ่นแอป", "App"), tdStyle: { fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }, cell: (r) => r.app_version || "—" },
               ]} />
           )}
         </>
@@ -11818,7 +11818,7 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
         )}
       </div>
       {dests.length > 0 && (
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
           สเตชันนี้จะเข้า: {dests.map((d) => `${d.th} (${d.path})`).join(" · ")}
         </div>
       )}
@@ -12071,7 +12071,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
         <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
       </Field>
       {hasSynthSelected && (
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
           ขั้นตอนที่ติ๊กใหม่ (แพ็กแผง / แพ็กไซต์ไอเทม / MILLING) ถ้ายังไม่มีในระบบ กด "บันทึก" แล้วจะสร้างให้อัตโนมัติ
         </div>
       )}
@@ -12637,7 +12637,7 @@ function PartMasterEditModal({ part, projectCode, onClose, onSaved }) {
         <Field label="น้ำหนัก/ชิ้น (กก.)"><NumField step="0.001" min="0" value={f.unit_weight} onChange={(e) => setF({ ...f, unit_weight: e.target.value })} /></Field>
         <Field label="ความยาว/ชิ้น (มม.)"><NumField step="0.1" min="0" value={f.default_length_mm} onChange={(e) => setF({ ...f, default_length_mm: e.target.value })} /></Field>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.6, margin: "-2px 0 10px" }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6, margin: "-2px 0 10px" }}>
         น้ำหนัก/ความยาวของเบอร์ = ค่าเริ่มต้น · Release ที่ตั้งน้ำหนักเองไว้ ใช้ค่าของ Release ก่อน (แก้ที่ ✎ แก้ไข ในหน้า Release)
       </div>
       {String(f.unit_weight) !== String(part.unit_weight ?? "") && num(f.unit_weight) > 0 && (
@@ -12740,7 +12740,7 @@ function PartMasterCrud() {
             options={PM_KINDS.map((k) => ({ value: k.value, label: k.label }))} />
         </Field>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", margin: "-6px 2px 12px", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-6px 2px 12px", lineHeight: 1.6 }}>
         <b>ชนิด</b>: พาร์ท = ชิ้นส่วนปกติ · ซับ/แผง/แพ็ก = เบอร์ประกอบ (ประกอบจากลูก) — เลือกเป็นเบอร์ประกอบแล้วจะกำหนด BOM ได้ในตารางด้านล่าง
       </div>
       <Btn variant="accent" onClick={add}>เพิ่ม Part</Btn>
