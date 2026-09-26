@@ -42,6 +42,53 @@
         } catch (e) { /* ignore */ }
       })();
     </script>
+    <!-- ★ รอบ 15: กันจอหมุนค้าง — ถ้าไฟล์โปรแกรมหลักโหลดไม่ขึ้น (เปิดหน้าไว้ระหว่าง deploy · แคช/เวอร์ชันเก่าค้าง)
+         → ล้างแคช + ถอน service worker แล้วโหลดใหม่เอง 1 ครั้ง · ยังไม่ได้ = ขึ้นข้อความ + ปุ่ม "โหลดใหม่" (ไม่หมุนเงียบ)
+         (ตัวกู้ใน main.jsx ช่วยไม่ได้ในกรณีนี้ เพราะไฟล์หลักไม่ได้ถูกโหลดเลย) -->
+    <script>
+      (function () {
+        var KEY = "mls-healed";   // main.jsx ล้างให้เองเมื่อแอปเปิดสำเร็จ
+        function th() { try { return (localStorage.getItem("mls-lang") || "th") !== "en"; } catch (e) { return true; } }
+        function wipe() {
+          var p = [];
+          try { if (window.caches && caches.keys) p.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+          try { if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) p.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+          return Promise.all(p).catch(function () {});
+        }
+        function showMsg() {
+          var s = document.getElementById("boot-splash"); if (!s) return;
+          var t = th();
+          s.innerHTML = '<div style="font-family:system-ui,sans-serif;text-align:center;color:#5a6a63;font-size:16px;line-height:1.6;padding:20px">'
+            + (t ? "โหลดแอปไม่สำเร็จ (อาจเพิ่งอัปเดตเวอร์ชันใหม่)" : "The app didn't load (a new version may have just been deployed)")
+            + '<br><button id="mls-boot-retry" style="margin-top:14px;font:inherit;font-weight:700;padding:10px 22px;border-radius:10px;border:0;background:#098259;color:#fff;cursor:pointer">'
+            + (t ? "โหลดใหม่" : "Reload") + "</button></div>";
+          var b = document.getElementById("mls-boot-retry");
+          if (b) b.onclick = function () { wipe().then(function () { location.reload(); }); };
+        }
+        var fired = false;
+        function heal() {
+          if (fired) return; fired = true;
+          var done = false;
+          try { done = sessionStorage.getItem(KEY) === "1"; } catch (e) {}
+          if (done) { showMsg(); return; }                       // ลองแล้วรอบนึง → ไม่วนซ้ำ ให้คนกดเอง
+          if (navigator.onLine === false) {                      // ออฟไลน์: ห้ามล้างแคช (ไม่มีอะไรเสิร์ฟ) → รอเน็ตกลับ
+            showMsg(); window.addEventListener("online", function () { location.reload(); }, { once: true }); return;
+          }
+          try { sessionStorage.setItem(KEY, "1"); } catch (e) {}
+          wipe().then(function () { location.reload(); });
+        }
+        // ไฟล์ .js ของแอป (/assets/…) โหลดไม่ขึ้น — รวมกรณีเซิร์ฟเวอร์ส่งหน้า HTML มาแทน (MIME text/html)
+        window.addEventListener("error", function (e) {
+          var el = e && e.target;
+          if (el && el.tagName === "SCRIPT" && /\/assets\/|\/src\/main/.test(el.src || "")) heal();
+        }, true);
+        // เผื่อเคสอื่น: 45 วิ แล้วยังไม่มีอะไรขึ้น → บอกผู้ใช้ + ปุ่มโหลดใหม่ (ไม่รีโหลดเอง — เน็ตช้าอาจยังโหลดอยู่)
+        setTimeout(function () {
+          var r = document.getElementById("root");
+          if (document.getElementById("boot-splash") && r && !r.childElementCount) showMsg();
+        }, 45000);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
