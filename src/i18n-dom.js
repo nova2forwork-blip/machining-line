@@ -512,10 +512,21 @@ const DICT = {
   "แบบ/ดรออิงไม่ชัด": "Drawing unclear",
   "งานยาก/ซับซ้อนกว่าปกติ": "Harder job than usual",
   "พักงาน": "Break",
+  // รอบ 16: ปุ่มรวมบนมือถือ / ตัวกรอง / ปุ่มในแถว
+  "+ เพิ่ม / นำเข้า": "+ Add / Import", "+ เพิ่ม": "+ Add", "ตัวกรอง": "Filters",
+  "ลบ Release Order นี้ทั้งชุด": "Delete this whole Release Order",
+  "สเตชันนี้จะเข้า:": "This station opens:", "INV Code / วัสดุ": "INV Code / material",
+  "น้ำหนัก/ความยาวของเบอร์ = ค่าเริ่มต้น · Release ที่ตั้งน้ำหนักเองไว้ ใช้ค่าของ Release ก่อน (แก้ที่ ✎ แก้ไข ในหน้า Release)":
+    "Part weight/length = the default · a release with its own weight uses that first (change it with ✎ Edit on the Release page)",
+  "ตั้งเครื่อง/สถานี/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง": "Set the home machine/station/operation here — the scan screen uses it instead of asking",
+  "* ถ้าไม่ตั้งเครื่อง/สถานี/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้": "* without a home machine/station/operation this employee can't scan work",
 };
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
 const RULES = [
+  // ── รอบ 16 (หน้าต่างแก้ไขที่เปิดจากปุ่มในแถว) ──
+  [/^แก้ไข Part (.+)$/, (m) => `Edit Part ${m[1]}`],
+  [/^โปรเจค ([A-Za-z0-9][\w.\-/]*)$/, (m) => `Project ${m[1]}`],
   // ── รอบ 13 ──
   [/^([\d.,]+)\s*วิ$/, (m) => `${m[1]} s`],
   [/^([\d,]+)\s*แถว$/, (m) => `${m[1]} rows`],
