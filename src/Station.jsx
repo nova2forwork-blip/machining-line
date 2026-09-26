@@ -217,14 +217,21 @@ function hms(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
   return `${pad(Math.floor(sec / 3600))}:${pad(Math.floor((sec % 3600) / 60))}:${pad(sec % 60)}`;
 }
-function todayISOdate() {
+// ★ รอบ 15: วันที่แบบ "วัน/เดือน" ตามที่คนไทยอ่าน (เดิม 2026.09.26 · 09.24 = เดือนก่อนวัน ชวนงง)
+//   การ์ดรายงานประจำวัน: 26/09/2569 (ไทย · พ.ศ.) / 26/09/2026 (EN)
+function todayISOdate(lang) {
   const d = new Date();
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear() + (lang === "en" ? 0 : 543)}`;
 }
-// วันที่แบบสั้น MM.DD — ใช้เติมคอลัมน์ DATE ให้แถวที่เพิ่งสแกน (row จาก record_machine_work ไม่มี day)
+// วันที่แบบสั้น DD/MM — ใช้เติมคอลัมน์ DATE ให้แถวที่เพิ่งสแกน (row จาก record_machine_work ไม่มี day)
 function todayMD() {
   const d = new Date();
-  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+}
+// server ส่ง day เป็น "MM.DD" (machine_day) → แสดงเป็น "DD/MM" · รูปแบบอื่นคืนตามเดิม
+function dayDM(s) {
+  const m = /^(\d{1,2})\.(\d{1,2})$/.exec(String(s ?? "").trim());
+  return m ? `${pad(m[2])}/${pad(m[1])}` : s;
 }
 
 // ─── เสียง "ติ๊ด" ตอนสแกน (Web Audio) + สั่น ───────────────────────────────
@@ -1742,7 +1749,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 return (
                   <tr key={r.id || i} className={`${isNew ? "stn-new" : ""}${r.pending ? " stn-pending-row" : ""}`}
                     title={r.pending ? "ยังไม่ซิงค์ — รอเน็ตกลับมา" : undefined}>
-                    <td className="stn-mono">{r.day || todayMD()}</td>
+                    <td className="stn-mono">{r.day ? dayDM(r.day) : todayMD()}</td>
                     <td className="stn-hide-sm">{fmtM(r.mdf_no) || "-"}</td>
                     <td className="stn-hide-sm">{r.rel_no || "-"}</td>
                     <td className="l">{r.part_no || "-"}</td>
@@ -2055,7 +2062,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         <div className="stn-daily">
           <div className="stn-daily-head">
             <h2>{t("รายงานประจำวัน", "DAILY REPORT")}</h2>
-            <div className="stn-date">{todayISOdate()}<span className="stn-build" title="รุ่นของเว็บ">build {appBuildId()}</span></div>
+            <div className="stn-date">{todayISOdate(lang)}<span className="stn-build" title="รุ่นของเว็บ">build {appBuildId()}</span></div>
           </div>
           <div className="stn-kpis">
             <div className="stn-kpi"><div className="lbl">{t("จำนวนวันนี้", "Daily Quantity")}</div>
@@ -2146,7 +2153,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               <div className={`stn-clock${timerLive ? " live" : ""}`}>{hms(elapsed)}</div>
               <div className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
-                <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· กรอกก่อน", "· fill first") : ""}</div>
+                <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· ① กรอกก่อน", "· ① fill first") : ""}</div>
                 <NumInput
                   inputMode="numeric" disabled={recording}
                   value={materialLen} placeholder="0"
@@ -2154,11 +2161,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 />
               </div>
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
-              <button className={`stn-ctl-btn${recording ? " recording" : ""}`} onClick={onRecord}
+              {/* ★ รอบ 15: ปุ่ม "ขั้นถัดไป" เป็นสีทึบ (ยังไม่เริ่ม + กรอกความยาวแล้ว = เริ่ม · รอสแกน = สแกน) คนใหม่รู้ว่าต้องกดอะไรต่อ */}
+              <button className={`stn-ctl-btn${recording ? " recording" : ""}${step === STEP.IDLE && matReady && !hold && !busy ? " next" : ""}`} onClick={onRecord}
                 disabled={busy || !!hold}>
-                <span>{recording ? t("ยกเลิก", "CANCEL") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
+                <span>{recording ? t("ยกเลิกงาน", "CANCEL JOB") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}`} onClick={onScan} disabled={busy || !!hold}>
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}${scanArmed && !hold && !busy ? " next" : ""}`} onClick={onScan} disabled={busy || !!hold}>
                 <div className="row1">
                   <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
@@ -3063,7 +3071,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
             onChange={(e) => setQty(Math.min(100000, Math.max(0, parseInt(e.target.value || "0", 10) || 0)))} />
           <button onClick={() => setQty(Math.min(100000, qty + 1))}>+</button>
         </div>
-        <div className="stn-row-btns stn-status-row">
+        <div className={`stn-row-btns stn-status-row${!status ? " pick" : ""}`}>
           <button className={`stn-pill ${status === "inprocess" ? "sel-inp" : ""}`} disabled={inpDisabled}
             style={inpDisabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
             onClick={() => { if (!inpDisabled) setStatus("inprocess"); }}>{t("กำลังทำ", "In Process")}</button>
@@ -3083,10 +3091,15 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <div className="stn-status-hint" style={{ fontSize: 12.5, color: "#0e9d63", textAlign: "center", marginTop: 2, lineHeight: 1.5 }}>
             {t(`ครบ ${fmt(total)} แล้ว — กด "เสร็จแล้ว" เพื่อปิดงาน หรือทำสแปร์ต่อได้ (กำลังทำ)`, `Reached ${fmt(total)} — press Finished to close, or keep going for spares (In Process)`)}
           </div>
+        ) : !status ? (
+          /* ★ รอบ 15: ปุ่ม OK จาง = ยังไม่ได้เลือกสถานะ → บอกให้ชัด */
+          <div className="stn-status-hint need">{t("① เลือก \"กำลังทำ\" หรือ \"เสร็จแล้ว\"  →  ② กด OK", "① Pick In Process or Finished  →  ② press OK")}</div>
+        ) : qty <= 0 ? (
+          <div className="stn-status-hint need">{t("ใส่จำนวนอย่างน้อย 1 ชิ้น", "Enter at least 1 piece")}</div>
         ) : null}
         <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={rescan} disabled={busy} title={t("กลับไปหน้ากำลังทำงาน (เวลายังเดินอยู่)", "Back to the running job (timer keeps running)")}>{t("ยกเลิก", "Cancel")}</button>
-          <button className="stn-pill ok" onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
+          <button className="stn-pill no" onClick={rescan} disabled={busy} title={t("กลับไปหน้ากำลังทำงาน (เวลายังเดินอยู่)", "Back to the running job (timer keeps running)")}>{t("← กลับ", "← Back")}</button>
+          <button className={`stn-pill ok${status && qty > 0 && !busy ? " next" : ""}`} onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
     );
@@ -3450,7 +3463,7 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
   const whenText = (it) => {
     const ts = it.rejectedAt || it.ts;
     if (!ts) return "";
-    try { const d = new Date(ts); return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+    try { const d = new Date(ts); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
     catch { return ""; }
   };
   return (
