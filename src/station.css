@@ -1097,3 +1097,83 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-dayop b { font-weight: 700; color: var(--st-ink); }
 .stn-dayop em { font-style: normal; color: #8a5c12; font-size: 1.35vh; }
 .stn-build { margin-left: 8px; font-size: 10px; opacity: .55; }
+
+/* ═══ รอบ 16: กลางจอ — ตอนว่าง = ขั้นตอนเป็นลำดับตัวใหญ่ · ตอนกำลังทำ = ป้ายชิ้นงานใหญ่ + แถบความคืบหน้า ═══ */
+.stn-idle { width: 100%; max-width: 440px; text-align: left; }
+.stn-idle-title { font-size: 20px; font-weight: 700; color: var(--st-ink); margin-bottom: 12px; text-align: center; }
+.stn-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.stn-steps li {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--st-line); background: var(--st-paper); color: #4a5470; font-size: 15px; line-height: 1.3;
+}
+.stn-steps li b { color: inherit; }
+.stn-steps li .n {
+  flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center;
+  font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 15px; background: var(--st-panel); color: var(--st-muted);
+}
+.stn-steps li .tx { display: flex; flex-direction: column; min-width: 0; }
+.stn-steps li small { font-size: 12px; color: var(--st-muted); margin-top: 1px; }
+.stn-steps li.cur { border-color: var(--st-red); box-shadow: 0 0 0 2px rgba(67,97,238,.18), var(--st-shadow); color: var(--st-ink); font-weight: 600; }
+.stn-steps li.cur .n { background: var(--st-red); color: #fff; }
+.stn-steps li.done { color: var(--st-muted); }
+.stn-steps li.done .n { background: var(--st-green); color: #fff; }
+
+.stn-run-view { width: 100%; display: flex; flex-direction: column; align-items: center; }
+.stn-run-view .stn-part-label { width: 100%; max-width: 420px; }
+.stn-run-prog { width: 100%; max-width: 420px; height: 8px; border-radius: 999px; background: var(--st-panel); border: 1px solid var(--st-line); overflow: hidden; margin: -2px 0 6px; }
+.stn-run-view .stn-scene { width: min(80%, 380px); margin-bottom: 10px; }
+.stn-steps li .tx .m { display: block; }
+.stn-run-prog i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--st-red-hi), var(--st-red)); transition: width .6s ease; }
+
+/* จอคอม/แท็บเล็ตแนวนอนที่สูงพอ → ขยายป้าย + "ทำแล้ว x of y" ให้อ่านได้จากระยะยืน */
+@media (min-width: 1000px) and (orientation: landscape) and (min-height: 601px) {
+  .stn-idle { max-width: 520px; }
+  .stn-idle-title { font-size: 24px; margin-bottom: 16px; }
+  .stn-steps { gap: 10px; }
+  .stn-steps li { font-size: 18px; padding: 12px 18px; gap: 14px; border-radius: 14px; }
+  .stn-steps li .n { width: 36px; height: 36px; font-size: 17px; }
+  .stn-steps li small { font-size: 13px; }
+
+  .stn-run-view .stn-part-label, .stn-run-prog { max-width: 600px; }
+  .stn-run-view .stn-part-label { padding: 18px 22px; gap: 18px; border-radius: 16px; }
+  .stn-run-view .stn-lbl-qr { width: 84px; height: 84px; background-size: 18px 18px; }
+  .stn-run-view .stn-lbl-num { font-size: 14px; }
+  .stn-run-view .stn-lbl-name { font-size: 16px; }
+  .stn-run-view .stn-lbl-part { font-size: 34px; }
+  .stn-run-view .stn-lbl-mat { font-size: 13px; }
+  .stn-run-view .stn-lbl-kv .k, .stn-run-view .stn-lbl-kv .v { font-size: 13.5px; }
+  .stn-run-view .stn-lbl-of { font-size: 30px; margin-top: 8px; padding-top: 6px; }
+  .stn-run-prog { height: 12px; margin: 0 0 10px; }
+  .stn-run-view .stn-scene { width: min(80%, 460px); }
+  .stn-run-view .stn-hint { max-width: 560px; font-size: 15px; }
+  .stn-run-view .stn-hint .big { font-size: 18px; }
+}
+@media (min-width: 1600px) and (orientation: landscape) and (min-height: 801px) {
+  .stn-run-view .stn-part-label, .stn-run-prog { max-width: 720px; }
+  .stn-run-view .stn-lbl-part { font-size: 42px; }
+  .stn-run-view .stn-lbl-of { font-size: 36px; }
+}
+/* หมุนจอ (แนวตั้ง) — ขนาดตาม vh เหมือนส่วนอื่นของหน้าเครื่อง */
+@media (orientation: portrait) and (max-width: 1024px) {
+  .stn-idle { max-width: 64vh; }
+  .stn-idle-title { font-size: 2.6vh; margin-bottom: 1.2vh; }
+  .stn-steps { gap: 0.9vh; }
+  .stn-steps li { font-size: 2vh; padding: 1.1vh 1.6vh; gap: 1.4vh; border-radius: 1.4vh; }
+  .stn-steps li .n { width: 3.6vh; height: 3.6vh; font-size: 1.8vh; }
+  .stn-steps li small { font-size: 1.5vh; }
+  .stn-run-view .stn-part-label, .stn-run-prog { max-width: 70vh; }
+  .stn-run-prog { height: 1.1vh; margin: 0 0 0.8vh; }
+}
+/* มือถือแนวนอนจอเตี้ย — ย่อให้พอดี */
+@media (orientation: landscape) and (max-height: 600px) {
+  .stn-idle-title { font-size: max(14px, 2.8vh); margin-bottom: 1vh; }
+  .stn-steps { gap: 0.8vh; }
+  .stn-steps li { font-size: max(12px, 2.4vh); padding: 0.8vh 1.6vh; gap: 1.4vh; border-radius: 1.4vh; }
+  .stn-steps li .n { width: max(20px, 4.4vh); height: max(20px, 4.4vh); font-size: max(11px, 2.2vh); }
+  .stn-steps li small { display: none; }
+  .stn-run-prog { height: 1.2vh; margin: 0 0 0.6vh; }
+}
+/* รหัสเครื่องไม่ชนปุ่ม "ไทย / เต็มจอ" ตอนตารางงานยังว่าง (แถวบนเตี้ย) */
+@media (orientation: landscape) and (min-height: 601px) {
+  .stn-code { padding-top: 42px; }
+}
