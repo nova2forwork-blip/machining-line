@@ -2376,13 +2376,13 @@ const BLANK_ROW = () => ({ id: Math.random().toString(36).slice(2), code: "", re
 const RELEASE_GRID_COLS = ["code", "qty", "length_mm", "weight_per_m", "material", "tkg", "remark", "rev", "wpcs"];
 const RELEASE_GRID_PASTE = { code: "code", qty: "qty", length_mm: "length_mm", weight_per_m: "weight_per_m", material: "material", tkg: "__skip__", remark: "remark", rev: "rev", wpcs: "__skip__" };
 
-function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject }) {
+function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProject, initialProjectId = "" }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const [modify, setModify] = useState("");   // Modify Release (เช่น M-001) — ระดับทั้งใบ
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(initialProjectId || "");   // ★ รอบ 17: เปิดจากหน้าโปรเจค = เลือกโปรเจคนั้นไว้ให้
   const [rows, setRows] = useState(() => Array.from({ length: 5 }, BLANK_ROW));
   const [makeQr, setMakeQr] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -2980,10 +2980,10 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
 // Material / Remark) แต่ละแถวจะกลายเป็น 1 release + สร้าง QR ต่อชิ้นให้ครบ
 // ตาม Qty เหมือนการ Release ทีละ Part ทุกประการ — ต่างกันที่ทำทีเดียวหลาย Part
 // และ Part ที่ยังไม่มีใน Part Master จะถูกสร้างให้อัตโนมัติจากข้อมูลในไฟล์
-function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
+function ImportReleaseModal({ user, projects, parts, onClose, onImported, initialProjectId = "" }) {
   const [file, setFile] = useState(null);
   const [parsed, setParsed] = useState(null); // { releaseOrder, projectCode, items }
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(initialProjectId || "");
   // ★ รอบ 12 (B33): เลข Release Order แก้ได้ (จัดรูปแบบ P-009 ให้) + วันที่ปล่อยงาน (เดิมอ่านอย่างเดียว · ไม่มีวันที่ · RO ว่าง = ทุกเบอร์แยกกลุ่ม)
   const [ro, setRo] = useState("");
   const [relDate, setRelDate] = useState(() => todayStr());
@@ -3003,7 +3003,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
       const matchedProject = projects.find(
         (p) => p.code.trim().toLowerCase() === result.projectCode.trim().toLowerCase()
       );
-      setProjectId(matchedProject ? matchedProject.id : "");
+      setProjectId(matchedProject ? matchedProject.id : (initialProjectId || ""));   // ไฟล์ไม่บอก/ไม่ตรงโปรเจคไหน = คงโปรเจคที่เปิดมา
     } catch (e2) {
       setErr(e2.message || "อ่านไฟล์ไม่สำเร็จ");
     }
@@ -3174,11 +3174,11 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported }) {
 function emptySubAsmChild() { return { code: "", desc: "", len: "", perSet: "" }; }
 function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [] }; }
 
-function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject }) {
+function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject, initialProjectId = "" }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
   // ★ รอบ 12 (D): ไม่เลือกโปรเจคแรกให้เอง (เดิมเผลอบันทึกเข้าโปรเจคผิด) — มีโปรเจคเดียว = เลือกให้
-  const [projectId, setProjectId] = useState(projects.length === 1 ? projects[0].id : "");
+  const [projectId, setProjectId] = useState(initialProjectId || (projects.length === 1 ? projects[0].id : ""));
   const [groups, setGroups] = useState([emptySubAsmGroup()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -3355,7 +3355,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
         await saveOneGroup(g, ro);
         done++;
       }
-      onSaved({ releaseOrder: ro, groups: clean.length, existing });
+      onSaved({ releaseOrder: ro, groups: clean.length, existing, kinds: [...new Set(clean.map((g) => g.parentKind || "subassembly"))] });
     } catch (e2) {
       // เก็บเฉพาะเบอร์ที่ "ยังไม่บันทึก" ไว้ในฟอร์ม กันกดซ้ำแล้วสร้าง release ซ้ำ
       const remaining = clean.slice(done).map((g) => ({
@@ -3505,10 +3505,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject 
 //   1 บั้ง = 1 package (kind=package + QR) · ยูนิตในบั้ง = BOM (จับคู่ part_no) · ฟอร์มเต็ม = pkg_manifest
 //   หน้าแพ็กที่สเตชันจะโชว์ manifest นี้ (ตำแหน่ง/ขนาด/น้ำหนัก) แล้วสแกนยูนิตเข้าเพื่อติดตามแพ็ก
 // ══════════════════════════════════════════════════════════════════════════
-function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject }) {
+function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, initialProjectId = "" }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
-  const [projectId, setProjectId] = useState(projects.length === 1 ? projects[0].id : "");   // ★ รอบ 12: ไม่เลือกโปรเจคแรกให้เอง
+  const [projectId, setProjectId] = useState(initialProjectId || (projects.length === 1 ? projects[0].id : ""));   // ★ รอบ 12: ไม่เลือกโปรเจคแรกให้เอง
   // ★ รอบ 12 (B34): หน่วยน้ำหนักในฟอร์มบั้ง — ฟอร์มจริงเป็นปอนด์ (Lbs) · ระบบเก็บน้ำหนัก/ชิ้นเป็นกก. → แปลงตอนบันทึก
   //   (รายการในบั้ง/ป้ายหน้าเครื่องยังโชว์ Lbs ตามฟอร์มเหมือนเดิม)
   const [wUnit, setWUnit] = useState("lbs");
@@ -6272,6 +6272,95 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   );
 }
 
+// ★ รอบ 17: ปุ่ม + ป็อปอัปสร้างงาน 4 แบบ — ใช้ร่วม หน้าปล่อยงาน (Release) และหน้าโปรเจค (เลือกโปรเจคไว้ให้)
+function releaseCreateItems(pick, disabled = false) {
+  return [
+    { key: "add", variant: "accent", icon: <Icon name="plus" size={15} />, label: "เพิ่ม Release", onClick: () => pick("add"), disabled },
+    { key: "import", variant: "accent", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => pick("import"), disabled },
+    { key: "subasm", variant: "accent", icon: <Icon name="box" size={15} />, label: "เบอร์ประกอบ / แผง", onClick: () => pick("subasm"), disabled },
+    { key: "bunk", variant: "accent", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
+  ];
+}
+// onDone(dept) — หลังบันทึกสำเร็จ: dept = แผนกของงานที่สร้าง (machine / sub / panel / packing) ให้หน้าโปรเจคสลับแท็บไปให้เห็น
+function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProjectId = "", onNeedProject, onDone }) {
+  if (!open) return null;
+  const done = async (dept) => { if (onDone) await onDone(dept); };
+  if (open === "add") {
+    return (
+      <AddReleaseModal
+        user={user} projects={projects} parts={parts} initialProjectId={initialProjectId}
+        onClose={onClose}
+        onNeedProject={onNeedProject}
+        onSaved={async ({ releaseOrder, releasesCreated, partsCreated, unitsCreated }) => {
+          onClose();
+          await done("machine");
+          mlsToast(
+            `บันทึก ${releaseOrder} สำเร็จ: ${nc(releasesCreated)} รายการ Part` +
+            (unitsCreated ? ` · สร้าง QR ${unitsCreated} ใบ` : "") +
+            (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ` : ""),
+            "success"
+          );
+        }}
+      />
+    );
+  }
+  if (open === "import") {
+    return (
+      <ImportReleaseModal
+        user={user} projects={projects} parts={parts} initialProjectId={initialProjectId}
+        onClose={onClose}
+        onImported={async ({ unitsCreated, releasesCreated, partsCreated }) => {
+          await done("machine");
+          mlsToast(
+            `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${nc(unitsCreated)} QR)` +
+            (partsCreated > 0
+              ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ · ⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
+              : ""),
+            partsCreated > 0 ? "warn" : "success"
+          );
+        }}
+      />
+    );
+  }
+  if (open === "subasm") {
+    return (
+      <AssemblyReleaseModal
+        user={user} projects={projects} initialProjectId={initialProjectId}
+        onClose={onClose}
+        onNeedProject={onNeedProject}
+        onSaved={async ({ releaseOrder, groups, existing = [], kinds = [] }) => {
+          onClose();
+          await done(deptOfKind(kinds.includes("panel") && !kinds.includes("subassembly") ? "panel" : (kinds[0] || "subassembly")));
+          mlsToast(`บันทึก ${releaseOrder} สำเร็จ — ${groups} เบอร์ (ตั้ง BOM/ปล่อยงานแล้ว)`
+            + (existing.length ? ` · ${existing.length} เบอร์มีอยู่แล้ว: อัปเดต BOM เท่านั้น ไม่ได้ปล่อยงานใหม่ (${existing.slice(0, 5).join(", ")}${existing.length > 5 ? " …" : ""})` : ""),
+            existing.length ? "warn" : "success");
+        }}
+      />
+    );
+  }
+  if (open === "bunk") {
+    return (
+      <BunkImportModal
+        user={user} projects={projects} initialProjectId={initialProjectId}
+        onClose={onClose}
+        onNeedProject={onNeedProject}
+        onSaved={async ({ releaseOrder, bunks, createdUnits, existing = [] }) => {
+          onClose();
+          await done("packing");
+          const warn = (createdUnits && createdUnits.length) || existing.length;
+          if (existing.length) mlsToast(`${existing.length} บั้งมีอยู่แล้ว — อัปเดตรายการในบั้งเท่านั้น ไม่ได้สร้าง QR ใหม่ (${existing.slice(0, 5).join(", ")}${existing.length > 5 ? " …" : ""})`, "warn");
+          mlsToast(
+            `นำเข้าบั้งสำเร็จ: ${bunks} บั้ง (${releaseOrder})` +
+            (warn ? ` · ⚠ สร้างยูนิตใหม่ ${nc(createdUnits.length)} รายการที่ยังไม่มีในระบบ (ยังไม่มี QR ให้สแกน) — ${createdUnits.slice(0, 8).join(", ")}${createdUnits.length > 8 ? "…" : ""} · ปล่อยงานยูนิตเหล่านี้ก่อนถึงจะสแกนแพ็กได้` : ""),
+            warn ? "warn" : "success"
+          );
+        }}
+      />
+    );
+  }
+  return null;
+}
+
 // ── แท็บแผนก (ใช้ร่วม 3 หน้า: รายงาน · ปล่อยงาน · พิมพ์ QR) — แยก แผง / ซับ ออกจากกัน ──
 const DEPT_TABS = [
   { value: "machine", label: "Machine",      sub: "งานตัด / เจาะ",  color: "#b45309", soft: "rgba(217,164,65,.14)", icon: "bolt" },
@@ -6281,7 +6370,7 @@ const DEPT_TABS = [
 ];
 // ชนิด part → แผนก: package=แพ็ก · panel=แผง · subassembly=ซับ · อื่น ๆ=เครื่องจักร
 const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : k === "subassembly" ? "sub" : "machine");
-function DeptTabs({ value, onChange }) {
+function DeptTabs({ value, onChange, counts }) {
   return (
     <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
       {DEPT_TABS.map((d) => {
@@ -6296,7 +6385,8 @@ function DeptTabs({ value, onChange }) {
               <Icon name={d.icon} size={20} />
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: active ? d.color : "var(--text, #0f172a)" }}>{d.label}
+                {counts ? <span className={"dept-count" + (counts[d.value] ? "" : " zero")} style={active ? { background: d.color, color: "#fff" } : undefined}>{nc(counts[d.value] || 0)}</span> : null}</div>
               <div style={{ fontSize: 11, color: "var(--muted, #64748b)", marginTop: 1 }}>{d.sub}</div>
             </div>
           </button>
@@ -6312,10 +6402,7 @@ function ReleasePage({ user, goTo }) {
   const [parts, setParts] = useState([]);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showImport, setShowImport] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-  const [showSubAsm, setShowSubAsm] = useState(false);
-  const [showBunk, setShowBunk] = useState(false);
+  const [createOpen, setCreateOpen] = useState(null);   // "add" | "import" | "subasm" | "bunk" (ป็อปอัปสร้างงาน)
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
@@ -6392,12 +6479,7 @@ function ReleasePage({ user, goTo }) {
           <div className="page-title">ปล่อยงาน (Release)</div>
           <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
         </div>
-        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={[
-          { key: "add", variant: "accent", icon: <Icon name="plus" size={15} />, label: "เพิ่ม Release", onClick: () => setShowAdd(true) },
-          { key: "import", variant: "accent", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => setShowImport(true) },
-          { key: "subasm", variant: "accent", icon: <Icon name="box" size={15} />, label: "เบอร์ประกอบ / แผง", onClick: () => setShowSubAsm(true) },
-          { key: "bunk", variant: "accent", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => setShowBunk(true) },
-        ]} />
+        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen)} />
       </div>
 
       <Card title="ค้นหา Release">
@@ -6483,80 +6565,8 @@ function ReleasePage({ user, goTo }) {
           ]} />
       </Card>
 
-      {showAdd && (
-        <AddReleaseModal
-          user={user}
-          projects={projects}
-          parts={parts}
-          onClose={() => setShowAdd(false)}
-          onNeedProject={() => setShowNewProject(true)}
-          onSaved={async ({ releaseOrder, releasesCreated, partsCreated, unitsCreated }) => {
-            setShowAdd(false);
-            await load();
-            mlsToast(
-              `บันทึก ${releaseOrder} สำเร็จ: ${nc(releasesCreated)} รายการ Part` +
-              (unitsCreated ? ` · สร้าง QR ${unitsCreated} ใบ` : "") +
-              (partsCreated > 0 ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ` : ""),
-              "success"
-            );
-          }}
-        />
-      )}
-
-      {showImport && (
-        <ImportReleaseModal
-          user={user}
-          projects={projects}
-          parts={parts}
-          onClose={() => setShowImport(false)}
-          onImported={async ({ unitsCreated, releasesCreated, partsCreated }) => {
-            await load();
-            mlsToast(
-              `นำเข้าสำเร็จ: สร้าง ${releasesCreated} release (${nc(unitsCreated)} QR)` +
-              (partsCreated > 0
-                ? ` · สร้าง Part ใหม่ ${nc(partsCreated)} รายการ · ⚠ Part ใหม่ยังไม่มี Routing — ไปตั้งขั้นตอนที่ Setup > Part Master ก่อน ไม่งั้นชิ้นงานจะไม่ขึ้นสถานะ "เสร็จ"`
-                : ""),
-              partsCreated > 0 ? "warn" : "success"
-            );
-          }}
-        />
-      )}
-
-      {showSubAsm && (
-        <AssemblyReleaseModal
-          user={user}
-          projects={projects}
-          onClose={() => setShowSubAsm(false)}
-          onNeedProject={() => setShowNewProject(true)}
-          onSaved={async ({ releaseOrder, groups, existing = [] }) => {
-            setShowSubAsm(false);
-            await load();
-            mlsToast(`บันทึก ${releaseOrder} สำเร็จ — ${groups} เบอร์ (ตั้ง BOM/ปล่อยงานแล้ว)`
-              + (existing.length ? ` · ${existing.length} เบอร์มีอยู่แล้ว: อัปเดต BOM เท่านั้น ไม่ได้ปล่อยงานใหม่ (${existing.slice(0, 5).join(", ")}${existing.length > 5 ? " …" : ""})` : ""),
-              existing.length ? "warn" : "success");
-          }}
-        />
-      )}
-
-      {showBunk && (
-        <BunkImportModal
-          user={user}
-          projects={projects}
-          onClose={() => setShowBunk(false)}
-          onNeedProject={() => setShowNewProject(true)}
-          onSaved={async ({ releaseOrder, bunks, createdUnits, existing = [] }) => {
-            setShowBunk(false);
-            await load();
-            const warn = (createdUnits && createdUnits.length) || existing.length;
-            if (existing.length) mlsToast(`${existing.length} บั้งมีอยู่แล้ว — อัปเดตรายการในบั้งเท่านั้น ไม่ได้สร้าง QR ใหม่ (${existing.slice(0, 5).join(", ")}${existing.length > 5 ? " …" : ""})`, "warn");
-            mlsToast(
-              `นำเข้าบั้งสำเร็จ: ${bunks} บั้ง (${releaseOrder})` +
-              (warn ? ` · ⚠ สร้างยูนิตใหม่ ${nc(createdUnits.length)} รายการที่ยังไม่มีในระบบ (ยังไม่มี QR ให้สแกน) — ${createdUnits.slice(0, 8).join(", ")}${createdUnits.length > 8 ? "…" : ""} · ปล่อยงานยูนิตเหล่านี้ก่อนถึงจะสแกนแพ็กได้` : ""),
-              warn ? "warn" : "success"
-            );
-          }}
-        />
-      )}
+      <ReleaseCreateModals open={createOpen} onClose={() => setCreateOpen(null)} user={user} projects={projects} parts={parts}
+        onNeedProject={() => setShowNewProject(true)} onDone={(dept) => { if (dept) setDeptFilter(dept); return load(); }} />
 
       {showNewProject && (
         <QuickAddProjectModal
@@ -10347,17 +10357,32 @@ function MachinesSummaryPage() {
 // ─── ดู Release ทั้งหมดในโปรเจคเดียว → เจาะเข้า Release → Part → รายละเอียด ──────
 //   ใช้ ReleaseGroupDetail ตัวเดียวกับหน้า Release Production เพื่อให้รายละเอียดเหมือนกัน
 function ProjectReleasesView({ project, user, goTo, onBack }) {
-  const [groups, setGroups] = useState(null);   // null = กำลังโหลด
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [rels, setRels] = useState(null);       // release ทั้งหมดของโปรเจคนี้ · null = กำลังโหลด
   const [stats, setStats] = useState({});       // release_id → { total, finished, ... } (สแกนสำนักงาน)
   const [opProg, setOpProg] = useState({});     // release_id → [{op,seq,done,finished}] (งานหน้าเครื่อง)
   const [statsReady, setStatsReady] = useState(false);
   const [viewGroup, setViewGroup] = useState(null);
   const sort = useTableSort();
 
+  // ★ รอบ 17: สร้างงานในโปรเจคนี้ได้เลย (Release / ประกอบ-แผง / ฟอร์มบั้งแพ็ก) + แท็บแผนกเหมือนหน้าปล่อยงาน
+  const [dept, setDept] = useState(null);        // null = ยังไม่เลือก → เลือกแผนกแรกที่มีงานให้เอง
+  const [createOpen, setCreateOpen] = useState(null);
+  const [lists, setLists] = useState(null);      // { projects, parts } สำหรับป็อปอัปสร้างงาน (โหลดเบื้องหลัง)
+  const [showNewProject, setShowNewProject] = useState(false);
+  const loadLists = useCallback(async () => {
+    try {
+      const [projects, parts] = await Promise.all([listRows("projects", { order: "code" }), listRows("part_master", { order: "part_no" })]);
+      setLists({ projects: projects || [], parts: parts || [] });
+    } catch { setLists({ projects: [project], parts: [] }); }
+  }, [project]);
+  useEffect(() => { loadLists(); }, [loadLists]);
+
   const load = useCallback(async () => {
     const all = await getReleasesFull();
     const mine = all.filter((r) => r.part_master?.project_id === project.id);
-    setGroups(groupReleases(mine));
+    setRels(mine);
     const ids = mine.map((r) => r.id);
     setStatsReady(false);
     if (ids.length) {
@@ -10367,6 +10392,16 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     } else { setStats({}); setOpProg({}); setStatsReady(true); }
   }, [project.id]);
   useEffect(() => { load(); }, [load]);
+
+  const deptCounts = useMemo(() => {
+    const c = { machine: 0, sub: 0, panel: 0, packing: 0 };
+    if (!rels) return c;
+    DEPT_TABS.forEach((d) => { c[d.value] = groupReleases(rels.filter((r) => deptOfKind(r.part_master?.kind) === d.value)).length; });
+    return c;
+  }, [rels]);
+  const curDept = dept || DEPT_TABS.find((d) => deptCounts[d.value] > 0)?.value || "machine";
+  const groups = useMemo(() => (rels ? groupReleases(rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)) : null), [rels, curDept]);
+  const curTab = DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0];
 
   // เจาะเข้า Release Order → แสดง Part + รายละเอียด (เหมือนหน้า Release Production)
   if (viewGroup) {
@@ -10388,10 +10423,17 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             <Btn variant="ghost" size="sm" onClick={onBack}><Icon name="arrowLeft" size={14} /> กลับไปหน้า Projects</Btn>
           </div>
           <div className="page-title">{project.code} — {project.name}</div>
-          <div className="page-sub">Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด</div>
+          <div className="page-sub">{L("Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด · สร้างงานใหม่ในโปรเจคนี้ได้จากปุ่ม เพิ่ม / นำเข้า",
+            "All releases in this project · tap a row to view parts and details · create new work in this project with the Add / Import buttons")}</div>
         </div>
+        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen, !lists)} />
       </div>
-      <Card title={groups ? `Release ทั้งหมด (${groups.length})` : "Release ทั้งหมด"}>
+      {project.status === "closed" ? (
+        <div className="proj-closed-note">{L("⚠ โปรเจคนี้ปิดแล้ว (เสร็จ) — สร้างงานได้ แต่หน้าเครื่องบันทึกงานเพิ่มไม่ได้จนกว่าจะเปิดโปรเจคอีกครั้ง",
+          "⚠ This project is closed (done) — you can still create work, but machine terminals can't record it until the project is reopened")}</div>
+      ) : null}
+      <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} />
+      <Card title={groups ? `Release ${curTab.label} (${groups.length})` : "Release ทั้งหมด"}>
         <SortControl sort={sort} options={[
           { k: "date", label: "วันที่" }, { k: "order", label: "Release Order" }, { k: "parts", label: "Part No." },
           { k: "qty", label: "จำนวน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
@@ -10401,8 +10443,14 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
         ) : groups.length === 0 ? (
           <div className="empty-state">
             <Icon name="box" size={32} />
-            <div className="empty-state-title">ยังไม่มี Release ในโปรเจคนี้</div>
-            <div className="empty-state-sub">ปล่อยงานที่หน้า Release Production เพื่อสร้าง Release แรก</div>
+            <div className="empty-state-title">{rels && rels.length
+              ? L(`ยังไม่มีงาน ${curTab.label} ในโปรเจคนี้`, `No ${curTab.label} work in this project yet`)
+              : L("ยังไม่มี Release ในโปรเจคนี้", "No releases in this project yet")}</div>
+            <div className="empty-state-sub">{curDept === "packing"
+              ? L("กด “นำเข้าฟอร์มบั้ง (แพ็ก)” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Import bundle form (packing)” above to create it in this project")
+              : curDept === "machine"
+                ? L("กด “เพิ่ม Release” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Add Release” above to create it in this project")
+                : L("กด “เบอร์ประกอบ / แผง” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Assembly / panel no.” above to create it in this project")}</div>
           </div>
         ) : (
           <DataTable id="project-releases" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
@@ -10439,6 +10487,20 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             ]} />
         )}
       </Card>
+
+      {lists ? (
+        <ReleaseCreateModals open={createOpen} onClose={() => setCreateOpen(null)} user={user}
+          projects={lists.projects.some((p) => p.id === project.id) ? lists.projects : [project, ...lists.projects]} parts={lists.parts}
+          initialProjectId={project.id}
+          onNeedProject={() => setShowNewProject(true)}
+          onDone={async (d) => { if (d) setDept(d); await Promise.all([load(), loadLists()]); }} />
+      ) : null}
+      {showNewProject && (
+        <QuickAddProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreated={(p) => setLists((l) => (l ? { ...l, projects: [...l.projects, p].sort((a, b) => a.code.localeCompare(b.code)) } : l))}
+        />
+      )}
     </div>
   );
 }
