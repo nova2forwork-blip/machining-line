@@ -26,7 +26,7 @@ import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogi
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { useLang } from "./i18n-dom.js";
+import { useLang, getLang } from "./i18n-dom.js";
 
 // ── Ctrl+Z ย้อนการแก้ไขที่ยังไม่บันทึก (ทั้งแอปฝั่งสำนักงาน) ──────────────────────
 // ใช้ useUndoable แทน useState ในฟอร์ม/ตาราง → เก็บประวัติ state (สูงสุด 50 ขั้น)
@@ -553,7 +553,7 @@ function LangToggle() {
       title="สลับภาษา / Switch language"
       style={{ appearance: "none", cursor: "pointer", fontFamily: "inherit",
         fontSize: 13, fontWeight: 800, lineHeight: 1, letterSpacing: ".03em",
-        padding: "7px 12px", borderRadius: 8,
+        padding: "8px 13px", minHeight: 34, borderRadius: 8,
         border: "1.5px solid var(--accent, #10b981)", background: "transparent", color: "var(--accent-dk, #0a8a60)" }}>
       {lang === "th" ? "ไทย" : "EN"}
     </button>
@@ -561,9 +561,17 @@ function LangToggle() {
 }
 
 const fmtNum = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
-const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
+// ★ รอบ 16: วันที่รูปแบบเดียวทั้งแอป = วัน/เดือน/ปี เติม 0 (26/09/69 14:05) · ไทย = พ.ศ. · EN = ค.ศ. (26/09/26)
+//   ปีเต็ม (26/09/2569) ใช้ในหัวรายงาน/ช่วงวันที่ · หัวข้อยาว ("วันเสาร์ที่ 26 กันยายน 2569") คงเดิม
+const _p2 = (n) => String(n).padStart(2, "0");
+const _yearOf = (d) => d.getFullYear() + (getLang() === "en" ? 0 : 543);
+const dmyOf = (d, full) => `${_p2(d.getDate())}/${_p2(d.getMonth() + 1)}/${full ? _yearOf(d) : _p2(_yearOf(d) % 100)}`;
+const _dt = (v) => { if (v == null || v === "") return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d.getTime()) ? null : d; };
+const fmtDT = (iso) => { const d = _dt(iso); return d ? `${dmyOf(d)} ${_p2(d.getHours())}:${_p2(d.getMinutes())}` : "-"; };
 // วันที่อย่างเดียว (สำหรับ "วันที่ปล่อยงาน" ที่เวลาไม่ใช่เวลาจริง — โชว์เวลาแล้วจะทำให้เข้าใจผิด)
-const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString("th-TH", { dateStyle: "short" }) : "-";
+const fmtD = (iso) => { const d = _dt(iso); return d ? dmyOf(d) : "-"; };
+// ปีเต็ม — ช่วงวันที่ในหัวรายงาน (26/09/2569)
+const fmtDFull = (iso) => { const d = _dt(iso); return d ? dmyOf(d, true) : "-"; };
 // เวลาเป็น ชม.:นาที (สำหรับ "เวลาเดินเครื่อง") — ปัดวินาทีทิ้ง อ่านง่ายในรายงาน
 const fmtHrs = (secs) => {
   const s = Math.max(0, Math.floor(Number(secs) || 0));
@@ -752,7 +760,114 @@ const Field = ({ label, children, err, className = "" }) => (
     {err && typeof err === "string" ? <div className="fld-err-msg">{err}</div> : null}
   </div>
 );
-const Card = ({ title, right, children, className = "" }) => (
+// ★ รอบ 16: คำอธิบายยาว → บรรทัดสั้น 1 บรรทัด + ปุ่ม "วิธีใช้" กดเปิด/ปิด (จำไว้ในเครื่องต่อหัวข้อ)
+function HowTo({ id, short, children, style, label }) {
+  const [lang] = useLang();
+  const key = "mls-howto:" + id;
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
+  const toggle = () => setOpen((o) => { const n = !o; try { localStorage.setItem(key, n ? "1" : "0"); } catch { /* ignore */ } return n; });
+  return (
+    <div className={"howto" + (open ? " open" : "")} style={style}>
+      <div className="howto-line">
+        {short ? <span className="howto-short">{short}</span> : null}
+        <button type="button" className="howto-btn" onClick={toggle} aria-expanded={open}>
+          <span className="howto-q" aria-hidden="true">?</span>
+          {open ? (lang === "en" ? "Hide" : "ซ่อน") : (label || (lang === "en" ? "How it works" : "วิธีใช้"))}
+        </button>
+      </div>
+      {open ? <div className="howto-body">{children}</div> : null}
+    </div>
+  );
+}
+// ★ รอบ 16: มือถือ (≤ 640 px) — ใช้รวมปุ่มหัวหน้า/ย่อตัวกรอง (render แบบเดียว ไม่ซ้ำปุ่มใน DOM)
+const PHONE_MQ = "(max-width: 640px)";
+function useIsPhone() {
+  const get = () => { try { return typeof window !== "undefined" && !!window.matchMedia && window.matchMedia(PHONE_MQ).matches; } catch { return false; } };
+  const [phone, setPhone] = useState(get);
+  useEffect(() => {
+    let mq; try { mq = window.matchMedia(PHONE_MQ); } catch { return undefined; }
+    if (!mq) return undefined;
+    const on = () => setPhone(mq.matches);
+    on();
+    if (mq.addEventListener) mq.addEventListener("change", on); else if (mq.addListener) mq.addListener(on);
+    return () => { if (mq.removeEventListener) mq.removeEventListener("change", on); else if (mq.removeListener) mq.removeListener(on); };
+  }, []);
+  return phone;
+}
+// ปุ่มหัวหน้า: จอใหญ่ = ปุ่มเรียงตามเดิม · มือถือ = ปุ่มหลัก (ถ้ามี) + เมนู "▾" รวมปุ่มที่เหลือ
+// items: [{ key, label, icon, onClick, disabled, title, variant, className, primary }]
+function PageActions({ items, menuLabel, style }) {
+  const [lang] = useLang();
+  const phone = useIsPhone();
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  const list = (items || []).filter(Boolean);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", key); };
+  }, [open]);
+  useEffect(() => { if (!phone) setOpen(false); }, [phone]);
+  if (!list.length) return null;
+  if (!phone || list.length < 2) {
+    return (
+      <div className="pa-row" style={style}>
+        {list.map((it) => (
+          <Btn key={it.key} variant={it.variant || "ghost"} className={it.className || ""} onClick={it.onClick} disabled={it.disabled} title={it.title}>
+            {it.icon}{it.label}
+          </Btn>
+        ))}
+      </div>
+    );
+  }
+  const primary = list.find((it) => it.primary);
+  const rest = primary ? list.filter((it) => it !== primary) : list;
+  return (
+    <div className="pa-row pa-phone" ref={boxRef} style={style}>
+      {primary ? (
+        <Btn variant={primary.variant || "accent"} className="pa-main" onClick={primary.onClick} disabled={primary.disabled} title={primary.title}>
+          {primary.icon}{primary.label}
+        </Btn>
+      ) : null}
+      <Btn variant={primary ? "ghost" : "accent"} className={"pa-toggle" + (primary ? " pa-more" : "")} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}>
+        {primary ? (lang === "en" ? "More" : "เพิ่มเติม") : (menuLabel || (lang === "en" ? "+ Add" : "+ เพิ่ม"))}
+        <span className={"pa-caret" + (open ? " up" : "")} aria-hidden="true">▾</span>
+      </Btn>
+      {open ? (
+        <div className="pa-menu" role="menu">
+          {rest.map((it) => (
+            <button key={it.key} type="button" role="menuitem" className="pa-item" disabled={it.disabled} title={it.title}
+              onClick={() => { setOpen(false); it.onClick && it.onClick(); }}>
+              <span className="pa-ico">{it.icon}</span><span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+// ตัวกรอง: จอใหญ่ = แสดงตามเดิม · มือถือ = ปุ่ม "ตัวกรอง (n) ▾" กดเปิด/ปิด (ช่องค้นหาวางไว้นอกกล่องนี้)
+function FilterFold({ active = 0, children, className = "", style }) {
+  const [lang] = useLang();
+  const phone = useIsPhone();
+  const [open, setOpen] = useState(false);
+  if (!phone) return <>{children}</>;
+  return (
+    <div className={"ffold" + (open ? " open" : "") + (className ? " " + className : "")} style={style}>
+      <button type="button" className="ffold-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5L3 5z" /></svg>
+        {lang === "en" ? "Filters" : "ตัวกรอง"}
+        {active > 0 ? <b className="ffold-n">{active}</b> : null}
+        <span className={"pa-caret" + (open ? " up" : "")} aria-hidden="true">▾</span>
+      </button>
+      {open ? <div className="ffold-body">{children}</div> : null}
+    </div>
+  );
+}
+const Card =({ title, right, children, className = "" }) => (
   <div className={`card ${className}`}>
     {(title || right) && (
       <div className="card-head">
@@ -937,7 +1052,7 @@ function Login({ onLogin }) {
           </div>
         )}
         <Field label="รหัสพนักงาน">
-          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น admin" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="รหัสพนักงาน" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} />
         </Field>
         <Field label="รหัสผ่าน">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
@@ -2144,9 +2259,9 @@ function MaterialsPage({ user }) {
     { key: "upd", header: L("อัปเดตล่าสุด", "Updated"), sortKey: "upd", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }, cell: (m) => <>{fmtDT(m.updated_at)}{m.by_name ? <span className="mat-sub"> · {m.by_name}</span> : null}</> },
     ...(canEdit ? [{ key: "manage", header: L("จัดการ", "Manage"), lockCol: true, tdStyle: { whiteSpace: "nowrap" }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
       cell: (m) => (
-        <span className="mat-actions">
-          <button type="button" className="mat-link" onClick={() => setEdit(m)}>{L("แก้ไข", "Edit")}</button>
-          <button type="button" className="mat-link danger" onClick={() => del(m)}>{L("ลบ", "Delete")}</button>
+        <span className="row-acts">
+          <button type="button" className="row-act" onClick={() => setEdit(m)}>{L("แก้ไข", "Edit")}</button>
+          <button type="button" className="row-act danger" onClick={() => del(m)}>{L("ลบ", "Delete")}</button>
         </span>
       ) }] : []),
   ];
@@ -2160,24 +2275,17 @@ function MaterialsPage({ user }) {
             "INV code · weight per metre · bar length · number of bars — per project, plus Center Stock (INV shared by every project)")}</div>
         </div>
         {!notInstalled && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" onClick={doExport} disabled={!shown.length} title={L("ดาวน์โหลดรายการที่แสดงอยู่เป็น Excel", "Download the listed items as Excel")}>
-              <Icon name="grid" size={14} /> {L("ดาวน์โหลด Excel", "Download Excel")}
-            </Btn>
-            {canEdit && scope === "project" && bf && bf.count > 0 && (
-              <Btn variant="ghost" onClick={doBackfill} disabled={bfBusy} title={L("INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ", "INV codes used by this project's parts that aren't listed yet")}>
-                <Icon name="refresh" size={14} /> {L(`ดึง INV จาก Release เดิม (${bf.count})`, `Add INV from past releases (${bf.count})`)}
-              </Btn>
-            )}
-            {canEdit && list.length > 0 && (
-              <Btn variant="ghost" onClick={() => setGrid("edit")} title={L("แก้ทุกรายการในตาราง · ก็อปจาก Excel มาวางทับได้ (จับคู่ตาม INV)", "Edit every item in a grid · paste from Excel to update (matched by INV)")}>
-                ✎ {L("แก้ไขทั้งตาราง", "Edit table")}
-              </Btn>
-            )}
-            {canEdit && <Btn variant="accent" onClick={() => setGrid("add")} disabled={scope === "project" && !projectId}>
-              <Icon name="plus" size={15} /> {L("เพิ่ม Material", "Add material")}
-            </Btn>}
-          </div>
+          <PageActions items={[
+            { key: "xls", icon: <Icon name="grid" size={14} />, label: L("ดาวน์โหลด Excel", "Download Excel"), onClick: doExport, disabled: !shown.length,
+              title: L("ดาวน์โหลดรายการที่แสดงอยู่เป็น Excel", "Download the listed items as Excel") },
+            canEdit && scope === "project" && bf && bf.count > 0 ? { key: "bf", icon: <Icon name="refresh" size={14} />,
+              label: L(`ดึง INV จาก Release เดิม (${bf.count})`, `Add INV from past releases (${bf.count})`), onClick: doBackfill, disabled: bfBusy,
+              title: L("INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ", "INV codes used by this project's parts that aren't listed yet") } : null,
+            canEdit && list.length > 0 ? { key: "edit", icon: <span aria-hidden="true">✎</span>, label: L("แก้ไขทั้งตาราง", "Edit table"), onClick: () => setGrid("edit"),
+              title: L("แก้ทุกรายการในตาราง · ก็อปจาก Excel มาวางทับได้ (จับคู่ตาม INV)", "Edit every item in a grid · paste from Excel to update (matched by INV)") } : null,
+            canEdit ? { key: "add", primary: true, variant: "accent", icon: <Icon name="plus" size={15} />, label: L("เพิ่ม Material", "Add material"),
+              onClick: () => setGrid("add"), disabled: scope === "project" && !projectId } : null,
+          ]} />
         )}
       </div>
 
@@ -2200,13 +2308,15 @@ function MaterialsPage({ user }) {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา INV / Description / หมายเหตุ", "Search INV / description / note")} />
         </div>
       </div>
-      <div className="mat-hint">
+      <HowTo id={"materials-" + scope} style={{ margin: "0 0 12px" }}
+        short={scope === "center" ? L("Center Stock = INV ที่ใช้ได้ทุกโปรเจค", "Center Stock = INV shared by every project")
+          : L("Weight/M ที่นี่ใช้เติมให้ตอนสร้าง Release", "Weight/M here is used to fill releases")}>
         {scope === "center"
           ? L("Center Stock = INV ที่ใช้ได้ทุกโปรเจค (กรอกเอง) · ตอนสร้าง Release ถ้าโปรเจคไม่มี INV นั้น (หรือไม่มี Weight/M) จะใช้ค่าจากที่นี่",
               "Center Stock = INV shared by every project (entered here) · when a release is created, this is used if the project doesn't list the INV (or has no Weight/M)")
           : L("ตอนสร้าง Release: Weight/M ที่เว้นว่างจะเติมจาก INV ของโปรเจคก่อน ไม่มีค่อยใช้ Center Stock · INV ใหม่ที่ยังไม่มีทั้ง 2 ที่ จะถูกบันทึกเข้าโปรเจคให้อัตโนมัติ — มากรอกความยาว/จำนวนต่อที่นี่ · OFF CUT (เศษ) ไม่บันทึกน้ำหนัก กรอกเองตอนสร้าง Release",
               "When a release is created: an empty Weight/M is filled from this project's INV first, then Center Stock · a new INV found in neither is added to the project automatically — fill in length/qty here · OFF CUT (scrap) has no stored weight — type it when creating a release")}
-      </div>
+      </HowTo>
 
       <Card>
         {notInstalled ? (
@@ -2796,12 +2906,13 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         </div>
       )}
 
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, lineHeight: 1.6 }}>
+      <HowTo id="add-release" style={{ marginBottom: 8 }}
+        short={L(<>วางจาก Excel ได้ (Ctrl+V) · Weight/M ว่าง = เติมจาก <b>บันทึก Material</b> · จำนวนว่าง = 1</>, <>Paste from Excel (Ctrl+V) · empty Weight/M = filled from <b>Materials</b> · empty Qty = 1</>)}>
         {L(<>วางจาก Excel ได้ทั้งบล็อก — <b>เรียงตามคอลัมน์บนจอ</b> เริ่มจากช่องที่คลิก (ลากหัวคอลัมน์ ⠿ ให้ตรงกับไฟล์ Excel ได้ · มีหัวตาราง = จับจากชื่อหัว) · คอลัมน์ที่ระบบคำนวณ (Total Kg · น้ำหนัก/ชิ้น) ข้ามค่าที่วางมา · น้ำหนัก/ชิ้น = (Length ÷ 1,000) × Weight/M</>,
            <>Paste a whole block from Excel — <b>it follows the column order on screen</b>, starting at the clicked cell (drag ⠿ headers to match your Excel file · with a header row, columns are matched by name) · calculated columns (Total Kg · Weight/pc) ignore pasted values · Weight/pc = (Length ÷ 1,000) × Weight/M</>)}
         <br />{L(<>Weight/M เว้นว่าง = เติมจาก <b>บันทึก Material</b> ตาม INV (โปรเจคนี้ก่อน → Center Stock) · <b>OFF CUT (เศษ) กรอก Weight/M เอง</b> ไม่เติม/ไม่บันทึก · จำนวนเว้นว่างได้ = 1 อัตโนมัติ · ขั้นตอนการทำงานขึ้นกับ "เครื่อง" ที่ทำ</>,
            <>Empty Weight/M = filled from <b>Materials</b> by INV (this project first → Center Stock) · <b>OFF CUT (scrap): type Weight/M yourself</b> — never filled or stored · empty Qty = 1 · steps depend on the machine that does the work</>)}
-      </div>
+      </HowTo>
 
       {!projectId && (
         <div className="pgrid-need-project">
@@ -4295,7 +4406,7 @@ const MOD_TONE = {
 const MOD_PURPLE = "#6d4aff";
 const modVer = (n) => "M-" + String(n).padStart(3, "0");   // ★ 3 หลัก: M-000 (ต้นฉบับ) · M-001 · M-002 …
 // ── วันที่ของ M (ตามเอกสาร) แยกจากเวลาที่ลงแอป ──
-const fmtYmd = (s) => (s ? new Date(String(s).slice(0, 10) + "T12:00:00").toLocaleDateString("th-TH", { dateStyle: "short" }) : "-");   // ไม่เลื่อนวันตามโซนเวลา
+const fmtYmd = (s) => (s ? fmtD(String(s).slice(0, 10) + "T12:00:00") : "-");   // ไม่เลื่อนวันตามโซนเวลา
 const ymdOf = (iso) => { if (!iso) return ""; const d = new Date(iso); if (!Number.isFinite(d.getTime())) return ""; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 const todayYmd = () => ymdOf(new Date().toISOString());
 const modDocDate = (m) => (m && (m.doc_date || ymdOf(m.created_at))) || "";        // M เก่า (ก่อนมีช่องวันที่) = วันที่ลงแอป
@@ -6029,7 +6140,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             { key: "remark", header: lang === "en" ? "Remark" : "หมายเหตุ", cell: (r) => r.note || "-" },
             ...(canEdit ? [{ key: "manage", header: lang === "en" ? "Manage" : "จัดการ",
               tdStyle: { whiteSpace: "nowrap" }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
-              cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>{busyId === r.id ? "กำลังลบ..." : "แก้ไข"}</span> }] : []),
+              cell: (r) => <button type="button" className="row-act" disabled={busyId === r.id} onClick={() => setEditing(r)}>{busyId === r.id ? (lang === "en" ? "Deleting…" : "กำลังลบ...") : (lang === "en" ? "Edit" : "แก้ไข")}</button> }] : []),
           ];
           const rctx = (r) => {
             const p = rowProg(r);
@@ -6196,6 +6307,7 @@ function DeptTabs({ value, onChange }) {
 }
 
 function ReleasePage({ user, goTo }) {
+  const phone = useIsPhone();
   const [projects, setProjects] = useState([]);
   const [parts, setParts] = useState([]);
   const [recent, setRecent] = useState([]);
@@ -6280,38 +6392,45 @@ function ReleasePage({ user, goTo }) {
           <div className="page-title">ปล่อยงาน (Release)</div>
           <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="accent" className="release-import-btn" onClick={() => setShowAdd(true)}>
-            <Icon name="plus" size={15} />เพิ่ม Release
-          </Btn>
-          <Btn variant="accent" className="release-import-btn" onClick={() => setShowImport(true)}>
-            <Icon name="folder" size={15} />นำเข้า Release จาก Excel
-          </Btn>
-          <Btn variant="accent" className="release-import-btn" onClick={() => setShowSubAsm(true)}>
-            <Icon name="box" size={15} />เบอร์ประกอบ / แผง
-          </Btn>
-          <Btn variant="accent" className="release-import-btn" onClick={() => setShowBunk(true)}>
-            <Icon name="weight" size={15} />นำเข้าฟอร์มบั้ง (แพ็ก)
-          </Btn>
-        </div>
+        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={[
+          { key: "add", variant: "accent", icon: <Icon name="plus" size={15} />, label: "เพิ่ม Release", onClick: () => setShowAdd(true) },
+          { key: "import", variant: "accent", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => setShowImport(true) },
+          { key: "subasm", variant: "accent", icon: <Icon name="box" size={15} />, label: "เบอร์ประกอบ / แผง", onClick: () => setShowSubAsm(true) },
+          { key: "bunk", variant: "accent", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => setShowBunk(true) },
+        ]} />
       </div>
 
       <Card title="ค้นหา Release">
-        <div className="grid-2">
-          <Field label="จากวันที่">
-            <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </Field>
-          <Field label="ถึงวันที่">
-            <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-          </Field>
-          <Field label="โปรเจค">
-            <Select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
-              options={projects.map((p) => ({ value: p.code, label: `${p.code} — ${p.name}` }))} />
-          </Field>
-          <Field label="ค้นหา Release / Part / INV / รหัสโปรเจค / หมายเหตุ">
-            <Input value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} placeholder="เช่น P-009 · AN04-001 · INV 6063 · A10035" />
-          </Field>
-        </div>
+        {(() => {
+          const fFrom = (
+            <Field label="จากวันที่">
+              <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </Field>);
+          const fTo = (
+            <Field label="ถึงวันที่">
+              <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            </Field>);
+          const fProj = (
+            <Field label="โปรเจค">
+              <Select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+                options={projects.map((p) => ({ value: p.code, label: `${p.code} — ${p.name}` }))} />
+            </Field>);
+          const fSearch = (
+            <Field label="ค้นหา Release / Part / INV / รหัสโปรเจค / หมายเหตุ">
+              <Input value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} placeholder="เช่น P-009 · AN04-001 · INV 6063 · A10035" />
+            </Field>);
+          // มือถือ: ช่องค้นหาอยู่บน + วันที่/โปรเจคพับไว้ใต้ปุ่ม "ตัวกรอง" (รอบ 16)
+          return phone ? (
+            <>
+              {fSearch}
+              <FilterFold active={(fromDate ? 1 : 0) + (toDate ? 1 : 0) + (projectFilter ? 1 : 0)} style={{ marginBottom: 12 }}>
+                <div className="grid-2">{fFrom}{fTo}{fProj}</div>
+              </FilterFold>
+            </>
+          ) : (
+            <div className="grid-2">{fFrom}{fTo}{fProj}{fSearch}</div>
+          );
+        })()}
         {hasFilter && (
           <div style={{ marginTop: 4 }}>
             <Btn variant="ghost" size="sm" onClick={clearFilters}><Icon name="close" size={13} /> ล้างตัวกรอง</Btn>
@@ -6559,10 +6678,11 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
         <StatCard label={L("Release ที่ทำครบแล้ว", "Releases complete")} value={loading ? "…" : `${fmtNum(fullRel)} / ${fmtNum(rows.length)}`} icon="check" />
       </div>
       <Card title={L("รายการชิ้นงานที่เสร็จ (ต่อ Release)", "Finished pieces (per Release)")}>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <HowTo id="finished-pieces" style={{ marginBottom: 12 }}
+          short={L(<><b>เสร็จ</b> = ชิ้นที่หน้าเครื่องกด Finished · ยอดสะสมทั้งหมด</>, <><b>Finished</b> = pieces marked Finished at the terminal · cumulative</>)}>
           {L(<><b>เสร็จ</b> = ชิ้นที่หน้าเครื่องกด <b>Finished</b> ตามรูทของเครื่อง (เครื่องติ๊กขั้นตอนไหนไว้ก็ตามนั้น) · ชิ้นเดียวกันกด Finished หลายเครื่อง/หลายครั้ง นับครั้งเดียว · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์) · ยอด<b>สะสมทั้งหมด</b> ไม่ขึ้นกับช่วงเวลาด้านบน · กรองตามโปรเจค / Part / Release ที่เลือก</>,
              <><b>Finished</b> = pieces the machine terminal marked <b>Finished</b>, following each machine’s own route (whatever steps it ticked) · a piece finished on several machines/scans counts once · capped at the ordered qty (extra = spare) · <b>cumulative</b>, not limited to the period above · filtered by the selected project / Part / Release</>)}
-        </div>
+        </HowTo>
         {!loading && prog.needSql && (
           <div style={{ fontSize: 12, lineHeight: 1.55, marginBottom: 12, padding: "8px 11px", borderRadius: 9, background: "rgba(217,122,0,.10)", border: "1px solid rgba(217,122,0,.35)", color: "var(--text)" }}>
             {L(<>⚠ ยังไม่ได้รัน <b>migration-finished-pieces.sql</b> ใน Supabase — ตอนนี้เป็นค่าประมาณ (ขั้นตอนที่มีชิ้นเสร็จมากสุด) และยังไม่แสดงเครื่อง</>,
@@ -7557,7 +7677,7 @@ function AssemblyReportView({ from, to, parentKind, projectFilter, partFilter, g
     await exportSheetsSafe(`${isPack ? "packing" : parentKind}-${todayStr()}.xlsx`, [
       { name: `รายการ${kindWord}`, rows: rows.map((r) => ({ "เบอร์แม่": r.parent_no, "QR เบอร์แม่": r.parent_qr, "เบอร์ลูก": r.child_no, "ชนิด": kindTh(r.child_kind), "ยาว (มม.)": r.length_mm ?? "", "จำนวน (ชิ้น)": r.qty })) },
       { name: `ราย${kindWord}`, rows: Object.values(perParent) },
-      { name: "สรุป", rows: [{ "ช่วงเวลา": `${new Date(from).toLocaleDateString("th-TH")} – ${new Date(to).toLocaleDateString("th-TH")}`, [`จำนวนเบอร์แม่ (${kindWord})`]: parentSet.size, "จำนวนลูกที่ใส่รวม (ชิ้น)": totalChildren, "ความยาวรวม (มม.)": totalLen }] },
+      { name: "สรุป", rows: [{ "ช่วงเวลา": `${fmtDFull(from)} – ${fmtDFull(to)}`, [`จำนวนเบอร์แม่ (${kindWord})`]: parentSet.size, "จำนวนลูกที่ใส่รวม (ชิ้น)": totalChildren, "ความยาวรวม (มม.)": totalLen }] },
     ]);
     setExporting(false);
   }
@@ -8319,7 +8439,7 @@ function ReportPage({ goTo }) {
 
       {view === "employee" && canSeeEmp ? (
         <EmployeeReportView from={curRange.from} to={curRange.to} filters={sumFilters({ projectFilter, partFilter, releaseFilter, deptFilter })}
-          rangeLabel={`${new Date(curRange.from).toLocaleDateString("th-TH")} – ${new Date(curRange.to).toLocaleDateString("th-TH")}`} />
+          rangeLabel={`${fmtDFull(curRange.from)} – ${fmtDFull(curRange.to)}`} />
       ) : view === "trend" ? (
         <TrendView filters={sumFilters({ projectFilter, partFilter, releaseFilter, deptFilter })} />
       ) : (<>
@@ -8351,13 +8471,13 @@ function ReportPage({ goTo }) {
           <Btn variant="accent" size="sm" onClick={doBackfillWeights} disabled={bfBusy}>{bfBusy ? "กำลังเติม..." : "เติมน้ำหนักย้อนหลัง"}</Btn>
         </div>
       )}
-      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-8px 2px 14px", lineHeight: 1.6 }}>
+      <HowTo id="report-kpis" style={{ margin: "-6px 2px 14px" }} label={lang === "en" ? "What these numbers mean" : "ตัวเลขด้านบนคิดยังไง"}>
         {lang === "en"
           ? <><b>Avg weight · per active day</b> = processed workload ÷ days that had work · a piece doing several ops in one machine at once counts once ·{" "}
               <b>Processed workload</b> = every scan summed; a piece through several separate operations is counted per operation (production-line load)</>
           : <><b>น้ำหนักเฉลี่ย/วัน</b> = ปริมาณงานที่ประมวลผล ÷ จำนวนวันที่มีงานจริง · ชิ้นที่ทำหลายขั้นตอนในเครื่องเดียว (สแกนครั้งเดียว) นับครั้งเดียว ·{" "}
               <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอน (คนละครั้ง) นับต่อขั้นตอน (วัดภาระงานรวมของสาย)</>}
-      </div>
+      </HowTo>
       <Card title="แยกตามขั้นตอนการทำงาน">
         <SimpleBarChart data={chartData} color={CHART.accent} height={260} />
       </Card>
@@ -9460,6 +9580,7 @@ function DrSettingsModal({ cfg, machines, onClose, onSaved, lang }) {
 }
 
 function DailyReportPage() {
+  const phone = useIsPhone();
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const sess = getSession();
@@ -9944,30 +10065,47 @@ function DailyReportPage() {
         <div className="dr-banner">{L("⚠ ยังไม่ได้รัน migration-daily-report-settings.sql — ใช้เวลากะเริ่มต้น 08:00–17:00 และยังตั้งเป้าไม่ได้", "⚠ migration-daily-report-settings.sql not run yet — using default shift 08:00–17:00, targets unavailable")}</div>
       )}
 
-      <div className="dr-filters">
-        <select value={machineF} onChange={(e) => setMachineF(e.target.value)} style={selStyle} aria-label={L("เครื่อง", "Machine")}>
-          <option value="">{L("ทุกเครื่อง", "All machines")}</option>
-          {machineOpts.map(([k, n]) => <option key={k} value={k}>{k}{n && n !== k ? ` — ${n}` : ""}</option>)}
-        </select>
-        <select value={projF} onChange={(e) => setProjF(e.target.value)} style={selStyle} aria-label={L("โปรเจค", "Project")}>
-          <option value="">{L("ทุกโปรเจค", "All projects")}</option>
-          {projOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
-        </select>
-        {deptOpts.length > 1 && (
-          <select value={deptF} onChange={(e) => setDeptF(e.target.value)} style={selStyle} aria-label={L("แผนก", "Department")}>
-            <option value="">{L("ทุกแผนก", "All departments")}</option>
-            {deptOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+      {(() => {
+        const drSearch = (
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา Part / Release / พนักงาน / INV…", "Search part / release / operator / INV…")} style={{ flex: "1 1 220px", minWidth: 200, height: 38 }} />
+        );
+        const drClear = anyFilter ? <Btn variant="ghost" size="sm" onClick={() => { setMachineF(""); setProjF(""); setDeptF(""); setStatusF(""); setQ(""); }}>{L("ล้างตัวกรอง", "Clear filters")}</Btn> : null;
+        const drSelects = (
+          <>
+          <select value={machineF} onChange={(e) => setMachineF(e.target.value)} style={selStyle} aria-label={L("เครื่อง", "Machine")}>
+            <option value="">{L("ทุกเครื่อง", "All machines")}</option>
+            {machineOpts.map(([k, n]) => <option key={k} value={k}>{k}{n && n !== k ? ` — ${n}` : ""}</option>)}
           </select>
-        )}
-        <select value={statusF} onChange={(e) => setStatusF(e.target.value)} style={selStyle} aria-label={L("สถานะ", "Status")}>
-          <option value="">{L("ทุกสถานะ", "All statuses")}</option>
-          <option value="finished">{L("เสร็จ", "Finished")}</option>
-          <option value="inprocess">{L("กำลังทำ", "In process")}</option>
-          {rowsAll.some((g) => g.office) && <option value="office">{L("สแกนสำนักงาน", "Office scan")}</option>}
-        </select>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหา Part / Release / พนักงาน / INV…", "Search part / release / operator / INV…")} style={{ flex: "1 1 220px", minWidth: 200, height: 38 }} />
-        {anyFilter ? <Btn variant="ghost" size="sm" onClick={() => { setMachineF(""); setProjF(""); setDeptF(""); setStatusF(""); setQ(""); }}>{L("ล้างตัวกรอง", "Clear filters")}</Btn> : null}
-      </div>
+          <select value={projF} onChange={(e) => setProjF(e.target.value)} style={selStyle} aria-label={L("โปรเจค", "Project")}>
+            <option value="">{L("ทุกโปรเจค", "All projects")}</option>
+            {projOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+          </select>
+          {deptOpts.length > 1 && (
+            <select value={deptF} onChange={(e) => setDeptF(e.target.value)} style={selStyle} aria-label={L("แผนก", "Department")}>
+              <option value="">{L("ทุกแผนก", "All departments")}</option>
+              {deptOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+            </select>
+          )}
+          <select value={statusF} onChange={(e) => setStatusF(e.target.value)} style={selStyle} aria-label={L("สถานะ", "Status")}>
+            <option value="">{L("ทุกสถานะ", "All statuses")}</option>
+            <option value="finished">{L("เสร็จ", "Finished")}</option>
+            <option value="inprocess">{L("กำลังทำ", "In process")}</option>
+            {rowsAll.some((g) => g.office) && <option value="office">{L("สแกนสำนักงาน", "Office scan")}</option>}
+          </select>
+          </>
+        );
+        // มือถือ: ช่องค้นหา + ปุ่ม "ตัวกรอง (n)" แถบเดียว → ตัวเลขขึ้นมาเห็นเร็วขึ้น (รอบ 16)
+        return phone ? (
+          <div className="dr-filters">
+            {drSearch}
+            <FilterFold className="inline" active={(machineF ? 1 : 0) + (projF ? 1 : 0) + (deptF ? 1 : 0) + (statusF ? 1 : 0)}>
+              <div className="dr-filters dr-filters-fold">{drSelects}{drClear}</div>
+            </FilterFold>
+          </div>
+        ) : (
+          <div className="dr-filters">{drSelects}{drSearch}{drClear}</div>
+        );
+      })()}
 
       {loading ? (
         <Card><div style={{ color: "var(--muted)", fontSize: 13, padding: "18px 2px", textAlign: "center" }}>{L("กำลังโหลด…", "Loading…")}</div></Card>
@@ -10175,10 +10313,11 @@ function MachinesSummaryPage() {
       </div>
       <LoadStateBanner state={st} onRetry={() => setTick((t) => t + 1)} />
       <Card title="ปริมาณงานที่แต่ละเครื่องประมวลผล">
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <HowTo id="machines-summary" style={{ marginBottom: 12 }}
+          short={lang === "en" ? "Tap a machine row to see all its scans" : "แตะแถวเครื่องเพื่อดูการสแกนทั้งหมดของเครื่องนั้น"}>
           นับตามจำนวนชิ้นที่ทำในแต่ละขั้นตอน — ชิ้นเดียวที่ผ่านหลายเครื่องจะถูกนับที่ทุกเครื่องที่ทำ (งานหน้าเครื่องนับตามจำนวนที่กรอก)
           <br />{lang === "en" ? "Tip: click a machine row to see all its scans (with date · time)." : "เคล็ดลับ: แตะแถวเครื่องเพื่อดูการสแกนทั้งหมดของเครื่องนั้น (พร้อมวัน · เวลา)"}
-        </div>
+        </HowTo>
         <div style={{ marginBottom: 16 }}>
           <SimpleBarChart data={rows} color={CHART.success} height={240} />
         </div>
@@ -10674,7 +10813,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
                   ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
                     cell: (g) => delKey === g.key
                       ? <span style={{ fontSize: 12, color: "var(--muted)" }}>กำลังลบ {nc(delProg)}/{nc(g.ids.length)}…</span>
-                      : <span onClick={() => deleteOrder(g)} title="ลบ Release Order นี้ทั้งชุด" style={{ color: "var(--danger-hi)", cursor: delKey ? "default" : "pointer", opacity: delKey ? 0.4 : 1 }}>ลบ</span> }] : []),
+                      : <button type="button" className="row-act danger" onClick={() => deleteOrder(g)} disabled={!!delKey} title="ลบ Release Order นี้ทั้งชุด">ลบ</button> }] : []),
                 ]} />
             )}
           </div>
@@ -10794,6 +10933,8 @@ function StationHealthCard({ compact = false }) {
 }
 
 function ActiveSessionsCard() {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
   const [rows, setRows] = useState(null);   // null = loading
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");     // sid ที่กำลังเตะ
@@ -10861,10 +11002,10 @@ function ActiveSessionsCard() {
       title="ผู้ใช้ที่กำลังใช้งาน (เฉพาะ Admin)"
       right={<Btn variant="ghost" size="sm" onClick={load} disabled={rows === null}>รีเฟรช</Btn>}
     >
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+      <HowTo id="online-users" style={{ marginBottom: 12 }} short={L("จุดเขียว = กำลังออนไลน์", "Green dot = online now")}>
         รายชื่อบัญชีที่ยัง “ถือเซสชันอยู่” (ยังไม่หมดอายุ/ยังไม่ถูกตัด) · จุดเขียว = กำลังออนไลน์ (มีสัญญาณใน 3 นาที) ·
         กด <b>บังคับออกจากระบบ</b> เพื่อเตะเครื่องนั้น — เครื่องนั้นจะซิงค์งานค้างให้เสร็จก่อนแล้วเด้งออกเอง <b>(ข้อมูลไม่หาย)</b>
-      </div>
+      </HowTo>
 
       {msg && <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--accent-dk, #0a7)" }}>✓ {msg}</div>}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
@@ -11890,6 +12031,7 @@ function MachineCrud() {
   const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข (ชื่อ/ประเภท/ความสามารถ/ลบ)
   const [err, setErr] = useState("");
   const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
   const sort = useTableSort("code");
 
   const load = useCallback(async () => {
@@ -11930,9 +12072,9 @@ function MachineCrud() {
         <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
       </div>
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+      <HowTo id="setup-machines" style={{ marginBottom: 10 }} short={L("กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท/ขั้นตอนที่ทำได้", "Press \"Edit\" to set the name, type and operations")}>
         เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>ปุ่มลัด:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> / <b>แพ็กไซต์ไอเทม</b> / <b>MILLING</b> (ถ้ายังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
-      </div>
+      </HowTo>
       <SortControl sort={sort} options={[
         { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
         { k: "type", label: "ประเภท" }, { k: "caps", label: "ขั้นตอนที่ทำได้" },
@@ -11959,7 +12101,7 @@ function MachineCrud() {
               </>
             ); } },
           { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" },
-            cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span> },
+            cell: (r) => <button type="button" className="row-act" onClick={() => setEditing(r)}>แก้ไข</button> },
         ]} />
       {editing && (
         <MachineEditModal
@@ -12180,7 +12322,7 @@ function OperationsCrud() {
             cell: (r) => { const dest = opTypeDest(r.op_type || "machining"); return (
               <><span style={{ fontWeight: 600 }}>{dest.th}</span><span style={{ color: "var(--muted)", marginLeft: 6 }}>{dest.path}</span></>
             ); } },
-          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+          { key: "manage", header: "", dataLabel: "", cell: (r) => <button type="button" className="row-act danger" onClick={() => remove(r.id)}>ลบ</button> },
         ]} />
     </Card>
   );
@@ -12223,7 +12365,7 @@ function SimpleCrud({ table, fields }) {
       <DataTable id={`simple-crud-${table}`} wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
         columns={[
           ...fields.map((f) => ({ key: f.key, header: f.label, align: f.type === "number" ? "right" : undefined, cell: (r) => r[f.key] })),
-          { key: "__manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span> },
+          { key: "__manage", header: "", dataLabel: "", cell: (r) => <button type="button" className="row-act danger" onClick={() => remove(r.id)}>ลบ</button> },
         ]} />
     </Card>
   );
@@ -12474,7 +12616,7 @@ function EmployeeCrud() {
               <Badge tone={r.active ? "success" : "muted"}>{r.active ? "ใช้งาน" : "ปิดใช้งาน"}</Badge>
             </span>
           ) },
-          { key: "manage", header: "", dataLabel: "", cell: (r) => <span onClick={() => setEditing(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span> },
+          { key: "manage", header: "", dataLabel: "", cell: (r) => <button type="button" className="row-act" onClick={() => setEditing(r)}>แก้ไข</button> },
         ]} />
       {editing && (
         <EmployeeEditModal
@@ -12570,7 +12712,7 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
                       <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{r.part_name}</td>
                       <td style={{ fontSize: 12.5 }}>{kindLabel(r.kind)}</td>
                       <td><NumField min="1" value={r.qty} onChange={(e) => setQty(r.child_pm_id, e.target.value)} style={{ maxWidth: 80 }} /></td>
-                      <td><span onClick={() => removeChild(r.child_pm_id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span></td>
+                      <td><button type="button" className="row-act danger" onClick={() => removeChild(r.child_pm_id)}>ลบ</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -12788,9 +12930,9 @@ function PartMasterCrud() {
             ? <Btn variant="ghost" size="sm" onClick={() => setBomParent(r)}><Icon name="grid" size={13} /> กำหนด BOM</Btn>
             : <span style={{ color: "var(--muted)", fontSize: 12 }}>—</span> },
           { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => (
-            <span style={{ display: "inline-flex", gap: 12 }}>
-              <span onClick={() => setPmEdit(r)} style={{ color: "var(--accent-dk)", cursor: "pointer" }}>แก้ไข</span>
-              <span onClick={() => remove(r.id)} style={{ color: "var(--danger-hi)", cursor: "pointer" }}>ลบ</span>
+            <span className="row-acts">
+              <button type="button" className="row-act" onClick={() => setPmEdit(r)}>แก้ไข</button>
+              <button type="button" className="row-act danger" onClick={() => remove(r.id)}>ลบ</button>
             </span>) },
         ]} />
     </Card>
