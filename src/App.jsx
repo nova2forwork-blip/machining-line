@@ -3898,8 +3898,9 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
       const installed = st.installed || [];
       // ★ รอบ 24: ประวัติรายรอบ/รายสเตชัน + ยอดทำรวมทุกรอบ (ยังไม่รัน SQL รอบ 24 = null → ใช้ยอดเดิม)
       let hist = null;
-      if ((st.parent?.kind || meta?.kind) !== "package") { try { hist = await getAssemblyBatches(qr); } catch { hist = null; } }
-      const madeSum = hist && hist.ok ? Math.floor(Number(hist.made_qty) || 0) : 0;
+      const isPkg = (st.parent?.kind || meta?.kind) === "package";
+      try { hist = await getAssemblyBatches(qr); } catch { hist = null; }   // ★ รอบ 25: บั้งก็มีประวัติรายสเตชัน
+      const madeSum = hist && hist.ok && !isPkg ? Math.floor(Number(hist.made_qty) || 0) : 0;   // บั้ง = 1 ใบเสมอ
       const madeQty = Math.max(1, madeSum > 0 ? madeSum : Math.floor(Number(st.made_qty) || 1));   // จำนวนที่ทำของเบอร์แม่ → แผน = BOM × จำนวนนี้
       const unitMap = await getUnitsByIds(installed.map((x) => x.child_unit_id));
       const byPm = {};
@@ -3932,8 +3933,9 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         madeQty,
         rows, extra, complete, hasOver, ok: complete && extra.length === 0 && !hasOver,
         plannedTotal: bom.reduce((s, b) => s + (Number(b.qty) || 0) * madeQty, 0), scannedTotal: sumQty(installed),
-        isPackage: (st.parent?.kind || meta?.kind) === "package",
+        isPackage: isPkg,
         hist: hist && hist.ok ? hist : null, histMissing: !hist,
+        shared: hist && hist.ok && Array.isArray(hist.shared) ? hist.shared : [],
       });
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
     setBusy(false);
@@ -4053,14 +4055,28 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         </Card>
       )}
 
-      {result && !busy && !result.isPackage && <AssemblyStationHistory hist={result.hist} missing={result.histMissing} />}
+      {result && !busy && result.shared && result.shared.length > 0 && (
+        <Card title={`⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย (${nc(result.shared.length)})`}>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table asm-shared" style={{ minWidth: 420 }}>
+              <thead><tr><th>เบอร์ชิ้น</th><th>QR</th><th>อยู่ในบั้งอื่น</th></tr></thead>
+              <tbody>{result.shared.map((x, i) => (
+                <tr key={i}><td style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{x.part_no || "?"}</td>
+                  <td style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{x.qr}</td>
+                  <td style={{ fontFamily: "var(--font-mono)" }}>{(x.others || []).join(", ")}</td></tr>))}</tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {result && !busy && (!result.isPackage || (result.hist && (result.hist.batches || []).length > 0)) && <AssemblyStationHistory hist={result.hist} missing={result.histMissing} isPackage={result.isPackage} />}
     </div>
   );
 }
 
 // ── ★ รอบ 24: "สเตชันไหนใส่อะไร" ของเบอร์แม่ 1 ตัว — สรุปรายสเตชัน + ทุกรอบที่บันทึก (ใหม่→เก่า) ──
 //   ข้อมูลจาก get_assembly_batches (migration-round24-assembly-batch.sql) · เริ่มเก็บตั้งแต่ติดตั้งรอบ 24
-function AssemblyStationHistory({ hist, missing }) {
+function AssemblyStationHistory({ hist, missing, isPackage = false }) {
   const batches = hist?.batches || [];
   const stations = useMemo(() => {
     const m = new Map();
@@ -4097,8 +4113,8 @@ function AssemblyStationHistory({ hist, missing }) {
             <table className="data-table asm-hist-st" style={{ minWidth: 620 }}>
               <thead><tr>
                 <th>สเตชัน</th><th>ขั้นตอน</th>
-                <th style={{ textAlign: "center", width: 110 }}>ทำเบอร์แม่</th>
-                <th>ลูกที่ใส่ (รวม)</th>
+                {isPackage ? null : <th style={{ textAlign: "center", width: 110 }}>ทำเบอร์แม่</th>}
+                <th>{isPackage ? "ของที่แพ็ก (รวม)" : "ลูกที่ใส่ (รวม)"}</th>
                 <th style={{ textAlign: "center", width: 90 }}>บันทึก (ครั้ง)</th>
                 <th style={{ width: 130 }}>ล่าสุด</th>
               </tr></thead>
@@ -4107,7 +4123,7 @@ function AssemblyStationHistory({ hist, missing }) {
                   <tr key={g.key}>
                     <td style={{ whiteSpace: "nowrap" }}><b style={{ fontFamily: "var(--font-mono)" }}>{g.code || "—"}</b>{g.name && g.name !== g.code ? <span style={{ color: "var(--muted)", fontSize: 12 }}> · {g.name}</span> : null}</td>
                     <td style={{ fontSize: 12.5 }}>{g.op || "—"}</td>
-                    <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{g.made > 0 ? `${nc(g.made)} ชิ้น` : "—"}</td>
+                    {isPackage ? null : <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{g.made > 0 ? `${nc(g.made)} ชิ้น` : "—"}</td>}
                     <td style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{itemsText(g.items)}</td>
                     <td style={{ textAlign: "center", fontFamily: "var(--font-mono)" }}>{nc(g.rounds)}</td>
                     <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtDT(g.last)}</td>
@@ -4122,7 +4138,7 @@ function AssemblyStationHistory({ hist, missing }) {
             <table className="data-table asm-hist-log" style={{ minWidth: 680 }}>
               <thead><tr>
                 <th style={{ width: 120 }}>เวลา</th><th>สเตชัน</th><th>คนบันทึก</th>
-                <th style={{ width: 130 }}>เบอร์แม่</th><th>ลูกที่ใส่</th>
+                <th style={{ width: 130 }}>{isPackage ? "ทำอะไร" : "เบอร์แม่"}</th><th>{isPackage ? "ของที่แพ็ก" : "ลูกที่ใส่"}</th>
               </tr></thead>
               <tbody>
                 {batches.map((b) => {
@@ -4134,6 +4150,7 @@ function AssemblyStationHistory({ hist, missing }) {
                       <td style={{ fontSize: 12.5 }}>{b.employee_name || b.employee_code || "—"}</td>
                       <td style={{ fontSize: 12.5 }}>
                         {rm ? <span className="asm-hist-badge rm">เอาออก</span>
+                          : isPackage ? <span className="asm-hist-badge made">แพ็กเข้า</span>
                           : Number(b.parent_qty) > 0 ? <span className="asm-hist-badge made">{`ทำ ${nc(b.parent_qty)} ชิ้น`}</span>
                           : <span className="asm-hist-badge add">ใส่เพิ่มในชิ้นเดิม</span>}
                       </td>
