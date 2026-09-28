@@ -9,7 +9,8 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
-  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents,
+  recordAssemblyBatch, getAssemblyBatches, logAssemblyRemoval, assemblyBatchSupported,
+  uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents, listGlazingParents,
   getOpenDowntime, listMachineReports,
   stationStop, stationReady, stationSlowReason, onStationEvents, stationEventsPending, stationPing, getStationDayOps, getTypicalTime, appBuildId,
   reportActiveJob, clearActiveJobNow,
@@ -274,6 +275,7 @@ function opDept(o) {
   if (ty === "pack_panel") return "packpanel";   // แพ็กแผง
   if (ty === "pack_site") return "packsite";     // แพ็กไซต์ไอเทม
   if (ty === "packing") return "packing";        // แพ็ก (รวม — บัญชีเดิม)
+  if (ty === "glazing") return "glazing";        // ★ รอบ 22: ติดกระจก (เบอร์แม่ = ซับ/หน้าต่าง หรือ แผง ที่ประกอบเสร็จแล้ว)
   return "machine";
 }
 const DEPT_META = {
@@ -283,7 +285,19 @@ const DEPT_META = {
   packing:  { th: "หน้าแพ็ก",   en: "Packing",  path: "/packing",  word: "แพ็ก",   wordEn: "packing" },
   packpanel:{ th: "หน้าแพ็กแผง", en: "Pack Panel", path: "/packing-panel", word: "แพ็กแผง", wordEn: "pack-panel" },
   packsite: { th: "หน้าแพ็กไซต์ไอเทม", en: "Pack Site Item", path: "/packing-site", word: "แพ็กไซต์ไอเทม", wordEn: "pack-site" },
+  glazing:  { th: "หน้าติดกระจก (Glazing)", en: "Glazing", path: "/glazing", word: "ติดกระจก", wordEn: "glazing" },
 };
+// ★ รอบ 23: สเตชันประกอบ (ซับ/แผง/ติดกระจก) = "บันทึกว่าใส่อะไรเข้าไป" อย่างเดียว — ไม่ปิดงานเอง ไม่บอกครบ/ไม่ครบ
+//   (หลังบ้านเทียบกับแบบ/BOM เองที่หน้า "ตรวจงานประกอบ") · แพ็ก (บั้ง) ยังเทียบรายการเหมือนเดิม
+const ASM_AUTO_CLOSE = false;
+// ★ รอบ 22: ชิ้นกระจก (ดูจากเบอร์/ชื่อ) — สเตชันซับ "ไม่บังคับ" ให้สแกนกระจกครบก่อนปิดงานเฟรม (กระจกไปติดที่สเตชัน Glazing)
+//   ไม่นับอุปกรณ์รอบกระจก (ยาง/คิ้ว/ตัวรอง/ซิลิโคน/คลิป) ว่าเป็นกระจก
+function isGlassName(s) {
+  const d = String(s || "").toUpperCase();
+  if (/SUPPORT|BEAD|SPACER|GASKET|SETTING|CLIP|SEAL|SILICON|TAPE|BLOCK/.test(d)) return false;
+  if (/ยาง|คิ้ว|ตัวรอง|ซิลิโคน|ซีล|เทป|คลิป/.test(String(s || ""))) return false;
+  return /GLASS|GLAZ|\bIGU\b|กระจก/.test(d) || /กระจก/.test(String(s || ""));
+}
 // สเตชันตระกูล "แพ็ก" (โหมดแพ็กเหมือนกัน) — legacy packing = เห็นทุกบั้ง · packpanel/packsite = กรองด้วย pkg_meta.pack_type
 const PACK_DEPTS = ["packing", "packpanel", "packsite"];
 const isPackingDept = (d) => PACK_DEPTS.includes(d);
@@ -391,7 +405,7 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
           <label>{dept === "machine" ? "รหัสเครื่อง / พนักงาน" : `รหัสสถานี${meta.word} / พนักงาน`}</label>
           <input className="stn-input" value={code} autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false}
             onChange={(e) => setCode(e.target.value)}
-            placeholder={dept === "assembly" ? "เช่น ประกอบ-01" : dept === "panel" ? "เช่น แผง-01" : dept === "packpanel" ? "เช่น แพ็กแผง-01" : dept === "packsite" ? "เช่น แพ็กไซต์-01" : dept === "packing" ? "เช่น แพ็ก-01" : "เช่น CT-001"} />
+            placeholder={dept === "assembly" ? "เช่น ประกอบ-01" : dept === "panel" ? "เช่น แผง-01" : dept === "glazing" ? "เช่น กระจก-01" : dept === "packpanel" ? "เช่น แพ็กแผง-01" : dept === "packsite" ? "เช่น แพ็กไซต์-01" : dept === "packing" ? "เช่น แพ็ก-01" : "เช่น CT-001"} />
         </div>
         <div className="stn-field">
           <label>รหัสผ่าน</label>
@@ -517,6 +531,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [asmPending, setAsmPending] = useState(null);   // ลูกที่เพิ่งสแกน รอกด "ใส่เข้าเบอร์แม่" (แผงยืนยันต่อชิ้น — โหมดประกอบ)
   const [asmDone, setAsmDone] = useState(null);         // แจ้งเตือน "ประกอบ/แพ็กเสร็จ" เด้งกลางจอหลังยืนยันสำเร็จ { partNo, count, isPack, queued }
   const asmClientRef = useRef(null);
+  const asmGlzClientRef = useRef(null);   // ★ รอบ 22: client_id ยอดติดกระจก (คงเดิมจนบันทึกสำเร็จ → กดซ้ำไม่นับเบิ้ล)
   const [packPhotos, setPackPhotos] = useState([]);     // รูปตอนแพ็ก (ยังไม่อัป) [{ blob, url }]
   const [photoOpen, setPhotoOpen] = useState(false);    // เปิดกล้องถ่ายรูปแพ็ก
   const [progress, setProgress] = useState(null); // { done, total } ของล็อต/รีลีสที่สแกน
@@ -673,18 +688,18 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // โหลดชิ้นงานล่วงหน้าเก็บในเครื่อง (ตอนออนไลน์) เพื่อให้สแกนออฟไลน์เจอข้อมูล
   // ทำเงียบๆ เบื้องหลัง + รีเฟรชทุกครั้งที่เน็ตกลับมา
   useEffect(() => {
-    const isAsmDept = dept === "assembly" || dept === "panel" || isPackingDept(dept);
+    const isAsmDept = dept === "assembly" || dept === "panel" || dept === "glazing" || isPackingDept(dept);
     const isOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
     // ★ อุ่น chunk ตัวถอด QR (jsQR) ตอนออนไลน์ → service worker แคชไว้ → สแกนกล้อง "ออฟไลน์" ได้
     //   (เดิม import("jsqr") ตอนเปิดกล้องครั้งแรก ถ้าครั้งแรกดันเป็นตอนออฟไลน์ = chunk ไม่ถูกแคช สแกนกล้องไม่ทำงาน)
     const warmScanner = () => { if (isOnline()) import("jsqr").catch(() => {}); };
     warmScanner();
     prefetchUnitsForOffline().catch(() => {});
-    if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});   // แคชสถานะเบอร์แม่ที่กำลังทำ → เปิด offline ได้
+    if (isAsmDept) prefetchAssemblyForOffline(120, dept).catch(() => {});   // แคชสถานะเบอร์แม่ที่กำลังทำ → เปิด offline ได้
     const onOnline = () => {
       warmScanner();
       prefetchUnitsForOffline().catch(() => {});
-      if (isAsmDept) prefetchAssemblyForOffline().catch(() => {});
+      if (isAsmDept) prefetchAssemblyForOffline(120, dept).catch(() => {});
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
@@ -1342,7 +1357,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }, [lockTableHeight]);
 
   // ── โหมดของหน้านี้ "ล็อกตามแผนก" (dept) แล้ว — assembly/packing = โหมดประกอบ/แพ็ก · machine = งานเครื่อง ──
-  const isAsm = dept === "assembly" || dept === "panel" || isPackingDept(dept);
+  const isAsm = dept === "assembly" || dept === "panel" || dept === "glazing" || isPackingDept(dept);
   // นับ "สะสม" = ที่ติดตั้งไปแล้ว (สเตชันก่อน) + ที่สแกนรอบนี้ · ครบเมื่อทุกบรรทัด ≥ qty
   const asmHave = (pmId) =>
     (asmParent?.installed || []).filter((x) => x.child_pm_id === pmId).length +
@@ -1370,7 +1385,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmParent(w.parent);
           const kids = Array.isArray(w.children) ? w.children : [];
           setAsmChildren(kids);
-          if (w.parentQty != null) setAsmParentQty(Math.max(1, Math.floor(Number(w.parentQty) || 1)));   // กู้ "จำนวนที่จะทำ" + สถานะยืนยันจำนวน (ซับ) — refresh แล้วไม่ต้องตั้งใหม่
+          if (w.parentQty != null) setAsmParentQty(Math.max(0, Math.floor(Number(w.parentQty) || 0)));   // กู้ "จำนวนที่จะทำ" + สถานะยืนยันจำนวน (ซับ) — refresh แล้วไม่ต้องตั้งใหม่
           if (w.qtyLocked) setAsmQtyLocked(true);
           flash(kids.length
             ? t("กู้รายการที่สแกนค้างไว้ (" + kids.length + ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย", "Restored " + kids.length + " scanned item(s) — review & confirm")
@@ -1434,6 +1449,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     try {
       const res = await removeAssemblyChild(asmParent.unit.id, childUnitId);
       if (res && res.ok) {
+        // ★ รอบ 24: จดลงประวัติรายรอบว่า "เอาออก" (หลังบ้านเห็นว่าสเตชันไหนเอาอะไรออก) · ไม่สำเร็จไม่เป็นไร
+        if (asmParent.batchOk) {
+          const remQty = (asmParent.installed || []).filter((x) => x.child_unit_id === childUnitId).reduce((s, x) => s + Math.max(1, Math.floor(Number(x.qty) || 1)), 0);
+          logAssemblyRemoval({ parentUnitId: asmParent.unit.id, childUnitId, qty: remQty || 1, operationId: op?.id || null });
+        }
         setAsmParent((p) => (p ? { ...p, installed: (p.installed || []).filter((x) => x.child_unit_id !== childUnitId) } : p));
         tickBeep(); flash(t("เอาลูกออกแล้ว", "child removed"), "ok");
       } else { errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn"); }
@@ -1478,6 +1498,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       parent_not_found: t("ไม่พบเบอร์แม่", "parent not found"),
       no_machine: t("บัญชีไม่ได้ผูกเครื่อง", "account has no machine"),
       unauthorized: t("เซสชันหมดอายุ — ล็อกอินใหม่", "session expired"),
+      // ★ รอบ 24 (record_assembly_batch)
+      bad_child_kind: t("เบอร์ลูกชนิดนี้ใส่ในเบอร์แม่นี้ไม่ได้", "this child type can't go into this parent"),
+      bad_parent_kind: t("เบอร์นี้ไม่ใช่ซับ/แผง — เปิดที่สเตชันนี้ไม่ได้", "not a subassembly/panel"),
+      child_is_parent: t("สแกนเบอร์แม่เป็นลูกของตัวเองไม่ได้", "a parent can't be its own child"),
+      machine_cannot: t("สถานีนี้ไม่ได้ตั้งให้ทำขั้นตอนนี้ — แจ้งออฟฟิศ", "this station isn't set up for this operation"),
+      project_closed: t("โปรเจคนี้ปิดแล้ว — บันทึกเพิ่มไม่ได้", "project closed"),
+      release_cancelled: t("Part นี้ถูกยกเลิกใน Modify — บันทึกไม่ได้", "part cancelled by a Modify"),
+      nothing: t("ยังไม่มีอะไรให้บันทึก", "nothing to save"),
+      too_many: t("สแกนลูกเกิน 500 รายการในรอบเดียว — แบ่งบันทึกเป็นหลายรอบ", "over 500 children in one save — split it"),
     };
     return m[r] || t("บันทึกประกอบไม่สำเร็จ", "assembly failed");
   };
@@ -1501,7 +1530,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       {
         const pk = u.part_master?.kind || "part";
         const wantKind = dept === "panel" ? "panel" : isPackingDept(dept) ? "package" : "subassembly";
-        if (pk !== wantKind) {
+        // ★ รอบ 22: ติดกระจก — เบอร์แม่เป็นได้ทั้ง ซับ (หน้าต่าง) และ แผง
+        if (dept === "glazing" && pk !== "subassembly" && pk !== "panel") {
+          errorBeep();
+          flash(t(`สเตชันติดกระจกเปิดได้เฉพาะเบอร์ ซับ (หน้าต่าง) หรือ แผง — เบอร์นี้เป็น ${pk === "package" ? "แพ็ก" : "part ธรรมดา"}`,
+                  `glazing opens subassembly (window) or panel parents only — this is ${pk}`), "warn");
+          return false;
+        }
+        if (dept !== "glazing" && pk !== wantKind) {
           const wantName = wantKind === "panel" ? t("แผง", "panel") : wantKind === "package" ? t("แพ็ก", "package") : t("ซับ (subassembly)", "subassembly");
           const pkName = pk === "part" ? t("part ธรรมดา", "plain part") : pk === "panel" ? t("แผง", "panel") : pk === "package" ? t("แพ็ก", "package") : pk === "subassembly" ? t("ซับ", "subassembly") : pk;
           errorBeep();
@@ -1536,7 +1572,30 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         return false;
       }
       if (st.offline) flash(t("โหมดออฟไลน์ — บันทึกเข้าคิว จะซิงค์เมื่อเน็ตกลับ", "offline — will queue & sync"), "info");
-      if (st.parent?.status === "finished") {
+      // ★ รอบ 24: ประกอบเป็นรอบ — ยอดที่ทำไว้แล้ว (รวมทุกรอบ) + server รองรับ "ใส่จำนวนทุกรอบ / สแกนลูกเดิมซ้ำ" ไหม
+      let bi = null;
+      if (!isPackingDept(dept)) {
+        setBusy(true);
+        try { bi = await getAssemblyBatches(u.qr_code); } catch { bi = null; }
+        setBusy(false);
+      }
+      const batchOk = !isPackingDept(dept) && (bi ? !!bi.ok : assemblyBatchSupported());
+      const madeSum = bi && bi.ok ? Math.max(0, Math.floor(Number(bi.made_qty) || 0)) : null;
+      const glazedSum = bi && bi.ok ? Math.max(0, Math.floor(Number(bi.glazed_qty) || 0)) : null;
+      const reopen = st.parent?.status === "finished" || (st.installed || []).length > 0 || (madeSum || 0) > 0;
+      // ★ รอบ 22: ติดกระจกหลังประกอบเสร็จเท่านั้น (เฟรมหน้าต่าง/แผงต้องบันทึกเสร็จที่สเตชันประกอบก่อน)
+      if (dept === "glazing" && st.parent?.status !== "finished" && u.status !== "finished") {
+        errorBeep();
+        flash(t(`${u.part_master?.part_no || u.qr_code} ยังไม่มีบันทึกที่สเตชัน${(u.part_master?.kind === "panel") ? "แผง" : "ซับ"} — บันทึกที่นั่นก่อน แล้วค่อยติดกระจก`,
+                `${u.part_master?.part_no || u.qr_code} isn't assembled yet — finish it at the ${u.part_master?.kind === "panel" ? "panel" : "sub-assembly"} station first`), "warn");
+        return false;
+      }
+      if (dept === "glazing") {
+        tickBeep(); flash(t(`ติดกระจก: ${u.part_master?.part_no || u.qr_code}`, `Glazing: ${u.part_master?.part_no || u.qr_code}`), "ok");
+      } else if (st.parent?.status === "finished" && !isPackingDept(dept)) {
+        // ★ รอบ 23: ไม่บอกหน้างานว่า "เสร็จ/ไม่เสร็จ" — แค่บอกว่ามีของที่บันทึกไว้แล้วกี่รายการ ใส่เพิ่มได้
+        tickBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} — บันทึกไว้แล้ว ${nc((st.installed || []).length)} รายการ · ใส่เพิ่มได้`, `${u.part_master?.part_no || u.qr_code} — ${(st.installed || []).length} saved · add more`), "ok");
+      } else if (st.parent?.status === "finished") {
         tickBeep(); flash(t("เบอร์นี้เสร็จแล้ว — เปิดโหมดแก้ไข (เพิ่ม/ลบลูกได้ ยอดผลิตไม่นับซ้ำ)", "already done — edit mode (add/remove children, no double count)"), "info");
       } else {
         tickBeep(); flash(t(`เบอร์แม่: ${u.part_master?.part_no || u.qr_code}`, `Parent: ${u.part_master?.part_no || u.qr_code}`), "ok");
@@ -1551,8 +1610,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           kind: b.kind || meta[b.child_pm_id]?.kind || "part",
         }));
       } catch { /* ไม่เป็นไร ใช้ bom เดิม */ }
-      setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [], parentStatus: st.parent?.status || null });
-      setAsmParentQty(1); setAsmQtyLocked(false); setAsmChildren([]); asmClientRef.current = null;
+      const madeQty = Math.max(1, madeSum != null && madeSum > 0 ? madeSum : Math.floor(Number(st.made_qty) || 1));
+      setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [], parentStatus: st.parent?.status || null,
+        madeQty, madeSum, glazedSum, batchOk, reopen });
+      // ติดกระจก: จำนวนเริ่มต้น = ที่ประกอบไว้ − ที่ติดกระจกไปแล้ว (รู้ยอด) / ที่ประกอบไว้ (ไม่รู้ยอด)
+      setAsmParentQty(dept === "glazing"
+        ? (glazedSum != null && madeQty - glazedSum > 0 ? madeQty - glazedSum : madeQty)
+        : 1);
+      // ★ รอบ 24: server รองรับรอบ → ถามจำนวนเบอร์แม่ "ทุกรอบ" (ทำเพิ่ม / ใส่ของเพิ่มในชิ้นเดิม)
+      //   ยังไม่รัน SQL รอบ 24 → แบบรอบ 23: เบอร์ที่เคยบันทึกแล้วไม่ถามซ้ำ (ยอดผลิตนับครั้งแรกครั้งเดียว)
+      setAsmQtyLocked((dept === "assembly" || dept === "panel") && !batchOk && st.parent?.status === "finished");
+      setAsmChildren([]); asmClientRef.current = null; asmGlzClientRef.current = null;
       return true;
     }
 
@@ -1560,7 +1628,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (u.id === asmParent.unit.id) { flash(t("นี่คือเบอร์แม่เอง", "this is the parent"), "warn"); return false; }
     // แพ็ก (นับต่อดวง): ห้ามสแกนดวงเดิมซ้ำ · ประกอบ/ซับ (นับจำนวนรวม): สแกนเบอร์เดิมซ้ำได้ → บวกจำนวนเพิ่มในแถวเดิม (asmAddPending รวมยอดให้)
     if (asmParent.parentKind === "package" && asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้วรอบนี้", "already scanned this round"), "warn"); return false; }
-    if ((asmParent.installed || []).some((x) => x.child_unit_id === u.id)) {
+    // ★ รอบ 24: server รองรับรอบ → QR ลูกเดิมใส่เบอร์แม่เดิมซ้ำได้ (บวกจำนวน · ป้ายล็อต 1 ใบ = หลายชิ้น) · แพ็กยังห้ามซ้ำ
+    const prevQty = (asmParent.installed || []).filter((x) => x.child_unit_id === u.id).reduce((s, x) => s + Math.max(1, Math.floor(Number(x.qty) || 1)), 0);
+    if (prevQty > 0 && !(asmParent.batchOk && asmParent.parentKind !== "package")) {
       flash(t("ชิ้นนี้ติดตั้งไปแล้ว (สเตชันก่อนหน้า)", "already installed (earlier station)"), "warn"); return false;
     }
     // ── กฎ "ชนิดลูก" ตามชนิดเบอร์แม่ (อัตโนมัติ) — sub → รับ part/ซับตัวอื่น (ไม่รับแผง) · แผง → รับ sub/part (กันสแกนผิดชั้น) ──
@@ -1578,7 +1648,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
     }
     // ลูกที่ "เป็นของประกอบเอง" (ไม่ใช่ part) ต้องประกอบเสร็จ (finished) ก่อนถึงใส่ได้ (ทั้ง 2 โหมด)
-    if (u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
+    // ★ รอบ 23: ประกอบ/แผง/ติดกระจก ไม่บังคับแล้ว (หน้างานทำตามแบบกระดาษ · หลังบ้านตรวจเอง) · แพ็กยังบังคับเหมือนเดิม
+    if (asmParent.parentKind === "package" && u.part_master?.kind && u.part_master.kind !== "part" && u.status !== "finished") {
       errorBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} ยังประกอบไม่เสร็จ — ใส่ไม่ได้`, `${u.part_master?.part_no || u.qr_code} isn't finished yet`), "warn"); return false;
     }
     const strict = asmParent.parentKind === "package";   // แพ็ก = เข้ม BOM/manifest · ประกอบ = อิสระ
@@ -1600,7 +1671,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // เด้งแผงยืนยันต่อชิ้น (เหมือนหน้าเครื่อง) — ยังไม่เข้ารายการจนกว่าจะกด "ใส่เข้าเบอร์แม่"
     //   สแกนเบอร์เดิมซ้ำ → ส่ง existingQty ให้แผงยืนยันโชว์ "มีอยู่แล้ว N" (asmAddPending จะบวกจำนวนเพิ่มให้)
     const existing = asmChildren.find((c) => c.unit_id === u.id);
-    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1, existingQty: existing ? (Number(existing.qty) || 0) : 0 });
+    // จำนวนเริ่มต้น = จำนวนเบอร์แม่ที่ทำรอบนี้ (ทำ 10 ชุด → ลูกเริ่มที่ 10 · แก้ได้) · ไม่ได้ทำเพิ่ม (0) = 1
+    const defQty = Math.max(1, Math.floor(Number(asmParentQty) || 0) || 1);
+    setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1,
+      existingQty: existing ? (Number(existing.qty) || 0) : 0, prevQty, defQty });
     return true;
   }
   const asmDecoded = async (qr) => {
@@ -1614,9 +1688,147 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   };
   const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
 
+  // ★ รอบ 22: ติดกระจก — (1) ผูกกระจก/ชิ้นที่สแกนเข้าเบอร์แม่ (ถ้ามี · เบอร์แม่เสร็จแล้ว = ไม่นับยอดประกอบซ้ำ)
+  //   (2) บันทึก "ยอดติดกระจก" เป็นงานของสเตชันนี้ (ขั้นตอน Glazing · จำนวน = ชิ้นที่ติดกระจกรอบนี้) → ขึ้นรายงาน/TV/รายงานประจำวัน
+  //   ทั้งสองส่วนเข้าคิวออฟไลน์ได้ · ส่วน (2) ใช้ client_id คงที่ → กดซ้ำ/ซิงค์ซ้ำไม่นับเบิ้ล
+  async function glazeConfirm() {
+    if (!asmParent || savingRef.current) return;
+    const pq = Math.max(1, Math.floor(Number(asmParentQty) || 1));
+    const pno = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
+    savingRef.current = true; setBusy(true);
+    if (!asmClientRef.current) asmClientRef.current = newClientId();
+    if (!asmGlzClientRef.current) asmGlzClientRef.current = newClientId();
+    let queued = false;
+    try {
+      // ★ รอบ 24: server รองรับรอบ → ครั้งเดียวจบ (ยอดติดกระจก + กระจกที่สแกน + สเตชัน/เวลา) ใน transaction เดียว
+      let viaBatch = false;
+      if (asmParent.batchOk) {
+        const rb = await recordAssemblyBatch({
+          parentQr: asmParent.unit.qr_code,
+          children: asmChildren.map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
+          parentQty: pq, operationId: op?.id || null, clientId: asmClientRef.current,
+        });
+        if (rb && !rb.legacy) {
+          if (rb.ok || rb.queued) {
+            tickBeep();
+            flash(rb.queued ? t(`✓ ติดกระจก ${nc(pq)} ชิ้น — เก็บเข้าคิว รอซิงค์`, `✓ Glazed ${pq} — queued for sync`)
+                            : t(`✓ ติดกระจกแล้ว ${nc(pq)} ชิ้น`, `✓ Glazed ${pq}`), "ok");
+            setAsmDone({ partNo: pno, count: pq, isPack: false, isSub: false, isGlz: true, queued: !!rb.queued });
+            setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; asmGlzClientRef.current = null;
+            reload();
+          } else if (rb.reason === "storage_full") {
+            errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
+          } else {
+            errorBeep(); flash(asmReason(rb?.reason) + (rb?.reason ? ` [${rb.reason}]` : ""), "warn");
+          }
+          return;
+        }
+        // server ไม่มีฟังก์ชันรอบ 24 (ถูกย้อนกลับ) → ลูกผูกผ่าน record_assembly แล้ว · นับยอดติดกระจกแบบเดิมต่อด้านล่าง
+        viaBatch = true;
+        if (rb && rb.queued) queued = true;
+        else if (!(rb && rb.ok) && asmChildren.length > 0) {
+          errorBeep(); flash(asmReason(rb?.reason) + (rb?.reason ? ` [${rb.reason}]` : ""), "warn");
+          return;
+        }
+        if (asmChildren.length > 0) {
+          const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1, part_no: c.part_no, qr: c.qr }));
+          setAsmParent((p) => (p ? { ...p, installed: [...(p.installed || []), ...addNow] } : p));
+          setAsmChildren([]); asmClientRef.current = null;
+        }
+      }
+      if (!viaBatch && asmChildren.length > 0) {
+        const res = await recordAssembly({
+          parentQr: asmParent.unit.qr_code,
+          childQrs: asmChildren.map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
+          parentQty: pq, operationId: op?.id || null, clientId: asmClientRef.current,
+        });
+        if (res && res.queued) queued = true;
+        else if (!(res && res.ok)) {
+          errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : ""), "warn");
+          return;
+        }
+        // ชิ้นที่สแกนรอบนี้บันทึกแล้ว → ย้ายไป "ติดแล้ว" (ถ้าขั้นต่อไปพลาด กดยืนยันซ้ำจะไม่ส่งลูกซ้ำ)
+        const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1, part_no: c.part_no, qr: c.qr }));
+        setAsmParent((p) => (p ? { ...p, installed: [...(p.installed || []), ...addNow] } : p));
+        setAsmChildren([]); asmClientRef.current = null;
+      }
+      const mw = await recordMachineWork({
+        qr: asmParent.unit.qr_code, quantity: pq, materialLengthMm: null, processSeconds: 0, status: "finished",
+        releaseId: asmParent.unit.release_id || null, clientId: asmGlzClientRef.current, operationId: op?.id || null, weight: 0,
+      });
+      if (mw && (mw.ok || mw.queued)) {
+        if (mw.queued) queued = true;
+        tickBeep();
+        flash(queued ? t(`✓ ติดกระจก ${nc(pq)} ชิ้น — เก็บเข้าคิว รอซิงค์`, `✓ Glazed ${pq} — queued for sync`)
+                     : t(`✓ ติดกระจกแล้ว ${nc(pq)} ชิ้น`, `✓ Glazed ${pq}`), "ok");
+        setAsmDone({ partNo: pno, count: pq, isPack: false, isSub: false, isGlz: true, queued });
+        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; asmGlzClientRef.current = null;
+        reload();
+      } else {
+        errorBeep();
+        flash(t("บันทึกยอดติดกระจกไม่สำเร็จ — กดบันทึกอีกครั้ง", "couldn't save the glazing count — press save again") + (mw?.reason ? ` [${mw.reason}]` : ""), "warn");
+      }
+    } catch (e) {
+      errorBeep();
+      flash(t("บันทึกไม่สำเร็จ: ", "save failed: ") + (e?.message || e?.details || e?.code || String(e)), "warn");
+    } finally { setBusy(false); savingRef.current = false; }
+  }
+
   // บันทึก "รอบนี้" (สะสมได้ — ไม่ต้องครบก็เซฟ) · ครบ BOM สะสม → ปิดงานอัตโนมัติ · ไม่ครบ → รีเฟรชยอด แล้วสแกนต่อ/ส่งสเตชันถัดไป
-  async function asmConfirm() {
+  // ★ รอบ 24: บันทึก 1 รอบ (ซับ/แผง) — จำนวนเบอร์แม่รอบนี้ (0 = ใส่ของเพิ่มในชิ้นเดิม) + ลูกพร้อมจำนวน + สเตชัน/เวลา
+  //   กลับหน้ารายการเบอร์แม่ทุกครั้ง (ไม่บอกครบ/ไม่ครบ) · เข้าคิวออฟไลน์ได้ (client_id คงที่ = ส่งซ้ำไม่นับเบิ้ล)
+  async function asmBatchConfirm() {
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
+    const pq = Math.max(0, Math.floor(Number(asmParentQty) || 0));
+    const pno = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
+    const n = asmChildren.length;
+    savingRef.current = true; setBusy(true);
+    if (!asmClientRef.current) asmClientRef.current = newClientId();
+    try {
+      const res = await recordAssemblyBatch({
+        parentQr: asmParent.unit.qr_code,
+        children: asmChildren.map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
+        parentQty: pq, operationId: op?.id || null, clientId: asmClientRef.current,
+      });
+      if (res && (res.ok || res.queued)) {
+        tickBeep();
+        if (res.queued) {
+          // แคชสถานะใหม่ไว้ (เปิดเบอร์นี้ซ้ำตอนออฟไลน์ เห็นของที่ใส่ไปแล้ว)
+          try {
+            const inst = (asmParent.installed || []).map((x) => ({ ...x }));
+            asmChildren.forEach((c) => {
+              const i = inst.findIndex((x) => x.child_unit_id === c.unit_id);
+              const q = Math.max(1, Math.floor(Number(c.qty) || 1));
+              if (i >= 0) inst[i].qty = Math.max(1, Math.floor(Number(inst[i].qty) || 1)) + q;
+              else inst.push({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: q, part_no: c.part_no, qr: c.qr });
+            });
+            setCachedAsmState(asmParent.unit.qr_code, {
+              ok: true, bom: asmParent.bom || [], installed: inst,
+              parent: { part_no: pno, status: (pq > 0 || asmParent.parentStatus === "finished") ? "finished" : (asmParent.parentStatus || "released") },
+              made_qty: asmParent.madeQty,
+            });
+          } catch { /* ignore */ }
+        }
+        const what = pq > 0 ? t(`ทำ ${nc(pq)} ชิ้น · ใส่ ${nc(n)} รายการ`, `made ${pq} · ${n} item(s)`) : t(`ใส่เพิ่ม ${nc(n)} รายการ`, `added ${n} item(s)`);
+        flash(res.queued ? t(`✓ บันทึกแล้ว ${pno} — ${what} · เก็บเข้าคิว รอซิงค์`, `✓ Saved ${pno} — ${what} · queued`)
+                         : t(`✓ บันทึกแล้ว ${pno} — ${what}`, `✓ Saved ${pno} — ${what}`), "ok");
+        setAsmDone({ partNo: pno, count: pq > 0 ? pq : n, isPack: false, isSub: dept === "assembly" && pq > 0, queued: !!res.queued });
+        setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setAsmParentQty(1); setAsmQtyLocked(false);
+        reload();
+      } else if (res && res.reason === "storage_full") {
+        errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
+      } else {
+        errorBeep(); flash(asmReason(res?.reason) + (res?.reason ? ` [${res.reason}]` : "") + (res?.qr ? ` · ${res.qr}` : ""), "warn");
+      }
+    } catch (e) {
+      errorBeep();
+      flash(t("บันทึกไม่สำเร็จ: ", "save failed: ") + (e?.message || e?.details || e?.hint || e?.code || String(e)), "warn");
+    } finally { setBusy(false); savingRef.current = false; }
+  }
+  async function asmConfirm() {
+    if (dept === "glazing") return glazeConfirm();
+    if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
+    if (asmParent.batchOk && asmParent.parentKind !== "package") return asmBatchConfirm();
     const isPack = isPackingDept(dept);
     const free = asmParent.parentKind !== "package";   // ประกอบอิสระ = ปิดเมื่อกดยืนยัน (แพ็ก = ครบตาม BOM)
     // ซับ: แจ้ง "เสร็จ" เป็น "จำนวนที่จะทำ" (นับหลายชิ้น) · อื่น ๆ = จำนวนลูกที่สแกนรอบนี้
@@ -1649,7 +1861,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         } catch { /* ignore */ }
         const photoNote = (isPack && packPhotos.length > 0) ? t(" · รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)", " · photos not saved offline") : "";
         if (complete) {
-          flash((isPack ? t("✓ แพ็กครบ — เก็บเข้าคิว รอซิงค์", "✓ Packed — queued for sync") : t("✓ ประกอบครบ — เก็บเข้าคิว รอซิงค์", "✓ Assembled — queued for sync")) + photoNote, "ok");
+          flash((isPack ? t("✓ แพ็กครบ — เก็บเข้าคิว รอซิงค์", "✓ Packed — queued for sync") : t(`✓ บันทึกแล้ว ${nc(asmChildren.length)} รายการ — เก็บเข้าคิว รอซิงค์`, `✓ Saved ${asmChildren.length} — queued for sync`)) + photoNote, "ok");
           setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: doneCount, isPack, isSub: dept === "assembly", queued: true });
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
@@ -1669,12 +1881,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         }
         tickBeep();
         if (res.complete) {
-          flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t("✓ ประกอบครบแล้ว — ปิดงาน", "✓ Assembled & complete"), "ok");
+          flash(isPack ? t("✓ แพ็กครบแล้ว — ปิดงาน", "✓ Packed & complete") : t(`✓ บันทึกแล้ว ${nc(res.added ?? asmChildren.length)} รายการ`, `✓ Saved ${res.added ?? asmChildren.length}`), "ok");
           setAsmDone({ partNo: asmParent.unit.part_master?.part_no || asmParent.unit.qr_code, count: doneCount, isPack, isSub: dept === "assembly", queued: false });
           setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
         } else {
           const added = res.added ?? asmChildren.length;
-          flash(t(`✓ บันทึกแล้ว ${nc(added)} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`), "ok");
+          flash((isPack ? t(`✓ บันทึกแล้ว ${nc(added)} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)`, `✓ Saved ${added} — not complete yet`) : t(`✓ บันทึกแล้ว ${nc(added)} รายการ`, `✓ Saved ${added}`)), "ok");
           // อัปเดต "ที่ติดแล้ว" แบบ optimistic ก่อน แล้ว reconcile กับเซิร์ฟเวอร์ · เก็บ length_mm/kind ที่เติมตอนสแกนไว้ (get_assembly_state ไม่คืนมา → กันคอลัมน์ขนาด/ยาวหาย)
           const addNow = asmChildren.map((c) => ({ child_pm_id: c.child_pm_id, child_unit_id: c.unit_id, qty: c.qty ?? 1 }));
           let st = null;
@@ -1724,7 +1936,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   // ครบ BOM×จำนวนหรือยัง — เฉพาะซับ + ต้องมี BOM + ครบทุกพาร์ท (ไม่มี BOM = ปิดเองไม่ได้ → กดยืนยันเอง)
   const asmBomMet = useMemo(() => {
     if (dept !== "assembly") return false;
-    const bom = asmParent?.bom || [];
+    // ★ รอบ 22: กระจกไม่บังคับที่สเตชันซับ (ไปติดที่สเตชัน Glazing ทีหลัง) · ถ้า BOM มีแต่กระจก = ใช้ BOM เต็มเหมือนเดิม
+    const bom0 = asmParent?.bom || [];
+    const noGlass = bom0.filter((b) => !isGlassName(`${b.part_no || ""} ${b.part_name || ""}`));
+    const bom = noGlass.length ? noGlass : bom0;
     const pq = Math.max(1, Math.floor(Number(asmParentQty) || 1));
     if (bom.length === 0) return false;
     return bom.every((b) => (asmGotByPm[b.child_pm_id] || 0) >= Math.max(1, Math.floor(Number(b.qty) || 1)) * pq);
@@ -1732,7 +1947,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [asmAutoIn, setAsmAutoIn] = useState(0);   // นับถอยหลังก่อนปิดงานอัตโนมัติ (0 = ไม่ได้นับ)
   useEffect(() => {
     // ปิดงานอัตโนมัติเฉพาะซับ + ยืนยันจำนวนแล้ว (locked) + ครบ BOM×จำนวน + มีลูกสแกนรอบนี้
-    if (dept !== "assembly" || !asmQtyLocked || !asmBomMet || busy || asmChildren.length === 0) { setAsmAutoIn(0); return; }
+    // ★ รอบ 23: เลิกปิดงานอัตโนมัติ (ผู้ใช้: "ไม่ต้องปิดงาน · ไม่ได้ประกอบครบในตอนเดียว · หลังบ้านดูเองว่าครบ/ผิด")
+    //   → หน้างานกด "บันทึก" เองทุกรอบ · กลับมาใส่เพิ่มได้ · ตัวนับถอยหลังไม่ทำงานอีก
+    if (ASM_AUTO_CLOSE === false || dept !== "assembly" || !asmQtyLocked || !asmBomMet || busy || asmChildren.length === 0) { setAsmAutoIn(0); return; }
     setAsmAutoIn(3);
     const iv = setInterval(() => {
       setAsmAutoIn((n) => { if (n <= 1) { clearInterval(iv); asmConfirmRef.current(); return 0; } return n - 1; });
@@ -2000,17 +2217,16 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         <div className="stn-oppick">
           <span className="stn-oppick-lbl">{t("ขั้นตอน", "Step")}:</span>
           {machineOps.map((o) => {
-            const isPrimary = primaryOp && primaryOp.id === o.id && selOps.length > 1;
+            // ★ รอบ 19: ไม่แสดง "ขั้นตอนหลัก" บนปุ่มแล้ว (ไม่มีดาว/กรอบ/ข้อความ — ผู้ใช้ขอ) · ปุ่มทุกขั้นตอนหน้าตาเหมือนกัน
             // ★ รอบ 11 (B21): ระหว่างทำงาน (เริ่ม START แล้ว) ล็อกขั้นตอน — เดิมเปลี่ยนได้กลางงาน (ล็อก/เลขวิ่งคิดจากขั้นตอนเดิม)
             const locked = step !== STEP.IDLE;
             return (
               <button key={o.id}
-                className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}${isPrimary ? " primary" : ""}`}
+                className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}`}
                 disabled={locked}
-                title={locked ? t("ล็อกระหว่างทำงาน — จบ/ยกเลิกงานก่อนถึงเปลี่ยนได้", "Locked during a job — finish or cancel first")
-                  : isPrimary ? t("ขั้นตอนหลัก — รับจำนวน/เวลา · ขั้นตอนอื่นบันทึกเป็นทำพร้อมกัน", "Primary step — takes the qty/time · others saved as done together") : undefined}
+                title={locked ? t("ล็อกระหว่างทำงาน — จบ/ยกเลิกงานก่อนถึงเปลี่ยนได้", "Locked during a job — finish or cancel first") : undefined}
                 onClick={() => setOpSel((prev) => { const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
-                {isPrimary ? "★ " : ""}{opLabel(o.name, lang)}
+                {opLabel(o.name, lang)}
               </button>
             );
           })}
@@ -2117,9 +2333,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 <div onClick={(e) => e.stopPropagation()}
                   style={{ width: "min(92vw, 420px)", background: "linear-gradient(180deg,#12241a,#0e1b14)", border: "1px solid #2f7d55", borderRadius: 20, padding: "30px 26px 22px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
                   <div style={{ width: 78, height: 78, margin: "0 auto 14px", borderRadius: "50%", background: "#1f9d5a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 46, color: "#fff", boxShadow: "0 0 0 6px rgba(31,157,90,.22)" }}>✓</div>
-                  <div style={{ fontSize: 21, fontWeight: 800, color: "#eafff5" }}>{asmDone.isPack ? t("แพ็กเสร็จแล้ว", "Packing done") : t("ประกอบเสร็จแล้ว", "Assembly done")}</div>
+                  <div style={{ fontSize: 21, fontWeight: 800, color: "#eafff5" }}>{asmDone.isGlz ? t("ติดกระจกเสร็จแล้ว", "Glazing done") : asmDone.isPack ? t("แพ็กเสร็จแล้ว", "Packing done") : t("ประกอบเสร็จแล้ว", "Assembly done")}</div>
                   <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#8ff0c0", margin: "10px 0 4px", wordBreak: "break-all" }}>{asmDone.partNo}</div>
-                  <div style={{ fontSize: 13.5, color: "#bfe6d3" }}>{asmDone.isSub ? t("ทำเสร็จ", "Made") : t("ใส่ลูกเข้าไป", "Assembled")} {asmDone.count} {t("ชิ้น", "pcs")} · {t("ปิดงานแล้ว", "closed")}{asmDone.queued ? t(" · รอซิงค์", " · queued") : ""}</div>
+                  <div style={{ fontSize: 13.5, color: "#bfe6d3" }}>{asmDone.isGlz ? t("ติดกระจก", "Glazed") : asmDone.isSub ? t("ทำเสร็จ", "Made") : t("ใส่ลูกเข้าไป", "Assembled")} {asmDone.count} {t("ชิ้น", "pcs")} · {t("ปิดงานแล้ว", "closed")}{asmDone.queued ? t(" · รอซิงค์", " · queued") : ""}</div>
                   <button onClick={() => setAsmDone(null)} className="stn-pill ok" style={{ marginTop: 18, width: "100%" }}>{t("ตกลง", "OK")}</button>
                 </div>
               </div>
@@ -2319,9 +2535,11 @@ function asmRole(name) {
 
 // แผงยืนยันต่อชิ้น (โหมดประกอบ/แพ็กอิสระ) — สแกนลูก → กรอกจำนวน → กดใส่เข้าเบอร์แม่
 function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
-  const [q, setQ] = useState("1");
+  // ★ รอบ 24: จำนวนเริ่มต้น = จำนวนเบอร์แม่ที่ทำรอบนี้ (defQty) · แก้ได้
+  const [q, setQ] = useState(String(Math.max(1, Math.floor(Number(pending.defQty) || 1))));
   const nq = Math.max(1, Math.floor(Number(q) || 0));
   const has = Math.max(0, Math.floor(Number(pending.existingQty) || 0));   // มีอยู่แล้วในแถวเดิม (กรณีสแกนเบอร์เดิมซ้ำ)
+  const prev = Math.max(0, Math.floor(Number(pending.prevQty) || 0));      // ใส่ไปแล้วในรอบก่อน (บันทึกแล้ว)
   const stepBtn = { width: 46, height: 46, borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 26, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -2341,6 +2559,10 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
         {has > 0 ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "#e6c67a", fontWeight: 700, margin: "0 0 12px", padding: "8px 10px", background: "#241f10", border: "1px solid #5c4a1f", borderRadius: 10 }}>
             {t(`เบอร์นี้มีอยู่แล้ว ${nc(has)} ชิ้น — กรอกจำนวนที่จะเพิ่ม`, `already ${nc(has)} pcs — enter amount to add`)}
+          </div>
+        ) : prev > 0 ? (
+          <div className="pend-prev" style={{ textAlign: "center", fontSize: 13, color: "#bfe6d3", fontWeight: 700, margin: "0 0 12px", padding: "8px 10px", background: "#12261c", border: "1px solid #2f5f49", borderRadius: 10 }}>
+            {t(`รอบก่อนใส่ไปแล้ว ${nc(prev)} ชิ้น — กรอกจำนวนที่ใส่รอบนี้`, `${nc(prev)} pcs saved earlier — enter this round's amount`)}
           </div>
         ) : null}
         {/* กรอกจำนวน (มีปุ่ม +/− ให้กดง่ายบนแท็บเล็ต) */}
@@ -2464,13 +2686,19 @@ function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
 //    ✓ = ครบ · ◐ = บางส่วน · ○ = ยังไม่ทำ (นับสะสม: ที่ติดไปแล้ว + ที่สแกนรอบนี้) · สแกนลูก = ติ๊กเพิ่มอัตโนมัติ
 //    ใช้คอมโพเนนต์เดียวทั้งประกอบ (ธีมเขียว) และแพ็ก (isPack → ธีมน้ำเงินจาก .dept-packing + ปุ่มถ่ายรูป)
 function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, asmOpenCam, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmUndo = null, asmUndoRemove, busy, t, childWord, confirmVerb, isPack = false, parentQty = 1, setParentQty, autoIn = 0, qtyLocked = false, setQtyLocked, openPhoto, packPhotos = [], photoRemove }) {
+  const isGlz = asmType === "glazing";   // ★ รอบ 22: สเตชันติดกระจก — ใส่ "จำนวนที่ติดกระจก" ก่อน · สแกนกระจกได้ (ไม่บังคับ) · กดบันทึกเอง
   const isSub = asmType === "assembly";   // สเตชัน "ซับ" — มีช่อง "จำนวนที่จะทำ" + ปิดงานอัตโนมัติเมื่อครบ BOM (ซ่อน BOM)
-  const pq = Math.max(1, Math.floor(Number(parentQty) || 1));
-  const subAuto = isSub && (asmParent.bom || []).length > 0;   // ซับที่มี BOM (มาจากตอนสั่งผลิต) → ปิดงานอัตโนมัติ ไม่มีปุ่มแตะปิด
+  const isPnl = asmType === "panel";      // ★ รอบ 24: สเตชันแผงก็ใส่จำนวนเบอร์แม่ (ป้ายล็อต 1 ใบ = หลายแผง)
+  const pqN = Math.floor(Number(parentQty));
+  const pq = Number.isFinite(pqN) && pqN >= 0 ? (isGlz ? Math.max(1, pqN) : pqN) : 1;   // 0 = ใส่ของเพิ่มในชิ้นเดิม (ซับ/แผง)
+  const reMore = !!(asmParent.batchOk && asmParent.reopen) && !isGlz;   // เบอร์ที่เคยบันทึกแล้ว + server รองรับรอบ → "ทำเพิ่มกี่ชิ้น"
+  const madeSum = asmParent.madeSum;
+  const subAuto = ASM_AUTO_CLOSE && isSub && (asmParent.bom || []).length > 0;   // ★ รอบ 23: ปิด (บันทึกเองทุกรอบ)   // ซับที่มี BOM (มาจากตอนสั่งผลิต) → ปิดงานอัตโนมัติ ไม่มีปุ่มแตะปิด
 
   // ── ซับ ขั้นที่ 1: ใส่ "จำนวนที่จะทำ" แล้วกด "เริ่มสแกนลูก" ก่อน (กันปิดงานก่อนตั้งจำนวน) ──
-  if (isSub && !qtyLocked) {
+  if ((isSub || isPnl || isGlz) && !qtyLocked) {
     const subNo = asmParent.unit?.part_master?.part_no || asmParent.unit?.qr_code;
+    const pqIn = Math.max(1, pq);   // ช่องกรอก (อย่างน้อย 1 · "ไม่ทำเพิ่ม" ใช้ปุ่มด้านล่าง)
     const subName = asmParent.unit?.part_master?.part_name || "";
     const stepBtn = { width: 56, height: 56, borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 30, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
     const subBack = () => { if (asmChildren.length > 0 && !window.confirm(t("ทิ้งลูกที่สแกนไว้ แล้วย้อนกลับ?", "Discard scanned children and go back?"))) return; asmReset && asmReset(); };
@@ -2479,26 +2707,43 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
         <div className="asw-head">
           <button className="asw-change" onClick={subBack} title={t("ย้อนกลับ / เปลี่ยนเบอร์", "Back / change")}>← {t("ย้อนกลับ", "Back")}</button>
           <div className="asw-hgrow">
-            <div className="asw-hlabel">{t("เบอร์แม่ (ซับ)", "SUBASSEMBLY")}</div>
+            <div className="asw-hlabel">{isGlz ? (asmParent.parentKind === "panel" ? t("ติดกระจก · แผง", "GLAZING · PANEL") : t("ติดกระจก · หน้าต่าง/ซับ", "GLAZING · WINDOW/SUB")) : isPnl ? t("เบอร์แม่ (แผง)", "PANEL") : t("เบอร์แม่ (ซับ)", "SUBASSEMBLY")}</div>
             <div className="asw-hno">{subNo}{subName ? <span className="asw-hname">{subName}</span> : null}</div>
           </div>
           <button className="asw-change" onClick={subBack}>{t("เปลี่ยนเบอร์", "Change")}</button>
         </div>
         <div style={{ maxWidth: 520, margin: "8px auto 0", width: "100%", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "26px 20px 22px", textAlign: "center" }}>
-          <div style={{ fontSize: 15, color: "#9fd8bf", fontWeight: 700, marginBottom: 4 }}>{t("จะทำเบอร์นี้กี่ชิ้น?", "How many to make?")}</div>
-          <div style={{ fontSize: 12.5, color: "#7fa694", marginBottom: 18 }}>{t("ใส่จำนวนก่อน แล้วค่อยสแกนลูก", "set the quantity, then scan children")}</div>
+          <div className="asw-q-title" style={{ fontSize: 15, color: "#9fd8bf", fontWeight: 700, marginBottom: 4 }}>{isGlz ? t("ติดกระจกกี่ชิ้น?", "How many to glaze?")
+            : reMore ? t("รอบนี้ทำเพิ่มกี่ชิ้น?", "How many more this round?")
+            : isPnl ? t("จะทำแผงนี้กี่ชิ้น?", "How many panels to make?") : t("จะทำเบอร์นี้กี่ชิ้น?", "How many to make?")}</div>
+          <div className="asw-q-sub" style={{ fontSize: 12.5, color: "#7fa694", marginBottom: 18 }}>{isGlz
+            ? t(`ประกอบไว้ ${nc(asmParent.madeQty || 1)} ชิ้น · ใส่จำนวนที่ติดกระจกรอบนี้`, `${asmParent.madeQty || 1} assembled · enter how many you glaze now`)
+            : reMore
+              ? (madeSum != null
+                  ? t(`ทำไว้แล้ว ${nc(madeSum)} ชิ้น · ใส่จำนวนที่ทำรอบนี้ แล้วสแกนลูก`, `${nc(madeSum)} made so far · enter this round's quantity, then scan`)
+                  : t("เบอร์นี้เคยบันทึกแล้ว · ใส่จำนวนที่ทำรอบนี้ แล้วสแกนลูก", "saved before · enter this round's quantity, then scan"))
+              : t("ใส่จำนวนก่อน แล้วค่อยสแกนลูก", "set the quantity, then scan children")}</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
-            <button type="button" aria-label="minus" onClick={() => setParentQty && setParentQty(Math.max(1, pq - 1))} disabled={busy} style={stepBtn}>−</button>
-            <NumInput strict inputMode="numeric" min={1} value={pq} disabled={busy}
+            <button type="button" aria-label="minus" onClick={() => setParentQty && setParentQty(Math.max(1, pqIn - 1))} disabled={busy} style={stepBtn}>−</button>
+            <NumInput strict inputMode="numeric" min={1} value={pqIn} disabled={busy}
               onFocus={(e) => e.target.select()}
               onChange={(e) => setParentQty && setParentQty(Math.max(1, Math.floor(Number(String(e.target.value).replace(/[^0-9]/g, "")) || 1)))}
               style={{ width: 130, padding: "12px", fontSize: 40, fontWeight: 800, textAlign: "center", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" }} />
-            <button type="button" aria-label="plus" onClick={() => setParentQty && setParentQty(pq + 1)} disabled={busy} style={stepBtn}>+</button>
+            <button type="button" aria-label="plus" onClick={() => setParentQty && setParentQty(pqIn + 1)} disabled={busy} style={stepBtn}>+</button>
           </div>
-          <button type="button" onClick={() => setQtyLocked && setQtyLocked(true)} disabled={busy}
+          <button type="button" className="asw-q-go" onClick={() => { setParentQty && setParentQty(pqIn); setQtyLocked && setQtyLocked(true); }} disabled={busy}
             style={{ marginTop: 22, width: "100%", padding: "15px", borderRadius: 12, border: "none", background: "#2f9e64", color: "#fff", fontSize: 18, fontWeight: 800, cursor: "pointer" }}>
-            {t(`เริ่มสแกนลูก (จะทำ ${nc(pq)} ชิ้น)`, `Start scanning (make ${pq})`)}
+            {isGlz ? t(`ต่อไป (ติดกระจก ${nc(pqIn)} ชิ้น)`, `Next (glaze ${pqIn})`)
+              : reMore ? t(`เริ่มสแกนลูก (ทำเพิ่ม ${nc(pqIn)} ชิ้น)`, `Start scanning (make ${pqIn} more)`)
+              : t(`เริ่มสแกนลูก (จะทำ ${nc(pqIn)} ชิ้น)`, `Start scanning (make ${pqIn})`)}
           </button>
+          {reMore ? (
+            <button type="button" className="asw-q-nomore" onClick={() => { setParentQty && setParentQty(0); setQtyLocked && setQtyLocked(true); }} disabled={busy}
+              style={{ marginTop: 10, width: "100%", padding: "13px", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#cfe7dc", fontSize: 15, fontWeight: 700, cursor: "pointer", lineHeight: 1.45 }}>
+              {t("ใส่ของเพิ่มในชิ้นเดิม (ไม่ได้ทำเพิ่ม)", "Add parts to the existing ones (no new pieces)")}
+              <span style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#7fa694" }}>{t("ยอดทำไม่เพิ่ม · บันทึกแค่ของที่ใส่", "count stays the same · saves only what goes in")}</span>
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -2574,11 +2819,15 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
       </div>
 
       {/* ── ซับ (ยืนยันจำนวนแล้ว): โชว์ "จำนวนที่จะทำ" อ่านอย่างเดียว + ปุ่มแก้ (กลับไปตั้งใหม่) ── */}
-      {isSub ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", margin: "2px 0 6px", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 12 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{t("จำนวนที่จะทำ", "Qty to make")}</span>
+      {(isSub || isPnl) ? (
+        <div className="asw-qrow" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", margin: "2px 0 6px", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 12 }}>
+          {pq === 0 ? (
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{t("ใส่ของเพิ่มในชิ้นเดิม · ยอดทำไม่เพิ่ม", "Adding to existing pieces · count unchanged")}{madeSum != null ? <span style={{ color: "#7fa694", fontWeight: 500 }}> · {t(`ทำไว้แล้ว ${nc(madeSum)} ชิ้น`, `${nc(madeSum)} made`)}</span> : null}</span>
+          ) : (<>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{reMore ? t("รอบนี้ทำเพิ่ม", "Making now") : t("จำนวนที่จะทำ", "Qty to make")}{reMore && madeSum != null ? <span style={{ color: "#7fa694", fontWeight: 500 }}> · {t(`ทำไว้แล้ว ${nc(madeSum)} ชิ้น`, `${nc(madeSum)} made`)}</span> : null}</span>
           <span style={{ fontSize: 22, fontWeight: 800, color: "#8ff0c0", fontFamily: "'IBM Plex Mono', monospace" }}>{pq}</span>
           <span style={{ fontSize: 13, color: "#9fd8bf" }}>{t("ชิ้น", "pcs")}</span>
+          </>)}
           <button type="button" onClick={() => setQtyLocked && setQtyLocked(false)} disabled={busy}
             style={{ marginLeft: 6, padding: "9px 13px", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#cfe7dc", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{t("แก้จำนวน", "Edit")}</button>
         </div>
@@ -2669,7 +2918,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           </div>
         )}
         <div className="asw-scanhead">
-          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{isPack ? t(`สแกน${childWord}`, `Scan ${childWord}`) : t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
+          <button className="asw-scanbtn" onClick={asmOpenCam}><Icon name="camera" size={22} className="stn-ico" />{isPack ? t(`สแกน${childWord}`, `Scan ${childWord}`) : isGlz ? t("สแกนกระจก / ชิ้นที่ติด (ถ้ามี QR)", "Scan glass / parts (if labelled)") : t(`สแกน${childWord}ที่ประกอบ`, `Scan ${childWord}`)}</button>
           <AsmManualInput onSubmit={asmScan} placeholder={t(`หรือพิมพ์ QR ${childWord}`, `type ${childWord} QR`)} t={t} />
         </div>
         {isPack ? (
@@ -2703,11 +2952,20 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
             )}
           </div>
         ) : (
+          isGlz ? (
+            <button className="asw-confirm ready" disabled={busy} onClick={asmConfirm}>
+              {busy ? "..." : t(`✓ บันทึกติดกระจก ${nc(pq)} ชิ้น${asmChildren.length ? ` · ${nc(asmChildren.length)} รายการที่สแกน` : ""}`,
+                                `✓ Save glazing · ${pq} pcs${asmChildren.length ? ` · ${asmChildren.length} scanned` : ""}`)}
+            </button>
+          ) :
           <button className={"asw-confirm" + (asmChildren.length > 0 ? " ready" : "")} disabled={asmChildren.length === 0 || busy} onClick={asmConfirm}>
             {busy ? "..." : asmChildren.length === 0
               ? (isPack ? t(`สแกน${childWord}ที่ใส่รอบนี้ก่อน`, `scan the ${childWord}s first`) : t(`สแกน${childWord}ที่ประกอบรอบนี้ก่อน`, `scan the ${childWord}s first`))
               : (free
-                ? t(`✓ ยืนยัน + ปิดงาน (${asmChildren.length})`, `✓ Confirm & finish (${asmChildren.length})`)
+                ? (asmParent.batchOk && (isSub || isPnl)
+                    ? (pq > 0 ? t(`✓ บันทึก (ทำ ${nc(pq)} ชิ้น · ${nc(asmChildren.length)} รายการ)`, `✓ Save (make ${pq} · ${asmChildren.length} items)`)
+                              : t(`✓ บันทึก (ใส่เพิ่ม ${nc(asmChildren.length)} รายการ)`, `✓ Save (add ${asmChildren.length} items)`))
+                    : t(`✓ บันทึก (${nc(asmChildren.length)} รายการ)`, `✓ Save (${asmChildren.length})`))
                 : asmComplete
                   ? t(`✓ ${confirmVerb} — ครบ ปิดงาน (${asmChildren.length})`, `✓ ${confirmVerb} — complete (${asmChildren.length})`)
                   : t(`✓ ${confirmVerb} (${nc(asmChildren.length)} ชิ้น)`, `✓ ${confirmVerb} (${asmChildren.length})`))}
@@ -2768,35 +3026,43 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
   const [rows, setRows] = useState(null);   // null = กำลังโหลด
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
-  const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
+  const glz = dept === "glazing";   // ★ รอบ 22: รายการ = หน้าต่าง/แผงที่ประกอบเสร็จแล้ว (รอติดกระจกขึ้นก่อน)
+  const parentWord = isPack ? t("เบอร์แพ็ก", "package") : glz ? t("หน้าต่าง/แผง", "window/panel") : t("เบอร์แม่", "parent");
+  const [glzMissing, setGlzMissing] = useState(false);
 
   useEffect(() => {
     let alive = true; setRows(null);
-    listAssemblyParents(dept).then((r) => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
+    const load = glz ? listGlazingParents().then((r) => { if (r === null) { setGlzMissing(true); return []; } return r; }) : listAssemblyParents(dept);
+    load.then((r) => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
     return () => { alive = false; };
-  }, [dept]);
+  }, [dept, glz]);
 
-  const doing = (s) => /progress/i.test(s || "");
+  // ★ รอบ 23: ซับ/แผง — "เริ่มแล้ว" = มีของที่บันทึกเข้าไปแล้ว (ไม่บอกครบ/ไม่ครบ)
+  const doing = (s, r) => (glz ? false : (r && r.items != null) ? r.items > 0 : /progress/i.test(s || ""));
   const all = rows || [];
   const filtered = all.filter((r) => {
     if (q.trim()) { const s = q.trim().toLowerCase(); if (!`${r.part_no} ${r.part_name} ${r.project_code}`.toLowerCase().includes(s)) return false; }
     if (filter === "panel") return r.kind === "panel";
     if (filter === "package") return r.kind === "package";
     if (filter === "sub") return r.kind === "subassembly";
-    if (filter === "doing") return doing(r.status);
-    if (filter === "todo") return !doing(r.status);
+    if (filter === "doing") return doing(r.status, r);
+    if (filter === "todo") return !doing(r.status, r);
+    if (filter === "glz-todo") return !r.glazed;
+    if (filter === "glz-done") return !!r.glazed;
     return true;
   });
   const kindLabel = (k) => k === "subassembly" ? t("ซับ", "SUB") : k === "package" ? t("บั้ง", "PKG") : t("แผง", "PANEL");
   const kindCls = (k) => k === "subassembly" ? "sub" : "panel";
   const submit = (e) => { e.preventDefault(); const s = q.trim(); if (s) onPick(s); };
-  const chips = isPack
+  const chips = glz
+    ? [["all", t("ทั้งหมด", "All")], ["glz-todo", t("รอติดกระจก", "To glaze")], ["glz-done", t("ติดแล้ว", "Glazed")], ["panel", t("แผง", "Panel")], ["sub", t("หน้าต่าง/ซับ", "Window/sub")]]
+    : isPack
     ? [["all", t("ทั้งหมด", "All")], ["package", t("บั้ง", "Pkg")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]]
-    : [["all", t("ทั้งหมด", "All")], ["panel", t("แผง", "Panel")], ["sub", t("ซับ", "Sub")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]];
+    : [["all", t("ทั้งหมด", "All")], ["panel", t("แผง", "Panel")], ["sub", t("ซับ", "Sub")], ["doing", t("เริ่มแล้ว", "Started")], ["todo", t("ยังไม่เริ่ม", "Not started")]];
 
   return (
     <div className="asw-pick">
-      <div className="asw-pick-h">{t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {all.length} {t("รายการที่ค้างอยู่", "pending")}</span></div>
+      <div className="asw-pick-h">{glz ? t("เลือกหน้าต่าง/แผงที่จะติดกระจก", "Choose a window/panel to glaze") : t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {all.length} {glz ? t("รายการ (ประกอบเสร็จแล้ว)", "assembled") : isPack ? t("รายการที่ค้างอยู่", "pending") : t("รายการ", "items")}</span></div>
       <div className="asw-pick-srow">
         <form className="asw-pick-search" onSubmit={submit}>
           <Icon name="search" size={18} className="stn-ico" />
@@ -2813,7 +3079,10 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
         {rows === null ? (
           <div className="asw-pick-msg"><div className="stn-asm-spin" />{t("กำลังโหลดรายการ…", "Loading…")}</div>
         ) : filtered.length === 0 ? (
-          <div className="asw-pick-msg">{all.length === 0 ? t(`ไม่มี${parentWord}ที่ค้างอยู่ — สแกน QR เพื่อเริ่ม`, "nothing pending — scan to start") : t("ไม่พบตามที่ค้นหา", "no match")}</div>
+          <div className="asw-pick-msg">{all.length === 0 ? (glz
+            ? (glzMissing ? t("สแกน QR หน้าต่าง/แผงที่จะติดกระจก (รายการให้เลือกจะขึ้นหลังรัน migration-round22-glazing.sql)", "scan the window/panel QR (the pick list appears after migration-round22-glazing.sql)")
+                          : t("ยังไม่มีหน้าต่าง/แผงที่ประกอบเสร็จ — สแกน QR เพื่อเริ่ม", "nothing assembled yet — scan to start"))
+            : t(`ไม่มี${parentWord}ที่ค้างอยู่ — สแกน QR เพื่อเริ่ม`, "nothing pending — scan to start")) : t("ไม่พบตามที่ค้นหา", "no match")}</div>
         ) : filtered.map((r) => (
           <button type="button" key={r.qr_code || r.id} className="asw-pick-row" onClick={() => onPick(r.qr_code || r.part_no)}>
             <span className={"asw-pick-kind " + kindCls(r.kind)}>{kindLabel(r.kind)}</span>
@@ -2821,7 +3090,11 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
               <span className="asw-pick-pno">{r.part_no}</span>
               <span className="asw-pick-name">{r.part_name}{r.project_code ? <> · <span className="proj">{r.project_code}</span></> : null}</span>
             </span>
-            <span className={"asw-pick-pill " + (doing(r.status) ? "doing" : "todo")}>{doing(r.status) ? t("กำลังทำ", "in progress") : t("ยังไม่เริ่ม", "not started")}</span>
+            {glz
+              ? <span className={"asw-pick-pill " + (r.glazed ? "doing" : "todo")}>{r.glazed ? t("ติดกระจกแล้ว", "glazed") : t("รอติดกระจก", "to glaze")}</span>
+              : <span className={"asw-pick-pill " + (doing(r.status, r) ? "doing" : "todo")}>{doing(r.status, r)
+                  ? (r.items != null ? t(`ใส่แล้ว ${nc(r.items)} รายการ`, `${r.items} saved`) : t("กำลังทำ", "in progress"))
+                  : t("ยังไม่เริ่ม", "not started")}</span>}
             <span className="asw-pick-go">›</span>
           </button>
         ))}
