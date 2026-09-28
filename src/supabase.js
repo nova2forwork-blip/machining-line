@@ -1524,6 +1524,15 @@ function rabRead() {
 }
 function rabSet(v) { _rabState = !!v; if (!v) _rabMissingNow = true; try { localStorage.setItem(ASM_BATCH_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
 export function assemblyBatchSupported() { return rabRead() === true && !_rabMissingNow; }
+// ★ รอบ 25: server รองรับ "บั้ง" ในรอบบันทึกไหม (get_assembly_batches คืน caps: ['package']) — จำไว้ใช้ตอนออฟไลน์
+const ASM_PACK_KEY = "mls-asm-batch-pack";
+let _rapState = null;
+function rapSet(v) { _rapState = !!v; try { localStorage.setItem(ASM_PACK_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
+export function assemblyPackSupported() {
+  if (_rabMissingNow) return false;
+  if (_rapState === null) { try { _rapState = localStorage.getItem(ASM_PACK_KEY) === "1"; } catch { _rapState = false; } }
+  return !!_rapState;
+}
 
 function queueAssemblyBatch(p) {
   const a = qRead();
@@ -1573,8 +1582,20 @@ export async function getAssemblyBatches(parentQr) {
     if (isMissingFnErr(error)) { rabSet(false); return null; }
     console.warn("get_assembly_batches error", error); return null;
   }
-  if (data && data.ok) rabSet(true);
+  if (data && data.ok) { rabSet(true); rapSet(Array.isArray(data.caps) && data.caps.includes("package")); }
   return data || null;
+}
+
+// ★ รอบ 25: ชิ้นนี้อยู่ในบั้งไหนแล้วบ้าง (หน้าแพ็กแผงเตือนก่อนใส่) · ออฟไลน์ / ยังไม่รัน SQL = null (ไม่เตือน)
+let _acpMissing = false;
+export async function assemblyChildParents(childQr) {
+  if (_acpMissing || !childQr) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
+  try {
+    const { data, error } = await supabase.rpc("assembly_child_parents", { p_child_qr: childQr });
+    if (error) { if (isMissingFnErr(error)) _acpMissing = true; return null; }
+    return Array.isArray(data) ? data : [];
+  } catch { return null; }
 }
 
 // จด "เอาลูกออก" ลงประวัติรายรอบ (best-effort · เรียกหลัง removeAssemblyChild สำเร็จ)
@@ -1728,16 +1749,21 @@ export async function listAssemblyParents(dept) {
   const wantPack = dept === "packpanel" ? "panel" : dept === "packsite" ? "site" : null;   // แพ็กแผง/ไซต์ = เฉพาะบั้งที่ติดป้ายตรงกัน (legacy packing = ทุกบั้ง)
   // ★ รอบ 23: ซับ/แผง = รายการรวม "ที่เคยบันทึกแล้ว" ด้วย (กลับมาใส่เพิ่มได้ · ไม่ปิดงาน) + จำนวนรายการที่ใส่ไปแล้ว
   //   ต้องรัน migration-round22-glazing.sql (list_assembly_open) · ยังไม่รัน = ใช้รายการเดิม (เฉพาะที่ยังไม่เคยบันทึก)
-  if ((dept === "assembly" || dept === "panel") && !_laoMissing) {
+  //   ★ รอบ 25: สเตชันแพ็กก็ใช้รายการนี้ (ไม่ปิดบั้ง) — เฉพาะเมื่อ server เป็นรุ่นที่คืน pack_type (รัน migration-round25-packing.sql แล้ว)
+  const isPackList = packDepts.includes(dept);
+  if ((dept === "assembly" || dept === "panel" || isPackList) && !_laoMissing) {
     const { data: d3, error: e3 } = await supabase.rpc("list_assembly_open", { p_kinds: kinds, p_limit: 2000 });
-    if (!e3) {
-      return (Array.isArray(d3) ? d3 : []).map((u) => ({
+    const arr = !e3 && Array.isArray(d3) ? d3 : null;
+    const hasPackType = !!arr && (arr.length === 0 || Object.prototype.hasOwnProperty.call(arr[0], "pack_type"));
+    if (arr && (!isPackList || hasPackType)) {
+      return arr.map((u) => ({
         id: u.id, qr_code: u.qr_code, status: u.status, part_no: u.part_no || u.qr_code, part_name: u.part_name || "",
-        kind: u.kind || "part", pack_type: null, project_code: u.project_code || "", project_status: u.project_status || "",
+        kind: u.kind || "part", pack_type: u.pack_type || null, bunk_no: u.bunk_no || null,
+        project_code: u.project_code || "", project_status: u.project_status || "",
         items: Number(u.items) || 0, items_qty: Number(u.items_qty) || 0,
-      }));
+      })).filter((r) => !wantPack || r.pack_type === wantPack);
     }
-    if (isMissingFnErr(e3)) _laoMissing = true; else { console.warn("list_assembly_open error", e3); }
+    if (e3) { if (isMissingFnErr(e3)) _laoMissing = true; else { console.warn("list_assembly_open error", e3); } }
   }
   // ★ รอบ 12 (B39): คัดฝั่ง server (ตัดโปรเจคปิด/ชนิดบั้ง/เสร็จแล้ว ก่อนจำกัดจำนวน · งานกำลังทำ + ใบใหม่ขึ้นก่อน)
   //   เดิมดึง 600 แถวแรกแบบไม่เรียงแล้วค่อยกรอง → ปีหลังๆ เบอร์แม่ของโปรเจคที่เปิดอยู่หายจากตัวเลือก
