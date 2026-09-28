@@ -351,6 +351,11 @@ const DICT = {
   "สเตชัน": "Station", "ทำเบอร์แม่": "Parents made", "ลูกที่ใส่ (รวม)": "Children put in (total)", "บันทึก (ครั้ง)": "Saves",
   "ล่าสุด": "Latest", "เวลา": "Time", "คนบันทึก": "Recorded by", "เบอร์แม่": "Parent", "ลูกที่ใส่": "Children put in",
   "เอาออก": "Removed", "ใส่เพิ่มในชิ้นเดิม": "Added to existing pieces",
+  // ── รอบ 25: บั้ง ──
+  "ของที่แพ็ก (รวม)": "Packed items (total)", "ของที่แพ็ก": "Packed items", "แพ็กเข้า": "Packed in", "ทำอะไร": "Action",
+  "แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ": "A panel/assembled piece should be in one bunk only — check for a wrong bunk or a duplicate label",
+  "อยู่ในบั้งอื่น": "Also in bunk",
+  "เบอร์ชิ้น": "Part No.",
   "ยังไม่ได้ติดตั้งส่วนเก็บประวัติรายสเตชัน (SQL รอบ 24) — ติดตั้งแล้วจะเริ่มเก็บ \"สเตชันไหน · ใคร · เมื่อไร · ใส่อะไรเท่าไร\" ทุกครั้งที่หน้างานกดบันทึก": "Per-station history isn't installed yet (round-24 SQL) — once installed, every save on the floor records \"which station · who · when · what and how many\"",
   "ยังไม่มีประวัติรายสเตชันของเบอร์นี้ — ของที่บันทึกก่อนติดตั้งรอบ 24 ไม่มีรายละเอียดสเตชัน (ยอดรวมด้านบนยังถูกต้อง)": "No per-station history for this number yet — saves made before round 24 have no station detail (the totals above are still correct)",
   "เทียบ \"ที่สั่งจาก release (แผน)\" กับ \"ที่หน้างานสแกนมาจริง\" — ดูว่าทำถูก + ครบไหม · เลือกเบอร์จากรายการ หรือสแกน/พิมพ์ QR (ดูของที่เสร็จแล้วได้)": "Compare \"ordered in the release (plan)\" with \"actually scanned on the floor\" — see whether it's right and complete · pick a number from the list or scan/type a QR (finished ones too)",
@@ -544,6 +549,7 @@ const RULES = [
   [/^ผลเทียบ — (.+)$/, (m) => `Comparison — ${m[1]}`],
   // ── รอบ 24 ──
   [/^ทำ ([\d,]+) ชิ้น$/, (m) => `made ${m[1]}`],
+  [/^⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย \(([\d,]+)\)$/, (m) => `⚠ Pieces also in another bunk (${m[1]})`],
   [/^ทุกครั้งที่บันทึก \(ใหม่ → เก่า\) · ([\d,]+) ครั้ง$/, (m) => `Every save (newest → oldest) · ${m[1]}`],
   [/^⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน \(([\d,]+)\) — ตรวจว่าใส่ผิดเบอร์ไหม$/, (m) => `⚠ Scanned pieces not in the plan (${m[1]}) — check for wrong numbers`],
   [/^(.*?)(?: · )?ทั้งหมด ([\d,]+) (?:ชิ้น|pcs)$/, (m) => `${m[1] ? m[1] + " · " : ""}${m[2]} pcs in total`],
