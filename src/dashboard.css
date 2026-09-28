@@ -210,6 +210,7 @@ body.dash-body {
 .dash-st { display: flex; align-items: center; gap: .6vh; margin-top: .7vh; font-size: 1.35vh; font-weight: 700; min-width: 0; white-space: nowrap; }
 .dash-st .ic { flex-shrink: 0; font-size: 1.2vh; }
 .dash-st .lb { flex-shrink: 0; }
+.dash-st .lb.rs { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }   /* เหตุผลแทนคำว่าหยุด — ยาวเกินการ์ด = ตัด … */
 .dash-st .dt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; opacity: .9; }
 .dash-st .du { flex-shrink: 0; margin-left: auto; font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; opacity: .85; }
 .dash-st.st-running { color: var(--dash-green); }
@@ -240,12 +241,13 @@ body.dash-body {
 .dash-strip-ok { font-size: 1.9vh; font-weight: 700; color: var(--dash-good); }
 .dash-strip-lbl { font-size: 1.6vh; font-weight: 800; letter-spacing: .06em; color: #ff5b5b; text-transform: uppercase; flex-shrink: 0; }
 .dash-stop-pill {
-  display: inline-flex; align-items: baseline; gap: 1vh; min-width: 0; flex: 0 1 auto;
+  display: inline-flex; align-items: baseline; gap: 1vh; min-width: 0; flex: 0 0 auto;   /* ไม่บีบ — ที่ไม่พอดีจะไปรวมใน "+N" */
   padding: .7vh 1.4vh; border-radius: 1vh; border: 1px solid rgba(255,91,91,.55); background: rgba(255,91,91,.12);
   font-size: 1.7vh; color: #ffd6d6; overflow: hidden;
 }
 .dash-stop-pill b { font-family: var(--font-mono, ui-monospace, monospace); font-size: 2vh; color: #fff; letter-spacing: .03em; flex-shrink: 0; }
-.dash-stop-pill .r { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.dash-stop-pill .r { min-width: 0; max-width: 26vh; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }   /* เหตุผลที่พิมพ์เองยาวๆ ตัดด้วย … */
+.dash-stop-pill.solo { flex: 0 1 auto; }   /* เหลือเม็ดเดียวแต่ยังยาวเกินจอ → ยอมหดแล้วตัด … */
 .dash-stop-pill .d { flex-shrink: 0; font-family: var(--font-mono, ui-monospace, monospace); font-weight: 700; color: #ff8a8a; }
 .dash-stop-more { font-size: 1.6vh; font-weight: 700; color: #ff8a8a; flex-shrink: 0; }
 .dash-line.has-stop { border-color: rgba(255,91,91,.45); }
