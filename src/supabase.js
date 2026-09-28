@@ -1533,6 +1533,15 @@ export function assemblyPackSupported() {
   if (_rapState === null) { try { _rapState = localStorage.getItem(ASM_PACK_KEY) === "1"; } catch { _rapState = false; } }
   return !!_rapState;
 }
+// ★ รอบ 26: server รองรับ "บั้งซ้อนบั้ง" ไหม (caps: 'nested')
+const ASM_NEST_KEY = "mls-asm-batch-nest";
+let _rnsState = null;
+function rnsSet(v) { _rnsState = !!v; try { localStorage.setItem(ASM_NEST_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
+export function assemblyNestSupported() {
+  if (_rabMissingNow) return false;
+  if (_rnsState === null) { try { _rnsState = localStorage.getItem(ASM_NEST_KEY) === "1"; } catch { _rnsState = false; } }
+  return !!_rnsState;
+}
 
 function queueAssemblyBatch(p) {
   const a = qRead();
@@ -1582,8 +1591,20 @@ export async function getAssemblyBatches(parentQr) {
     if (isMissingFnErr(error)) { rabSet(false); return null; }
     console.warn("get_assembly_batches error", error); return null;
   }
-  if (data && data.ok) { rabSet(true); rapSet(Array.isArray(data.caps) && data.caps.includes("package")); }
+  if (data && data.ok) { rabSet(true); rapSet(Array.isArray(data.caps) && data.caps.includes("package")); rnsSet(Array.isArray(data.caps) && data.caps.includes("nested")); }
   return data || null;
+}
+
+// ★ รอบ 28: เบอร์นี้อยู่ในอะไรบ้าง (ทุกชนิด: ซับ/แผง/บั้ง) — หน้าหลังบ้านไล่ขึ้น · ยังไม่รัน SQL รอบ 28 = null (ใช้ assemblyChildParents แทน)
+let _apoMissing = false;
+export async function assemblyParentsOf(childQr) {
+  if (_apoMissing || !childQr) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
+  try {
+    const { data, error } = await supabase.rpc("assembly_parents_of", { p_child_qr: childQr });
+    if (error) { if (isMissingFnErr(error)) _apoMissing = true; return null; }
+    return Array.isArray(data) ? data : [];
+  } catch { return null; }
 }
 
 // ★ รอบ 25: ชิ้นนี้อยู่ในบั้งไหนแล้วบ้าง (หน้าแพ็กแผงเตือนก่อนใส่) · ออฟไลน์ / ยังไม่รัน SQL = null (ไม่เตือน)
@@ -1711,11 +1732,12 @@ export async function getUnitsByIds(ids) {
   if (!list.length) return {};
   const { data, error } = await supabase
     .from("part_units")
-    .select("id, qr_code, part_master(part_no, part_name)")
+    .select("id, qr_code, part_master(part_no, part_name, kind, pkg_meta)")
     .in("id", list);
   if (error) { console.warn("getUnitsByIds error", error); return {}; }
   const m = {};
-  (data || []).forEach((u) => { m[u.id] = { qr_code: u.qr_code, part_no: u.part_master?.part_no || "", part_name: u.part_master?.part_name || "" }; });
+  (data || []).forEach((u) => { m[u.id] = { qr_code: u.qr_code, part_no: u.part_master?.part_no || "", part_name: u.part_master?.part_name || "",
+    kind: u.part_master?.kind || "part", bunk_no: u.part_master?.pkg_meta?.bunk_no || null }; });
   return m;
 }
 
