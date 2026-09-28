@@ -1177,3 +1177,8 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 @media (orientation: landscape) and (min-height: 601px) {
   .stn-code { padding-top: 42px; }
 }
+/* ── รอบ 22: สเตชันติดกระจก (Glazing) — ธีมฟ้าอมเขียว แยกจากประกอบ/แพ็ก ── */
+.stn-login.dept-glazing { border-top: 3px solid #22b8cf; }
+.stn-asm-badge.dept-glazing { color: #032a33; background: #3fc9dc; }
+.stn-asm-shell.dept-glazing .stn-oppick-btn.sel { background: #22b8cf; border-color: #22b8cf; color: #032a33; }
+.stn-asm-shell.dept-glazing .stn-netbar.syncing { background: #1597a8; }
