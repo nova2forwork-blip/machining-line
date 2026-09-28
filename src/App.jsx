@@ -16,7 +16,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
-  getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches,
+  getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches, assemblyChildParents,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
   importBackupExtra, getPartStationProgress,
@@ -3839,6 +3839,115 @@ function verifyStatusColor(s) {
     : s === "partial" ? { bg: "rgba(217,164,65,.14)", fg: "#b45309", bd: "rgba(217,164,65,.4)" }
     : { bg: "rgba(220,38,38,.10)", fg: "var(--danger-hi, #c0362c)", bd: "rgba(220,38,38,.3)" };
 }
+// ── ★ รอบ 27: บั้งซ้อน — ของทุกชั้น (ลงไปข้างใน) + เส้นทางขึ้น (อยู่ในบั้งไหน ของบั้งไหน) ─────────────
+//   ใช้ RPC เดิม (get_assembly_state / assembly_child_parents) · ไม่ต้องรัน SQL เพิ่ม · จำกัด 6 ชั้น · กันวน
+const PACK_TREE_MAX_DEPTH = 6;
+function packBomStatus(bom, installed) {
+  const need = {}; (bom || []).forEach((b) => { need[b.child_pm_id] = (need[b.child_pm_id] || 0) + (Number(b.qty) || 0); });
+  const got = {}; (installed || []).forEach((x) => { got[x.child_pm_id] = (got[x.child_pm_id] || 0) + Math.max(1, Math.floor(Number(x.qty) || 1)); });
+  const extra = Object.keys(got).some((k) => !(k in need));
+  const over = Object.keys(need).some((k) => (got[k] || 0) > need[k]);
+  const full = Object.keys(need).length > 0 && Object.keys(need).every((k) => (got[k] || 0) >= need[k]);
+  return extra || over ? "issue" : full ? "complete" : "partial";
+}
+async function packTreeNodes(installed, unitMap, depth, seen) {
+  const nodes = [];
+  for (const x of installed || []) {
+    const u = unitMap[x.child_unit_id] || {};
+    const node = { key: x.child_unit_id, qr: u.qr_code || "—", part_no: u.part_no || "?", part_name: u.part_name || "", kind: u.kind || "part",
+      name: (u.kind === "package" && u.bunk_no) || u.part_no || "?", qty: Math.max(1, Math.floor(Number(x.qty) || 1)), children: null, status: null, loop: false };
+    if (node.kind === "package" && u.qr_code) {
+      if (seen.has(u.qr_code)) node.loop = true;
+      else if (depth < PACK_TREE_MAX_DEPTH) {
+        seen.add(u.qr_code);
+        try {
+          const st2 = await getAssemblyState(u.qr_code);
+          if (st2 && st2.ok) {
+            const inst2 = st2.installed || [];
+            const map2 = await getUnitsByIds(inst2.map((i) => i.child_unit_id));
+            node.children = await packTreeNodes(inst2, map2, depth + 1, seen);
+            node.status = packBomStatus(st2.bom || [], inst2);
+          }
+        } catch { /* โหลดบั้งลูกไม่ได้ — โชว์เป็นแถวเดียว */ }
+      }
+    }
+    nodes.push(node);
+  }
+  // ของในชั้นนี้ขึ้นก่อน (เรียงเบอร์) → บั้งลูกตามหลัง (อ่านง่าย: ชั้นเดียวกันอยู่ติดกัน)
+  const byNo = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true });
+  return [...nodes.filter((n) => n.kind !== "package").sort(byNo), ...nodes.filter((n) => n.kind === "package").sort(byNo)];
+}
+async function packPathUp(qr) {
+  const chain = []; const seen = new Set([qr]); let cur = qr;
+  for (let i = 0; i < PACK_TREE_MAX_DEPTH; i++) {
+    const o = await assemblyChildParents(cur).catch(() => null);
+    if (!o || !o.length) break;
+    chain.unshift(o.map((p) => ({ qr: p.qr, name: p.bunk_no || p.part_no })));
+    const nx = o[0].qr;
+    if (!nx || seen.has(nx)) break;
+    seen.add(nx); cur = nx;
+  }
+  return chain;   // [[บั้งนอกสุด…], …, [บั้งที่ครอบบั้งนี้ตรงๆ]]
+}
+function packTreeTotals(nodes) {
+  let items = 0, bunks = 0;
+  const walk = (ns) => (ns || []).forEach((n) => { if (n.kind === "package") { bunks += 1; walk(n.children); } else items += n.qty; });
+  walk(nodes);
+  return { items, bunks };
+}
+function PackNestTree({ rootName, pathUp, tree, onOpen }) {
+  const stLabel = { complete: "✓ ครบตามใบ", partial: "◐ ยังไม่ครบ", issue: "⚠ มีของเกิน/ไม่อยู่ในใบ" };
+  const tot = packTreeTotals(tree);
+  const Rows = ({ nodes, depth }) => (
+    <>
+      {nodes.map((n) => (
+        <div key={n.key + ":" + depth} className={"asm-tree-node" + (n.kind === "package" ? " is-bunk" : "")}>
+          <div className="asm-tree-row" style={{ paddingLeft: 10 + depth * 22 }}>
+            {n.kind === "package" ? <span className="asm-tree-kind">บั้ง</span> : null}
+            <b className="asm-tree-no">{n.name}</b>
+            {n.kind === "package"
+              ? <>
+                  {n.status ? <span className={"asm-tree-st " + n.status}>{stLabel[n.status]}</span> : null}
+                  {n.loop ? <span className="asm-tree-st issue">⚠ ซ้อนวน</span> : null}
+                  <span className="asm-tree-meta">{n.children ? `${nc(n.children.length)} รายการ` : ""}</span>
+                  {n.qr && n.qr !== "—" ? <Btn variant="ghost" size="sm" className="asm-nest-go" onClick={() => onOpen(n.qr)}>เปิด ›</Btn> : null}
+                </>
+              : <>
+                  <span className="asm-tree-meta">{n.part_name}</span>
+                  <span className="asm-tree-qr">{n.qr}</span>
+                  <span className="asm-tree-qty">{`×${nc(n.qty)}`}</span>
+                </>}
+          </div>
+          {n.children && n.children.length > 0 ? <Rows nodes={n.children} depth={depth + 1} /> : null}
+        </div>
+      ))}
+    </>
+  );
+  return (
+    <div className="asm-nest">
+      {pathUp.length > 0 && (
+        <div className="asm-nest-path">
+          <span className="lbl">อยู่ใน</span>
+          {pathUp.map((lvl, i) => (
+            <span key={i} className="lvl">
+              {lvl.map((o) => <Btn key={o.qr} variant="ghost" size="sm" className="asm-nest-go" onClick={() => onOpen(o.qr)}>{o.name}</Btn>)}
+              <span className="sep">›</span>
+            </span>
+          ))}
+          <b>{rootName}</b>
+        </div>
+      )}
+      {tree.length > 0 && (
+        <div className="asm-tree">
+          <div className="asm-tree-row root"><span className="asm-tree-kind">บั้ง</span><b className="asm-tree-no">{rootName}</b><span className="asm-tree-meta">{`(บั้งนี้) · ${nc(tree.length)} รายการ`}</span></div>
+          <Rows nodes={tree} depth={1} />
+        </div>
+      )}
+      {tree.length > 0 && <div className="asm-tree-sum">{`รวมของทุกชั้น ${nc(tot.items)} ชิ้น · บั้งข้างใน ${nc(tot.bunks)} ใบ (ไม่นับตัวบั้ง)`}</div>}
+    </div>
+  );
+}
+
 function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
   const [parents, setParents] = useState([]);
   const [q, setQ] = useState("");
@@ -3936,6 +4045,21 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         isPackage: isPkg,
         hist: hist && hist.ok ? hist : null, histMissing: !hist,
         shared: hist && hist.ok && Array.isArray(hist.shared) ? hist.shared : [],
+        // ★ รอบ 26: แพ็กซ้อนแพ็ก — บั้งที่อยู่ข้างใน + บั้งนี้อยู่ในบั้งไหน (กดไปดูต่อได้)
+        // ★ รอบ 27: ของทุกชั้นในบั้งซ้อน + เส้นทางขึ้นไปถึงบั้งนอกสุด
+        ...(isPkg ? await (async () => {
+          const hasInner = installed.some((x) => unitMap[x.child_unit_id]?.kind === "package");
+          const pathUp = await packPathUp(qr);
+          const tree = hasInner ? await packTreeNodes(installed, unitMap, 1, new Set([qr])) : [];
+          let rootName = meta?.bunk_no || null;
+          if (!rootName && (tree.length || pathUp.length)) {
+            try {
+              const { data: ru } = await supabase.from("part_units").select("part_master(part_no, pkg_meta)").eq("qr_code", qr).maybeSingle();
+              rootName = ru?.part_master?.pkg_meta?.bunk_no || ru?.part_master?.part_no || null;
+            } catch { /* ใช้เบอร์แทน */ }
+          }
+          return { nestTree: tree, nestPath: pathUp, nestRoot: rootName || meta?.part_no || st.parent?.part_no || qr };
+        })() : { nestTree: [], nestPath: [], nestRoot: "" }),
       });
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
     setBusy(false);
@@ -4055,6 +4179,11 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         </Card>
       )}
 
+      {result && !busy && result.isPackage && (result.nestTree.length > 0 || result.nestPath.length > 0) && (
+        <Card title="บั้งซ้อน · ของทุกชั้น">
+          <PackNestTree rootName={result.nestRoot} pathUp={result.nestPath} tree={result.nestTree} onOpen={(q) => load(q, null)} />
+        </Card>
+      )}
       {result && !busy && result.shared && result.shared.length > 0 && (
         <Card title={`⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย (${nc(result.shared.length)})`}>
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ</div>
