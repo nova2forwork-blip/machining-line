@@ -9,7 +9,7 @@ import {
   scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
   countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
-  recordAssemblyBatch, getAssemblyBatches, logAssemblyRemoval, assemblyBatchSupported,
+  recordAssemblyBatch, getAssemblyBatches, logAssemblyRemoval, assemblyBatchSupported, assemblyPackSupported, assemblyChildParents,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents, listGlazingParents,
   getOpenDowntime, listMachineReports,
   stationStop, stationReady, stationSlowReason, onStationEvents, stationEventsPending, stationPing, getStationDayOps, getTypicalTime, appBuildId,
@@ -18,7 +18,7 @@ import {
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
-import { askConfirm, ConfirmHost, NumInput, nc } from "./confirm.jsx";
+import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
 import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
@@ -1462,9 +1462,22 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     } finally { setBusy(false); }
   }
   // แผงยืนยันต่อชิ้น (โหมดประกอบ): กด "ใส่เข้าเบอร์แม่" → เข้ารายการรอปิดงาน · "ยกเลิก" → ทิ้งชิ้นที่เพิ่งสแกน
-  function asmAddPending(qty) {
+  async function asmAddPending(qty) {
     if (!asmPending) return;
     const q = Math.max(1, Math.floor(Number(qty) || 1));   // จำนวนที่กรอกในแผงยืนยัน (ค่าเริ่มต้น 1)
+    // ★ รอบ 25: แพ็กใส่จำนวน — รวมแล้วเกินใบบั้ง = ถามก่อน (ใส่ต่อได้)
+    if (asmPending.pack && asmPending.inBom && asmPending.bomQty != null) {
+      const total = pmHave(asmPending.child_pm_id) + q;
+      if (total > asmPending.bomQty) {
+        const v = await askChoice({
+          title: t("ตรวจก่อนใส่บั้ง", "Check before packing"), tone: "warn", cancelText: false,
+          message: t(`${asmPending.part_no}: ในใบบั้งมี ${nc(asmPending.bomQty)} · ใส่รอบนี้แล้วรวมจะเป็น ${nc(total)} (เกิน ${nc(total - asmPending.bomQty)})\nใส่ต่อไหม?`,
+                     `${asmPending.part_no}: the list has ${nc(asmPending.bomQty)} · this makes ${nc(total)} (${nc(total - asmPending.bomQty)} extra)\nAdd anyway?`),
+          choices: [{ value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }, { value: "skip", label: t("แก้จำนวน", "Change qty"), primary: true }],
+        });
+        if (v !== "add") return;   // แผงกรอกจำนวนยังเปิดอยู่ — แก้แล้วกดใหม่
+      }
+    }
     setAsmChildren((prev) => {
       const i = prev.findIndex((c) => c.unit_id === asmPending.unit_id);
       if (i >= 0) {   // เบอร์เดิมที่สแกนซ้ำ → บวกจำนวนเพิ่มในแถวเดิม (นับจำนวนรวม)
@@ -1574,12 +1587,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (st.offline) flash(t("โหมดออฟไลน์ — บันทึกเข้าคิว จะซิงค์เมื่อเน็ตกลับ", "offline — will queue & sync"), "info");
       // ★ รอบ 24: ประกอบเป็นรอบ — ยอดที่ทำไว้แล้ว (รวมทุกรอบ) + server รองรับ "ใส่จำนวนทุกรอบ / สแกนลูกเดิมซ้ำ" ไหม
       let bi = null;
-      if (!isPackingDept(dept)) {
-        setBusy(true);
-        try { bi = await getAssemblyBatches(u.qr_code); } catch { bi = null; }
-        setBusy(false);
-      }
-      const batchOk = !isPackingDept(dept) && (bi ? !!bi.ok : assemblyBatchSupported());
+      setBusy(true);
+      try { bi = await getAssemblyBatches(u.qr_code); } catch { bi = null; }
+      setBusy(false);
+      // ★ รอบ 25: แพ็ก = ต้องเป็น server รุ่นที่รับ "บั้ง" (caps: package) · ไม่งั้นใช้แบบเดิม (เทียบใบบั้ง · ครบแล้วปิด)
+      const batchOk = isPackingDept(dept)
+        ? (bi ? !!(bi.ok && Array.isArray(bi.caps) && bi.caps.includes("package")) : assemblyPackSupported())
+        : (bi ? !!bi.ok : assemblyBatchSupported());
+      // แพ็กแผง = สแกนทีละแผ่น (1 QR = 1 ชิ้น) · แพ็กไซต์ไอเทม = ป้ายล็อต + ใส่จำนวน (/packing เดิม: ตามชนิดบั้ง)
+      const packMode = dept === "packsite" || (dept === "packing" && u.part_master?.pkg_meta?.pack_type === "site") ? "qty" : "piece";
       const madeSum = bi && bi.ok ? Math.max(0, Math.floor(Number(bi.made_qty) || 0)) : null;
       const glazedSum = bi && bi.ok ? Math.max(0, Math.floor(Number(bi.glazed_qty) || 0)) : null;
       const reopen = st.parent?.status === "finished" || (st.installed || []).length > 0 || (madeSum || 0) > 0;
@@ -1592,9 +1608,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       }
       if (dept === "glazing") {
         tickBeep(); flash(t(`ติดกระจก: ${u.part_master?.part_no || u.qr_code}`, `Glazing: ${u.part_master?.part_no || u.qr_code}`), "ok");
-      } else if (st.parent?.status === "finished" && !isPackingDept(dept)) {
-        // ★ รอบ 23: ไม่บอกหน้างานว่า "เสร็จ/ไม่เสร็จ" — แค่บอกว่ามีของที่บันทึกไว้แล้วกี่รายการ ใส่เพิ่มได้
-        tickBeep(); flash(t(`${u.part_master?.part_no || u.qr_code} — บันทึกไว้แล้ว ${nc((st.installed || []).length)} รายการ · ใส่เพิ่มได้`, `${u.part_master?.part_no || u.qr_code} — ${(st.installed || []).length} saved · add more`), "ok");
+      } else if ((st.parent?.status === "finished" && !isPackingDept(dept)) || (isPackingDept(dept) && batchOk && (st.installed || []).length > 0)) {
+        // ★ รอบ 23: ไม่บอกหน้างานว่า "เสร็จ/ไม่เสร็จ" — แค่บอกว่ามีของที่บันทึกไว้แล้วกี่รายการ ใส่เพิ่มได้ (รอบ 25: บั้งด้วย)
+        const nm = (isPackingDept(dept) && u.part_master?.pkg_meta?.bunk_no) || u.part_master?.part_no || u.qr_code;
+        tickBeep(); flash(t(`${nm} — บันทึกไว้แล้ว ${nc((st.installed || []).length)} รายการ · ใส่เพิ่มได้`, `${nm} — ${(st.installed || []).length} saved · add more`), "ok");
+      } else if (isPackingDept(dept) && batchOk) {
+        tickBeep(); flash(t(`บั้ง: ${u.part_master?.pkg_meta?.bunk_no || u.part_master?.part_no || u.qr_code}`, `Bunk: ${u.part_master?.pkg_meta?.bunk_no || u.part_master?.part_no || u.qr_code}`), "ok");
       } else if (st.parent?.status === "finished") {
         tickBeep(); flash(t("เบอร์นี้เสร็จแล้ว — เปิดโหมดแก้ไข (เพิ่ม/ลบลูกได้ ยอดผลิตไม่นับซ้ำ)", "already done — edit mode (add/remove children, no double count)"), "info");
       } else {
@@ -1612,7 +1631,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       } catch { /* ไม่เป็นไร ใช้ bom เดิม */ }
       const madeQty = Math.max(1, madeSum != null && madeSum > 0 ? madeSum : Math.floor(Number(st.made_qty) || 1));
       setAsmParent({ unit: u, parentKind: u.part_master?.kind || null, bom, installed: st.installed || [], parentStatus: st.parent?.status || null,
-        madeQty, madeSum, glazedSum, batchOk, reopen });
+        madeQty, madeSum, glazedSum, batchOk, reopen, packMode });
       // ติดกระจก: จำนวนเริ่มต้น = ที่ประกอบไว้ − ที่ติดกระจกไปแล้ว (รู้ยอด) / ที่ประกอบไว้ (ไม่รู้ยอด)
       setAsmParentQty(dept === "glazing"
         ? (glazedSum != null && madeQty - glazedSum > 0 ? madeQty - glazedSum : madeQty)
@@ -1626,6 +1645,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
     // เป็น "ลูก" (ที่จะติดตั้งรอบนี้)
     if (u.id === asmParent.unit.id) { flash(t("นี่คือเบอร์แม่เอง", "this is the parent"), "warn"); return false; }
+    // ★ รอบ 25: แพ็กแบบใหม่ (server รองรับ) — ไม่เทียบใบบั้งที่หน้าจอ · ของไม่อยู่ในใบ/เกิน/ยังไม่ประกอบ/อยู่บั้งอื่น = เตือนแล้วใส่ต่อได้
+    if (asmParent.parentKind === "package" && asmParent.batchOk) return packFreeScan(u);
     // แพ็ก (นับต่อดวง): ห้ามสแกนดวงเดิมซ้ำ · ประกอบ/ซับ (นับจำนวนรวม): สแกนเบอร์เดิมซ้ำได้ → บวกจำนวนเพิ่มในแถวเดิม (asmAddPending รวมยอดให้)
     if (asmParent.parentKind === "package" && asmChildren.some((c) => c.unit_id === u.id)) { flash(t("สแกนชิ้นนี้ไปแล้วรอบนี้", "already scanned this round"), "warn"); return false; }
     // ★ รอบ 24: server รองรับรอบ → QR ลูกเดิมใส่เบอร์แม่เดิมซ้ำได้ (บวกจำนวน · ป้ายล็อต 1 ใบ = หลายชิ้น) · แพ็กยังห้ามซ้ำ
@@ -1677,13 +1698,75 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       existingQty: existing ? (Number(existing.qty) || 0) : 0, prevQty, defQty });
     return true;
   }
+  // ยอดของเบอร์นี้ในบั้ง/เบอร์แม่: ที่บันทึกแล้ว + ที่สแกนรอบนี้ (รวมจำนวน)
+  const pmHave = (pmId) => {
+    let n = 0;
+    (asmParent?.installed || []).forEach((x) => { if (x.child_pm_id === pmId) n += Math.max(1, Math.floor(Number(x.qty) || 1)); });
+    asmChildren.forEach((c) => { if (c.child_pm_id === pmId) n += Math.max(1, Math.floor(Number(c.qty) || 1)); });
+    return n;
+  };
+  // ถามก่อนใส่ (ของไม่อยู่ในใบ / เกิน / ยังไม่ประกอบ / อยู่บั้งอื่น) · Enter / แตะนอกกรอบ = "ไม่ใส่" (กันสแกนเนอร์ยิง Enter แล้วใส่เอง)
+  async function packWarnAsk(lines) {
+    closeScan();   // ปิดกล้องก่อนถาม (กันสแกนซ้ำระหว่างรอตอบ)
+    errorBeep();
+    const v = await askChoice({
+      title: t("ตรวจก่อนใส่บั้ง", "Check before packing"), tone: "warn", list: lines, cancelText: false,
+      message: t("ชิ้นนี้ไม่ตรงกับใบบั้ง — ใส่ต่อไหม? (หลังบ้านจะเห็นเป็นรายการที่ต้องตรวจ)", "This doesn't match the bunk list — add it anyway? (the office will see it flagged)"),
+      choices: [{ value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }, { value: "skip", label: t("ไม่ใส่", "Don't add"), primary: true }],
+    });
+    if (v !== "add") { flash(t("ไม่ได้ใส่", "not added"), "info"); return false; }
+    return true;
+  }
+  // ★ รอบ 25: สแกนของเข้าบั้ง (แพ็กแบบใหม่ · ไม่ปิดบั้ง)
+  //   ทีละแผ่น (แพ็กแผง): 1 QR = 1 ชิ้น · ซ้ำในบั้งเดียวกันไม่ได้ · ใส่เลยไม่ต้องกรอกจำนวน · กล้องเปิดค้าง
+  //   ใส่จำนวน (แพ็กไซต์ไอเทม): ป้ายล็อต → แผงกรอกจำนวน · สแกนซ้ำ = บวกเพิ่ม · เกินใบ = ถามตอนกดใส่
+  async function packFreeScan(u) {
+    const qtyMode = asmParent.packMode === "qty";
+    const cno = u.part_master?.part_no || u.qr_code;
+    const cKind = u.part_master?.kind || "part";
+    if (cKind === "package") { errorBeep(); flash(t("ใส่บั้งในบั้งไม่ได้", "a bunk can't go inside a bunk"), "warn"); return false; }
+    const prevQty = (asmParent.installed || []).filter((x) => x.child_unit_id === u.id).reduce((s, x) => s + Math.max(1, Math.floor(Number(x.qty) || 1)), 0);
+    const sess = asmChildren.find((c) => c.unit_id === u.id);
+    if (!qtyMode && sess) { flash(t("สแกนชิ้นนี้ไปแล้วรอบนี้", "already scanned this round"), "warn"); return false; }
+    if (!qtyMode && prevQty > 0) { flash(t(`${cno} อยู่ในบั้งนี้แล้ว (บันทึกไว้ก่อนหน้า)`, `${cno} is already in this bunk`), "warn"); return false; }
+    const inBom = (asmParent.bom || []).find((b) => b.child_pm_id === u.part_master_id);
+    const warns = [];
+    if (!inBom) warns.push(t(`${cno} ไม่อยู่ในใบบั้งนี้`, `${cno} is not on this bunk's list`));
+    else if (!qtyMode && pmHave(u.part_master_id) + 1 > Math.max(0, Number(inBom.qty) || 0)) {
+      warns.push(t(`${cno} ใส่ครบตามใบแล้ว (${nc(inBom.qty)} ชิ้น) — ชิ้นนี้จะเกิน`, `${cno} already has the listed ${nc(inBom.qty)} — this one is extra`));
+    }
+    if (cKind !== "part" && u.status !== "finished") {
+      warns.push(t(`${cno} ยังไม่มีบันทึกที่สเตชัน${cKind === "panel" ? "แผง" : "ซับ"}`, `${cno} has nothing recorded at the ${cKind === "panel" ? "panel" : "sub-assembly"} station yet`));
+    }
+    if (!qtyMode) {
+      setBusy(true);
+      let others = null;
+      try { others = await assemblyChildParents(u.qr_code); } catch { others = null; }
+      setBusy(false);
+      const oth = (others || []).filter((p) => p.qr !== asmParent.unit.qr_code);
+      if (oth.length) warns.push(t(`${cno} อยู่ในบั้ง ${oth.map((p) => p.bunk_no || p.part_no).join(", ")} แล้ว`, `${cno} is already in bunk ${oth.map((p) => p.bunk_no || p.part_no).join(", ")}`));
+    }
+    if (warns.length && !(await packWarnAsk(warns))) return false;
+    const clen = u.length_mm ?? u.part_master?.default_length_mm ?? null;
+    const cwt = u.weight ?? u.part_master?.unit_weight ?? null;
+    if (qtyMode) {
+      tickBeep();
+      setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1,
+        existingQty: sess ? (Number(sess.qty) || 0) : 0, prevQty, defQty: 1, pack: true, inBom: !!inBom, bomQty: inBom ? Number(inBom.qty) || 0 : null });
+      return true;
+    }
+    tickBeep(); flash(`+ ${cno}`, "ok");
+    setAsmChildren((prev) => (prev.some((c) => c.unit_id === u.id) ? prev
+      : [...prev, { unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, qty: 1, len: clen, wt: cwt }]));
+    return true;
+  }
   const asmDecoded = async (qr) => {
     const hadParent = !!asmParent;
-    const free = !asmParent || asmParent.parentKind !== "package";   // ประกอบ = อิสระ · แพ็ก = เข้ม
+    // แพ็กทีละแผ่น (ทั้งแบบเดิมและแบบใหม่) = กล้องเปิดค้าง สแกนรัว · ประกอบ / แพ็กใส่จำนวน = ปิดกล้อง เด้งแผงกรอกจำนวน
+    const keepOpen = !!asmParent && asmParent.parentKind === "package" && !(asmParent.batchOk && asmParent.packMode === "qty");
     const ok = await asmScan(qr);
     // เบอร์แม่ (ยังไม่มี parent) → ปิดกล้อง เด้งเข้าหน้าเบอร์นั้น · ลูกโหมดประกอบ → ปิดกล้อง เด้งแผงยืนยันต่อชิ้น
-    //   ลูกโหมดแพ็ก → เปิดกล้องต่อ สแกนรัวได้เหมือนเดิม
-    if (ok && (!hadParent || free)) closeScan();
+    if (ok && (!hadParent || !keepOpen)) closeScan();
     return false;
   };
   const asmManual  = async (text) => { await asmScan(text); return { ok: false }; };
@@ -1779,8 +1862,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   //   กลับหน้ารายการเบอร์แม่ทุกครั้ง (ไม่บอกครบ/ไม่ครบ) · เข้าคิวออฟไลน์ได้ (client_id คงที่ = ส่งซ้ำไม่นับเบิ้ล)
   async function asmBatchConfirm() {
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
-    const pq = Math.max(0, Math.floor(Number(asmParentQty) || 0));
-    const pno = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
+    const isPackP = asmParent.parentKind === "package";   // ★ รอบ 25: บั้ง — ไม่มีจำนวนที่ทำ · รูปแพ็กอัปหลังบันทึก
+    const pq = isPackP ? 0 : Math.max(0, Math.floor(Number(asmParentQty) || 0));
+    const pno = (isPackP && asmParent.unit.part_master?.pkg_meta?.bunk_no) || asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
     const n = asmChildren.length;
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
@@ -1809,11 +1893,25 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             });
           } catch { /* ignore */ }
         }
-        const what = pq > 0 ? t(`ทำ ${nc(pq)} ชิ้น · ใส่ ${nc(n)} รายการ`, `made ${pq} · ${n} item(s)`) : t(`ใส่เพิ่ม ${nc(n)} รายการ`, `added ${n} item(s)`);
-        flash(res.queued ? t(`✓ บันทึกแล้ว ${pno} — ${what} · เก็บเข้าคิว รอซิงค์`, `✓ Saved ${pno} — ${what} · queued`)
-                         : t(`✓ บันทึกแล้ว ${pno} — ${what}`, `✓ Saved ${pno} — ${what}`), "ok");
-        setAsmDone({ partNo: pno, count: pq > 0 ? pq : n, isPack: false, isSub: dept === "assembly" && pq > 0, queued: !!res.queued });
+        // แพ็ก: อัปรูปหลังบันทึกสำเร็จ (ออนไลน์) · อัปไม่ได้ไม่ล้มงาน (รูปไม่บังคับ)
+        let photoNote = "";
+        if (isPackP && packPhotos.length > 0) {
+          if (res.queued) photoNote = t(" · รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)", " · photos not saved offline");
+          else {
+            try {
+              const photoPaths = [];
+              for (const ph of packPhotos) photoPaths.push(await uploadPackingPhoto(ph.blob, asmParent.unit.qr_code));
+              if (photoPaths.length) await recordPackingPhotos(asmParent.unit.qr_code, photoPaths);
+            } catch { photoNote = t(" · แนบรูปไม่สำเร็จ (รูปไม่บังคับ)", " · photo attach failed (optional)"); }
+          }
+        }
+        const what = isPackP ? t(`ใส่ ${nc(n)} รายการ`, `${n} item(s)`)
+          : pq > 0 ? t(`ทำ ${nc(pq)} ชิ้น · ใส่ ${nc(n)} รายการ`, `made ${pq} · ${n} item(s)`) : t(`ใส่เพิ่ม ${nc(n)} รายการ`, `added ${n} item(s)`);
+        flash((res.queued ? t(`✓ บันทึกแล้ว ${pno} — ${what} · เก็บเข้าคิว รอซิงค์`, `✓ Saved ${pno} — ${what} · queued`)
+                          : t(`✓ บันทึกแล้ว ${pno} — ${what}`, `✓ Saved ${pno} — ${what}`)) + photoNote, "ok");
+        setAsmDone({ partNo: pno, count: pq > 0 ? pq : n, isPack: isPackP, isSub: dept === "assembly" && pq > 0, queued: !!res.queued });
         setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setAsmParentQty(1); setAsmQtyLocked(false);
+        setPackPhotos([]); setPhotoOpen(false);
         reload();
       } else if (res && res.reason === "storage_full") {
         errorBeep(); flash(t("ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ (เคลียร์คิวเก่าก่อน)", "storage full — clear the queue first"), "warn");
@@ -1828,7 +1926,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   async function asmConfirm() {
     if (dept === "glazing") return glazeConfirm();
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
-    if (asmParent.batchOk && asmParent.parentKind !== "package") return asmBatchConfirm();
+    if (asmParent.batchOk) return asmBatchConfirm();   // ★ รอบ 24–25: ซับ/แผง/บั้ง = บันทึกเป็นรอบ
     const isPack = isPackingDept(dept);
     const free = asmParent.parentKind !== "package";   // ประกอบอิสระ = ปิดเมื่อกดยืนยัน (แพ็ก = ครบตาม BOM)
     // ซับ: แจ้ง "เสร็จ" เป็น "จำนวนที่จะทำ" (นับหลายชิ้น) · อื่น ๆ = จำนวนลูกที่สแกนรอบนี้
@@ -2546,7 +2644,7 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
       {/* ล็อกหน้าจอ: แตะพื้นหลังไม่ปิด — ต้องกด "ใส่เข้าเบอร์แม่" หรือ "ยกเลิก" เท่านั้น (กันเผลอแตะแล้วหลุด) */}
       <div style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
         <div style={{ textAlign: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("สแกนลูกได้", "Scanned child")}</div>
+          <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{pending.pack ? t("สแกนของเข้าบั้ง", "Scanned item") : t("สแกนลูกได้", "Scanned child")}</div>
           <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{pending.part_no}</div>
           {pending.part_name ? <div style={{ fontSize: 13.5, color: "#cfe7dc" }}>{pending.part_name}</div> : null}
           <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>
@@ -2580,7 +2678,7 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
         </div>
         <div className="stn-row-btns">
           <button className="stn-pill no" onClick={onCancel} disabled={busy}>{t("ยกเลิก", "Cancel")}</button>
-          <button className="stn-pill ok" onClick={() => onAdd(nq)} disabled={busy}>{has > 0 ? t(`✓ เพิ่ม (รวม ${has + nq})`, `✓ Add (total ${has + nq})`) : t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
+          <button className="stn-pill ok" onClick={() => onAdd(nq)} disabled={busy}>{has > 0 ? t(`✓ เพิ่ม (รวม ${has + nq})`, `✓ Add (total ${has + nq})`) : pending.pack ? t("✓ ใส่เข้าบั้ง", "✓ Add to bunk") : t("✓ ใส่เข้าเบอร์แม่", "✓ Add to parent")}</button>
         </div>
       </div>
     </div>
@@ -2783,7 +2881,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
 
   // ── โหมดประกอบอิสระ (เบอร์แม่ที่ไม่ใช่ package): โชว์ "ลูกที่สแกนเข้าไปแล้ว" แทนเช็กลิสต์ BOM
   //    (เช็กลิสต์อยู่หลังบ้าน) · แยกด้วย kind ให้ตรงกับ RPC — แพ็ก (package) = เช็กลิสต์เหมือนเดิม ──
-  const free = pkind !== "package";
+  const free = pkind !== "package" || !!asmParent.batchOk;   // ★ รอบ 25: บั้ง (server รองรับ) = แบบอิสระเหมือนประกอบ · ไม่โชว์ใบบั้ง
   // ตารางประกอบ: ที่ติดตั้งแล้ว (จากสเตชันก่อน/เซิร์ฟเวอร์) + ที่สแกนเข้ารายการรอบนี้ (ลบออกได้)
   const installedRows = (asmParent.installed || []).map((x, i) => ({
     key: "i" + (x.child_unit_id || i), unit_id: x.child_unit_id, part_no: x.part_no || "—", qr: x.qr || "—", now: false, len: null, wt: null, qty: x.qty ?? 1,
@@ -2833,7 +2931,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
         </div>
       ) : null}
 
-      <div className="asw-stitle">{isPack ? t("รายการยูนิตในบั้งนี้", "Units in this bunk") : free ? t("ลูกที่สแกนเข้าไปแล้ว", "Children scanned in") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {free ? scannedCount : rows.length} {t("รายการ", "items")}</span></div>
+      <div className="asw-stitle">{isPack ? (free ? t("ของที่แพ็กเข้าบั้งแล้ว", "Packed into this bunk") : t("รายการยูนิตในบั้งนี้", "Units in this bunk")) : free ? t("ลูกที่สแกนเข้าไปแล้ว", "Children scanned in") : t("รายการชิ้นงานที่ต้องใช้", "Parts required")} <span className="hint">· {free ? scannedCount : rows.length} {t("รายการ", "items")}</span></div>
       <div className="asw-sheet">
         {free ? (
         <table className="asw-tab">
@@ -2865,7 +2963,8 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
               </tr>
             ))}
             {freeRows.length === 0 ? (
-              <tr><td colSpan={7} className="asw-tabempty">{t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
+              <tr><td colSpan={7} className="asw-tabempty">{isPack ? t("ยังไม่มีของในบั้ง — สแกน QR ของที่แพ็กเข้าบั้งนี้", "nothing packed yet — scan the QR of what goes into this bunk")
+                : t("ยังไม่มีลูกที่สแกนเข้าไป — สแกน QR ลูกที่ประกอบเข้าเบอร์นี้", "no children yet — scan the QR of parts assembled into this")}</td></tr>
             ) : null}
           </tbody>
         </table>
@@ -3052,17 +3151,18 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
     return true;
   });
   const kindLabel = (k) => k === "subassembly" ? t("ซับ", "SUB") : k === "package" ? t("บั้ง", "PKG") : t("แผง", "PANEL");
+  const hasItems = all.some((r) => r.items != null);   // ★ รอบ 25: รายการแบบใหม่ (รวมบั้ง/เบอร์ที่บันทึกแล้ว + จำนวนรายการที่ใส่)
   const kindCls = (k) => k === "subassembly" ? "sub" : "panel";
   const submit = (e) => { e.preventDefault(); const s = q.trim(); if (s) onPick(s); };
   const chips = glz
     ? [["all", t("ทั้งหมด", "All")], ["glz-todo", t("รอติดกระจก", "To glaze")], ["glz-done", t("ติดแล้ว", "Glazed")], ["panel", t("แผง", "Panel")], ["sub", t("หน้าต่าง/ซับ", "Window/sub")]]
     : isPack
-    ? [["all", t("ทั้งหมด", "All")], ["package", t("บั้ง", "Pkg")], ["doing", t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]]
+    ? [["all", t("ทั้งหมด", "All")], ["package", t("บั้ง", "Pkg")], ["doing", hasItems ? t("เริ่มแล้ว", "Started") : t("กำลังทำ", "Doing")], ["todo", t("ยังไม่เริ่ม", "Not started")]]
     : [["all", t("ทั้งหมด", "All")], ["panel", t("แผง", "Panel")], ["sub", t("ซับ", "Sub")], ["doing", t("เริ่มแล้ว", "Started")], ["todo", t("ยังไม่เริ่ม", "Not started")]];
 
   return (
     <div className="asw-pick">
-      <div className="asw-pick-h">{glz ? t("เลือกหน้าต่าง/แผงที่จะติดกระจก", "Choose a window/panel to glaze") : t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {all.length} {glz ? t("รายการ (ประกอบเสร็จแล้ว)", "assembled") : isPack ? t("รายการที่ค้างอยู่", "pending") : t("รายการ", "items")}</span></div>
+      <div className="asw-pick-h">{glz ? t("เลือกหน้าต่าง/แผงที่จะติดกระจก", "Choose a window/panel to glaze") : t(`เลือก${parentWord}ที่จะประกอบ`, `Choose a ${parentWord}`)} <span>· {nc(all.length)} {glz ? t("รายการ (ประกอบเสร็จแล้ว)", "assembled") : isPack && !hasItems ? t("รายการที่ค้างอยู่", "pending") : t("รายการ", "items")}</span></div>
       <div className="asw-pick-srow">
         <form className="asw-pick-search" onSubmit={submit}>
           <Icon name="search" size={18} className="stn-ico" />
@@ -3088,7 +3188,7 @@ function AsmParentPicker({ dept, isPack, onScan, onPick, t }) {
             <span className={"asw-pick-kind " + kindCls(r.kind)}>{kindLabel(r.kind)}</span>
             <span className="asw-pick-mid">
               <span className="asw-pick-pno">{r.part_no}</span>
-              <span className="asw-pick-name">{r.part_name}{r.project_code ? <> · <span className="proj">{r.project_code}</span></> : null}</span>
+              <span className="asw-pick-name">{r.bunk_no && r.bunk_no !== r.part_no ? <><b>{r.bunk_no}</b> · </> : null}{r.part_name}{r.project_code ? <> · <span className="proj">{r.project_code}</span></> : null}</span>
             </span>
             {glz
               ? <span className={"asw-pick-pill " + (r.glazed ? "doing" : "todo")}>{r.glazed ? t("ติดกระจกแล้ว", "glazed") : t("รอติดกระจก", "to glaze")}</span>
