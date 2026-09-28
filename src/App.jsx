@@ -16,7 +16,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
-  getAssemblyState, listAssemblyParents, getUnitsByIds,
+  getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
   importBackupExtra, getPartStationProgress,
@@ -3896,7 +3896,11 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
       }
       const bom = st.bom || [];
       const installed = st.installed || [];
-      const madeQty = Math.max(1, Math.floor(Number(st.made_qty) || 1));   // จำนวนที่ทำของเบอร์แม่ → แผน = BOM × จำนวนนี้
+      // ★ รอบ 24: ประวัติรายรอบ/รายสเตชัน + ยอดทำรวมทุกรอบ (ยังไม่รัน SQL รอบ 24 = null → ใช้ยอดเดิม)
+      let hist = null;
+      if ((st.parent?.kind || meta?.kind) !== "package") { try { hist = await getAssemblyBatches(qr); } catch { hist = null; } }
+      const madeSum = hist && hist.ok ? Math.floor(Number(hist.made_qty) || 0) : 0;
+      const madeQty = Math.max(1, madeSum > 0 ? madeSum : Math.floor(Number(st.made_qty) || 1));   // จำนวนที่ทำของเบอร์แม่ → แผน = BOM × จำนวนนี้
       const unitMap = await getUnitsByIds(installed.map((x) => x.child_unit_id));
       const byPm = {};
       installed.forEach((x) => {
@@ -3928,6 +3932,8 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
         madeQty,
         rows, extra, complete, hasOver, ok: complete && extra.length === 0 && !hasOver,
         plannedTotal: bom.reduce((s, b) => s + (Number(b.qty) || 0) * madeQty, 0), scannedTotal: sumQty(installed),
+        isPackage: (st.parent?.kind || meta?.kind) === "package",
+        hist: hist && hist.ok ? hist : null, histMissing: !hist,
       });
     } catch (e) { setErr("ผิดพลาด: " + (e?.message || e)); }
     setBusy(false);
@@ -4035,7 +4041,7 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
 
           {result.extra.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontWeight: 700, color: "var(--danger-hi)", marginBottom: 6 }}>⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน ({result.extra.length}) — ตรวจว่าใส่ผิดเบอร์ไหม</div>
+              <div style={{ fontWeight: 700, color: "var(--danger-hi)", marginBottom: 6 }}>{`⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน (${nc(result.extra.length)}) — ตรวจว่าใส่ผิดเบอร์ไหม`}</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="data-table" style={{ minWidth: 360 }}>
                   <thead><tr><th>เบอร์ชิ้น</th><th>QR</th></tr></thead>
@@ -4046,7 +4052,103 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
           )}
         </Card>
       )}
+
+      {result && !busy && !result.isPackage && <AssemblyStationHistory hist={result.hist} missing={result.histMissing} />}
     </div>
+  );
+}
+
+// ── ★ รอบ 24: "สเตชันไหนใส่อะไร" ของเบอร์แม่ 1 ตัว — สรุปรายสเตชัน + ทุกรอบที่บันทึก (ใหม่→เก่า) ──
+//   ข้อมูลจาก get_assembly_batches (migration-round24-assembly-batch.sql) · เริ่มเก็บตั้งแต่ติดตั้งรอบ 24
+function AssemblyStationHistory({ hist, missing }) {
+  const batches = hist?.batches || [];
+  const stations = useMemo(() => {
+    const m = new Map();
+    batches.forEach((b) => {
+      const key = `${b.machine_code || b.machine_name || "?"}|${b.op_name || ""}`;
+      const g = m.get(key) || { key, code: b.machine_code || "", name: b.machine_name || "", op: b.op_name || "", opType: b.op_type || "", made: 0, rounds: 0, last: null, items: new Map() };
+      if (b.kind !== "remove") { g.made += Number(b.parent_qty) || 0; g.rounds += 1; }
+      if (!g.last || new Date(b.at) > new Date(g.last)) g.last = b.at;
+      (b.items || []).forEach((it) => {
+        const k = it.part_no || it.qr || "?";
+        g.items.set(k, (g.items.get(k) || 0) + (b.kind === "remove" ? -1 : 1) * (Number(it.qty) || 0));
+      });
+      m.set(key, g);
+    });
+    return [...m.values()].sort((a, b) => new Date(b.last) - new Date(a.last));
+  }, [batches]);
+  const itemsText = (map) => [...map.entries()].filter(([, q]) => q !== 0)
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }))
+    .map(([k, q]) => `${k} ×${nc(q)}`).join(" · ") || "—";
+  return (
+    <Card title="ใครใส่อะไร · แยกสเตชัน">
+      {missing ? (
+        <div className="asm-hist-note" style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.7, padding: 6 }}>
+          ยังไม่ได้ติดตั้งส่วนเก็บประวัติรายสเตชัน (SQL รอบ 24) — ติดตั้งแล้วจะเริ่มเก็บ "สเตชันไหน · ใคร · เมื่อไร · ใส่อะไรเท่าไร" ทุกครั้งที่หน้างานกดบันทึก
+        </div>
+      ) : batches.length === 0 ? (
+        <div className="asm-hist-note" style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.7, padding: 6 }}>
+          ยังไม่มีประวัติรายสเตชันของเบอร์นี้ — ของที่บันทึกก่อนติดตั้งรอบ 24 ไม่มีรายละเอียดสเตชัน (ยอดรวมด้านบนยังถูกต้อง)
+        </div>
+      ) : (
+        <>
+          <div className="asm-hist-sub" style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>สรุปรายสเตชัน (ใส่ − เอาออก)</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="data-table asm-hist-st" style={{ minWidth: 620 }}>
+              <thead><tr>
+                <th>สเตชัน</th><th>ขั้นตอน</th>
+                <th style={{ textAlign: "center", width: 110 }}>ทำเบอร์แม่</th>
+                <th>ลูกที่ใส่ (รวม)</th>
+                <th style={{ textAlign: "center", width: 90 }}>บันทึก (ครั้ง)</th>
+                <th style={{ width: 130 }}>ล่าสุด</th>
+              </tr></thead>
+              <tbody>
+                {stations.map((g) => (
+                  <tr key={g.key}>
+                    <td style={{ whiteSpace: "nowrap" }}><b style={{ fontFamily: "var(--font-mono)" }}>{g.code || "—"}</b>{g.name && g.name !== g.code ? <span style={{ color: "var(--muted)", fontSize: 12 }}> · {g.name}</span> : null}</td>
+                    <td style={{ fontSize: 12.5 }}>{g.op || "—"}</td>
+                    <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{g.made > 0 ? `${nc(g.made)} ชิ้น` : "—"}</td>
+                    <td style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{itemsText(g.items)}</td>
+                    <td style={{ textAlign: "center", fontFamily: "var(--font-mono)" }}>{nc(g.rounds)}</td>
+                    <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtDT(g.last)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="asm-hist-sub" style={{ fontSize: 12.5, color: "var(--muted)", margin: "16px 0 8px" }}>{`ทุกครั้งที่บันทึก (ใหม่ → เก่า) · ${nc(batches.length)} ครั้ง`}</div>
+          <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
+            <table className="data-table asm-hist-log" style={{ minWidth: 680 }}>
+              <thead><tr>
+                <th style={{ width: 120 }}>เวลา</th><th>สเตชัน</th><th>คนบันทึก</th>
+                <th style={{ width: 130 }}>เบอร์แม่</th><th>ลูกที่ใส่</th>
+              </tr></thead>
+              <tbody>
+                {batches.map((b) => {
+                  const rm = b.kind === "remove";
+                  return (
+                    <tr key={b.id} className={rm ? "asm-hist-rm" : ""}>
+                      <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtDT(b.at)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}><b style={{ fontFamily: "var(--font-mono)" }}>{b.machine_code || "—"}</b>{b.op_name ? <span style={{ color: "var(--muted)", fontSize: 12 }}> · {b.op_name}</span> : null}</td>
+                      <td style={{ fontSize: 12.5 }}>{b.employee_name || b.employee_code || "—"}</td>
+                      <td style={{ fontSize: 12.5 }}>
+                        {rm ? <span className="asm-hist-badge rm">เอาออก</span>
+                          : Number(b.parent_qty) > 0 ? <span className="asm-hist-badge made">{`ทำ ${nc(b.parent_qty)} ชิ้น`}</span>
+                          : <span className="asm-hist-badge add">ใส่เพิ่มในชิ้นเดิม</span>}
+                      </td>
+                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
+                        {(b.items || []).length ? (b.items || []).map((it) => `${it.part_no || it.qr} ×${nc(it.qty)}`).join(" · ") : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -12012,6 +12114,7 @@ const OP_TYPE_DEST = {
   pack_panel: { th: "หน้าแพ็กแผง",                 path: "/packing-panel" },
   pack_site:  { th: "หน้าแพ็กไซต์ไอเทม",           path: "/packing-site" },
   packing:    { th: "หน้าแพ็ก · รวมทุกบั้ง",       path: "/packing" },
+  glazing:    { th: "หน้าติดกระจก (Glazing)",      path: "/glazing" },
 };
 const opTypeDest = (ty) => OP_TYPE_DEST[ty] || OP_TYPE_DEST.machining;
 // รวม "หน้าปลายทาง" ที่ไม่ซ้ำ จากชุด operation ที่เลือก (ไว้สรุปว่าสเตชันนี้จะเป็นหน้าอะไร)
@@ -12209,6 +12312,7 @@ const QUICK_ADD_CHIPS = [
   { key: "pack_panel", name: "แพ็กแผง",       op_type: "pack_panel", match: (o) => o.op_type === "pack_panel" },
   { key: "pack_site",  name: "แพ็กไซต์ไอเทม", op_type: "pack_site",  match: (o) => o.op_type === "pack_site" },
   { key: "milling",    name: "กัด",           op_type: "machining",  match: (o) => { const n = String(o.name || "").trim(); return n === "กัด" || n.toUpperCase() === "MILLING"; } },
+  { key: "glazing",    name: "ติดกระจก",      op_type: "glazing",    match: (o) => o.op_type === "glazing" },   // ★ รอบ 22
 ];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
@@ -12329,6 +12433,7 @@ const OP_TYPES = [
   { value: "pack_panel", label: "แพ็กแผง (pack panel)" },
   { value: "pack_site", label: "แพ็กไซต์ไอเทม (pack site item)" },
   { value: "packing", label: "แพ็ก · รวมทุกบั้ง (packing)" },
+  { value: "glazing", label: "ติดกระจก (glazing)" },   // ★ รอบ 22: หน้าต่าง/แผงที่ประกอบเสร็จ → ติดกระจก → นับยอดแยก
 ];
 function OperationsCrud() {
   const [rows, setRows] = useState([]);
@@ -12384,7 +12489,9 @@ function OperationsCrud() {
         <b>สำคัญ: "แผนก/หน้าปลายทาง" มาจาก "ประเภทงาน" ของขั้นตอน ไม่ใช่ชื่อสเตชัน</b> — ดูคอลัมน์ <b>หน้าปลายทาง</b> ด้านล่าง<br />
         • อยากแยกแพ็กเป็น 2 หน้า ต้องมี <b>2 ขั้นตอนคนละประเภท</b>: <b>แพ็กแผง</b> (→ /packing-panel) และ <b>แพ็กไซต์ไอเทม</b> (→ /packing-site) แล้วตั้งให้สเตชันละอัน · ประเภท <b>แพ็ก · รวมทุกบั้ง</b> (→ /packing) เห็นทุกบั้ง ไม่แยก<br />
         • ถ้าหลายสเตชันใช้ขั้นตอนประเภทเดียวกัน จะเข้า<b>หน้าเดียวกัน</b> (ไม่แยกกัน)<br />
-        • <b>Glazing/ติดกระจก</b>: เลือก <b>แผง</b> ถ้าเบอร์แม่ที่กระจกไปติดเป็นชนิด "แผง" · เลือก <b>ประกอบ · ซับ</b> ถ้าเป็นชนิด "ซับ" — ทั้งสองแบบ<b>ใส่ part ที่ไม่ใช่กระจกได้อยู่แล้ว</b> (ไม่บล็อก)
+        • {lang === "en"
+          ? <><b>Glazing</b>: use type <b>glazing</b> (→ /glazing) · scan a window (sub) or panel that is already assembled → enter how many were glazed → scan the glass if it has a QR (optional) → save = a separate glazing count · the sub-assembly station no longer waits for the glass before closing the frame</>
+          : <><b>ติดกระจก (Glazing)</b>: เลือกประเภท <b>ติดกระจก (glazing)</b> (→ /glazing) · สแกนหน้าต่าง (ซับ) หรือแผงที่<b>ประกอบเสร็จแล้ว</b> → ใส่จำนวนที่ติดกระจก → สแกนกระจกถ้ามี QR (ไม่บังคับ) → บันทึก = นับยอดติดกระจกแยก · สเตชันซับไม่ต้องรอกระจกก่อนปิดงานเฟรม</>}
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-start" }}>
         <Field label="ชื่อขั้นตอน"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น ตัด / ประกอบ / แพ็ก" /></Field>
