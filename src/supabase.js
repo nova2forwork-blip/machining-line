@@ -1510,6 +1510,86 @@ export async function recordAssembly({ parentQr, childQrs, operationId, clientId
   return data || { ok: false, reason: "error" };
 }
 
+// ── ★ รอบ 24: ประกอบเป็น "รอบ" (record_assembly_batch) ─────────────────────────────
+//   ทุกรอบ: จำนวนเบอร์แม่ (บวกยอดผลิต · 0 = ใส่ของเพิ่มในชิ้นเดิม) + ลูกพร้อมจำนวน (QR เดิมใส่ซ้ำได้ → บวกจำนวน)
+//   + เก็บว่าสเตชัน/ใคร/เมื่อไร · ยังไม่รัน migration-round24 → ตกไปใช้ record_assembly เดิม (ผลมี legacy:true)
+//   สถานะ "server มีฟังก์ชันไหม" จำไว้ในเครื่อง (ใช้ตอนออฟไลน์) · ออนไลน์ตรวจใหม่ทุกครั้งที่เปิดหน้า
+const ASM_BATCH_KEY = "mls-asm-batch";
+let _rabState = null;          // true = มี · false = ยังไม่มี · null = ยังไม่รู้
+let _rabMissingNow = false;    // หน้านี้เพิ่งเจอว่าไม่มี → ไม่ลองซ้ำจนกว่าจะเปิดหน้าใหม่
+function rabRead() {
+  if (_rabState !== null) return _rabState;
+  try { const v = localStorage.getItem(ASM_BATCH_KEY); if (v === "1") _rabState = true; else if (v === "0") _rabState = false; } catch { /* ignore */ }
+  return _rabState;
+}
+function rabSet(v) { _rabState = !!v; if (!v) _rabMissingNow = true; try { localStorage.setItem(ASM_BATCH_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
+export function assemblyBatchSupported() { return rabRead() === true && !_rabMissingNow; }
+
+function queueAssemblyBatch(p) {
+  const a = qRead();
+  a.push({ assembly: {
+    batch: true,   // ★ flush → record_assembly_batch (ไม่มี = record_assembly เดิม)
+    p_parent_qr: p.parentQr, p_child_qrs: p.children,
+    p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
+    p_parent_qty: p.parentQty,
+  }, qid: p.clientId, ts: Date.now(), owner: queueOwner() });
+  if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+  return { ok: true, queued: true };
+}
+
+// children = [{ qr, qty }] · parentQty = จำนวนเบอร์แม่ที่ทำรอบนี้ (0 ได้)
+export async function recordAssemblyBatch({ parentQr, children, parentQty, operationId, clientId, recordedAt }, { allowQueue = true } = {}) {
+  const p = {
+    parentQr, children: (children || []).map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
+    parentQty: Math.max(0, Math.floor(Number(parentQty) || 0)), operationId: operationId ?? null,
+    clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(),
+  };
+  const legacy = async () => {
+    const r = await recordAssembly({ parentQr: p.parentQr, childQrs: p.children, operationId: p.operationId, clientId: p.clientId,
+      recordedAt: p.recordedAt, parentQty: Math.max(1, p.parentQty) }, { allowQueue });
+    return r ? { ...r, legacy: true } : r;
+  };
+  if (_rabMissingNow) return legacy();
+  if (allowQueue && typeof navigator !== "undefined" && navigator.onLine === false) return queueAssemblyBatch(p);
+  const { data, error } = await supabase.rpc("record_assembly_batch", {
+    p_token: authToken(), p_parent_qr: p.parentQr, p_parent_qty: p.parentQty, p_children: p.children,
+    p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt,
+  });
+  if (error) {
+    if (isMissingFnErr(error)) { rabSet(false); return legacy(); }
+    if (allowQueue && isNetworkErr(error)) return queueAssemblyBatch(p);
+    console.warn("record_assembly_batch error", error); flagAuth(error); throw error;
+  }
+  rabSet(true);
+  return data || { ok: false, reason: "error" };
+}
+
+// ประวัติรายรอบของเบอร์แม่ + ยอดประกอบ/ติดกระจกรวม · null = ยังไม่รัน SQL รอบ 24 หรือออฟไลน์
+export async function getAssemblyBatches(parentQr) {
+  if (_rabMissingNow) return null;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
+  const { data, error } = await supabase.rpc("get_assembly_batches", { p_parent_qr: parentQr });
+  if (error) {
+    if (isMissingFnErr(error)) { rabSet(false); return null; }
+    console.warn("get_assembly_batches error", error); return null;
+  }
+  if (data && data.ok) rabSet(true);
+  return data || null;
+}
+
+// จด "เอาลูกออก" ลงประวัติรายรอบ (best-effort · เรียกหลัง removeAssemblyChild สำเร็จ)
+export async function logAssemblyRemoval({ parentUnitId, childUnitId, qty, operationId }) {
+  if (_rabMissingNow) return null;
+  try {
+    const { data, error } = await supabase.rpc("assembly_log_removal", {
+      p_token: authToken(), p_parent_unit_id: parentUnitId, p_child_unit_id: childUnitId,
+      p_qty: qty ?? null, p_operation_id: operationId ?? null,
+    });
+    if (error) { if (isMissingFnErr(error)) rabSet(false); return null; }
+    return data;
+  } catch { return null; }
+}
+
 // บันทึกงานประกอบ "ซับ" แบบนับจำนวนรวม (สแกนแม่ + จำนวนที่ทำ · ลูกเช็ก BOM ที่สเตชัน) — ปิดงานเบอร์แม่
 export async function recordSubassembly({ parentQr, qty, operationId, clientId, recordedAt }) {
   const { data, error } = await supabase.rpc("record_subassembly", {
@@ -1555,16 +1635,19 @@ export async function getAssemblyState(parentQr) {
 // prefetch สถานะเบอร์แม่ที่กำลังทำ (assembly+packing) ลงแคช — เรียกตอนเข้าหน้า/เน็ตกลับ
 // best-effort + bounded (กันยิง RPC เยอะ) → เปิดเบอร์ที่ยังไม่เคยสแกนตอน offline ได้
 let _prefetchingAsm = false;
-export async function prefetchAssemblyForOffline(limit = 120) {
+export async function prefetchAssemblyForOffline(limit = 120, dept) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
   if (_prefetchingAsm) return 0;                   // ★ กันรันซ้อน (mount + online event + เน็ตกระพริบ) = ยิง RPC ซ้ำเป็นชุด
   _prefetchingAsm = true;
   try {
     let parents = [];
     try {
-      const [asm, panel, pack] = await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("panel"), listAssemblyParents("packing")]);
+      // ★ รอบ 22: สเตชันติดกระจก = แคชหน้าต่าง/แผงที่ "ประกอบเสร็จ" (รอติดกระจกก่อน) · สเตชันอื่นเหมือนเดิม
+      const lists = dept === "glazing"
+        ? [((await listGlazingParents()) || []).filter((p) => !p.glazed)]
+        : await Promise.all([listAssemblyParents("assembly"), listAssemblyParents("panel"), listAssemblyParents("packing")]);
       const seen = new Set();
-      [...asm, ...panel, ...pack].forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
+      lists.flat().forEach((p) => { if (p && p.qr_code && !seen.has(p.qr_code)) { seen.add(p.qr_code); parents.push(p.qr_code); } });
     } catch { return 0; }
     parents = parents.slice(0, limit);
     // ★ ขนานแบบจำกัด concurrency (เดิม sequential ทีละตัว = ช้ามาก ~120 round-trip/เครื่อง + burst ตอนหลายเครื่อง reconnect พร้อมกัน)
@@ -1615,9 +1698,26 @@ export async function getUnitsByIds(ids) {
   return m;
 }
 
+// ★ รอบ 22: รายการหน้าต่าง/แผง "ที่ประกอบเสร็จแล้ว" ให้สเตชันติดกระจกเลือก (รอติดกระจกขึ้นก่อน)
+//   ยังไม่รัน migration-round22-glazing.sql → คืน null (หน้าสเตชันเหลือสแกน QR อย่างเดียว ไม่พัง)
+let _lgpMissing = false;
+export async function listGlazingParents(limit = 500) {
+  if (_lgpMissing) return null;
+  const { data, error } = await supabase.rpc("list_glazing_parents", { p_limit: limit });
+  if (error) {
+    if (isMissingFnErr(error)) { _lgpMissing = true; return null; }
+    console.warn("list_glazing_parents error", error); return [];
+  }
+  return (Array.isArray(data) ? data : []).map((u) => ({
+    id: u.id, qr_code: u.qr_code, status: u.status, part_no: u.part_no || u.qr_code, part_name: u.part_name || "",
+    kind: u.kind || "part", project_code: u.project_code || "", glazed: !!u.glazed, glazed_qty: Number(u.glazed_qty) || 0,
+  }));
+}
+
 // รายการ "เบอร์แม่" ที่ยังประกอบไม่เสร็จ (ให้เลือกในหน้าประกอบ/แพ็ก แทนการสแกนอย่างเดียว)
 // assembly = แผง + ซับ · packing = บั้ง(package) · ตัดโปรเจคที่ปิด · อ่านตรง (anon SELECT)
 let _lapMissing = false;
+let _laoMissing = false;   // ★ รอบ 23: list_assembly_open ยังไม่ติดตั้ง
 export async function listAssemblyParents(dept) {
   // แยกชนิดตามสเตชัน: แพ็ก/แพ็กแผง/แพ็กไซต์→package · แผง→panel · ประกอบ(ซับ)→subassembly · อื่น ๆ→ทั้ง panel+sub
   const packDepts = ["packing", "packpanel", "packsite"];
@@ -1626,6 +1726,19 @@ export async function listAssemblyParents(dept) {
     : dept === "assembly" ? ["subassembly"]
     : ["panel", "subassembly"];
   const wantPack = dept === "packpanel" ? "panel" : dept === "packsite" ? "site" : null;   // แพ็กแผง/ไซต์ = เฉพาะบั้งที่ติดป้ายตรงกัน (legacy packing = ทุกบั้ง)
+  // ★ รอบ 23: ซับ/แผง = รายการรวม "ที่เคยบันทึกแล้ว" ด้วย (กลับมาใส่เพิ่มได้ · ไม่ปิดงาน) + จำนวนรายการที่ใส่ไปแล้ว
+  //   ต้องรัน migration-round22-glazing.sql (list_assembly_open) · ยังไม่รัน = ใช้รายการเดิม (เฉพาะที่ยังไม่เคยบันทึก)
+  if ((dept === "assembly" || dept === "panel") && !_laoMissing) {
+    const { data: d3, error: e3 } = await supabase.rpc("list_assembly_open", { p_kinds: kinds, p_limit: 2000 });
+    if (!e3) {
+      return (Array.isArray(d3) ? d3 : []).map((u) => ({
+        id: u.id, qr_code: u.qr_code, status: u.status, part_no: u.part_no || u.qr_code, part_name: u.part_name || "",
+        kind: u.kind || "part", pack_type: null, project_code: u.project_code || "", project_status: u.project_status || "",
+        items: Number(u.items) || 0, items_qty: Number(u.items_qty) || 0,
+      }));
+    }
+    if (isMissingFnErr(e3)) _laoMissing = true; else { console.warn("list_assembly_open error", e3); }
+  }
   // ★ รอบ 12 (B39): คัดฝั่ง server (ตัดโปรเจคปิด/ชนิดบั้ง/เสร็จแล้ว ก่อนจำกัดจำนวน · งานกำลังทำ + ใบใหม่ขึ้นก่อน)
   //   เดิมดึง 600 แถวแรกแบบไม่เรียงแล้วค่อยกรอง → ปีหลังๆ เบอร์แม่ของโปรเจคที่เปิดอยู่หายจากตัวเลือก
   if (!_lapMissing) {
@@ -1777,7 +1890,20 @@ export async function flushScanQueue() {
       if (typeof navigator !== "undefined" && navigator.onLine === false) break;
       let data, error;
       try {
-        if (item.assembly) {
+        if (item.assembly && item.assembly.batch) {
+          // ★ รอบ 24: รอบประกอบ (จำนวนเบอร์แม่ + ลูก) · server ยังไม่มีฟังก์ชัน = ส่งแบบเดิม
+          const a = item.assembly;
+          ({ data, error } = await supabase.rpc("record_assembly_batch", {
+            p_token: tok, p_parent_qr: a.p_parent_qr, p_parent_qty: Math.max(0, Number(a.p_parent_qty) || 0), p_children: a.p_child_qrs || [],
+            p_operation_id: a.p_operation_id ?? null, p_client_id: a.p_client_id ?? item.qid, p_recorded_at: a.p_recorded_at ?? null,
+          }));
+          if (error && isMissingFnErr(error)) {
+            ({ data, error } = await supabase.rpc("record_assembly", {
+              p_token: tok, p_parent_qr: a.p_parent_qr, p_child_qrs: a.p_child_qrs || [], p_operation_id: a.p_operation_id ?? null,
+              p_client_id: a.p_client_id ?? item.qid, p_recorded_at: a.p_recorded_at ?? null, p_parent_qty: Math.max(1, Number(a.p_parent_qty) || 1),
+            }));
+          }
+        } else if (item.assembly) {
           ({ data, error } = await supabase.rpc("record_assembly", { ...item.assembly, p_token: tok }));
         } else if (item.machineWork) {
           ({ data, error } = await supabase.rpc("record_machine_work", { ...item.machineWork, p_token: tok }));
