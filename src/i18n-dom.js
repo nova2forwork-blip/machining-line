@@ -356,6 +356,11 @@ const DICT = {
   "แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ": "A panel/assembled piece should be in one bunk only — check for a wrong bunk or a duplicate label",
   "อยู่ในบั้งอื่น": "Also in bunk",
   "เบอร์ชิ้น": "Part No.",
+  // ── รอบ 26: บั้งซ้อน ──
+  "บั้งซ้อน": "Nested bunks", "บั้งนี้อยู่ในบั้ง": "This bunk is inside", "บั้งที่อยู่ข้างใน": "Bunks inside",
+  // ── รอบ 27: ของทุกชั้น ──
+  "บั้งซ้อน · ของทุกชั้น": "Nested bunks · all levels", "อยู่ใน": "Inside", "บั้ง": "Bunk", "เปิด ›": "Open ›",
+  "✓ ครบตามใบ": "✓ Matches list", "◐ ยังไม่ครบ": "◐ Not complete", "⚠ มีของเกิน/ไม่อยู่ในใบ": "⚠ Extra / not on list", "⚠ ซ้อนวน": "⚠ Loop",
   "ยังไม่ได้ติดตั้งส่วนเก็บประวัติรายสเตชัน (SQL รอบ 24) — ติดตั้งแล้วจะเริ่มเก็บ \"สเตชันไหน · ใคร · เมื่อไร · ใส่อะไรเท่าไร\" ทุกครั้งที่หน้างานกดบันทึก": "Per-station history isn't installed yet (round-24 SQL) — once installed, every save on the floor records \"which station · who · when · what and how many\"",
   "ยังไม่มีประวัติรายสเตชันของเบอร์นี้ — ของที่บันทึกก่อนติดตั้งรอบ 24 ไม่มีรายละเอียดสเตชัน (ยอดรวมด้านบนยังถูกต้อง)": "No per-station history for this number yet — saves made before round 24 have no station detail (the totals above are still correct)",
   "เทียบ \"ที่สั่งจาก release (แผน)\" กับ \"ที่หน้างานสแกนมาจริง\" — ดูว่าทำถูก + ครบไหม · เลือกเบอร์จากรายการ หรือสแกน/พิมพ์ QR (ดูของที่เสร็จแล้วได้)": "Compare \"ordered in the release (plan)\" with \"actually scanned on the floor\" — see whether it's right and complete · pick a number from the list or scan/type a QR (finished ones too)",
@@ -549,6 +554,9 @@ const RULES = [
   [/^ผลเทียบ — (.+)$/, (m) => `Comparison — ${m[1]}`],
   // ── รอบ 24 ──
   [/^ทำ ([\d,]+) ชิ้น$/, (m) => `made ${m[1]}`],
+  [/^\(บั้งนี้\) · ([\d,]+) รายการ$/, (m) => `(this bunk) · ${m[1]} items`],
+  [/^([\d,]+) รายการ$/, (m) => `${m[1]} items`],
+  [/^รวมของทุกชั้น ([\d,]+) ชิ้น · บั้งข้างใน ([\d,]+) ใบ \(ไม่นับตัวบั้ง\)$/, (m) => `All levels: ${m[1]} pcs · ${m[2]} bunk(s) inside (bunks not counted)`],
   [/^⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย \(([\d,]+)\)$/, (m) => `⚠ Pieces also in another bunk (${m[1]})`],
   [/^ทุกครั้งที่บันทึก \(ใหม่ → เก่า\) · ([\d,]+) ครั้ง$/, (m) => `Every save (newest → oldest) · ${m[1]}`],
   [/^⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน \(([\d,]+)\) — ตรวจว่าใส่ผิดเบอร์ไหม$/, (m) => `⚠ Scanned pieces not in the plan (${m[1]}) — check for wrong numbers`],
