@@ -345,6 +345,14 @@ const DICT = {
   "รายการซับ — เบอร์ลูกที่ใส่เข้าแต่ละเบอร์แม่": "Sub list — children fitted to each parent",
   "แต่ละเบอร์แม่มีเบอร์ลูกอะไร ยาวเท่าไร กี่ชิ้น — ใช้เช็คว่าประกอบถูกไหม": "What children each parent has, their length and count — to check the assembly",
   "ตรวจงานประกอบ / แพ็ก": "Assembly / packing check",
+  // ── รอบ 24: ใครใส่อะไร · แยกสเตชัน ──
+  "ใครใส่อะไร · แยกสเตชัน": "Who put in what · by station",
+  "สรุปรายสเตชัน (ใส่ − เอาออก)": "Summary by station (added − removed)",
+  "สเตชัน": "Station", "ทำเบอร์แม่": "Parents made", "ลูกที่ใส่ (รวม)": "Children put in (total)", "บันทึก (ครั้ง)": "Saves",
+  "ล่าสุด": "Latest", "เวลา": "Time", "คนบันทึก": "Recorded by", "เบอร์แม่": "Parent", "ลูกที่ใส่": "Children put in",
+  "เอาออก": "Removed", "ใส่เพิ่มในชิ้นเดิม": "Added to existing pieces",
+  "ยังไม่ได้ติดตั้งส่วนเก็บประวัติรายสเตชัน (SQL รอบ 24) — ติดตั้งแล้วจะเริ่มเก็บ \"สเตชันไหน · ใคร · เมื่อไร · ใส่อะไรเท่าไร\" ทุกครั้งที่หน้างานกดบันทึก": "Per-station history isn't installed yet (round-24 SQL) — once installed, every save on the floor records \"which station · who · when · what and how many\"",
+  "ยังไม่มีประวัติรายสเตชันของเบอร์นี้ — ของที่บันทึกก่อนติดตั้งรอบ 24 ไม่มีรายละเอียดสเตชัน (ยอดรวมด้านบนยังถูกต้อง)": "No per-station history for this number yet — saves made before round 24 have no station detail (the totals above are still correct)",
   "เทียบ \"ที่สั่งจาก release (แผน)\" กับ \"ที่หน้างานสแกนมาจริง\" — ดูว่าทำถูก + ครบไหม · เลือกเบอร์จากรายการ หรือสแกน/พิมพ์ QR (ดูของที่เสร็จแล้วได้)": "Compare \"ordered in the release (plan)\" with \"actually scanned on the floor\" — see whether it's right and complete · pick a number from the list or scan/type a QR (finished ones too)",
   "เลือกเบอร์แม่ / เบอร์แพ็ก": "Pick a parent / package number",
   "เบอร์ (Part)": "Number (Part)",
@@ -515,6 +523,13 @@ const DICT = {
   // รอบ 16: ปุ่มรวมบนมือถือ / ตัวกรอง / ปุ่มในแถว
   "+ เพิ่ม / นำเข้า": "+ Add / Import", "+ เพิ่ม": "+ Add", "ตัวกรอง": "Filters",
   "ลบ Release Order นี้ทั้งชุด": "Delete this whole Release Order",
+  // รอบ 22: ติดกระจก
+  "ติดกระจก (glazing)": "Glazing", "ติดกระจก": "Glazing", "หน้าติดกระจก (Glazing)": "Glazing page",
+  "หน้าแผง": "Panel page", "หน้าประกอบ · ซับ": "Sub-assembly page", "หน้าแพ็กแผง": "Pack-panel page",
+  "หน้าแพ็กไซต์ไอเทม": "Pack-site-item page", "หน้าแพ็ก · รวมทุกบั้ง": "Packing page (all bunks)",
+  "กำหนด BOM": "Set BOM", "สแกนแล้ว": "Scanned", "◐ ยังไม่ครบตามแผน": "◐ Not complete yet",
+  "เบอร์ชิ้น (แผน)": "Part No. (plan)", "ต้องใช้": "Required", "QR/ชิ้นที่สแกนมา": "Scanned QR / pieces",
+  "เบอร์นี้ไม่มี BOM (ไม่มีชิ้นที่ต้องประกอบ)": "No BOM for this part (nothing to assemble)",
   "สเตชันนี้จะเข้า:": "This station opens:", "INV Code / วัสดุ": "INV Code / material",
   "น้ำหนัก/ความยาวของเบอร์ = ค่าเริ่มต้น · Release ที่ตั้งน้ำหนักเองไว้ ใช้ค่าของ Release ก่อน (แก้ที่ ✎ แก้ไข ในหน้า Release)":
     "Part weight/length = the default · a release with its own weight uses that first (change it with ✎ Edit on the Release page)",
@@ -524,6 +539,14 @@ const DICT = {
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
 const RULES = [
+  // ── รอบ 22: "หน้าปลายทาง (URL)" ของสเตชัน · ผลเทียบงานประกอบ ──
+  [/^(หน้า.+?) \((\/[\w-]+)\)$/, (m) => (DICT[m[1]] ? `${DICT[m[1]]} (${m[2]})` : null)],
+  [/^ผลเทียบ — (.+)$/, (m) => `Comparison — ${m[1]}`],
+  // ── รอบ 24 ──
+  [/^ทำ ([\d,]+) ชิ้น$/, (m) => `made ${m[1]}`],
+  [/^ทุกครั้งที่บันทึก \(ใหม่ → เก่า\) · ([\d,]+) ครั้ง$/, (m) => `Every save (newest → oldest) · ${m[1]}`],
+  [/^⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน \(([\d,]+)\) — ตรวจว่าใส่ผิดเบอร์ไหม$/, (m) => `⚠ Scanned pieces not in the plan (${m[1]}) — check for wrong numbers`],
+  [/^(.*?)(?: · )?ทั้งหมด ([\d,]+) (?:ชิ้น|pcs)$/, (m) => `${m[1] ? m[1] + " · " : ""}${m[2]} pcs in total`],
   // ── รอบ 16 (หน้าต่างแก้ไขที่เปิดจากปุ่มในแถว) ──
   [/^แก้ไข Part (.+)$/, (m) => `Edit Part ${m[1]}`],
   [/^โปรเจค ([A-Za-z0-9][\w.\-/]*)$/, (m) => `Project ${m[1]}`],
