@@ -13,6 +13,7 @@ const isPanel = path === "/panel" || path.startsWith("/panel/");            // �
 const isPacking = path === "/packing" || path.startsWith("/packing/");      // หน้าแพ็ก (รวม — บัญชีเดิม เห็นทุกบั้ง)
 const isPackPanel = path === "/packing-panel" || path.startsWith("/packing-panel/");   // หน้าแพ็กแผง (บั้ง pack_type=panel)
 const isPackSite  = path === "/packing-site"  || path.startsWith("/packing-site/");    // หน้าแพ็กไซต์ไอเทม (บั้ง pack_type=site)
+const isGlazing = path === "/glazing" || path.startsWith("/glazing/");      // ★ รอบ 22: หน้าติดกระจก (หน้าต่าง/แผงที่ประกอบเสร็จ)
 const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
 
 // ── auto-heal: render error จาก chunk ที่ไม่ตรงกัน (deploy ใหม่ทับของเก่า / แคชค้าง) ──
@@ -121,9 +122,9 @@ if (isDashboard) {
     root.render(<React.StrictMode><Dashboard /></React.StrictMode>);
     hideBootSplash();
   }).catch(onChunkError);
-} else if (isStation || isAssembly || isPanel || isPacking || isPackPanel || isPackSite) {
+} else if (isStation || isAssembly || isPanel || isPacking || isPackPanel || isPackSite || isGlazing) {
   // ทุกแผนกใช้เอนจิน Station.jsx ตัวเดียวกัน — แยกด้วย prop dept (คนละ URL / คนละหน้าจอ)
-  const dept = isAssembly ? "assembly" : isPanel ? "panel" : isPackPanel ? "packpanel" : isPackSite ? "packsite" : isPacking ? "packing" : "machine";
+  const dept = isAssembly ? "assembly" : isPanel ? "panel" : isPackPanel ? "packpanel" : isPackSite ? "packsite" : isPacking ? "packing" : isGlazing ? "glazing" : "machine";
   import("./Station.jsx").then(({ default: StationApp }) => {
     root.render(<React.StrictMode><StationApp dept={dept} /></React.StrictMode>);
     hideBootSplash();
