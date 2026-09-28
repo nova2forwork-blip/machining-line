@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import "./dashboard.css";
 import { getScanLogsToday, listRows, supabase, getTvMachineStatus } from "./supabase.js";
 import { machineOpMatrix, logWeight } from "./metrics.js";
@@ -25,7 +25,7 @@ function timeOf(iso) { try { return new Date(iso).toLocaleTimeString("en-GB", { 
 // ─── สองภาษา ไทย/อังกฤษ ─────────────────────────────────────────────────────
 const STR = {
   th: {
-    subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
+    L: "th", subtitle: "จอแสดงการผลิตแบบเรียลไทม์", live: "LIVE",
     kpiPieces: "ชิ้นงานที่ทำวันนี้", unitPieces: "ชิ้น",
     kpiWeight: "น้ำหนักรวมวันนี้", unitKg: "กก.",
     kpiTime: "เวลาเดินเครื่องรวม (หน้าเครื่อง)",
@@ -41,7 +41,7 @@ const STR = {
     stripOk: "ไม่มีเครื่องหยุด", stripStopped: "เครื่องที่หยุดอยู่", stripMore: "เครื่อง", stripActive: "เครื่องที่มีงานวันนี้",
   },
   en: {
-    subtitle: "Live Production Monitor", live: "LIVE",
+    L: "en", subtitle: "Live Production Monitor", live: "LIVE",
     kpiPieces: "Pieces Worked Today", unitPieces: "pcs",
     kpiWeight: "Total Weight Today", unitKg: "kg",
     kpiTime: "Machine Time · logged",
@@ -136,6 +136,22 @@ const OP_EN = {
 const OP_NORM = { "MILLING": "กัด", "milling": "กัด", "Milling": "กัด" };   // ชื่ออังกฤษที่เผลอตั้ง → ไทยมาตรฐาน
 const opLabel = (name, lang) => { const th = OP_NORM[name] || name; return lang === "en" ? (OP_EN[th] || th) : th; };
 
+// เหตุผลแจ้งหยุด / รอบช้า — หน้าเครื่องบันทึกเป็นไทยเสมอ (ของเก่าบางแถวเป็นอังกฤษ) → แปลตามภาษาจอ
+//   (ชุดเดียวกับ STN_STOP_REASONS / STN_WORK_REASONS ใน Station.jsx · REASON_EN_TH ใน App.jsx)
+const REASON_PAIRS = [
+  ["ไฟดับ / ไฟตก", "Power outage"], ["เครื่องเสีย", "Breakdown"], ["บำรุงรักษา (PM)", "Maintenance"], ["อื่นๆ", "Other"],
+  ["ปั้มลมมีปัญหา", "Air pump"], ["เครื่องเดินไม่เต็มที่ / รวน", "Machine unstable"], ["ดอก/ใบมีดสึก", "Tool worn"],
+  ["วัตถุดิบไม่ได้ขนาด/มีตำหนิ", "Material off-spec"], ["แบบ/ดรออิงไม่ชัด", "Drawing unclear"], ["งานยาก/ซับซ้อนกว่าปกติ", "Harder job"],
+];
+const REASON_TH2EN = Object.fromEntries(REASON_PAIRS);
+const REASON_EN2TH = { "machine breakdown": "เครื่องเสีย", ...Object.fromEntries(REASON_PAIRS.map(([th, en]) => [en.toLowerCase(), th])) };   // จอ TV ใช้คำสั้น (การ์ดแคบ) · ของเก่าบันทึกเป็นคำเต็ม
+const reasonLabel = (r, L) => {
+  const s = String(r || "").trim();
+  if (!s) return "";
+  const th = REASON_EN2TH[s.toLowerCase()] || s;          // ของเก่าที่เป็นอังกฤษ → ไทยมาตรฐาน
+  return L === "en" ? (REASON_TH2EN[th] || s) : th;         // ข้อความที่พิมพ์เอง (ไม่อยู่ในชุด) = แสดงตามที่พิมพ์
+};
+
 // นาฬิกา + ตัวชี้ "อัปเดตสด/ข้อมูลค้าง" — แยกเป็น component ลูกที่ tick เองทุก 1 วิ
 // เพื่อไม่ให้การเดินนาฬิกาไป re-render ทั้ง Dashboard (รวมกราฟ recharts ที่หนัก) ทุกวินาที
 function LiveClock({ lang, t, lastOkRef }) {
@@ -149,7 +165,7 @@ function LiveClock({ lang, t, lastOkRef }) {
   const ago = Math.max(0, Math.round(gapMs / 1000));
   return (
     <>
-      <div className={`dash-live${stale ? " stale" : ""}`} title={stale ? "การเชื่อมต่ออาจหลุด — กำลังลองใหม่" : "อัปเดตสด"}>
+      <div className={`dash-live${stale ? " stale" : ""}`} title={lang === "en" ? (stale ? "Connection may be lost — retrying" : "Live updates") : (stale ? "การเชื่อมต่ออาจหลุด — กำลังลองใหม่" : "อัปเดตสด")}>
         <span className="dot" /> {stale ? (lang === "en" ? "RECONNECTING" : "กำลังเชื่อมต่อใหม่") : t.live}
         {lastOkRef.current > 0 && <span className="dash-live-ago">{lang === "en" ? `· ${ago}s ago` : `· ${ago} วิ`}</span>}
       </div>
@@ -616,10 +632,12 @@ function MachineState({ st, t }) {
   const dur = sinceText(st.since, t);
   const label = { running: t.stRunning, stopped: t.stStopped, paused: t.stPaused, idle: t.stIdle, off: t.stOff }[st.state] || st.state;
   const icon = { running: "●", stopped: "■", paused: "❚❚", idle: "○", off: "◌" }[st.state] || "•";
-  const detail = st.state === "stopped" ? (st.reason || "") : st.state === "running" ? (st.part_no || "") : "";
+  const reason = st.state === "stopped" ? reasonLabel(st.reason, t.L) : "";
+  const detail = st.state === "running" ? (st.part_no || "") : "";
+  // ★ หยุดแบบมีเหตุผล: โชว์เหตุผลแทนคำว่า "หยุด" (การ์ดแดง + ■ บอกว่าหยุดอยู่แล้ว · การ์ดแคบ/อังกฤษยาว เดิมเหตุผลโดนตัดเหลือ "Machi…")
   return (
-    <div className={`dash-st st-${st.state}`} title={[label, detail, dur].filter(Boolean).join(" · ")}>
-      <span className="ic">{icon}</span><span className="lb">{label}</span>
+    <div className={`dash-st st-${st.state}`} title={[label, reason, detail, dur].filter(Boolean).join(" · ")}>
+      <span className="ic">{icon}</span>{reason ? <span className="lb rs">{reason}</span> : <span className="lb">{label}</span>}
       {detail ? <span className="dt">{detail}</span> : null}
       {dur && st.state !== "idle" && st.state !== "off" ? <span className="du">{dur}</span> : null}
     </div>
@@ -638,13 +656,59 @@ function MachineLine({ still }) {
 }
 
 // ★ รอบ 16: แถบสาย: [อนิเมชันเล็ก] [● เดิน · ■ หยุด · ○ ว่าง] [เครื่องที่หยุด + เหตุผล + นานเท่าไหร่]
+// ★ โชว์เท่าที่พอดีความกว้างจอ (ภาษาอังกฤษยาวกว่า · หยุดหลายเครื่อง) — ที่เหลือรวมเป็น "+N เพิ่มเติม"
+//   เดิมบีบทุกเม็ดให้แคบลงจนเหตุผลหายหมด เหลือแค่รหัสเครื่อง
+//   วัดครั้งเดียวตอนรายการ/ภาษา/ขนาดจอเปลี่ยน: เม็ดเต็ม (รหัส + เหตุผล + เวลา) ใส่ได้ครบ → ใช้แบบเต็ม
+//   ใส่ไม่ครบ → เทียบกับแบบย่อ (รหัส + เวลา · เหตุผลอยู่ใน tooltip/การ์ดด้านล่าง) เลือกแบบที่เห็นเครื่องได้มากกว่า
+const STRIP_MAX = 8;
 function LineStrip({ t, stSum, stopped, activeCount, total }) {
   useTick(30000);
-  const MAX = 4;
-  const shown = stopped.slice(0, MAX);
+  const boxRef = useRef(null), lineRef = useRef(null);
+  const key = stopped.map((m) => (m.code || m.name) + ":" + (m.st && m.st.reason)).join("|") + "|" + t.L;
+  const [fit, setFit] = useState({ key: "", n: STRIP_MAX, compact: false });
+  const fresh = fit.key !== key;
+  const n = fresh ? STRIP_MAX : fit.n;
+  const compact = fresh ? false : fit.compact;
+  const shown = stopped.slice(0, Math.max(1, n));
   const more = stopped.length - shown.length;
+  useLayoutEffect(() => {
+    const box = boxRef.current; if (!box) return;
+    const pills = [...box.querySelectorAll(".dash-stop-pill")];
+    if (!pills.length) { if (fresh) setFit({ key, n: STRIP_MAX, compact: false }); return; }
+    const cs = getComputedStyle(box);
+    if (cs.flexWrap === "wrap") { if (fresh || n !== STRIP_MAX || compact) setFit({ key, n: STRIP_MAX, compact: false }); return; }   // จอแคบ/แนวตั้ง: ขึ้นบรรทัดใหม่ได้ ไม่ต้องตัด
+    const right = box.getBoundingClientRect().right - (parseFloat(cs.paddingRight) || 0) + 0.5;
+    const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+    const moreEl = box.querySelector(".dash-stop-more");
+    const moreW = (moreEl ? moreEl.getBoundingClientRect().width : window.innerHeight * 0.12) + gap;
+    if (fresh) {
+      const x0 = pills[0].getBoundingClientRect().left;
+      const inner = parseFloat(getComputedStyle(pills[0]).columnGap) || 0;
+      const W = pills.map((p) => p.getBoundingClientRect().width);
+      const R = pills.map((p) => { const r = p.querySelector(".r"); return r ? r.getBoundingClientRect().width + inner : 0; });
+      const pack = (ws, limit) => { let x = x0, c = 0; for (const w of ws) { if (x + w > limit) break; x += w + gap; c++; } return c; };
+      const all = stopped.length;
+      const fitN = (ws) => { const c = pack(ws, right); return c >= all ? all : pack(ws, right - moreW); };
+      const nFull = fitN(W);
+      const nComp = nFull >= all ? all : fitN(W.map((w, i) => w - R[i]));
+      const useComp = nComp > nFull;
+      setFit({ key, n: Math.max(1, useComp ? nComp : nFull), compact: useComp });
+      return;
+    }
+    // เวลาที่ยาวขึ้น (59 น. → 1:00 ชม.) ดันเม็ดท้ายเลยขอบ → ลดลง 1
+    const last = pills[pills.length - 1];
+    const limit = more > 0 ? right - moreW : right;
+    if (pills.length > 1 && last.getBoundingClientRect().right > limit) setFit({ key, n: pills.length - 1, compact });
+  });
+  useEffect(() => {
+    const el = lineRef.current; if (!el || typeof ResizeObserver === "undefined") return undefined;
+    let w = el.clientWidth;
+    const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; setFit((f) => ({ ...f, key: "" })); } });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className={"dash-panel dash-line" + (stopped.length ? " has-stop" : "")}>
+    <div ref={lineRef} className={"dash-panel dash-line" + (stopped.length ? " has-stop" : "")}>
       <MachineLine still={!!stSum && stSum.run === 0} />
       {stSum ? (
         <>
@@ -653,16 +717,16 @@ function LineStrip({ t, stSum, stopped, activeCount, total }) {
             <span className={"s-stop" + (stSum.stop ? " on" : "")}><b className="dash-num">{stSum.stop}</b> {t.sumStopped}</span>
             <span className="s-idle"><b className="dash-num">{stSum.other}</b> {t.sumIdle}</span>
           </div>
-          <div className="dash-strip-stops">
+          <div className="dash-strip-stops" ref={boxRef}>
             {stopped.length === 0 ? (
               <span className="dash-strip-ok">✓ {t.stripOk}</span>
             ) : (
               <>
                 <span className="dash-strip-lbl">■ {t.stripStopped}</span>
                 {shown.map((m) => (
-                  <span key={m.code || m.name} className="dash-stop-pill" title={[m.code || m.name, m.st.reason, sinceText(m.st.since, t)].filter(Boolean).join(" · ")}>
+                  <span key={m.code || m.name} className={"dash-stop-pill" + (shown.length === 1 ? " solo" : "")} title={[m.code || m.name, reasonLabel(m.st.reason, t.L), sinceText(m.st.since, t)].filter(Boolean).join(" · ")}>
                     <b>{m.code || m.name}</b>
-                    {m.st.reason ? <span className="r">{m.st.reason}</span> : null}
+                    {m.st.reason && !compact ? <span className="r">{reasonLabel(m.st.reason, t.L)}</span> : null}
                     {m.st.since ? <span className="d dash-num">{sinceText(m.st.since, t)}</span> : null}
                   </span>
                 ))}
