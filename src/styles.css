@@ -1553,4 +1553,15 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .asm-tree-st.issue    { background: rgba(220,38,38,.10); color: var(--danger-hi, #c0362c); border-color: rgba(220,38,38,.3); }
 .asm-tree-node.is-bunk > .asm-tree-row .asm-nest-go { margin-left: auto; }
 .asm-tree-sum { font-size: 12.5px; color: var(--muted); }
-@media (max-width: 640px) { .asm-tree-qr { margin-left: 0; width: 100%; } }
+@media (max-width: 640px) {
+  .asm-tree-row { gap: 4px 10px; }
+  .asm-tree-node:not(.is-bunk) > .asm-tree-row .asm-tree-meta { flex: 1 1 auto; min-width: 0; }
+  .asm-tree-qr { margin-left: 0; flex: 1 1 auto; }
+}
+/* รอบ 28: ซับ/แผงในต้นไม้ */
+.asm-tree-kind.k-panel { background: rgba(139, 92, 246, .14); color: #6d28d9; }
+.asm-tree-kind.k-subassembly { background: rgba(16, 185, 129, .14); color: var(--accent-dk, #098259); }
+.asm-tree-node.k-panel > .asm-tree-row, .asm-tree-node.k-subassembly > .asm-tree-row { background: rgba(120, 140, 190, .06); }
+.asm-tree-qty.in-row { min-width: 0; text-align: left; }
+.asm-tree-meta.lot { font-style: italic; }
+.asm-tree-node.is-bunk > .asm-tree-row .asm-tree-qr + .asm-nest-go { margin-left: 8px; }
