@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Componen
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  listRows, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
+  listRows, findPartByNo, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
   findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
   setReleaseMdf, releaseMdf, listReleaseIdsOfOrder, recalcRecordWeights, countReleaseStationRecords, updatePartMaster,
@@ -3329,7 +3329,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     // 1) release เบอร์แม่ → หา/สร้าง part_master (ถ้ายังไม่มี) + release + QR
     //    ★ หาแม่ก่อนเสมอ (เหมือน saveOneBunk) — ถ้ามีแล้วข้าม createReleaseBatch
     //    กัน retry หลังพลาดกลางกลุ่ม สร้าง release + QR ซ้ำ (createReleaseBatch ไม่ idempotent)
-    let parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: parentCode } }))[0];
+    let parentPm = (await findPartByNo(projectId, parentCode));
     if (!parentPm) {
       await createReleaseBatch({
         projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
@@ -3337,7 +3337,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
           length_mm: g.parentLen === "" || g.parentLen == null ? null : Number(g.parentLen),
           material: null, remark: null, routing: [] }],
       });
-      parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: parentCode } }))[0];
+      parentPm = (await findPartByNo(projectId, parentCode));
     }
     if (!parentPm) throw new Error(`ไม่พบเบอร์แม่ ${parentCode} หลังสร้าง`);
     // 2) ตั้ง kind=subassembly (replace-style, idempotent)
@@ -3347,7 +3347,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     for (const ch of g.children) {
       const code = ch.code.trim();
       if (!code || !(Number(ch.perSet) > 0)) continue;
-      let pm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+      let pm = (await findPartByNo(projectId, code));
       if (!pm) {
         const created = await insertRow("part_master", {
           project_id: projectId, part_no: code, part_name: ch.desc?.trim() || code,
@@ -3355,7 +3355,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
           default_length_mm: ch.len === "" || ch.len == null ? null : Number(ch.len),
           routing: [], kind: /^\s*sa/i.test(code) ? "subassembly" : "part",   // ลูกที่ code ขึ้นต้น SA = เบอร์ซับ
         });
-        pm = created && created.id ? created : (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+        pm = created && created.id ? created : (await findPartByNo(projectId, code));
       }
       if (!pm?.id) throw new Error(`สร้าง/หาลูก ${code} ไม่สำเร็จ`);
       const perUnit = Math.max(1, Math.round(Number(ch.perSet)));   // "ต่อชุด" = qty ใน BOM โดยตรง (ไม่ต้องหารแล้ว)
@@ -3635,7 +3635,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
   async function saveOneBunk(bunk, ro) {
     const code = String(bunk.meta?.bunk_no || "").trim();
     if (!code) throw new Error("บั้งนี้ไม่มีเลข BUNK NO.");
-    let parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+    let parentPm = (await findPartByNo(projectId, code));
     const existed = !!parentPm;
     if (!parentPm) {
       await createReleaseBatch({
@@ -3643,7 +3643,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
         rows: [{ code, qty: 1, unit_weight: toKg(bunk.meta?.total_weight), length_mm: null, material: null,
           remark: [bunk.meta?.project, bunk.meta?.elevation, bunk.meta?.level].filter(Boolean).join(" · ") || null, routing: [] }],
       });
-      parentPm = (await listRows("part_master", { filters: { project_id: projectId, part_no: code } }))[0];
+      parentPm = (await findPartByNo(projectId, code));
     }
     if (!parentPm?.id) throw new Error(`ไม่พบบั้ง ${code} หลังสร้าง`);
     if (parentPm.kind !== "package") await updateRow("part_master", parentPm.id, { kind: "package" });
@@ -3657,14 +3657,14 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
     }
     const components = []; const createdUnits = [];
     for (const [unitNo, qty] of byNo) {
-      let pm = (await listRows("part_master", { filters: { project_id: projectId, part_no: unitNo } }))[0];
+      let pm = (await findPartByNo(projectId, unitNo));
       if (!pm) {
         const sample = bunk.units.find((u) => String(u.unit_no).trim() === unitNo) || {};
         const created = await insertRow("part_master", {
           project_id: projectId, part_no: unitNo, part_name: sample.description || unitNo,
           material: null, unit_weight: toKg(sample.weight), default_length_mm: null, routing: [], kind: "part",
         });
-        pm = created && created.id ? created : (await listRows("part_master", { filters: { project_id: projectId, part_no: unitNo } }))[0];
+        pm = created && created.id ? created : (await findPartByNo(projectId, unitNo));
         createdUnits.push(unitNo);
       }
       if (!pm?.id) throw new Error(`สร้าง/หายูนิต ${unitNo} ไม่สำเร็จ`);
@@ -4763,6 +4763,8 @@ function modErrText(res, lang = "th") {
   const E = (th, en) => (lang === "en" ? en : th);
   const d = String(res?.detail || "");
   const [, a, b] = d.split(":");
+  // ★ 2026-09-30: เบอร์ปลายทางที่พิมพ์ ตัวพิมพ์เล็ก/ใหญ่ต่างจากเบอร์ที่มีในโปรเจค → DB กันซ้ำ (part_master_project_partno_uniq)
+  if (/part_master_project_partno_uniq/.test(d + " " + String(res?.message || ""))) return E("เบอร์ปลายทางนี้มีอยู่แล้วในโปรเจค (ตัวพิมพ์เล็ก/ใหญ่ต่างกัน) — พิมพ์ให้ตรงกับเบอร์เดิม", "That target part already exists in this project (different upper/lower case) — type it exactly like the existing part");
   switch (res?.reason) {
     case "not_installed": return E("ยังไม่ได้ติดตั้งฐานข้อมูลส่วน Modify — รัน migration-release-modify.sql ใน Supabase ก่อน", "Modify isn't installed yet — run migration-release-modify.sql in Supabase first");
     case "forbidden": return E("เฉพาะแอดมินเท่านั้นที่ Modify ได้", "Only admins can Modify");
@@ -12070,6 +12072,7 @@ function RestorePointsCard() {
         <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, marginBottom: 14 }}>
           ระบบเก็บ <b>สแนปช็อตอัตโนมัติทุกวัน (เที่ยงคืน)</b> แยกตามโปรเจค เก็บย้อนหลัง 7 วัน — admin กดกู้คืนได้เองในแอป
           โดยเลือกได้ว่าจะ <b>กู้เฉพาะที่หายไป</b> (งานสแกนใหม่ยังอยู่) หรือ <b>ย้อนทั้งโปรเจค</b> กลับไปวันนั้น
+          <div style={{ marginTop: 4 }}>{"โปรเจคที่ปิดแล้ว: เก็บ “ชุดปิดโปรเจค” ไว้ 1 ชุด (ไม่สำรองซ้ำทุกคืน) · เปิดโปรเจคกลับ = สำรองทุกคืนอีกครั้ง"}</div>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
@@ -12103,8 +12106,10 @@ function RestorePointsCard() {
               { key: "project", header: "โปรเจค", tdStyle: { whiteSpace: "nowrap" }, cell: (b) => `${b.project_code} — ${b.project_name}` },
               { key: "kind", header: "ชนิด", cell: (b) => (
                 <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 999,
-                  background: b.kind === "auto" ? "var(--surface-3)" : "var(--accent)", color: b.kind === "auto" ? "var(--muted)" : "#fff" }}>
-                  {b.kind === "auto" ? "อัตโนมัติ" : "สร้างเอง"}
+                  background: b.kind === "auto" ? "var(--surface-3)" : b.kind === "closed" ? "var(--surface-2, #eef2f0)" : "var(--accent)",
+                  color: b.kind === "auto" ? "var(--muted)" : b.kind === "closed" ? "var(--text, #1d2a24)" : "#fff",
+                  border: b.kind === "closed" ? "1px solid var(--border)" : "none" }}>
+                  {b.kind === "auto" ? "อัตโนมัติ" : b.kind === "closed" ? "ชุดปิดโปรเจค" : "สร้างเอง"}
                 </span>
               ) },
               { key: "rows", header: "จำนวนแถว", align: "right", cell: (b) => fmtNum(b.total_rows) },
