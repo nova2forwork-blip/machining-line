@@ -121,6 +121,21 @@ export async function listRows(table, { order, ascending = true, filters, strict
   return all;
 }
 
+// ★ 2026-09-30: หา Part ในโปรเจคด้วยเบอร์ — ไม่สนตัวพิมพ์เล็ก/ใหญ่ + ช่องว่างหัวท้าย
+//   กติกาเดียวกับ create_release_batch (lower(trim(part_no))) และ unique index part_master_project_partno_uniq
+//   (เดิมหาแบบตรงตัว: "sa-001" หา "SA-001" ไม่เจอ → สร้างเบอร์ซ้ำ หรือ "ไม่พบเบอร์แม่หลังสร้าง")
+//   ilike ใช้ดึงตัวเลือกมาก่อน (_ % * เป็น wildcard ได้) แล้วเทียบตรงๆ อีกชั้นในนี้ · เจอหลายตัว = เลือกตัวที่ตรงตัวพิมพ์ก่อน
+export async function findPartByNo(projectId, partNo) {
+  const key = String(partNo ?? "").trim();
+  if (!projectId || !key) return null;
+  const { data, error } = await supabase.from("part_master").select("*")
+    .eq("project_id", projectId).ilike("part_no", key + "*").order("id", { ascending: true });
+  if (error) { console.warn("findPartByNo error", error); return null; }
+  const k = key.toLowerCase();
+  const hits = (data || []).filter((p) => String(p.part_no ?? "").trim().toLowerCase() === k);
+  return hits.find((p) => String(p.part_no ?? "").trim() === key) || hits[0] || null;
+}
+
 export async function insertRow(table, row) {
   const { data, error } = await supabase.rpc("authz_insert", { p_token: authToken(), p_tbl: table, p_payload: row });
   if (error) { console.warn("insertRow error", table, error); flagAuth(error); throw error; }
@@ -2439,6 +2454,20 @@ export async function getScanLogsToday(fromIso, toIso) {
   const { data, error } = await supabase.rpc("report_logs", { p_from: fromIso, p_to: toIso });
   if (error) throw reportErr("report_logs", error);
   return data || [];
+}
+
+// ★ 2026-09-30: จอ TV ดึงเฉพาะของใหม่ — report_logs_today_since (migration-scale-prep.sql)
+//   sinceIso = null → ทั้งวัน · มีค่า → เฉพาะแถวที่ลง DB หลังเวลานั้น
+//   คืน { ok, now, full, fp: {n,q,w} ตัวเลขตรวจทั้งวัน, rows } · ยังไม่รัน SQL = { missing: true } (จอใช้วิธีเดิม)
+let _sinceMissing = false;
+export async function getScanLogsTodaySince(sinceIso) {
+  if (_sinceMissing) return { missing: true };
+  const { data, error } = await supabase.rpc("report_logs_today_since", { p_since: sinceIso || null });
+  if (error) {
+    if (isMissingFnErr(error)) { _sinceMissing = true; return { missing: true }; }
+    throw reportErr("report_logs_today_since", error);
+  }
+  return { ok: true, now: data?.now || null, full: !!data?.full, fp: data?.fp || null, rows: Array.isArray(data?.rows) ? data.rows : [] };
 }
 
 // เหตุผล "รอบช้า" (รายงานการทำงาน) ต่อการสแกน ในช่วงเวลา — ออฟฟิศเอาไปจับคู่กับแถวสแกน (part_unit + เวลา)
