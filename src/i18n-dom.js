@@ -495,6 +495,8 @@ const DICT = {
   "เมื่อมีการลบ/แก้/กู้คืนข้อมูลสำคัญ จะบันทึกที่นี่": "Deletes/edits/restores of important data are recorded here",
   "ระบบเก็บ": "The system keeps",
   "สแนปช็อตอัตโนมัติทุกวัน (เที่ยงคืน)": "an automatic daily snapshot (midnight)",
+  "ชุดปิดโปรเจค": "Closed-project copy",
+  "โปรเจคที่ปิดแล้ว: เก็บ “ชุดปิดโปรเจค” ไว้ 1 ชุด (ไม่สำรองซ้ำทุกคืน) · เปิดโปรเจคกลับ = สำรองทุกคืนอีกครั้ง": "Closed projects: one \"closed-project copy\" is kept (not re-copied every night) · reopening the project resumes the nightly copies",
   "แยกตามโปรเจค เก็บย้อนหลัง 7 วัน — admin กดกู้คืนได้เองในแอป โดยเลือกได้ว่าจะ": "per project for 7 days — an admin can restore it in the app, choosing to",
   "กู้เฉพาะที่หายไป": "restore only what's missing",
   "(งานสแกนใหม่ยังอยู่) หรือ": "(new scans are kept) or",
