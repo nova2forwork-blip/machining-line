@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import "./dashboard.css";
-import { getScanLogsToday, listRows, supabase, getTvMachineStatus } from "./supabase.js";
+import { getScanLogsToday, getScanLogsTodaySince, listRows, supabase, getTvMachineStatus } from "./supabase.js";
 import { machineOpMatrix, logWeight } from "./metrics.js";
 // ★ รอบ 12 (D): กราฟ SVG ในตัว (เดิม recharts — ตัวที่เคยทำ build พัง + ไฟล์ใหญ่)
 import { SimpleAreaChart } from "./svgcharts.jsx";
@@ -209,17 +209,60 @@ export default function Dashboard() {
   const pendingRef = useRef(false);
   const fetchRef = useRef(null);
 
+  // ★ 2026-09-30: ดึงเฉพาะของใหม่ (report_logs_today_since) — เดิมดึง "ทั้งวัน" ทุก 5 วิ
+  //   30 เครื่อง ≈ หลายพันแถวตอนเย็น → จอละหลาย GB/วัน · ใหม่: รอบปกติได้แค่แถวที่เพิ่งลง DB (ส่วนใหญ่ว่าง)
+  //   + ตัวเลขตรวจทั้งวันจาก server (จำนวนแถว/ชิ้น/น้ำหนัก) — ไม่ตรงกับที่จอมี (ออฟฟิศลบ/แก้ · แถวหลุด) → โหลดทั้งวันใหม่ทันที
+  //   โหลดทั้งวันด้วย: ครั้งแรก · ข้ามวัน · ทุก 30 นาที (กันพลาด)
+  //   ยังไม่รัน migration-scale-prep.sql → ใช้วิธีเดิม (ทั้งวันทุกรอบ)
+  const rowsMapRef = useRef(new Map());   // id → แถว (ของวันนี้)
+  const sinceRef = useRef(null);          // เวลา server ของรอบที่สำเร็จล่าสุด
+  const fullAtRef = useRef(0);            // โหลดทั้งวันล่าสุดเมื่อไร (ms เครื่องนี้)
+  const fullDayRef = useRef("");          // วันไทยของการโหลดทั้งวันล่าสุด
+  const forceFullRef = useRef(false);     // ตัวเลขตรวจไม่ตรง → รอบถัดไปโหลดทั้งวัน
+
   const fetchNow = useCallback(async () => {
     if (inflightRef.current) { pendingRef.current = true; return; }
     inflightRef.current = true;
     const { from, to } = bangkokTodayRange();
-    let data;
+    let data, changed = true;
     try {
-      data = await getScanLogsToday(from, to);   // ★ รอบ 12 (C1): จอ TV ไม่ล็อกอิน → เฉพาะวันนี้ ไม่มีชื่อพนักงาน
+      const day = from.slice(0, 10);
+      const nowMs = Date.now();
+      const fullEvery = (typeof window !== "undefined" && window.__mlsTvFullMs) || 30 * 60 * 1000;
+      const needFull = !sinceRef.current || fullDayRef.current !== day || forceFullRef.current || nowMs - fullAtRef.current >= fullEvery;
+      // เผื่อ 10 วิ (แถวที่บันทึกคาบเกี่ยวกับรอบก่อน) — ซ้ำได้ ตัดด้วย id · หลุดจริง ตัวเลขตรวจจับได้
+      const since = needFull ? null : new Date(new Date(sinceRef.current).getTime() - 10000).toISOString();
+      const res = await getScanLogsTodaySince(since);
+      if (res.missing) {
+        data = await getScanLogsToday(from, to);   // ★ รอบ 12 (C1): จอ TV ไม่ล็อกอิน → เฉพาะวันนี้ ไม่มีชื่อพนักงาน
+      } else {
+        const m = res.full ? new Map() : rowsMapRef.current;
+        for (const r of res.rows) { if (r && r.id != null) m.set(r.id, r); }
+        rowsMapRef.current = m;
+        if (res.now) sinceRef.current = res.now;
+        if (res.full) { fullAtRef.current = nowMs; fullDayRef.current = day; forceFullRef.current = false; }
+        else if (res.fp) {
+          let q = 0, w = 0;
+          for (const r of m.values()) { q += Number(r.quantity) || 0; w += Number(r.weight) || 0; }
+          if (m.size !== Number(res.fp.n) || Math.abs(q - Number(res.fp.q)) > 1e-6 || Math.abs(w - Number(res.fp.w)) > 0.01) {
+            forceFullRef.current = true;
+            pendingRef.current = true;          // → ดึงทั้งวันซ้ำทันทีหลังรอบนี้
+          }
+        }
+        changed = res.full || res.rows.length > 0;
+        data = changed ? [...m.values()].sort((a, b) => (Date.parse(b.scanned_at) || 0) - (Date.parse(a.scanned_at) || 0)) : null;
+      }
     } catch {
       // ดึงข้อมูลพลาด (เน็ต/DB) → คงข้อมูลเดิมไว้ (ไม่ล้างเป็น 0) · ไม่แตะ lastOkRef → จอขึ้น "ข้อมูลค้าง" เอง
       setBooted(true);
       inflightRef.current = false;
+      return;
+    }
+    if (!changed) {
+      // ไม่มีอะไรใหม่ → ไม่ต้องคำนวณ/วาดใหม่ แค่บอกว่าเชื่อมต่อปกติ
+      inflightRef.current = false;
+      lastOkRef.current = Date.now();
+      if (pendingRef.current) { pendingRef.current = false; setTimeout(() => fetchRef.current && fetchRef.current(), 250); }
       return;
     }
     inflightRef.current = false;
