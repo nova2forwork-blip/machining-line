@@ -1500,7 +1500,7 @@ function QuickAddProjectModal({ onClose, onCreated }) {
       onCreated(project);
       onClose();
     } catch (e2) {
-      setErr(isDuplicateError(e2) ? `รหัสโปรเจค "${code}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : "เกิดข้อผิดพลาด: " + e2.message);
+      setErr(isDuplicateError(e2) ? `รหัสโปรเจค "${code}" มีอยู่แล้ว กรุณาใช้รหัสอื่น` : isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : "เกิดข้อผิดพลาด: " + e2.message);
     }
     setBusy(false);
   }
@@ -1559,7 +1559,7 @@ function QuickAddPartModal({ project, onClose, onCreated }) {
       onCreated(part);
       onClose();
     } catch (e2) {
-      setErr(isDuplicateError(e2) ? `Part "${part_no}" มีอยู่แล้วในโปรเจคนี้` : "เกิดข้อผิดพลาด: " + e2.message);
+      setErr(isDuplicateError(e2) ? `Part "${part_no}" มีอยู่แล้วในโปรเจคนี้` : isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : "เกิดข้อผิดพลาด: " + e2.message);
     }
     setBusy(false);
   }
@@ -2789,7 +2789,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       try { localStorage.removeItem(AR_DRAFT_KEY); } catch { /* ignore */ }   // ★ รอบ 13: บันทึกแล้ว → ลบร่าง
       onSaved({ releaseOrder: ro, ...res });
     } catch (e2) {
-      setErr("เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ถ้าเน็ตหลุดหลังกดบันทึก อาจบันทึกไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนกดซ้ำ (กันซ้ำ)");
+      setErr(isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : "เกิดข้อผิดพลาดระหว่างบันทึก: " + e2.message + " — ถ้าเน็ตหลุดหลังกดบันทึก อาจบันทึกไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนกดซ้ำ (กันซ้ำ)");
     }
     setBusy(false); setProgress("");
   }
@@ -3127,7 +3127,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported, initia
       onImported({ releaseOrder: roN, ...res });
       onClose();
     } catch (e2) {
-      setErr("เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + " — ถ้าเน็ตหลุดหลังกดนำเข้า อาจนำเข้าไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนนำเข้าซ้ำ");
+      setErr(isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : "เกิดข้อผิดพลาดระหว่างนำเข้า: " + e2.message + " — ถ้าเน็ตหลุดหลังกดนำเข้า อาจนำเข้าไปแล้ว · รีเฟรชแล้วตรวจในรายการ Release ก่อนนำเข้าซ้ำ");
     }
     setBusy(false); setProgress("");
   }
@@ -3413,7 +3413,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet) })),
       }));
       setGroups(remaining.length ? remaining : [emptySubAsmGroup()]);
-      setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${e2?.message || e2}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
+      setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : (e2?.message || e2)}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
       setBusy(false); setProgress("");
       return;
     }
@@ -3709,7 +3709,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
       }
     } catch (e2) {
       setBunks((bs) => bs.slice(done));   // เหลือเฉพาะบั้งที่ยังไม่บันทึก กันบันทึกซ้ำ
-      setErr(`บันทึกไม่สำเร็จที่บั้ง "${bunks[done]?.meta?.bunk_no || "-"}": ${e2?.message || e2}`
+      setErr(`บันทึกไม่สำเร็จที่บั้ง "${bunks[done]?.meta?.bunk_no || "-"}": ${isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : (e2?.message || e2)}`
         + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} บั้ง (เอาออกให้แล้ว)` : ""));
       setBusy(false); setProgress("");
       return;
@@ -4758,6 +4758,9 @@ function ModVerPill({ v, gray, onClick, title }) {
         background: gray ? "var(--muted-2)" : MOD_PURPLE, color: "#fff", cursor: onClick ? "pointer" : "default", flexShrink: 0 }}>{fmtM(v)}</span>
   );
 }
+// ★ 2026-10-08: ฐานข้อมูลยังไม่เปิดสิทธิ์ให้ออฟฟิศ (ยังไม่ได้รัน SQL) → บอกให้ชัด แทนคำว่า forbidden
+const NO_OFFICE_RIGHT_TH = "บัญชีนี้ยังไม่มีสิทธิ์ทำรายการนี้ฝั่งฐานข้อมูล — ให้แอดมินรัน migration-office-release-rights.sql (เปิดสิทธิ์ให้พนักงานออฟฟิศ)";
+const isForbiddenMsg = (m) => /forbidden|permission denied|ไม่มีสิทธิ์/i.test(String(m || ""));
 // ข้อความผิดพลาดจากเซิร์ฟเวอร์ → ภาษาคน
 function modErrText(res, lang = "th") {
   const E = (th, en) => (lang === "en" ? en : th);
@@ -4767,7 +4770,7 @@ function modErrText(res, lang = "th") {
   if (/part_master_project_partno_uniq/.test(d + " " + String(res?.message || ""))) return E("เบอร์ปลายทางนี้มีอยู่แล้วในโปรเจค (ตัวพิมพ์เล็ก/ใหญ่ต่างกัน) — พิมพ์ให้ตรงกับเบอร์เดิม", "That target part already exists in this project (different upper/lower case) — type it exactly like the existing part");
   switch (res?.reason) {
     case "not_installed": return E("ยังไม่ได้ติดตั้งฐานข้อมูลส่วน Modify — รัน migration-release-modify.sql ใน Supabase ก่อน", "Modify isn't installed yet — run migration-release-modify.sql in Supabase first");
-    case "forbidden": return E("เฉพาะแอดมินเท่านั้นที่ Modify ได้", "Only admins can Modify");
+    case "forbidden": return E("บัญชีนี้ยังไม่มีสิทธิ์ Modify ฝั่งฐานข้อมูล — ให้แอดมินรัน migration-office-release-rights.sql (เปิดสิทธิ์ให้พนักงานออฟฟิศ)", "This account can't Modify yet on the database — ask an admin to run migration-office-release-rights.sql (gives office staff the right)");
     case "unauthorized": return E("เซสชันหมดอายุ — เข้าสู่ระบบใหม่", "Session expired — please sign in again");
     case "no_reason": return E("ใส่เหตุผลก่อนบันทึก", "Enter a reason before saving");
     case "no_items": return E("ยังไม่มีรายการแก้ไข", "No changes yet");
@@ -5942,7 +5945,10 @@ function pmUiLoad(key) {
 function pmUiSave(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ } }
 
 function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
-  const canEdit = isAdmin(user);   // เฉพาะ Admin เท่านั้นที่แก้ไข/ลบ Release ได้ (office เพิ่ม/นำเข้า/ดูได้ แต่แก้/ลบไม่ได้)
+  // ★ 2026-10-08: พนักงานออฟฟิศ (เช่น Planning) = สร้าง + Modify + แก้หัวเอกสาร + แก้รายการ ได้ · "ลบ" (Part / ข้อมูลสแกน) = Admin เท่านั้น
+  //   (เดิม canEdit = isAdmin — office สร้างได้อย่างเดียว) · ฝั่ง DB เปิดสิทธิ์ด้วย migration-office-release-rights.sql
+  const canEdit = canManage(user);
+  const canDelete = isAdmin(user);
   const [lang] = useLang();        // แปลหัวคอลัมน์ที่เพิ่มเอง (ลำดับ/Item) ตามภาษา
   // สำเนา releases แบบ local เพื่อให้แก้ไข/ลบ สะท้อนทันทีในหน้านี้ (ยอดรวมคิดใหม่ตามนี้)
   const [releases, setReleases] = useState(group.releases);
@@ -6558,7 +6564,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           modLocked={modList.length > 0}
           onClose={() => setEditing(null)}
           onSaved={afterEdit}
-          onDelete={() => { const r = editing; setEditing(null); handleDelete(r); }}
+          onDelete={canDelete ? () => { const r = editing; setEditing(null); handleDelete(r); } : undefined}
+          canClearScans={canDelete}
         />
       )}
       {modOpen && modReady && (
@@ -7516,13 +7523,19 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
         try { const mr = await setReleaseMdf(ids, mdfVal); if (mr && mr.ok) mdfForHeader = null; }
         catch (e) { setErr("บันทึก Modify ไม่สำเร็จ: " + (e?.message || e)); setBusy(false); return; }
       }
-      const res = await updateReleaseHeader({
+      // ★ 2026-10-08: แก้แค่ Modify (เก็บต่อใบไปแล้ว) → ไม่ต้องเรียก RPC หัวเอกสาร (ไม่มีอะไรเหลือให้แก้)
+      const needHeader = roChanged || dateChanged || mdfForHeader != null;
+      const res = needHeader ? await updateReleaseHeader({
         releaseIds: ids,
         releaseOrder: ro || null,
         releaseDate: dateIso,
         mdfNo: mdfForHeader,
-      });
-      if (!res?.ok) { setErr("บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : "")); setBusy(false); return; }
+      }) : { ok: true, releases: ids.length };
+      if (!res?.ok) {
+        const savedMdf = mdfVal != null && mdfForHeader == null;
+        setErr((res?.reason === "forbidden" ? NO_OFFICE_RIGHT_TH : "บันทึกไม่สำเร็จ" + (res?.reason ? ` (${res.reason})` : "")) + (savedMdf ? " · (Modify บันทึกแล้ว)" : ""));
+        setBusy(false); return;
+      }
 
       auditRecord("edit_release_header", "release_group", group.releaseOrder || releases[0]?.id, {
         project: group.projectCode, parts: ids.length,
@@ -7540,7 +7553,7 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
       const msg = String(e?.message || e);
       setErr(/ro_has_modify/.test(msg)
         ? `ใบนี้มีประวัติ Modify แล้ว — เปลี่ยนเลข Release Order ไม่ได้ (ประวัติ M ผูกกับเลข ${curRO})`
-        : "บันทึกไม่สำเร็จ: " + msg);
+        : isForbiddenMsg(msg) ? NO_OFFICE_RIGHT_TH : "บันทึกไม่สำเร็จ: " + msg);
       setBusy(false);
     }
   }
@@ -7595,7 +7608,7 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
 //                ลบต่ำกว่าจำนวนที่สแกนไปแล้วไม่ได้ เพื่อไม่ให้ประวัติการทำงานหาย
 // - แก้น้ำหนัก/ความยาว → จ่ายค่าลงทุกชิ้นในล็อตนี้ใหม่ (เหมือนตอน Release ครั้งแรก)
 // ลบทั้ง Release → ลบ QR (part_units) และประวัติสแกน (scan_logs) ของล็อตนั้นทั้งหมด
-function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDelete }) {
+function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDelete, canClearScans = true }) {
   const [qty, setQty] = useState(release.qty);
   const [unitWeight, setUnitWeight] = useState(release.unit_weight ?? "");
   const [lengthMm, setLengthMm] = useState(release.length_mm ?? "");
@@ -7786,7 +7799,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
 
       onSaved();
     } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + e.message);
+      setErr(isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : "บันทึกไม่สำเร็จ: " + e.message);
     }
     setBusy(false);
   }
@@ -7941,7 +7954,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
                   ลบ Part นี้
                 </Btn>
               )}
-              {scannedCount > 0 && (
+              {scannedCount > 0 && canClearScans && (
                 <Btn type="button" variant="ghost" onClick={doClearScans} disabled={busy}
                   style={{ color: "var(--danger-hi)" }} title="ลบข้อมูลสแกนของล็อตนี้ (แก้สแกนเกิน/ผิด) — QR/ล็อตยังอยู่">
                   ลบข้อมูลสแกน
@@ -12752,36 +12765,68 @@ function SimpleCrud({ table, fields }) {
   );
 }
 
+// ★ 2026-10-08: บัญชีเครื่องมักตั้งรหัสพนักงาน = รหัสเครื่อง (เช่น CT-068) → หาเครื่องที่รหัสตรงกันให้เอง
+const codeKey = (s) => String(s ?? "").trim().toUpperCase();
+function machineByCode(machines, code) {
+  const k = codeKey(code);
+  return k ? (machines || []).find((m) => codeKey(m.code) === k) || null : null;
+}
+// เรียงขั้นตอนที่เลือกตามลำดับ (seq) — ตัวแรก = ขั้นตอนตั้งต้นของพนักงาน
+function orderedOpIds(operations, selectedSet) {
+  const seq = new Map((operations || []).map((o, i) => [o.id, i]));
+  return [...selectedSet].sort((a, b) => (seq.get(a) ?? 1e9) - (seq.get(b) ?? 1e9));
+}
+// ขั้นตอนหลายอัน "เก็บไว้กับเครื่อง" (machine_operations) · พนักงานเก็บได้ขั้นตอนเดียว (operation_id)
+const multiOpNeedsMachine = (lang) => (lang === "en"
+  ? "Choose a machine/station first — multiple operations are stored on the machine (without a machine only one operation can be kept)"
+  : "เลือกเครื่อง/สถานีก่อน — ขั้นตอนหลายอันเก็บไว้กับเครื่อง (ถ้าไม่ผูกเครื่อง จะเก็บได้ขั้นตอนเดียว)");
+
 function EmployeeEditModal({ employee, departments, machines, operations, caps = [], onClose, onSaved }) {
+  // ★ 2026-10-08: ยังไม่ผูกเครื่อง แต่มีเครื่องรหัสเดียวกับพนักงาน → เลือกให้เลย (โชว์บอก · กดเปลี่ยนได้ก่อนบันทึก)
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const codeMatch = !employee.machine_id ? machineByCode(machines, employee.code) : null;
+  const initMachine = employee.machine_id || codeMatch?.id || "";
   const [form, setForm] = useUndoable({
     name: employee.name,
     department_id: employee.department_id || "",
     role: employee.role,
-    machine_id: employee.machine_id || "",
+    machine_id: initMachine,
     password: "", // เว้นว่าง = ไม่เปลี่ยนรหัสผ่าน
   });
-  // ขั้นตอนประจำ = เลือกได้หลายอัน · ค่าเริ่มต้นดึงจาก "ความสามารถของเครื่อง" ที่ผูกอยู่
-  // (ถ้าเครื่องยังไม่มีความสามารถ แต่มี operation_id เดิม → ใช้ค่านั้นเป็นตัวเริ่ม)
-  // ★ ใช้ "ความสามารถจริงของเครื่อง" อย่างเดียว — ไม่ seed จาก employee.operation_id เดิม
-  //   (เดิม seed ค่านั้นเมื่อเครื่องไม่มี caps แล้วพอ save จะเขียนทับ = เผลอล็อกเครื่องที่ตั้ง "ไม่จำกัด" ให้เหลือขั้นตอนเดียว)
+  // ขั้นตอนประจำ = เลือกได้หลายอัน · ค่าเริ่ม = "ความสามารถของเครื่อง" ที่ผูกอยู่
+  // ★ 2026-10-08 (แก้ "แก้ไขแล้วค่าเดิมหาย"): เครื่องยังไม่มีความสามารถ / ยังไม่ผูกเครื่อง → โชว์ขั้นตอนเดิมของพนักงาน (operation_id)
+  //   และจะ "ไม่เขียนความสามารถของเครื่อง" ถ้าไม่ได้แตะชิปขั้นตอน (opsDirty) → ไม่เผลอล็อกเครื่อง "ไม่จำกัด" เหลือขั้นตอนเดียว
   const capsForMachine = (mid) => new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id));
-  const [opSel, setOpSel] = useUndoable(() => capsForMachine(employee.machine_id || ""));
+  const initOps = (mid) => {
+    const s = mid ? capsForMachine(mid) : new Set();
+    if (s.size) return s;
+    return employee.operation_id ? new Set([employee.operation_id]) : new Set();
+  };
+  const [opSel, setOpSel] = useUndoable(() => initOps(initMachine));
+  const [opsDirty, setOpsDirty] = useState(false);
+  const [autoPicked, setAutoPicked] = useState(!!codeMatch);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   function chooseMachine(mid) {
     setForm((f) => ({ ...f, machine_id: mid }));
-    setOpSel(capsForMachine(mid));   // ย้ายเครื่อง → โหลดความสามารถของเครื่องใหม่มาแสดง
+    setOpSel(initOps(mid));   // ย้ายเครื่อง → โหลดความสามารถของเครื่องใหม่มาแสดง
+    setOpsDirty(false); setAutoPicked(false);
   }
   function toggleOp(id) {
+    setOpsDirty(true);
     setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
   async function save() {
     if (!form.name.trim()) { setErr("กรอกชื่อให้ครบ"); return; }
+    if (!form.machine_id && opSel.size > 1) { setErr(multiOpNeedsMachine(lang)); return; }
     setBusy(true); setErr("");
     try {
-      const opIds = [...opSel];
+      const opIds = orderedOpIds(operations, opSel);
+      // ขั้นตอนตั้งต้น: ยังอยู่ในชุดที่เลือก → คงของเดิม · ไม่อยู่แล้ว → ตัวแรกตามลำดับ
+      const defOp = employee.operation_id && opSel.has(employee.operation_id) ? employee.operation_id : (opIds[0] || null);
       // บันทึกผ่าน RPC — DB จัดการ bcrypt เอง client ไม่แตะ hash (แก้ C2/H1)
       await upsertEmployee({
         id: employee.id,
@@ -12791,7 +12836,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         role: form.role,
         department_id: form.department_id || null,
         machine_id: form.machine_id || null,
-        operation_id: opIds[0] || null,   // ตัวแรก = ขั้นตอนตั้งต้น (fallback ตอนสแกน)
+        operation_id: defOp,   // ขั้นตอนตั้งต้น (fallback ตอนสแกน)
         active: employee.active,
       });
       // ★ รอบ 12 (B14): บันทึกการแก้พนักงาน (สิทธิ์/รหัสผ่าน/เครื่อง) — ไม่เก็บรหัสผ่านจริง บอกแค่ว่าเปลี่ยน
@@ -12801,8 +12846,8 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         after: { role: form.role, machine: form.machine_id || null, name: form.name.trim() },
         fields: [form.password ? "รหัสผ่าน" : null].filter(Boolean),
       });
-      // ซิงค์ความสามารถของเครื่องให้ตรงกับที่เลือก (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้)
-      await syncMachineOps(form.machine_id, opIds, caps);
+      // ซิงค์ความสามารถของเครื่องให้ตรงกับที่เลือก (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้) — เฉพาะเมื่อแตะชิปขั้นตอน
+      if (form.machine_id && opsDirty) await syncMachineOps(form.machine_id, opIds, caps);
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + e.message);
@@ -12855,8 +12900,18 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
           options={machines.map((m) => ({ value: m.id, label: `${m.code} — ${m.name}` }))} /></Field>
         <Field label="ขั้นตอนประจำ (เลือกได้หลายขั้นตอน) *">
           <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
+          {form.machine_id && (
+            <div className="emp-op-note" style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
+              {(() => { const c = machines.find((m) => m.id === form.machine_id)?.code || ""; return L(`ขั้นตอนเก็บไว้กับเครื่อง ${c} — ใช้ร่วมกับทุกคนที่ผูกเครื่องนี้`, `Operations are stored on machine ${c} — shared by everyone assigned to it`); })()}
+            </div>
+          )}
         </Field>
       </div>
+      {autoPicked && codeMatch && form.machine_id === codeMatch.id && (
+        <div className="emp-auto-machine" style={{ fontSize: 12, color: "var(--accent-dk, #0a7)", margin: "-2px 0 8px" }}>
+          {L(`✓ เลือกเครื่อง ${codeMatch.code} ให้แล้ว (รหัสตรงกับพนักงาน) — กด "บันทึก" เพื่อผูก · เปลี่ยนได้ที่ช่องเครื่อง/สถานี`, `✓ Machine ${codeMatch.code} selected for you (same code as the employee) — press "Save" to assign · change it in the machine/station field`)}
+        </div>
+      )}
       <Field label="ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)">
         <Input type="password" value={form.password} autoComplete="new-password"
           onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
@@ -12888,7 +12943,11 @@ function EmployeeCrud() {
   const [caps, setCaps] = useState([]);
   const [form, setForm] = useUndoable({ role: "operator" });
   const [opSel, setOpSel] = useUndoable(new Set());   // ขั้นตอนประจำ (เลือกได้หลายอัน)
+  const [opsDirty, setOpsDirty] = useState(false);     // แตะชิปขั้นตอนแล้ว (ค่อยเขียนความสามารถของเครื่อง)
+  const [machineTouched, setMachineTouched] = useState(false);   // เลือกเครื่องเองแล้ว → ไม่เลือกตามรหัสให้อีก
+  const [binding, setBinding] = useState(false);
   const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);            // กำลังบันทึก — กันกดซ้ำ + โชว์สถานะ
   const [msg, setMsg] = useState(null);               // { ok, text } แสดงผลในฟอร์ม (เห็นชัดกว่า toast มุมจอ)
@@ -12902,12 +12961,52 @@ function EmployeeCrud() {
   useEffect(() => { load(); }, [load]);
 
   // เลือกเครื่อง → ดึงความสามารถเดิมของเครื่องนั้นมาแสดง (กันเผลอลบทิ้งตอนบันทึก)
-  function chooseMachine(mid) {
+  //   keepOps = เลือกให้อัตโนมัติจากรหัส แต่ผู้ใช้ติ๊กขั้นตอนไว้แล้ว → คงที่ติ๊กไว้ (จะเขียนลงเครื่องตอนบันทึก)
+  function chooseMachine(mid, { auto = false } = {}) {
     setForm((f) => ({ ...f, machine_id: mid }));
+    if (!auto) setMachineTouched(true);
+    if (auto && opsDirty && opSel.size) return;
     setOpSel(new Set(caps.filter((c) => c.machine_id === mid).map((c) => c.operation_id)));
+    setOpsDirty(false);
   }
   function toggleOp(id) {
+    setOpsDirty(true);
     setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  // พิมพ์รหัสพนักงาน = รหัสเครื่อง (เช่น CT-068) → เลือกเครื่องนั้นให้ (ถ้ายังไม่ได้เลือกเครื่องเอง)
+  function onCode(v) {
+    setForm((f) => ({ ...f, code: v }));
+    if (machineTouched) return;
+    const m = machineByCode(machines, v);
+    if (m && m.id !== form.machine_id) chooseMachine(m.id, { auto: true });
+    else if (!m && form.machine_id && !opsDirty) { setForm((f) => ({ ...f, code: v, machine_id: "" })); setOpSel(new Set()); }
+  }
+  // ★ 2026-10-08: พนักงานที่ยังไม่ผูกเครื่อง แต่มีเครื่องรหัสเดียวกัน → ผูกให้ทีเดียว (คงขั้นตอนตั้งต้นเดิมไว้)
+  const unboundMatches = rows
+    .filter((r) => !r.machine_id && r.role === "operator")
+    .map((r) => ({ r, m: machineByCode(machines, r.code) }))
+    .filter((x) => x.m);
+  async function bindByCode() {
+    if (!unboundMatches.length || binding) return;
+    const list = unboundMatches.map((x) => `${x.r.code} → ${L("เครื่อง", "machine")} ${x.m.code}`).join("\n");
+    if (!(await askConfirm({
+      message: L(`ผูกเครื่องให้ ${unboundMatches.length} คน (รหัสพนักงานตรงกับรหัสเครื่อง):\n\n${list}\n\nขั้นตอนที่ทำได้ = ตามที่ตั้งไว้กับเครื่อง (ตั้งค่า › เครื่อง/สถานี)`,
+                 `Assign machines to ${unboundMatches.length} employee(s) (employee code = machine code):\n\n${list}\n\nOperations = as set on each machine (Setup › Machines/Stations)`),
+      confirmText: L("ผูกเครื่อง", "Assign"), cancelText: L("ยกเลิก", "Cancel") }))) return;
+    setBinding(true);
+    let ok = 0; const bad = [];
+    for (const { r, m } of unboundMatches) {
+      try {
+        await upsertEmployee({ id: r.id, code: r.code, name: r.name, password: "", role: r.role,
+          department_id: r.department_id || null, machine_id: m.id, operation_id: r.operation_id || null, active: r.active });
+        auditRecord("employee_update", "employee", r.id, { code: r.code, name: r.name, before: { role: r.role, machine: null, name: r.name }, after: { role: r.role, machine: m.id, name: r.name }, fields: ["เครื่อง (ผูกตามรหัส)"] });
+        ok++;
+      } catch (e) { bad.push(`${r.code}: ${e?.message || "error"}`); }
+    }
+    setBinding(false);
+    mlsToast(bad.length ? L(`ผูกแล้ว ${ok} คน · ไม่สำเร็จ ${bad.length}: ${bad.join(" · ")}`, `Assigned ${ok} · failed ${bad.length}: ${bad.join(" · ")}`)
+                        : L(`ผูกเครื่องแล้ว ${ok} คน`, `Machines assigned: ${ok}`), bad.length ? "warn" : "success");
+    load();
   }
 
   async function add() {
@@ -12915,7 +13014,8 @@ function EmployeeCrud() {
     if (!form.code || !form.name || !form.password) {
       const w = "กรอกรหัส/ชื่อ/รหัสผ่านให้ครบ"; setMsg({ ok: false, text: w }); mlsToast(w, "warn"); return;
     }
-    const opIds = [...opSel];
+    if (!form.machine_id && opSel.size > 1) { const w = multiOpNeedsMachine(lang); setMsg({ ok: false, text: w }); mlsToast(w, "warn"); return; }
+    const opIds = orderedOpIds(operations, opSel);
     setBusy(true); setMsg({ ok: null, text: "กำลังบันทึก…" });
     // ── ขั้นที่ 1: สร้างพนักงาน (ผ่าน RPC — DB hash bcrypt เอง client ไม่แตะ hash) ──
     try {
@@ -12936,14 +13036,14 @@ function EmployeeCrud() {
     // ── ขั้นที่ 2: ตั้งความสามารถเครื่อง (งานรอง) — ถ้าพลาด พนักงานถูกสร้างแล้ว อย่าให้ดูเหมือนล้มเหลว ──
     let warn = "";
     try {
-      await syncMachineOps(form.machine_id, opIds, caps);
+      if (form.machine_id && opsDirty) await syncMachineOps(form.machine_id, opIds, caps);
     } catch (e) {
       warn = ` (แต่ตั้งความสามารถเครื่องไม่สำเร็จ: ${e?.message || "error"} — แก้ได้ที่ปุ่ม "แก้ไข")`;
       mlsToast(`เพิ่มพนักงานแล้ว${warn}`, "warn");
     }
     setMsg({ ok: true, text: `เพิ่มพนักงาน "${form.name}" สำเร็จ${warn}` });
     if (!warn) mlsToast(`เพิ่มพนักงาน "${form.name}" สำเร็จ`, "info");
-    setForm({ role: "operator" }); setOpSel(new Set()); setBusy(false); load();
+    setForm({ role: "operator" }); setOpSel(new Set()); setOpsDirty(false); setMachineTouched(false); setBusy(false); load();
   }
   async function toggle(r) {
     try { await setEmployeeActive(r.id, !r.active); load(); }
@@ -12953,7 +13053,7 @@ function EmployeeCrud() {
   return (
     <Card title="เพิ่มพนักงานใหม่">
       <div className="grid-3" style={{ marginBottom: 6 }}>
-        <Field label="รหัสพนักงาน"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
+        <Field label="รหัสพนักงาน"><Input value={form.code || ""} onChange={(e) => onCode(e.target.value)} /></Field>
         <Field label="ชื่อ"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label="รหัสผ่านเริ่มต้น"><Input value={form.password || ""} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
         <Field label="แผนก"><Select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
@@ -12967,6 +13067,11 @@ function EmployeeCrud() {
           <OpMultiPick operations={operations} selected={opSel} onToggle={toggleOp} machineChosen={!!form.machine_id} />
         </Field>
       </div>
+      {!machineTouched && form.machine_id && machineByCode(machines, form.code)?.id === form.machine_id && (
+        <div className="emp-auto-machine" style={{ fontSize: 12, color: "var(--accent-dk, #0a7)", marginBottom: 6 }}>
+          {(() => { const c = machines.find((m) => m.id === form.machine_id)?.code || ""; return L(`✓ เลือกเครื่อง ${c} ให้แล้ว (รหัสตรงกับพนักงาน)`, `✓ Machine ${c} selected for you (same code as the employee)`); })()}
+        </div>
+      )}
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         พนักงานที่ยังไม่ได้ตั้งเครื่อง/สถานี/ขั้นตอนประจำ จะสแกนงานไม่ได้ (ตั้งภายหลังได้ที่ปุ่ม "แก้ไข") · เลือกได้หลายขั้นตอนถ้าเครื่องนี้ทำได้หลายอย่าง
       </div>
@@ -12979,18 +13084,32 @@ function EmployeeCrud() {
           </span>
         )}
       </div>
+      {unboundMatches.length > 0 && (
+        <div className="emp-bind-bar" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", margin: "14px 0 4px", padding: "10px 12px", borderRadius: 12, background: "var(--warn-tint, #fff6e0)", border: "1px solid #f3d27a", fontSize: 13 }}>
+          {(() => { const codes = unboundMatches.slice(0, 6).map((x) => x.r.code).join(", ") + (unboundMatches.length > 6 ? " …" : "");
+            return <span>{L(`⚠ พนักงาน ${unboundMatches.length} คนยังไม่ผูกเครื่อง แต่มีเครื่องรหัสเดียวกัน (${codes}) — ยังสแกนงานไม่ได้`, `⚠ ${unboundMatches.length} employee(s) have no machine yet, but a machine with the same code exists (${codes}) — they can't scan work`)}</span>; })()}
+          <Btn variant="accent" size="sm" onClick={bindByCode} disabled={binding}>{binding ? L("กำลังผูก…", "Assigning…") : L(`ผูกเครื่องตามรหัส (${unboundMatches.length})`, `Assign by code (${unboundMatches.length})`)}</Btn>
+        </div>
+      )}
       <DataTable id="employee-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
         columns={[
           { key: "code", header: "รหัส", cell: (r) => r.code },
           { key: "name", header: "ชื่อ", cell: (r) => r.name },
           { key: "dept", header: "แผนก", cell: (r) => departments.find((d) => d.id === r.department_id)?.name || "-" },
           { key: "role", header: "สิทธิ์", cell: (r) => ROLE_LABELS[r.role] || r.role },
-          { key: "machine", header: "เครื่อง/สถานีประจำ", cell: (r) => machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span> },
+          { key: "machine", header: "เครื่อง/สถานีประจำ", cell: (r) => {
+            if (r.machine_id) return machines.find((m) => m.id === r.machine_id)?.code || <span style={{ color: "var(--danger-hi)" }}>{L("ไม่พบเครื่อง (ถูกลบ?)", "Machine not found (deleted?)")}</span>;
+            const m = r.role === "operator" ? machineByCode(machines, r.code) : null;
+            return <span style={{ color: "var(--danger-hi)" }}>{L("ยังไม่ตั้ง", "Not set")}{m ? <span className="emp-match" style={{ display: "block", fontSize: 11.5, color: "var(--muted)" }}>{L(`มีเครื่อง ${m.code} รหัสตรงกัน`, `machine ${m.code} has the same code`)}</span> : null}</span>;
+          } },
           { key: "ops", header: "ขั้นตอนประจำ", cell: (r) => {
             const ids = new Set(caps.filter((c) => c.machine_id === r.machine_id).map((c) => c.operation_id));
             let names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
             if (names.length === 0 && r.operation_id) { const o = operations.find((o) => o.id === r.operation_id); if (o) names = [opLabel(o.name, lang)]; }
-            return names.length ? names.join(", ") : <span style={{ color: "var(--danger-hi)" }}>ยังไม่ตั้ง</span>;
+            const unlimited = !!r.machine_id && ids.size === 0 && names.length > 0;
+            return names.length
+              ? <>{names.join(", ")}{unlimited ? <span style={{ display: "block", fontSize: 11.5, color: "var(--muted)" }}>{L("เครื่องนี้ไม่จำกัดขั้นตอน", "machine allows any operation")}</span> : null}</>
+              : <span style={{ color: "var(--danger-hi)" }}>{r.role === "operator" ? L("ยังไม่ตั้ง", "Not set") : "-"}</span>;
           } },
           { key: "status", header: "สถานะ", cell: (r) => (
             <span onClick={() => toggle(r)} style={{ cursor: "pointer" }}>
