@@ -72,6 +72,10 @@ const DICT = {
   // สถานะ / ข้อความ
   "มีเวอร์ชันใหม่ของระบบ": "A new version is available", "อัปเดตเดี๋ยวนี้": "Update now",
   "บัญชีนี้ยังไม่มีสิทธิ์ทำรายการนี้ฝั่งฐานข้อมูล — ให้แอดมินรัน migration-office-release-rights.sql (เปิดสิทธิ์ให้พนักงานออฟฟิศ)": "This account doesn't have this right on the database yet — ask an admin to run migration-office-release-rights.sql (gives office staff the right)",
+  "เรียงป้าย": "Sort labels",
+  "ขึ้นไปด้านบนสุด": "Back to top", "กำหนดเอง (มม.)": "Custom (mm)",
+  "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ": "One label for the whole lot — scan once at the machine, then enter the quantity made",
+  "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น เลขวิ่ง 1 OF N — ติดสติกเกอร์รายชิ้น": "One label per piece, numbered 1 OF N — stick one on every piece",
   "ยังไม่ตั้ง": "Not set", "ยังไม่ได้กำหนด Routing สำหรับ Part นี้": "No routing set for this part",
   "ไม่บังคับ": "Optional", "ปิด": "Close", "ใช่": "Yes", "ไม่ใช่": "No", "ทั้งหมด": "All",
 
@@ -555,6 +559,11 @@ const DICT = {
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
 const RULES = [
+  // ── 2026-10-08: หน้าพิมพ์ QR ──
+  [/^พิมพ์ \(([\d,]+)\)$/, (m) => `Print (${m[1]})`],
+  [/^([\d.]+ × [\d.]+) ซม\.(.*)$/, (m) => `${m[1]} cm${m[2]}`],
+  [/^ป้ายรายชิ้น \(รันเบอร์\) — ทุกพาร์ทที่เลือก \(([\d,]+) พาร์ท\) จะได้ป้ายครบทุกชิ้น เลขวิ่ง 1 OF N แยกตามแต่ละพาร์ท$/, (m) => `Per-piece labels — every selected part (${m[1]} parts) gets one label per piece, numbered 1 OF N per part`],
+  [/^ป้ายรวมล็อต — ([\d,]+) พาร์ท ได้ 1 ใบต่อพาร์ท \(สแกน 1 ครั้งแล้วกรอกจำนวน\)$/, (m) => `Lot labels — ${m[1]} parts, 1 label per part (scan once, then enter the quantity)`],
   // ── 2026-10-08: บันทึกหัวเอกสารไม่ผ่าน แต่ Modify (ต่อใบ) บันทึกแล้ว ──
   [/^(.+) · \(Modify บันทึกแล้ว\)$/, (m) => `${DICT[m[1]] ?? m[1]} · (Modify saved)`],
   // ── รอบ 22: "หน้าปลายทาง (URL)" ของสเตชัน · ผลเทียบงานประกอบ ──
