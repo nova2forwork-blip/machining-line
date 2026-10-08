@@ -7100,6 +7100,13 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
 // ══════════════════════════════════════════════════════════════════════════
 // 4) QR / LABELS — reprint labels for any past release lot, true-size (2×2cm default)
 // ══════════════════════════════════════════════════════════════════════════
+// ★ 2026-10-08: เรียงป้าย QR ตามตัวอักษร (เรียงแบบตัวเลข: VE01-027 ก่อน VE01-1004) — เดิมออกตามลำดับ id ของล็อต (สุ่ม)
+const QR_COLL = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const QR_SORTS = [
+  { value: "pn", label: "Part No. A → Z" },
+  { value: "pn_desc", label: "Part No. Z → A" },
+  { value: "ro", label: "Release Order → Part No." },
+];
 function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [releases, setReleases] = useState([]);
   const [parts, setParts] = useState([]);
@@ -7116,6 +7123,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [printMode, setPrintMode] = useState("roll");   // ค่าเริ่มต้น: 1 ป้าย/หน้า ขนาดเท่าจริง
   // ชนิดป้าย: 'unit' = ป้ายรายชิ้น (ติดทุกชิ้น — ชิ้นใหญ่) | 'lot' = ป้ายรวมล็อต 1 ใบ (ชิ้นเล็ก สแกนแล้วกรอกจำนวน)
   const [labelScope, setLabelScope] = useState("unit");
+  const [qrSort, setQrSortState] = useState(() => { try { const v = localStorage.getItem("mls-qr-sort"); return QR_SORTS.some((o) => o.value === v) ? v : "pn"; } catch { return "pn"; } });
+  const setQrSort = (v) => { setQrSortState(v); try { localStorage.setItem("mls-qr-sort", v); } catch { /* ignore */ } };
   // กรองล็อตแบบดรอปดาวลูกโซ่: Projects → Release (Release Order) → Part (ล็อต) + ช่องค้นหาอิสระ
   const [projectFilter, setProjectFilter] = useState("");
   const [releaseOrder, setReleaseOrder] = useState("");
@@ -7196,15 +7205,37 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedKey]);
 
+  // ★ เรียงทีละล็อต: ล็อต (Release) เรียงตามเบอร์ Part (หรือ Release Order → เบอร์) · ในล็อตเรียงตามเลขชิ้น 1 OF N
+  //   (QR โหลดมาเรียง release_id + unit_no อยู่แล้ว → จัดกลุ่มแล้วเรียงเฉพาะกลุ่ม = เร็วแม้หมื่นใบ)
+  const sortedUnits = useMemo(() => {
+    const groups = new Map();
+    for (const u of units) { let g = groups.get(u.release_id); if (!g) { g = []; groups.set(u.release_id, g); } g.push(u); }
+    const pnOf = new Map(parts.map((p) => [p.id, p.part_no || ""]));
+    const roOf = new Map(releases.map((r) => [r.id, r.release_order || ""]));
+    const keys = [...groups.keys()].map((rid) => {
+      const g = groups.get(rid);
+      g.sort((a, b) => (Number(a.unit_no) || 0) - (Number(b.unit_no) || 0));
+      return { rid, pn: pnOf.get(g[0].part_master_id) || "", ro: roOf.get(rid) || "" };
+    });
+    const dir = qrSort === "pn_desc" ? -1 : 1;
+    keys.sort((a, b) => (qrSort === "ro" ? QR_COLL.compare(a.ro, b.ro) : 0)
+      || QR_COLL.compare(a.pn, b.pn) * dir
+      || QR_COLL.compare(a.ro, b.ro)
+      || (a.rid < b.rid ? -1 : a.rid > b.rid ? 1 : 0));
+    const out = [];
+    for (const k of keys) out.push(...groups.get(k.rid));
+    return out;
+  }, [units, parts, releases, qrSort]);
+
   // 1 ใบต่อ 1 พาร์ท (ตัวแทนใบแรกของแต่ละล็อต) — สำหรับป้ายรวมล็อต / เลือกหลายพาร์ท
   const lotReps = (() => {
     const seen = new Set(); const reps = [];
-    for (const u of units) if (!seen.has(u.release_id)) { seen.add(u.release_id); reps.push(u); }
+    for (const u of sortedUnits) if (!seen.has(u.release_id)) { seen.add(u.release_id); reps.push(u); }
     return reps;
   })();
   const multi = lotReps.length > 1;                  // เลือกหลายพาร์ท (ใช้ปรับข้อความอธิบาย)
   const effScope = labelScope;                       // เลือกป้ายรายชิ้น (รันเบอร์) ได้แม้เลือกหลายพาร์ท
-  const displayed = effScope === "unit" ? units : lotReps;
+  const displayed = effScope === "unit" ? sortedUnits : lotReps;
 
   // เลือกทุกใบที่แสดงโดยอัตโนมัติ
   useEffect(() => {
@@ -7326,7 +7357,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           </Field>
           <Field label={`Part${hasFilter ? ` (${filteredReleases.length})` : ""}`}>
             <Select value={releaseId} onChange={(e) => setReleaseId(e.target.value)}
-              options={filteredReleases.map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${nc(r.qty)} ชิ้น` }))} />
+              options={[...filteredReleases]
+                .sort((a, b) => QR_COLL.compare(partOf(a)?.part_no || "", partOf(b)?.part_no || "") || QR_COLL.compare(a.release_order || "", b.release_order || ""))
+                .map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${nc(r.qty)} ชิ้น` }))} />
           </Field>
         </div>
 
@@ -7376,6 +7409,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
           {/* ── แถบเครื่องมือ (ย้ายขึ้นบน + sticky) ─────────────────────────── */}
           <div className="qr-toolbar">
+            <Field label="เรียงป้าย">
+              <select className="select qr-sort" value={qrSort} onChange={(e) => setQrSort(e.target.value)} style={{ minWidth: 190 }}>
+                {QR_SORTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
             <Field label="ขนาดป้าย">
               <Select value={labelPreset} onChange={(e) => setLabelPreset(e.target.value)}
                 options={LABEL_PRESETS.map((p) => ({ value: p.value, label: p.label }))} style={{ minWidth: 160 }} />
