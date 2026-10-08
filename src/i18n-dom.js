@@ -71,6 +71,7 @@ const DICT = {
 
   // สถานะ / ข้อความ
   "มีเวอร์ชันใหม่ของระบบ": "A new version is available", "อัปเดตเดี๋ยวนี้": "Update now",
+  "บัญชีนี้ยังไม่มีสิทธิ์ทำรายการนี้ฝั่งฐานข้อมูล — ให้แอดมินรัน migration-office-release-rights.sql (เปิดสิทธิ์ให้พนักงานออฟฟิศ)": "This account doesn't have this right on the database yet — ask an admin to run migration-office-release-rights.sql (gives office staff the right)",
   "ยังไม่ตั้ง": "Not set", "ยังไม่ได้กำหนด Routing สำหรับ Part นี้": "No routing set for this part",
   "ไม่บังคับ": "Optional", "ปิด": "Close", "ใช่": "Yes", "ไม่ใช่": "No", "ทั้งหมด": "All",
 
@@ -554,6 +555,8 @@ const DICT = {
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
 const RULES = [
+  // ── 2026-10-08: บันทึกหัวเอกสารไม่ผ่าน แต่ Modify (ต่อใบ) บันทึกแล้ว ──
+  [/^(.+) · \(Modify บันทึกแล้ว\)$/, (m) => `${DICT[m[1]] ?? m[1]} · (Modify saved)`],
   // ── รอบ 22: "หน้าปลายทาง (URL)" ของสเตชัน · ผลเทียบงานประกอบ ──
   [/^(หน้า.+?) \((\/[\w-]+)\)$/, (m) => (DICT[m[1]] ? `${DICT[m[1]]} (${m[2]})` : null)],
   [/^ผลเทียบ — (.+)$/, (m) => `Comparison — ${m[1]}`],
