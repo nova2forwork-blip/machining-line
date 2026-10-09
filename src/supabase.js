@@ -338,6 +338,32 @@ export async function setMachineOps(machineId, operationIds) {
   return data || { ok: false, reason: "error" };
 }
 
+// ── ★ 2026-10-09: รูปแบบการสแกนหน้าเครื่อง (machines.scan_mode · migration-scan-mode.sql) ──
+//   'timed' (ค่าเริ่มต้น) = สแกน 2 ครั้ง + จับเวลา · 'count' = สแกนครั้งเดียวตอนทำเสร็จ ไม่จับเวลา (นับชิ้นอย่างเดียว)
+//   หน้าเครื่องอ่านค่าตอนเข้า + จำไว้ในเครื่อง (ออฟไลน์ใช้ค่าล่าสุด) · ยังไม่รัน SQL = คอลัมน์ไม่มี → 'timed' (ทำงานแบบเดิม)
+const SCAN_MODE_KEY = (id) => "mls-scan-mode:" + (id || "x");
+export function cachedMachineScanMode(machineId) {
+  try { const v = localStorage.getItem(SCAN_MODE_KEY(machineId)); return v === "count" ? "count" : v === "timed" ? "timed" : null; } catch { return null; }
+}
+export async function getMachineScanMode(machineId) {
+  if (!machineId) return "timed";
+  const cached = cachedMachineScanMode(machineId);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return cached || "timed";
+  try {
+    const { data, error } = await supabase.from("machines").select("scan_mode").eq("id", machineId).maybeSingle();
+    if (error || !data) return cached || "timed";
+    const mode = data.scan_mode === "count" ? "count" : "timed";
+    try { localStorage.setItem(SCAN_MODE_KEY(machineId), mode); } catch { /* ignore */ }
+    return mode;
+  } catch { return cached || "timed"; }
+}
+// แอดมินตั้งค่า (ผ่าน RPC เฉพาะ — authz_update มี allow-list คอลัมน์ จึงเขียนคอลัมน์ใหม่ตรงๆ ไม่ได้)
+export async function setMachineScanMode(machineId, mode) {
+  const { data, error } = await supabase.rpc("authz_set_machine_scan_mode", { p_token: authToken(), p_machine_id: machineId, p_mode: mode === "count" ? "count" : "timed" });
+  if (error) { console.warn("authz_set_machine_scan_mode error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
 export async function clearScansRelease(releaseId, { preview = false } = {}) {
   const { data, error } = await supabase.rpc("authz_clear_scans_release", { p_token: authToken(), p_release_id: releaseId, p_preview: preview });
