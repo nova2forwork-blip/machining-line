@@ -24,7 +24,8 @@ const COLUMN_ALIASES = {
 };
 
 function matches(value, patterns) {
-  const s = String(value ?? "").trim();
+  // ★ 2026-10-09: หัวตารางที่ขึ้นบรรทัดใหม่ในเซลล์ (เช่น "Sum⏎Quantity", "Panel⏎Quantity") → ยุบเป็นช่องว่างเดียวก่อนเทียบ
+  const s = String(value ?? "").replace(/\s+/g, " ").trim();
   if (!s) return false;
   return patterns.some((re) => re.test(s));
 }
@@ -174,8 +175,33 @@ export async function parseSubAssemblyExcel(file) {
 }
 
 // แปลงข้อความ TSV (ก็อปจาก Excel, Ctrl+V) เป็นตาราง array-of-arrays
+// ★ 2026-10-09: รองรับเซลล์ที่ Excel ครอบด้วย "..." (เซลล์มีขึ้นบรรทัดใหม่/แท็บ/เครื่องหมาย " ข้างใน)
+//   เดิม split ตรงๆ ด้วย \n → หัวตาราง 2 บรรทัด ("Sum⏎Quantity") แตกเป็นหลายแถว → หาคอลัมน์ Sum ไม่เจอ
+//   → ตกไปอ่านเป็น "รายชื่อแผง" (ทุกแถวกลายเป็นแผงเปล่า ไม่มี BOM)
 function tsvToRows(text) {
-  return String(text || "").replace(/\r/g, "").split("\n").map((line) => line.split("\t"));
+  const src = String(text || "").replace(/\r\n?/g, "\n");
+  const rows = []; let row = []; let cell = ""; let i = 0; let atStart = true;
+  while (i < src.length) {
+    const ch = src[i];
+    if (atStart && ch === '"') {
+      // เซลล์แบบมีเครื่องหมายคำพูด: อ่านจนเจอ " ปิด ("" = " หนึ่งตัว)
+      let j = i + 1; let val = ""; let closed = false;
+      while (j < src.length) {
+        if (src[j] === '"') {
+          if (src[j + 1] === '"') { val += '"'; j += 2; continue; }
+          closed = true; j++; break;
+        }
+        val += src[j]; j++;
+      }
+      // ปิดแล้วต้องตามด้วยแท็บ/ขึ้นบรรทัด/จบ — ไม่ใช่ = " อยู่กลางข้อความปกติ → อ่านแบบธรรมดา
+      if (closed && (j >= src.length || src[j] === "\t" || src[j] === "\n")) { cell = val; i = j; atStart = false; continue; }
+    }
+    if (ch === "\t") { row.push(cell); cell = ""; atStart = true; i++; continue; }
+    if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; atStart = true; i++; continue; }
+    cell += ch; atStart = false; i++;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
 }
 
 // วางจาก Excel: ก็อปทั้งตาราง (รวมแถวหัว Code/Quantity/Sum) แล้ววาง → parse เหมือนตอน import ไฟล์
@@ -198,7 +224,7 @@ function parseSubAssemblyRows(rows) {
   if (headerRowIndex === -1) throw new Error("หาหัวตาราง (Code / Quantity) ไม่เจอ — ก็อป/เลือกไฟล์ให้มีแถวหัวตาราง (Code, Quantity/Sum) มาด้วย");
 
   const codeCol = headerRow.findIndex((c) => matches(c, [/^code$/i, /เบอร์/]));
-  const sumCol = headerRow.findIndex((c) => matches(c, [/^sum$/i, /รวม/]));
+  const sumCol = headerRow.findIndex((c) => matches(c, [/^sum$/i, /^sum\s*(quantity|qty)$/i, /^total\s*(quantity|qty)$/i, /รวม/]));
   const panelCol = headerRow.findIndex((c) => matches(c, [/^panel$/i]) && !matches(c, [/panel\s*no/i]));
   const qtyCols = []; headerRow.forEach((c, i) => { if (matches(c, [/quantity/i, /qty/i, /จำนวน/])) qtyCols.push(i); });
   const descCols = []; headerRow.forEach((c, i) => { if (matches(c, [/description/i, /รายละเอียด/])) descCols.push(i); });
