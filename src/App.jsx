@@ -7328,13 +7328,15 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   })();
   const multi = lotReps.length > 1;                  // เลือกหลายพาร์ท (ใช้ปรับข้อความอธิบาย)
   // ป้ายที่แสดง: เบอร์ที่เป็น 'unit' = ครบทุกชิ้น · เบอร์ที่เป็น 'lot' = ใบแรกใบเดียว (คงลำดับการเรียงเดิม)
+  //   ★ 2026-10-09: ป้าย "ทั้งล็อต" (ใบเดียว) ขึ้นก่อน แล้วตามด้วย 1 OF N — ในแต่ละกลุ่มเรียงตามตัวเลือก "เรียงป้าย" เหมือนเดิม
+  //   (ลำดับนี้ใช้ทั้งพรีวิวและตอนพิมพ์)
   const displayed = useMemo(() => {
-    const out = []; const seen = new Set();
+    const lotOut = []; const unitOut = []; const seen = new Set();
     for (const u of sortedUnits) {
-      if ((scopeOverride[u.release_id] || labelScope) === "unit") out.push(u);
-      else if (!seen.has(u.release_id)) { seen.add(u.release_id); out.push(u); }
+      if ((scopeOverride[u.release_id] || labelScope) === "unit") unitOut.push(u);
+      else if (!seen.has(u.release_id)) { seen.add(u.release_id); lotOut.push(u); }
     }
-    return out;
+    return lotOut.concat(unitOut);
   }, [sortedUnits, scopeOverride, labelScope]);
   const lotCountByScope = lotReps.reduce((a, r) => { a[scopeOf(r.release_id)]++; return a; }, { unit: 0, lot: 0 });
   const mixed = lotCountByScope.unit > 0 && lotCountByScope.lot > 0;
@@ -7386,8 +7388,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     const p = LABEL_PRESETS.find((x) => x.value === labelPreset);
     return { w: p.w, h: p.h };
   }
-  function doPrint() {
-    const picked = displayed.filter((u) => selected.has(u.id));
+  // only = undefined → พิมพ์ทุกใบที่ติ๊ก · 'lot' / 'unit' → พิมพ์เฉพาะฝั่งนั้น (★ 2026-10-09)
+  function doPrint(only) {
+    const picked = displayed.filter((u) => selected.has(u.id) && (!only || scopeOf(u.release_id) === only));
     if (!picked.length) { mlsToast("กรุณาเลือกอย่างน้อย 1 ใบ", "warn"); return; }
     // ใบที่เลือกแต่ไม่อยู่ในพรีวิว 600 ใบแรก ต้องเรนเดอร์ QR ซ่อนก่อน (printLabels อ่านจาก DOM)
     const first600 = new Set(displayed.slice(0, 600).map((u) => u.id));
@@ -7670,8 +7673,23 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             </label>
             <div className="qr-toolbar-print">
               <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
-              <Btn variant="accent" onClick={doPrint} disabled={preparingPrint}>
-                <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `พิมพ์ (${fmtNum(selected.size)})`}
+              {/* ★ แบบผสม → พิมพ์เฉพาะฝั่งใดฝั่งหนึ่งได้ (นับเฉพาะใบที่ติ๊กไว้ในฝั่งนั้น) */}
+              {mixed && (() => {
+                const nLot = displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "lot" ? 1 : 0), 0);
+                const nUnit = displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "unit" ? 1 : 0), 0);
+                return (
+                  <>
+                    <Btn onClick={() => doPrint("lot")} disabled={preparingPrint || !nLot} title="พิมพ์เฉพาะป้ายฝั่ง ทั้งล็อต · ใบเดียว">
+                      <Icon name="printer" size={15} />{`เฉพาะทั้งล็อต (${fmtNum(nLot)})`}
+                    </Btn>
+                    <Btn onClick={() => doPrint("unit")} disabled={preparingPrint || !nUnit} title="พิมพ์เฉพาะป้ายฝั่ง 1 OF N · รายชิ้น">
+                      <Icon name="printer" size={15} />{`เฉพาะ 1 OF N (${fmtNum(nUnit)})`}
+                    </Btn>
+                  </>
+                );
+              })()}
+              <Btn variant="accent" onClick={() => doPrint()} disabled={preparingPrint}>
+                <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `${mixed ? "พิมพ์ทั้งหมด" : "พิมพ์"} (${fmtNum(selected.size)})`}
               </Btn>
             </div>
           </div>
