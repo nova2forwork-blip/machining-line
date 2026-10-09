@@ -633,6 +633,33 @@ input.err-flash, select.err-flash { animation: errFlashIn 1.5s ease; }
   position: sticky; top: 8px; z-index: 6;
 }
 .qr-toolbar-print { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-bottom: 2px; }
+.qr-print-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+/* แบบผสม: แถวพิมพ์ลงบรรทัดใหม่ เต็มความกว้าง คั่นด้วยเส้นบาง */
+.qr-toolbar-print.mixed { flex-basis: 100%; margin-left: 0; justify-content: space-between; flex-wrap: wrap;
+  padding-top: 12px; border-top: 1px dashed var(--border); }
+.qr-only { display: flex; align-items: center; gap: 10px; }
+.qr-only-lbl { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.qr-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+.qr-seg button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 0; background: transparent;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; white-space: nowrap; transition: background .15s ease; }
+.qr-seg button + button { border-left: 1px solid var(--border); }
+.qr-seg button:hover:not(:disabled) { background: var(--surface-2); }
+.qr-seg button:disabled { opacity: .45; cursor: default; }
+.qr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.qr-dot.lot { background: #3b5bdb; }
+.qr-dot.unit { background: var(--accent); }
+.qr-n { min-width: 26px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  /* จอแคบ: เรียงลงแนวตั้ง ปุ่มเต็มความกว้าง ไม่ล้นจอ */
+  .qr-toolbar-print.mixed { flex-direction: column; align-items: stretch; gap: 10px; }
+  .qr-print-actions { flex-direction: column; align-items: stretch; width: 100%; }
+  .qr-only { flex-direction: column; align-items: stretch; gap: 6px; }
+  .qr-seg { width: 100%; }
+  .qr-seg button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 10px; }
+  .qr-seg button > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+  .qr-print-actions > .btn { width: 100%; justify-content: center; }
+}
 .qr-count { font-size: 12.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
 .qr-grid-scroll {
   max-height: 56vh; overflow-y: auto; padding: 12px;
