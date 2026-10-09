@@ -20,7 +20,7 @@ import {
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
   importBackupExtra, getPartStationProgress,
-  getStationStatusList, appBuildId, reportSummary,
+  getStationStatusList, appBuildId, reportSummary, setMachineScanMode,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
@@ -12778,7 +12778,12 @@ function MachineCrud() {
         }}
         columns={[
           { key: "code", header: "รหัสเครื่อง", sortKey: "code", cell: (r) => r.code },
-          { key: "name", header: "ชื่อเครื่อง/สถานี", sortKey: "name", cell: (r) => r.name },
+          { key: "name", header: "ชื่อเครื่อง/สถานี", sortKey: "name", cell: (r) => (
+            <>
+              {r.name}
+              {r.scan_mode === "count" ? <div style={{ fontSize: 11.5, color: "var(--accent)", fontWeight: 600, marginTop: 3 }}>⚡ สแกนครั้งเดียว · ไม่จับเวลา</div> : null}
+            </>
+          ) },
           { key: "type", header: "ประเภท", sortKey: "type", cell: (r) => r.type || "-" },
           { key: "caps", header: "ขั้นตอนที่ทำได้", sortKey: "caps",
             cell: (r) => { const names = capNames(r.id); return (
@@ -12817,6 +12822,9 @@ const QUICK_ADD_CHIPS = [
 ];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
+  // ★ 2026-10-09: รูปแบบการสแกนหน้าเครื่อง — undefined = ยังไม่ได้รัน migration-scan-mode.sql (คอลัมน์ไม่มี)
+  const hasScanMode = Object.prototype.hasOwnProperty.call(machine, "scan_mode");
+  const [scanMode, setScanMode] = useState(machine.scan_mode === "count" ? "count" : "timed");
   const [opSel, setOpSel] = useUndoable(() => new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id)));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -12834,6 +12842,17 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
     setBusy(true); setErr("");
     try {
       await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
+      if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
+        let r;
+        try { r = await setMachineScanMode(machine.id, scanMode); }
+        catch (e) {
+          const m = String(e?.message || e);
+          throw new Error(/authz_set_machine_scan_mode|function|schema cache/i.test(m)
+            ? "ยังไม่ได้รัน migration-scan-mode.sql ใน Supabase — รันก่อนแล้วตั้งรูปแบบการสแกนใหม่"
+            : m);
+        }
+        if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ"));
+      }
       // แปลงชิปชั่วคราว (new:<key>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent · เช็ก/หาเจอด้วย match)
       const finalIds = [];
       for (const id of opSel) {
@@ -12900,6 +12919,20 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       </div>
       <Field label="ประเภทงาน (คำอธิบาย · ไม่บังคับ)">
         <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
+      </Field>
+      <Field label="รูปแบบการสแกนหน้าเครื่อง">
+        <div className="chip-row">
+          <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => setScanMode("timed")}>สแกน 2 ครั้ง · จับเวลา (ปกติ)</span>
+          <span className={`chip ${scanMode === "count" ? "active" : ""}`} onClick={() => setScanMode("count")}>สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา</span>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, lineHeight: 1.55 }}>
+          {scanMode === "count"
+            ? "ทำเสร็จแล้วสแกน QR ครั้งเดียว → ใส่จำนวน + สถานะ → OK · ไม่ต้องกรอกความยาว ไม่จับเวลา — หน้าเครื่องโชว์ยอดชิ้นวันนี้ (ดูยอดรายวันที่ Report)"
+            : "กรอกความยาว → เริ่ม → สแกนตอนเริ่ม (จับเวลา) → ทำเสร็จสแกนอีกครั้ง → ใส่จำนวน + สถานะ → OK"}
+        </div>
+        {!hasScanMode && (
+          <div style={{ fontSize: 12, color: "var(--warning)", marginTop: 4 }}>⚠️ ต้องรัน migration-scan-mode.sql ใน Supabase ก่อน ถึงจะเปลี่ยนรูปแบบการสแกนได้</div>
+        )}
       </Field>
       <Field label="ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)">
         <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
