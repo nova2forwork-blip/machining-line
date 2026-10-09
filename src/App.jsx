@@ -12736,8 +12736,14 @@ function MachineCrud() {
     if (!form.code || !form.name) { setErr("กรอกรหัสและชื่อเครื่องให้ครบ"); return; }
     setErr("");
     try {
-      await insertRow("machines", { code: form.code, name: form.name, type: form.type || null });
-      setForm({}); load();
+      const code = form.code;
+      await insertRow("machines", { code, name: form.name, type: form.type || null });
+      setForm({});
+      // ★ 2026-10-09: เพิ่มแล้วเปิดหน้าตั้งรายละเอียดต่อเลย (รูปแบบการสแกน / ขั้นตอนที่ทำได้) — กด "ข้าม" ได้
+      const fresh = await listRows("machines", { order: "code" });
+      setRows(fresh);
+      const made = fresh.find((m) => String(m.code).trim().toLowerCase() === String(code).trim().toLowerCase());
+      if (made) setEditing({ ...made, __fresh: true });
     } catch (e) {
       setErr(isDuplicateError(e) ? `รหัสเครื่อง "${form.code}" มีอยู่แล้ว` : "เกิดข้อผิดพลาด: " + e.message);
     }
@@ -12821,6 +12827,7 @@ const QUICK_ADD_CHIPS = [
   { key: "glazing",    name: "ติดกระจก",      op_type: "glazing",    match: (o) => o.op_type === "glazing" },   // ★ รอบ 22
 ];
 function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
+  const fresh = !!machine.__fresh;   // ★ เพิ่งสร้าง → หัวข้อ "ตั้งรายละเอียด" + ปุ่ม "ข้าม" (ไม่บังคับ)
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
   // ★ 2026-10-09: รูปแบบการสแกนหน้าเครื่อง — undefined = ยังไม่ได้รัน migration-scan-mode.sql (คอลัมน์ไม่มี)
   const hasScanMode = Object.prototype.hasOwnProperty.call(machine, "scan_mode");
@@ -12912,7 +12919,8 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
   }
 
   return (
-    <Modal title={`แก้ไขเครื่อง/สถานี — ${machine.code}`} sub="แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้" onClose={onClose}>
+    <Modal title={fresh ? `ตั้งรายละเอียดเครื่องใหม่ — ${machine.code}` : `แก้ไขเครื่อง/สถานี — ${machine.code}`}
+      sub={fresh ? "เพิ่มเครื่องแล้ว ✓ — ตั้งรูปแบบการสแกน + ขั้นตอนที่ทำได้ต่อเลย หรือกด \"ข้าม\" ไว้ตั้งทีหลังด้วยปุ่ม แก้ไข" : "แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้"} onClose={onClose}>
       <div className="grid-2">
         <Field label="รหัสเครื่อง"><Input value={machine.code} disabled /></Field>
         <Field label="ชื่อเครื่อง/สถานี"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -12951,7 +12959,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>ลบเครื่องนี้</Btn>
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{fresh ? "ข้าม — ตั้งทีหลัง" : "ยกเลิก"}</Btn>
           <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
         </div>
       </div>
