@@ -15,6 +15,7 @@ import {
   stationStop, stationReady, stationSlowReason, onStationEvents, stationEventsPending, stationPing, getStationDayOps, getTypicalTime, appBuildId,
   reportActiveJob, clearActiveJobNow,
   getStationScanInfo, queueForeignOwners, myQueueCount, addRejected, releaseMdf,
+  getMachineScanMode, cachedMachineScanMode,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras, getCameraErrorKind } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -512,6 +513,19 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [loadErr, setLoadErr] = useState("");
 
   const [step, setStep] = useState(STEP.IDLE);
+  // ★ 2026-10-09: รูปแบบการสแกนของเครื่องนี้ (ตั้งที่ออฟฟิศ › เครื่อง/สถานี) — 'count' = สแกนครั้งเดียวตอนเสร็จ ไม่จับเวลา
+  //   (เช่น Drilling-01 นับชิ้นอย่างเดียว) · ค่าเริ่มจากที่จำไว้ในเครื่อง แล้วอัปเดตจาก server
+  const [scanMode, setScanMode] = useState(() => (dept === "machine" ? (cachedMachineScanMode(user.machine?.id) || "timed") : "timed"));
+  useEffect(() => {
+    if (dept !== "machine" || !machine?.id) return undefined;
+    let ok = true;
+    const load = () => getMachineScanMode(machine.id).then((m) => { if (ok) setScanMode(m); }).catch(() => {});
+    load();
+    window.addEventListener("online", load);
+    return () => { ok = false; window.removeEventListener("online", load); };
+  }, [dept, machine?.id]);
+  const quick = dept === "machine" && scanMode === "count";
+  const quickRef = useRef(quick); quickRef.current = quick;
   const [materialLen, setMaterialLen] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(null);
@@ -947,7 +961,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     : t("พักงานอยู่ — กด \"ทำงานต่อ\" ก่อน", "On break — press \"Resume\" first"));
   // START (ใช้ร่วมกับสแกนเนอร์ USB: สแกนตอนยังไม่เริ่ม = เริ่มงานให้เลย) · คืน false = ยังเริ่มไม่ได้ (บอกเหตุผลแล้ว)
   function beginJob() {
-    if (!matReady) { errorBeep(); flash(t("กรอกความยาววัสดุ (Material Length) ก่อน", "Enter the Material Length first"), "warn"); return false; }
+    if (!quickRef.current && !matReady) { errorBeep(); flash(t("กรอกความยาววัสดุ (Material Length) ก่อน", "Enter the Material Length first"), "warn"); return false; }
     if (machineOps.length > 1 && !op) { errorBeep(); flash(t("เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน", "Pick the operation first"), "warn"); return false; }
     warmAudio();
     // ★ START = เปิดกล้องให้สแกน (ยังไม่จับเวลา) · เวลาเริ่มนับตอนสแกนรอบ 1
@@ -980,6 +994,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
   async function onScan() {
     if (hold) { flash(holdMsg(), "warn"); return; }
+    // ★ โหมดสแกนครั้งเดียว: กด SCAN ตอนว่าง = เปิดกล้องเลย (ไม่ต้องกรอกความยาว/กดเริ่ม) · กดซ้ำ = ปิดกล้อง กลับหน้าว่าง
+    if (quick && step === STEP.IDLE) { beginJob(); return; }
+    if (quick && step === STEP.SCAN) { resetAll(true); return; }
     if (step === STEP.IDLE) { flash(t("กรอกความยาว แล้วกด เริ่ม ก่อน", "Enter the length, then press START"), "warn"); return; }
     // ★ กด SCAN ซ้ำระหว่างกล้องเปิด (ยังไม่ได้สแกน) → ปิดกล้อง (toggle) · งาน/เวลาที่เริ่มไว้ยังอยู่
     if (step === STEP.SCAN) { setStep(STEP.REC); return; }
@@ -994,9 +1011,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // ยังไม่มีงาน = สแกนรอบ 1 (เริ่มจับเวลา) · มีงานแล้ว = สแกนรอบ 2 (ทำเสร็จ) — แยกกันใน showScannedUnit
     setStep(STEP.SCAN);
   }
-  function closeScan() { setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังทำงาน (ถ้ายังไม่ได้สแกนรอบ 1 = ยังไม่จับเวลา)
+  function closeScan() { if (quickRef.current && !isAsm) { resetAll(true); return; } setStep(STEP.REC); } // ปิดกล้อง กลับไปหน้ากำลังทำงาน (ถ้ายังไม่ได้สแกนรอบ 1 = ยังไม่จับเวลา)
   // หน้าจำนวน/สถานะ กด ยกเลิก → กลับไปหน้ากำลังทำงาน (งาน + เวลายังเดินอยู่ ไม่ได้หยุด) · สแกนรอบ 2 ใหม่ได้
-  function backToRun() { jobGenRef.current += 1; clientIdRef.current = null; clientIdMapRef.current = null; setStep(STEP.REC); }
+  function backToRun() {
+    if (quickRef.current) { resetAll(true); return; }   // โหมดสแกนครั้งเดียว: ← กลับ = ทิ้งชิ้นนี้ กลับหน้าว่าง (ไม่มีงานค้าง/เวลา)
+    jobGenRef.current += 1; clientIdRef.current = null; clientIdMapRef.current = null; setStep(STEP.REC);
+  }
   // แสดงชิ้นงานที่ระบุได้แล้ว (ใช้ร่วมกันทั้งสแกน QR / พิมพ์เบอร์ / เลือก release)
   // สแกนเสร็จ = เวลายังเดินต่อ (ไม่หยุด) — โชว์ป้ายตัวใหม่ + running number
   //   done = จำนวนที่ "เครื่องนี้ (ขั้นตอนนี้)" ทำไปแล้วของรีลีสนี้ · total = จำนวนสั่งทั้งใบ
@@ -1049,6 +1069,16 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   //   รอบ 1 = เริ่มจับเวลา · รอบ 2 = ขั้นตอนสแกนเดิม (ใส่จำนวน · สถานะ · OK) เวลาเดินจนกด OK
   async function showScannedUnit(u, gen = jobGenRef.current) {
     if (gen !== jobGenRef.current) return false;   // ★ B23: สแกนนี้เริ่มก่อนกดยกเลิก → ทิ้ง
+    // ★ โหมดสแกนครั้งเดียว: สแกน = ทำเสร็จแล้ว → ตรวจเหมือนเดิม → หน้าจำนวน + สถานะ → OK (ไม่จับเวลา)
+    if (quickRef.current) {
+      if (!(await loadScannedUnit(u))) return false;
+      if (gen !== jobGenRef.current) return false;
+      stopTimer(); setElapsed(0);
+      setQty(1);
+      clearTimeout(toastRef.current); setToast(null);
+      setStep(STEP.PART);
+      return true;
+    }
     const job = unitRef.current;
     if (job) {
       // รอบ 2: QR ไหนก็ได้ ขอแค่เป็นเบอร์พาร์ทเดียวกัน (โปรเจคเดียวกัน) กับที่เริ่มไว้
@@ -1195,7 +1225,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
     //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
     // ★ รอบ 13: เวลาผิดปกติ (เร็ว/ช้ากว่าปกติมาก) → ถามก่อนบันทึก (ครั้งเดียวต่องาน · มีเหตุผลรอบช้าแล้ว = ไม่ถามเรื่องช้า)
-    const iss = durationIssue();
+    const iss = quick ? null : durationIssue();   // โหมดสแกนครั้งเดียว = ไม่มีเวลา ไม่ต้องตรวจ
     if (iss && durWarnedRef.current !== startTsRef.current && !(iss.kind === "slow" && slowArmed)) {
       durWarnedRef.current = startTsRef.current;
       const typ = iss.median ? t(` · ปกติ ~${hms(Math.round(iss.median))} ต่อชิ้น`, ` · usually ~${hms(Math.round(iss.median))} per piece`) : "";
@@ -1241,8 +1271,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       const res = await recordMachineWork({
         qr: unit.qr_code,
         quantity: qty,
-        materialLengthMm: materialLen === "" ? null : Number(materialLen),
-        processSeconds: activeSecs(),   // ★ คิดจากเวลาเริ่มจริง (ไม่พึ่งนาฬิกาบนจอ) · ★ รอบ 13: ไม่รวมช่วงพัก/หยุด
+        materialLengthMm: (quick || materialLen === "") ? null : Number(materialLen),
+        processSeconds: quick ? 0 : activeSecs(),   // ★ โหมดสแกนครั้งเดียว = ไม่จับเวลา (0)   // ★ คิดจากเวลาเริ่มจริง (ไม่พึ่งนาฬิกาบนจอ) · ★ รอบ 13: ไม่รวมช่วงพัก/หยุด
         status,
         releaseId: unit.release_id,   // ใช้คำนวณ running number ตอนออฟไลน์
         operationId: primaryId,       // ★ ขั้นตอนหลัก — นับยอด/เวลา/น้ำหนักจริง
@@ -1270,7 +1300,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId();
         const payload = {
           qr: unit.qr_code, quantity: 0,
-          materialLengthMm: materialLen === "" ? null : Number(materialLen),
+          materialLengthMm: (quick || materialLen === "") ? null : Number(materialLen),
           processSeconds: 0, status,
           releaseId: unit.release_id, operationId: oid,
           clientId: clientIdMapRef.current[k], weight: 0,
@@ -2167,7 +2197,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       status={status} setStatus={setStatus} statusLock={statusLock} busy={busy}
       onDecoded={onDecoded} onManualEntry={onManualEntry} onPickUnit={onPickUnit}
       confirmCancel={confirmCancel} confirmPart={confirmPart}
-      closeScan={closeScan} rescan={backToRun} dupCount={dupCount} matReady={matReady}
+      closeScan={closeScan} rescan={backToRun} dupCount={dupCount} matReady={matReady} quick={quick}
       isAsm={isAsm} asmType={dept} asmParent={asmParent} asmChildren={asmChildren} asmComplete={asmComplete}
       asmParentQty={asmParentQty} setAsmParentQty={setAsmParentQty} asmAutoIn={asmAutoIn}
       asmQtyLocked={asmQtyLocked} setAsmQtyLocked={setAsmQtyLocked}
@@ -2383,8 +2413,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               <div className="val">{fmt(daily.quantity)} {t("ชิ้น", "pcs")}</div></div>
             <div className="stn-kpi"><div className="lbl">{t("น้ำหนักวันนี้", "Daily Weight")}</div>
               <div className="val">{fmt(daily.weight)} {t("กก.", "kg")}</div></div>
-            <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
-              <div className="val mono">{hms(daily.process_seconds)}</div></div>
+            {quick ? null : (
+              <div className="stn-kpi"><div className="lbl">{t("เวลาเดินเครื่องวันนี้", "Daily Process Time")}</div>
+                <div className="val mono">{hms(daily.process_seconds)}</div></div>
+            )}
           </div>
           {/* ★ รอบ 13: ยอดวันนี้แยกตามขั้นตอน (ขั้นตอนที่ติ๊กร่วม = จำนวนชิ้นของสแกนนั้น) */}
           {dayOpsList.length > 0 && (
@@ -2464,6 +2496,14 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
 
           <div className="stn-control">
             <div className="stn-ctl-main">
+              {quick ? (
+                /* ★ โหมดสแกนครั้งเดียว: ไม่มีนาฬิกา/ความยาว/ปุ่มเริ่ม — โชว์ยอดวันนี้ตัวใหญ่แทน */
+                <div className="stn-quick-today">
+                  <div className="lbl">{t("เสร็จวันนี้", "Done today")}</div>
+                  <div className="val">{fmt(daily.quantity)} <small>{t("ชิ้น", "pcs")}</small></div>
+                  <div className="mode">{t("⚡ สแกนครั้งเดียว · ไม่จับเวลา", "⚡ One scan · no timer")}</div>
+                </div>
+              ) : <>
               <div className={`stn-clock${timerLive ? " live" : ""}`}>{hms(elapsed)}</div>
               <div className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
@@ -2480,7 +2520,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 disabled={busy || !!hold}>
                 <span>{recording ? t("ยกเลิกงาน", "CANCEL JOB") : t("เริ่ม", "START")}</span><span className="stn-rec-dot" />
               </button>
-              <button className={`stn-ctl-btn stn-scan-cell${scanArmed ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}${scanArmed && !hold && !busy ? " next" : ""}`} onClick={onScan} disabled={busy || !!hold}>
+              </>}
+              <button className={`stn-ctl-btn stn-scan-cell${scanArmed || (quick && step === STEP.IDLE) ? " armed" : ""}${step === STEP.SCAN ? " scanning" : ""}${(scanArmed || (quick && step === STEP.IDLE)) && !hold && !busy ? " next" : ""}`} onClick={onScan} disabled={busy || !!hold}>
                 <div className="row1">
                   <span>{step === STEP.SCAN ? t("ปิดกล้อง", "CLOSE") : t("สแกน", "SCAN")}</span>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3M4 12h16" /></svg>
@@ -2488,6 +2529,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                 <div className="qty">{step === STEP.SCAN ? t("กดซ้ำเพื่อปิดกล้อง", "tap again to close")
                   : step === STEP.REC ? (unit ? t("② สแกนเมื่อทำเสร็จ", "② scan when done") : t("① สแกนเพื่อเริ่ม", "① scan to start"))
                   : step === STEP.PART ? <>{t("จำนวน", "Quantity")} <b>{qty}</b> {t("ชิ้น", "piece")}</>
+                  : quick ? t("สแกนเมื่อทำเสร็จ", "scan when done")
                   : t("กด เริ่ม ก่อน", "press START first")}</div>
               </button>
               {/* ปุ่มรายงานปัญหา — เดินเครื่องอยู่ = รายงานการทำงาน · ยังไม่เริ่ม = แจ้งเครื่องหยุด */}
@@ -3296,7 +3338,7 @@ function modNoteText(note, lang) {
     .replace(/\(QR เดิม\)/g, "(same QR)")
     .replace(/เพิ่มจำนวน/g, "Qty increased").replace(/ลดจำนวน/g, "Qty reduced").replace(/ยกเลิก Part/g, "Part cancelled");
 }
-function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0, matReady = false,
+function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatus, statusLock = { finishedExists: false, inProcessExists: false }, busy, onDecoded, onManualEntry, onPickUnit, confirmCancel, confirmPart, closeScan, rescan, dupCount = 0, matReady = false, quick = false,
   isAsm, asmType, asmParent, asmChildren = [], asmComplete, asmDecoded, asmManual, asmScan, asmConfirm, asmRemoveChild, asmRemoveInstalled, asmReset, asmOpenCam,
   asmUndo = null, asmUndoRemove,
   asmParentQty = 1, setAsmParentQty, asmAutoIn = 0, asmQtyLocked = false, setAsmQtyLocked,
@@ -3347,7 +3389,12 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 
   if (step === STEP.IDLE) {
     // ★ รอบ 16: ขั้นตอนเป็นลำดับตัวใหญ่ + ติ๊กถูกเมื่อทำแล้ว (เดิมข้อความเล็ก 2 บรรทัด · กลางจอว่าง)
-    const steps = [
+    // ★ 2026-10-09: โหมดสแกนครั้งเดียว (ไม่จับเวลา) — ทำเสร็จ → สแกน → จำนวน/สถานะ → OK
+    const steps = quick ? [
+      { k: "work", done: false, th: <>ทำงานให้ <b>เสร็จ</b></>, en: <>Finish the <b>work</b></>, subTh: "ไม่ต้องกรอกความยาว · ไม่จับเวลา", subEn: "no length · no timer" },
+      { k: "scan", done: false, th: <>กด <b>สแกน</b> → สแกน QR</>, en: <>Press <b>SCAN</b> → scan the QR</>, subTh: "สแกนครั้งเดียวตอนเสร็จ", subEn: "one scan when done" },
+      { k: "fin", done: false, th: <>ใส่จำนวน + สถานะ → <b>OK</b></>, en: <>Qty + status → <b>OK</b></>, subTh: "เข้ายอดวันนี้ทันที", subEn: "counts toward today" },
+    ] : [
       { k: "len", done: matReady, th: <>กรอก <b>ความยาววัสดุ</b></>, en: <>Enter <b>material length</b></>, subTh: "ช่องขวามือ (มม.)", subEn: "right panel (mm)" },
       { k: "start", done: false, th: <>กด <b>เริ่ม</b></>, en: <>Press <b>START</b></>, subTh: "เปิดกล้องสแกน", subEn: "opens the scanner" },
       { k: "scan", done: false, th: <>สแกน QR ชิ้นงาน</>, en: <>Scan the piece QR</>, subTh: "เวลาเริ่มนับตอนสแกน", subEn: "the timer starts on scan" },
@@ -3448,8 +3495,10 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
     const pj = unit?.part_master?.projects?.code || "";
     return (
       <div className="stn-scan-stack">
-        <div className={"stn-scan-phase" + (unit ? " fin" : "")}>
-          {unit
+        <div className={"stn-scan-phase" + (unit || quick ? " fin" : "")}>
+          {quick
+            ? t("สแกน QR ชิ้นงานที่ทำเสร็จ (ไม่จับเวลา)", "Scan the finished piece’s QR (no timer)")
+            : unit
             ? t(<>② สแกนจบงาน — ป้ายไหนก็ได้ของ <b>{pn}</b> · {pj} · Release <b>{ro}</b> · เวลา {hms(elapsed)}</>, <>② Finish scan — any label of <b>{pn}</b> · {pj} · Release <b>{ro}</b> · {hms(elapsed)}</>)
             : t("① สแกนชิ้นงานเพื่อเริ่มจับเวลา", "① Scan the piece to start the timer")}
         </div>
@@ -3554,7 +3603,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
           <div className="stn-status-hint need">{t("ใส่จำนวนอย่างน้อย 1 ชิ้น", "Enter at least 1 piece")}</div>
         ) : null}
         <div className="stn-row-btns">
-          <button className="stn-pill no" onClick={rescan} disabled={busy} title={t("กลับไปหน้ากำลังทำงาน (เวลายังเดินอยู่)", "Back to the running job (timer keeps running)")}>{t("← กลับ", "← Back")}</button>
+          <button className="stn-pill no" onClick={rescan} disabled={busy} title={quick ? t("ไม่บันทึกชิ้นนี้ กลับไปหน้าแรก", "Don't save — back to start") : t("กลับไปหน้ากำลังทำงาน (เวลายังเดินอยู่)", "Back to the running job (timer keeps running)")}>{quick ? t("✕ ยกเลิก", "✕ Cancel") : t("← กลับ", "← Back")}</button>
           <button className={`stn-pill ok${status && qty > 0 && !busy ? " next" : ""}`} onClick={confirmPart} disabled={!status || qty <= 0 || busy}>{busy ? "..." : "OK"}</button>
         </div>
       </div>
