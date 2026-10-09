@@ -293,6 +293,14 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 .stn-mat.live { border-color: var(--st-red); } .stn-mat.live input { color: var(--st-red); }
 .stn-mat input:disabled { color: #9aa0a8; }
 
+/* ★ 2026-10-09: โหมดสแกนครั้งเดียว (ไม่จับเวลา) — ยอด "เสร็จวันนี้" แทนนาฬิกา/ความยาว/ปุ่มเริ่ม */
+.stn-quick-today { border: 1px solid var(--st-line); border-radius: 14px; padding: 12px 14px; background: var(--st-paper);
+  box-shadow: var(--st-shadow); text-align: right; }
+.stn-quick-today .lbl { font-size: 11px; letter-spacing: .04em; color: #333; text-transform: uppercase; }
+.stn-quick-today .val { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: clamp(28px, 3.6vw, 46px); line-height: 1.1; color: #4361ee; }
+.stn-quick-today .val small { font-size: .42em; font-weight: 600; color: #555; }
+.stn-quick-today .mode { margin-top: 4px; font-size: 11px; font-weight: 600; color: #0e9d63; }
+
 .stn-ctl-btn {
   border: 1px solid var(--st-line); border-radius: 14px; background: var(--st-paper); cursor: pointer;
   font-family: inherit; display: flex; align-items: center; justify-content: space-between; gap: 10px;
