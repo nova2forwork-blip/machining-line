@@ -7671,27 +7671,34 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 9 }}>
               <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
             </label>
-            <div className="qr-toolbar-print">
-              <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
-              {/* ★ แบบผสม → พิมพ์เฉพาะฝั่งใดฝั่งหนึ่งได้ (นับเฉพาะใบที่ติ๊กไว้ในฝั่งนั้น) */}
-              {mixed && (() => {
-                const nLot = displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "lot" ? 1 : 0), 0);
-                const nUnit = displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "unit" ? 1 : 0), 0);
-                return (
-                  <>
-                    <Btn onClick={() => doPrint("lot")} disabled={preparingPrint || !nLot} title="พิมพ์เฉพาะป้ายฝั่ง ทั้งล็อต · ใบเดียว">
-                      <Icon name="printer" size={15} />{`เฉพาะทั้งล็อต (${fmtNum(nLot)})`}
+            {/* ★ แถวพิมพ์ — แบบผสม: ขึ้นแถวใหม่เต็มกว้าง · ซ้าย = จำนวนที่เลือก · ขวา = [พิมพ์เฉพาะ: ทั้งล็อต | 1 OF N] + พิมพ์ทั้งหมด */}
+            {(() => {
+              const nLot = mixed ? displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "lot" ? 1 : 0), 0) : 0;
+              const nUnit = mixed ? displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "unit" ? 1 : 0), 0) : 0;
+              return (
+                <div className={`qr-toolbar-print${mixed ? " mixed" : ""}`}>
+                  <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
+                  <div className="qr-print-actions">
+                    {mixed && (
+                      <div className="qr-only">
+                        <span className="qr-only-lbl">พิมพ์เฉพาะ</span>
+                        <div className="qr-seg" role="group">
+                          <button type="button" onClick={() => doPrint("lot")} disabled={preparingPrint || !nLot} title="พิมพ์เฉพาะป้ายฝั่ง ทั้งล็อต · ใบเดียว">
+                            <span className="qr-dot lot" /><span>ทั้งล็อต · ใบเดียว</span><span className="qr-n">{fmtNum(nLot)}</span>
+                          </button>
+                          <button type="button" onClick={() => doPrint("unit")} disabled={preparingPrint || !nUnit} title="พิมพ์เฉพาะป้ายฝั่ง 1 OF N · รายชิ้น">
+                            <span className="qr-dot unit" /><span>1 OF N · รายชิ้น</span><span className="qr-n">{fmtNum(nUnit)}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <Btn variant="accent" onClick={() => doPrint()} disabled={preparingPrint}>
+                      <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `${mixed ? "พิมพ์ทั้งหมด" : "พิมพ์"} (${fmtNum(selected.size)})`}
                     </Btn>
-                    <Btn onClick={() => doPrint("unit")} disabled={preparingPrint || !nUnit} title="พิมพ์เฉพาะป้ายฝั่ง 1 OF N · รายชิ้น">
-                      <Icon name="printer" size={15} />{`เฉพาะ 1 OF N (${fmtNum(nUnit)})`}
-                    </Btn>
-                  </>
-                );
-              })()}
-              <Btn variant="accent" onClick={() => doPrint()} disabled={preparingPrint}>
-                <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `${mixed ? "พิมพ์ทั้งหมด" : "พิมพ์"} (${fmtNum(selected.size)})`}
-              </Btn>
-            </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* ── ตาราง QR เลื่อนได้ (มีสกอลบาร์ด้านข้าง) ───────────────────── */}
