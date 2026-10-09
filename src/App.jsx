@@ -3326,6 +3326,9 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   const removeChild = (gi, ci) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, children: g.children.filter((_, j) => j !== ci) } : g)));
   const addGroup = () => setGroups((gs) => [...gs, emptySubAsmGroup()]);
   const removeGroup = (gi) => setGroups((gs) => (gs.length <= 1 ? [emptySubAsmGroup()] : gs.filter((_, i) => i !== gi)));
+  // ★ 2026-10-09: ย่อ/ขยายแต่ละเบอร์แม่ (_collapsed เก็บในกลุ่ม — ไม่ถูกส่งไปบันทึก) + ย่อ/ขยายทั้งหมด
+  const toggleGroup = (gi) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, _collapsed: !g._collapsed } : g)));
+  const setAllCollapsed = (v) => setGroups((gs) => gs.map((g) => ({ ...g, _collapsed: v })));
 
   // เติมฟอร์มจากผลที่ parse ได้ (ใช้ทั้งนำเข้าไฟล์ + วางจาก Excel)
   function matchProject(projectName) {
@@ -3344,6 +3347,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         code: c.code, desc: c.desc, len: c.len ?? "",
         perSet: Number(c.totalQty) > 0 ? String(Math.max(1, Math.round(Number(c.totalQty) / (Number(g.parentQty) || 1)))) : "",
       })),
+      _collapsed: parsed.groups.length > 3,   // นำเข้าหลายเบอร์ → เริ่มแบบย่อ (เห็นภาพรวม แตะเพื่อขยายดูลูก)
     }));
     setGroups(gs.length ? gs : [emptySubAsmGroup()]);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
@@ -3493,6 +3497,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     } catch (e2) {
       // เก็บเฉพาะเบอร์ที่ "ยังไม่บันทึก" ไว้ในฟอร์ม กันกดซ้ำแล้วสร้าง release ซ้ำ
       const remaining = clean.slice(done).map((g) => ({
+        parentKind: g.parentKind || "subassembly",
         parentCode: g.parentCode, parentDesc: g.parentDesc, parentLen: g.parentLen, parentQty: String(g.parentQty),
         children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet) })),
       }));
@@ -3549,12 +3554,39 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
       {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
 
+      {groups.length > 1 && (
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 8 }}>
+          <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(true)} disabled={groups.every((g) => g._collapsed)}>▸ ย่อทั้งหมด</Btn>
+          <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(false)} disabled={groups.every((g) => !g._collapsed)}>▾ ขยายทั้งหมด</Btn>
+        </div>
+      )}
       <div style={{ maxHeight: "48vh", overflow: "auto", paddingRight: 4 }}>
         {groups.map((g, gi) => {
           const pq = parseInt(g.parentQty, 10) || 0;
+          const kindTxt = { subassembly: "ซับ", panel: "แผง", package: "แพ็ก" }[g.parentKind || "subassembly"] || "ซับ";
+          if (g._collapsed) {
+            // แถบย่อ: ชนิด · เบอร์ · รายละเอียด · จำนวน · จำนวนลูก — แตะเพื่อขยาย
+            return (
+              <div key={gi} role="button" tabIndex={0} onClick={() => toggleGroup(gi)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleGroup(gi); } }}
+                title="แตะเพื่อขยาย"
+                style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--border)", borderRadius: 10, padding: "9px 12px", marginBottom: 8, background: "var(--surface-2, #f6f8f7)", cursor: "pointer" }}>
+                <span style={{ color: "var(--muted)", width: 14, flexShrink: 0 }}>▸</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", flexShrink: 0 }}>#{gi + 1}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, flexShrink: 0,
+                  background: g.parentKind === "panel" ? "rgba(59,91,219,.1)" : g.parentKind === "package" ? "rgba(245,158,11,.14)" : "rgba(16,185,129,.12)",
+                  color: g.parentKind === "panel" ? "#3b5bdb" : g.parentKind === "package" ? "#b45309" : "var(--accent-dk, #047857)" }}>{kindTxt}</span>
+                <b style={{ fontFamily: "var(--font-mono)", fontSize: 13, flexShrink: 0 }}>{g.parentCode || <span style={{ color: "var(--danger-hi)" }}>(ยังไม่กรอกเบอร์)</span>}</b>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.parentDesc}</span>
+                <span style={{ fontSize: 12.5, flexShrink: 0 }}>× <b>{fmtNum(pq)}</b></span>
+                <span style={{ fontSize: 12, color: "var(--muted)", flexShrink: 0, minWidth: 64, textAlign: "right" }}>{g.children.length ? `ลูก ${fmtNum(g.children.length)} รายการ` : "ไม่มีลูก"}</span>
+              </div>
+            );
+          }
           return (
             <div key={gi} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, marginBottom: 12, background: "var(--surface-2, #f6f8f7)" }}>
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 8 }}>
+                <Btn type="button" variant="ghost" size="sm" title="ย่อ" onClick={() => toggleGroup(gi)} style={{ alignSelf: "flex-end", minWidth: 34, padding: "6px 8px" }}>▾</Btn>
                 <div style={{ flex: "0 0 108px" }}>
                   <Field label={`ชนิด #${gi + 1}`}>
                     <Select value={g.parentKind || "subassembly"} onChange={(e) => setParent(gi, "parentKind", e.target.value)}
