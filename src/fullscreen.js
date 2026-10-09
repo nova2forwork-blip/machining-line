@@ -107,9 +107,31 @@ async function _acquireRearStream() {
     { video: { facingMode: "environment" } },
   ].filter(Boolean);
   for (const c of tries) {
-    try { return await navigator.mediaDevices.getUserMedia(c); } catch { /* ลองแบบถัดไป */ }
+    try { _lastCamError = ""; return await navigator.mediaDevices.getUserMedia(c); }
+    catch (e) {
+      _lastCamError = e?.name || "Error";
+      // ★ ถูกปฏิเสธสิทธิ์ → ลอง constraint อื่นก็ไม่ช่วย (เบราว์เซอร์จำ "ไม่อนุญาต" ไว้) หยุดเลย
+      if (_lastCamError === "NotAllowedError" || _lastCamError === "SecurityError") break;
+    }
   }
   return null;
+}
+
+// ── เหตุผลที่เปิดกล้องไม่ได้ครั้งล่าสุด (ไว้บอกผู้ใช้ว่าต้องแก้ยังไง) ─────────────────
+//   "insecure"   = ไม่ได้เปิดผ่าน https → เบราว์เซอร์ไม่ให้ใช้กล้อง
+//   "unsupported"= เบราว์เซอร์ไม่มี getUserMedia (เช่นเปิดในแอปอื่น/in-app browser)
+//   "denied"     = เคยกด "ไม่อนุญาต" → เบราว์เซอร์จำไว้ จะไม่ถามซ้ำ ต้องไปเปิดในการตั้งค่า
+//   "notfound"   = ไม่พบกล้อง · "busy" = กล้องถูกแอปอื่นใช้อยู่ · "other" = อื่นๆ
+let _lastCamError = "";
+export function getCameraErrorKind() {
+  if (typeof window !== "undefined" && window.isSecureContext === false) return "insecure";
+  if (!navigator.mediaDevices?.getUserMedia) return "unsupported";
+  switch (_lastCamError) {
+    case "NotAllowedError": case "SecurityError": case "PermissionDeniedError": return "denied";
+    case "NotFoundError": case "DevicesNotFoundError": case "OverconstrainedError": return "notfound";
+    case "NotReadableError": case "TrackStartError": case "AbortError": return "busy";
+    default: return "other";
+  }
 }
 
 // คืนสตรีมกล้องที่ใช้ร่วมกัน — ถ้ายังเปิดอยู่คืนตัวเดิม (ไม่เรียก getUserMedia ซ้ำ)
@@ -118,7 +140,7 @@ export async function getSharedCameraStream() {
   if (_acquiring) return _acquiring;                               // กันเรียกซ้อนตอนกำลังเปิด
   _acquiring = (async () => {
     try {
-      if (!navigator.mediaDevices?.getUserMedia) return null;
+      if (!navigator.mediaDevices?.getUserMedia) { _lastCamError = "unsupported"; return null; }
       markCamAsked();
       const s = await _acquireRearStream();
       _sharedStream = s;
