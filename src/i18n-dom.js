@@ -147,7 +147,7 @@ const DICT = {
   "แตะเพื่อย้ายไปฝั่ง ทั้งล็อต": "Tap to move to Whole lot", "แตะเพื่อย้ายไปฝั่ง 1 OF N": "Tap to move to 1 OF N",
   "ชนิดป้าย (ตั้งทุกเบอร์)": "Label type (all parts)",
   "พิมพ์เฉพาะป้ายฝั่ง ทั้งล็อต · ใบเดียว": "Print only the Whole lot labels", "พิมพ์เฉพาะป้ายฝั่ง 1 OF N · รายชิ้น": "Print only the 1 OF N labels",
-  "ค้นหาเบอร์...": "Search part…", "เลือกทั้งหมดที่ค้นเจอ": "Select all matches", "เสร็จ": "Done",
+  "พิมพ์เฉพาะ": "Print only", "ค้นหาเบอร์...": "Search part…", "เลือกทั้งหมดที่ค้นเจอ": "Select all matches", "เสร็จ": "Done",
   "ไม่พบชิ้นงาน (QR) ในตัวกรองนี้": "No pieces (QR) match this filter",
   "ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต": "Filter changed — press “Search QR” to update",
   "ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด": "No lots match — press “Clear” to see all",
