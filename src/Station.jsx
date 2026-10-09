@@ -16,7 +16,7 @@ import {
   reportActiveJob, clearActiveJobNow,
   getStationScanInfo, queueForeignOwners, myQueueCount, addRejected, releaseMdf,
 } from "./supabase.js";
-import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras } from "./fullscreen.js";
+import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras, getCameraErrorKind } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import Icon from "./icons.jsx";
@@ -3075,6 +3075,71 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
   );
 }
 
+// ── วิธีแก้เมื่อเปิดกล้องไม่ได้ ───────────────────────────────────────────────
+// เคสหลัก: ตอนแรกกด "ไม่อนุญาต" → เบราว์เซอร์จำไว้และจะไม่เด้งถามอีก (เว็บขอใหม่เองไม่ได้)
+//   ต้องให้ผู้ใช้ไปเปิดสิทธิ์ในการตั้งค่า แล้วโหลดหน้าใหม่ — จึงบอกขั้นตอนตามอุปกรณ์
+function CameraFixHelp({ kind, t }) {
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
+  const app = isStandalone();
+  const iosChrome = isIOS && /CriOS/.test(ua);            // Chrome บน iPad/iPhone
+  const iosOther = isIOS && /EdgiOS|FxiOS/.test(ua);      // Edge / Firefox บน iPad
+  let steps = [];
+  if (kind === "denied") {
+    if (iosChrome || iosOther) steps = [
+      t("เปิดแอป \"การตั้งค่า\" (Settings) ของ iPad", "Open the iPad Settings app"),
+      t(`ไปที่ แอป → ${iosChrome ? "Chrome" : "เบราว์เซอร์ที่ใช้"} → เปิดสวิตช์ \"กล้อง\" (Camera)`, `Go to Apps → ${iosChrome ? "Chrome" : "your browser"} → turn on Camera`),
+      t("กลับมาที่ Chrome → แตะไอคอนซ้ายของช่องที่อยู่เว็บ → สิทธิ์ (Permissions) → เปิด \"กล้อง\"", "Back in Chrome → tap the icon left of the address bar → Permissions → turn on Camera"),
+      t("ถ้ายังไม่ได้: ปัดปิด Chrome แล้วเปิดใหม่", "Still blocked: swipe Chrome away and reopen it"),
+      t("กด \"โหลดหน้าใหม่\" ด้านล่าง แล้วแตะเปิดกล้องอีกครั้ง (ถ้าเด้งถาม ให้กด \"อนุญาต\")", "Tap Reload below, tap to open the camera, and choose Allow if asked"),
+    ];
+    else if (isIOS && app) steps = [
+      t("เปิดแอป \"การตั้งค่า\" (Settings) ของ iPad", "Open the iPad Settings app"),
+      t("ไปที่ แอป → Safari → กล้อง (Camera) → เลือก \"อนุญาต\" หรือ \"ถาม\"", "Go to Apps → Safari → Camera → choose Allow or Ask"),
+      t("ปิดแอปนี้ (ปัดขึ้นทิ้ง) แล้วเปิดใหม่ → แตะเปิดกล้อง", "Close this app (swipe it away), reopen it, then tap to open the camera"),
+      t("ถ้ายังไม่ได้: ลบไอคอนแอปจากหน้าจอโฮม แล้ว \"เพิ่มไปยังหน้าจอโฮม\" ใหม่จาก Safari", "Still blocked: delete the Home Screen icon and add it again from Safari"),
+    ];
+    else if (isIOS) steps = [
+      t("แตะปุ่ม \"aA\" (หรือไอคอนหน้าเว็บ) ซ้ายของช่องที่อยู่เว็บ", "Tap the \"aA\" (page settings) button next to the address bar"),
+      t("เลือก \"การตั้งค่าเว็บไซต์\" → กล้อง → \"อนุญาต\"", "Choose Website Settings → Camera → Allow"),
+      t("หรือ: การตั้งค่า (Settings) → แอป → Safari → กล้อง → \"อนุญาต\"", "Or: Settings → Apps → Safari → Camera → Allow"),
+      t("กด \"โหลดหน้าใหม่\" ด้านล่าง แล้วแตะเปิดกล้องอีกครั้ง", "Tap Reload below, then tap to open the camera again"),
+    ];
+    else steps = [
+      t("แตะไอคอน 🔒 / ⚙ ซ้ายของช่องที่อยู่เว็บ", "Tap the 🔒 / ⚙ icon left of the address bar"),
+      t("เลือก \"สิทธิ์\" (Permissions) → กล้อง → \"อนุญาต\"", "Choose Permissions → Camera → Allow"),
+      t("กด \"โหลดหน้าใหม่\" ด้านล่าง แล้วแตะเปิดกล้องอีกครั้ง", "Tap Reload below, then tap to open the camera again"),
+    ];
+  } else if (kind === "insecure") steps = [
+    t("เว็บต้องเปิดผ่าน https:// เท่านั้นถึงจะใช้กล้องได้", "The camera only works when the site is opened over https://"),
+    t("ตรวจลิงก์ที่เปิด — ให้ใช้ลิงก์ที่ขึ้นต้นด้วย https://", "Check the link — use the one starting with https://"),
+  ];
+  else if (kind === "busy") steps = [
+    t("กล้องถูกแอปอื่นใช้อยู่ — ปิดแอปกล้อง/วิดีโอคอลอื่นก่อน", "The camera is in use by another app — close camera / video-call apps"),
+    t("แล้วแตะเปิดกล้องอีกครั้ง (ถ้ายังไม่ได้ ให้โหลดหน้าใหม่)", "Then tap to open the camera again (reload if needed)"),
+  ];
+  else if (kind === "notfound") steps = [
+    t("ไม่พบกล้องบนเครื่องนี้ — ใช้ช่องพิมพ์รหัส QR ด้านล่างแทน", "No camera found on this device — use the code box below"),
+  ];
+  else if (kind === "unsupported") steps = [
+    t("เบราว์เซอร์นี้ใช้กล้องไม่ได้ — เปิดลิงก์ด้วย Safari หรือ Chrome โดยตรง", "This browser can't use the camera — open the link directly in Safari or Chrome"),
+  ];
+  if (!steps.length) return null;
+  return (
+    <div className="stn-cam-help" style={{ marginTop: 8, padding: "10px 14px", borderRadius: 12, background: "rgba(59,91,219,.07)", fontSize: 14, lineHeight: 1.55, textAlign: "left" }}>
+      <b>{kind === "denied" ? t("กล้องถูกปิดสิทธิ์ไว้ (เคยกด \"ไม่อนุญาต\") — วิธีเปิด:", "Camera permission is blocked (\"Don't Allow\" was chosen) — to fix:") : t("วิธีแก้:", "How to fix:")}</b>
+      <ol style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+        {steps.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
+      {(kind === "denied" || kind === "busy") && (
+        <button type="button" className="stn-pill" style={{ marginTop: 8 }} onClick={() => window.location.reload()}>
+          {t("↻ โหลดหน้าใหม่", "↻ Reload")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── ถ่ายรูปตอนแพ็ก (ภาพนิ่งจากกล้องที่ใช้ร่วมกัน) ────────────────────────────
 function PackPhotoCapture({ onCapture, onClose, count, t }) {
   const videoRef = useRef(null);
@@ -3515,6 +3580,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
   const doneRef = useRef(false);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState("");
+  const [errKind, setErrKind] = useState("");   // เหตุที่เปิดกล้องไม่ได้ → โชว์วิธีแก้
   const [pickList, setPickList] = useState(null);   // [options] ให้เลือก "โปรเจค" เมื่อเบอร์พาร์ทอยู่หลายโปรเจค
   const [pickFilter, setPickFilter] = useState("");   // ค้นหาโปรเจคในตัวเลือก (กรณีมีหลายสิบโปรเจค)
   const [camOn, setCamOn] = useState(true);    // ★ กด SCAN → กล้องเปิดทันที · ขอสิทธิ์ไปแล้วครั้งเดียว จึงไม่ถามซ้ำ (กด "พักกล้อง" ปิดชั่วคราวได้)
@@ -3585,7 +3651,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
       // ★ ใช้สตรีมกล้องที่ใช้ร่วมกัน — เปิด/ขอสิทธิ์ครั้งเดียว จากนั้นทุกครั้งที่กด SCAN ใช้ตัวเดิม
       const stream = await getSharedCameraStream();
       if (cancelled) return;                       // ปิดหน้าไปก่อน — อย่าแตะกล้อง (สตรีมคงอยู่ให้ครั้งหน้า)
-      if (!stream) { setErr(t("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้", "Can't open camera — type the QR code below instead")); setCamOn(false); return; }
+      if (!stream) { setErrKind(getCameraErrorKind()); setErr(t("เปิดกล้องไม่ได้ — พิมพ์รหัส QR ด้านล่างแทนได้", "Can't open camera — type the QR code below instead")); setCamOn(false); return; }
       streamRef.current = stream;
       // ★ ตรวจว่ากล้องรองรับซูม (hardware zoom) ไหม — ถ้ารองรับให้โชว์แถบซูม
       const track = stream.getVideoTracks?.()[0] || null;
@@ -3767,13 +3833,14 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
           </>
         ) : (
           // กล้องยังไม่เปิด — กดเปิดเอง (ขอสิทธิ์ไปแล้ว จึงไม่ถามซ้ำ)
-          <button type="button" className="stn-cam-open" onClick={() => { setErr(""); setCamOn(true); }}>
+          <button type="button" className="stn-cam-open" onClick={() => { setErr(""); setErrKind(""); setCamOn(true); }}>
             <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
             <span>{t("แตะเพื่อเปิดกล้อง", "Tap to open camera")}</span>
           </button>
         )}
       </div>
       {err && <div className="stn-err" style={{ marginTop: 10 }}>{err}</div>}
+      {err && errKind && errKind !== "other" && <CameraFixHelp kind={errKind} t={t} />}
       <form className="stn-cam-manual" onSubmit={submitManual}>
         <input className="stn-input stn-mono" value={manual} placeholder={t("หรือพิมพ์ QR / เบอร์พาร์ท", "or type QR / part no.")}
           onChange={(e) => setManual(e.target.value)} />
