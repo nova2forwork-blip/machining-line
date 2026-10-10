@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { tsvToRows } from "./tsv.js";
 
 // ─── Import Release จากไฟล์ Excel ("Production Release Report") ────────────
 // รูปแบบไฟล์ต้นแบบ: หัวเอกสารมี "Release Order:" กับ "Project:" แล้วตามด้วย
@@ -178,31 +179,7 @@ export async function parseSubAssemblyExcel(file) {
 // ★ 2026-10-09: รองรับเซลล์ที่ Excel ครอบด้วย "..." (เซลล์มีขึ้นบรรทัดใหม่/แท็บ/เครื่องหมาย " ข้างใน)
 //   เดิม split ตรงๆ ด้วย \n → หัวตาราง 2 บรรทัด ("Sum⏎Quantity") แตกเป็นหลายแถว → หาคอลัมน์ Sum ไม่เจอ
 //   → ตกไปอ่านเป็น "รายชื่อแผง" (ทุกแถวกลายเป็นแผงเปล่า ไม่มี BOM)
-function tsvToRows(text) {
-  const src = String(text || "").replace(/\r\n?/g, "\n");
-  const rows = []; let row = []; let cell = ""; let i = 0; let atStart = true;
-  while (i < src.length) {
-    const ch = src[i];
-    if (atStart && ch === '"') {
-      // เซลล์แบบมีเครื่องหมายคำพูด: อ่านจนเจอ " ปิด ("" = " หนึ่งตัว)
-      let j = i + 1; let val = ""; let closed = false;
-      while (j < src.length) {
-        if (src[j] === '"') {
-          if (src[j + 1] === '"') { val += '"'; j += 2; continue; }
-          closed = true; j++; break;
-        }
-        val += src[j]; j++;
-      }
-      // ปิดแล้วต้องตามด้วยแท็บ/ขึ้นบรรทัด/จบ — ไม่ใช่ = " อยู่กลางข้อความปกติ → อ่านแบบธรรมดา
-      if (closed && (j >= src.length || src[j] === "\t" || src[j] === "\n")) { cell = val; i = j; atStart = false; continue; }
-    }
-    if (ch === "\t") { row.push(cell); cell = ""; atStart = true; i++; continue; }
-    if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; atStart = true; i++; continue; }
-    cell += ch; atStart = false; i++;
-  }
-  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
-  return rows;
-}
+// ★ 2026-10-10 ตรวจรอบ 2: ใช้ตัวแปลงตัวเดียวกับหน้าเพิ่ม Release (tsv.js — มีกัน " ตัวเดียว เช่น 6" กลืนหลายแถว)
 
 // วางจาก Excel: ก็อปทั้งตาราง (รวมแถวหัว Code/Quantity/Sum) แล้ววาง → parse เหมือนตอน import ไฟล์
 export function parseSubAssemblyText(text) {
