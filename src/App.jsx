@@ -3608,6 +3608,15 @@ async function parsePanelBomFile(file) {
   return null;
 }
 
+// ★ 2026-10-10: เรียงกลุ่มหลังนำเข้า/วาง — แผงก่อน → ซับ → แพ็ก · ในชนิดเดียวกันเรียงเบอร์ A-Z (เลขเรียงตามค่า: 2 < 10)
+//   เรียงตอนนำเข้าเท่านั้น (ไม่เรียงสดตอนพิมพ์ กันกลุ่มกระโดดหนีตอนแก้เบอร์) · ลำดับบันทึกยังจัดลูกก่อนแม่ใน doSave เหมือนเดิม
+const ASM_KIND_ORDER = { panel: 0, subassembly: 1, package: 2 };
+function sortAsmGroups(gs) {
+  return [...gs].sort((a, b) =>
+    ((ASM_KIND_ORDER[a.parentKind || "subassembly"] ?? 9) - (ASM_KIND_ORDER[b.parentKind || "subassembly"] ?? 9))
+    || String(a.parentCode || "").localeCompare(String(b.parentCode || ""), "en", { numeric: true, sensitivity: "base" }));
+}
+
 function emptySubAsmChild() { return { code: "", desc: "", len: "", perSet: "" }; }
 function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [] }; }
 
@@ -3676,7 +3685,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       }),
       _collapsed: parsed.groups.length > 3,   // นำเข้าหลายเบอร์ → เริ่มแบบย่อ (เห็นภาพรวม แตะเพื่อขยายดูลูก)
     }));
-    setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+    setGroups(gs.length ? sortAsmGroups(gs) : [emptySubAsmGroup()]);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
     matchProject(parsed.projectName);
     const nPanel = gs.filter((g) => g.parentKind === "panel").length, nSub = gs.filter((g) => g.parentKind === "subassembly").length;
@@ -3711,7 +3720,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       return;
     }
     const gs = parsed.items.map((it) => ({ parentKind: "panel", parentCode: it.code, parentDesc: "", parentLen: "", parentQty: String(it.qty || 1), children: [] }));
-    setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+    setGroups(gs.length ? sortAsmGroups(gs) : [emptySubAsmGroup()]);
     setNote(null);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
     matchProject(parsed.projectName);
@@ -4035,8 +4044,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
 
       {groups.length > 1 && (
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 8 }}>
-          <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(true)} disabled={groups.every((g) => g._collapsed)}>▸ ย่อทั้งหมด</Btn>
-          <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(false)} disabled={groups.every((g) => !g._collapsed)}>▾ ขยายทั้งหมด</Btn>
+          {/* ★ 2026-10-10: ย่อ/ขยายทั้งหมด รวมเป็นปุ่มเดียว — มีกลุ่มที่ขยายอยู่ = ย่อทั้งหมด · ย่อหมดแล้ว = ขยายทั้งหมด */}
+          {groups.some((g) => !g._collapsed)
+            ? <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(true)}>▸ ย่อทั้งหมด</Btn>
+            : <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(false)}>▾ ขยายทั้งหมด</Btn>}
         </div>
       )}
       <div style={{ maxHeight: "48vh", overflow: "auto", paddingRight: 4 }}>
