@@ -56,7 +56,14 @@ export function ConfirmHost() {
     if (!cur) return;
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); done(no()); }
-      else if (e.key === "Enter") { e.preventDefault(); done(isChoice ? primary() : true); }
+      else if (e.key === "Enter") {
+        // ★ 2026-10-10 ตรวจรอบ 3: Enter ค้าง (repeat จากปุ่มที่เปิดการ์ดนี้) = ไม่ยืนยัน · โฟกัสอยู่ที่ปุ่มในการ์ด (เช่น ยกเลิก)
+        //   → ปล่อยให้ปุ่มนั้นคลิกเอง (เดิม Enter บนปุ่มยกเลิก = ยืนยัน)
+        if (e.repeat) { e.preventDefault(); return; }
+        const t = e.target;
+        if (t && t.closest && t.closest(".mls-confirm-card button")) return;
+        e.preventDefault(); done(isChoice ? primary() : true);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
