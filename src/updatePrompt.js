@@ -52,9 +52,12 @@ function readyWhenCached(latest) {
   if (!ctl || typeof MessageChannel === "undefined") { markUpdateReady(); return; }
   let done = false;
   const finish = () => { if (done) return; done = true; markUpdateReady(); };
+  // ★ 2026-10-10 ตรวจรอบ 3: SW ตอบ {ok:false} (เก็บไฟล์ไม่ครบ) → ห้ามขึ้นแถบ (จอ TV รีโหลดได้ตัวเดิม → วนรีโหลด)
+  //   ล้าง _preinstall ให้รอบเช็คถัดไป (ทุก 5 นาที) สั่งเก็บใหม่ · ไม่ตอบเลยเกิน 2 นาที = ขึ้นแถบแบบเดิม
+  const fail = () => { if (done) return; done = true; if (_preinstall === latest) _preinstall = ""; };
   try {
     const ch = new MessageChannel();
-    ch.port1.onmessage = () => finish();
+    ch.port1.onmessage = (ev) => { if (ev && ev.data && ev.data.ok === true) finish(); else fail(); };
     ctl.postMessage({ type: "mls-install-latest" }, [ch.port2]);
   } catch { finish(); return; }
   setTimeout(finish, 120 * 1000);
