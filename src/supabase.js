@@ -392,6 +392,21 @@ export async function setMachineScanMode(machineId, mode) {
   return data || { ok: false, reason: "error" };
 }
 
+// ── ★ 2026-10-10: บัญชีที่ "ล็อกอินได้หลายเครื่องพร้อมกัน" (employees.multi_session · migration-multi-session.sql) ──
+//   คืน { ok, ids:Set } · ยังไม่รัน SQL = { ok:false, missing:true }
+export async function getMultiSessionIds() {
+  try {
+    const { data, error } = await supabase.rpc("authz_list_multi_session", { p_token: authToken() });
+    if (error) return { ok: false, missing: isMissingFnErr(error), ids: new Set() };
+    return { ok: true, ids: new Set(Array.isArray(data) ? data : []) };
+  } catch { return { ok: false, ids: new Set() }; }
+}
+export async function setEmployeeMultiSession(employeeId, on) {
+  const { data, error } = await supabase.rpc("authz_set_employee_multi_session", { p_token: authToken(), p_employee_id: employeeId, p_on: !!on });
+  if (error) { console.warn("authz_set_employee_multi_session error", error); flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── ล้างข้อมูลสแกน (admin) — ราย Release หรือ รายชิ้น · preview=true = นับก่อน ไม่ลบ ──
 export async function clearScansRelease(releaseId, { preview = false } = {}) {
   const { data, error } = await supabase.rpc("authz_clear_scans_release", { p_token: authToken(), p_release_id: releaseId, p_preview: preview });
