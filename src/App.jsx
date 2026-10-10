@@ -9921,6 +9921,19 @@ function MachineScanDetail({ machine, onBack }) {
   const colApi = useRef(null);                          // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มา)
 
   useEffect(() => { listRows("operations", { order: "seq" }).then((r) => setAllOps(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  // ★ 2026-10-10 ตรวจรอบ 3: id เครื่อง — ส่งให้ edit_scan แก้/ลบเฉพาะแถวของเครื่องนี้
+  //   (เดิมหาแถวด้วยป้าย + เวลา ±3 วิ ไม่ดูเครื่อง → ป้ายล็อตที่ 2 เครื่องสแกนใกล้กัน อาจแก้/ลบโดนแถวของอีกเครื่อง)
+  const [machineId, setMachineId] = useState(machine.id || null);
+  useEffect(() => {
+    if (machine.id) { setMachineId(machine.id); return; }
+    let alive = true;
+    listRows("machines", { order: "code" }).then((ms) => {
+      if (!alive) return;
+      const hit = (ms || []).find((m) => (machine.code ? m.code === machine.code : m.name === machine.name));
+      setMachineId(hit?.id || null);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [machine.id, machine.code, machine.name]);
   // ช่วงวันที่ที่แสดงบนแถบเลือกช่วงเวลา (รอบ 20) — สูตรเดียวกับที่ใช้โหลดข้อมูลด้านล่าง
   const shownRange = useMemo(() => (
     rangeMode === "month" ? monthRangeFor(monthValue) : rangeMode === "custom" ? customRangeFor(customFrom, customTo) : rangeFor(preset)
@@ -10216,7 +10229,7 @@ function MachineScanDetail({ machine, onBack }) {
     const doneSteps = [];   // ★ 2026-10-10 ตรวจรอบ 3: ทำทีละขั้น (ไม่มี transaction) → พลาดกลางทาง = บอกว่าอะไรบันทึกไปแล้ว
     try {
       if (isDelete) {
-        await editScan(g.part_unit_id, g.time, { qty: 0 });
+        await editScan(g.part_unit_id, g.time, { qty: 0, machineId });
         auditRecord("delete_scan", "scan_data", g.release_id, { part_no: g.part_no, release_order: g.release_order, machine: mkey, at: g.time, qty: cur });   // ★ รอบ 12 (B14)
       } else {
         // ★ ตรวจรอบ 3: ระดับพาร์ท/ล็อต "ก่อน" รายสแกน — ที่พลาดบ่อยสุดคือ Part No. ชนเบอร์เดิม (unique) → พลาดก่อนแตะสแกน
@@ -10247,6 +10260,7 @@ function MachineScanDetail({ machine, onBack }) {
             matLen: mlChanged ? nMatLen : null,           // Mat. Length = เฉพาะสแกนนี้
             slowReason: slowChanged ? nSlowReason : null, // รายงานการทำงาน = เฉพาะสแกนนี้ (null = ไม่แตะ · '' = ล้าง)
             slowNote: slowChanged ? nSlowNote : null,
+            machineId,                                    // ★ ตรวจรอบ 3: แก้เฉพาะแถวของเครื่องนี้
           });
           doneSteps.push("ข้อมูลสแกน");
         }
@@ -11668,7 +11682,7 @@ function MachinesSummaryPage() {
         <DataTable id="machines-summary" wrapClass="table-wrap" tableClass="data-table"
           rows={matrix.machines} rowKey={(m) => m.code || m.name} sort={sortW} sortAccessors={machineAcc}
           empty={lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}
-          rowProps={(m) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => setViewMachine({ code: m.code, name: m.name }), title: lang === "en" ? "Click to see all scans of this machine" : "แตะเพื่อดูการสแกนทั้งหมดของเครื่องนี้" })}
+          rowProps={(m) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => setViewMachine({ id: m.id || m.machine_id || null, code: m.code, name: m.name }), title: lang === "en" ? "Click to see all scans of this machine" : "แตะเพื่อดูการสแกนทั้งหมดของเครื่องนี้" })}
           columns={[
             { key: "code", header: "รหัสเครื่อง", sortKey: "code", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 700 }, cell: (m) => m.code || "—" },
             { key: "name", header: "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
