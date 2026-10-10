@@ -517,6 +517,26 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     return () => { ok = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine?.id]);
+  // ★ 2026-10-10 ตรวจรอบ 3: ข้ามวัน (เวลาไทย) ระหว่างเปิดหน้าค้าง → ดึง "รายงานวันนี้" ใหม่ (เดิมโหลดตอนเปิดครั้งเดียว ค้างของเมื่อวาน)
+  useEffect(() => {
+    if (!machine?.id) return;
+    const dayKey = () => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date()); } catch { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); } };
+    let last = dayKey();
+    const id = setInterval(() => { const k = dayKey(); if (k !== last) { last = k; loadReports(); } }, 60000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machine?.id]);
+  // ★ 2026-10-10 ตรวจรอบ 3: แท็บอื่นล็อกอิน/ออกด้วยบัญชีอื่น → token ในเครื่องเปลี่ยน แต่จอยังเป็นคนเดิม → รีโหลดให้ตรงกัน (เฉพาะเมื่อ id ต่างจากจอนี้ กันวนรีโหลด)
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== "mls-session" && e.key !== null) return;
+      let sid = null;
+      try { const raw = localStorage.getItem("mls-session") || sessionStorage.getItem("mls-session"); sid = raw ? (JSON.parse(raw)?.id ?? null) : null; } catch { return; }
+      if (String(sid ?? "") !== String(user.id ?? "")) { try { window.location.reload(); } catch { /* ignore */ } }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [user.id]);
   // ขั้นตอนประจำเครื่อง (ตัด/เจาะ/บาก) — ใช้ทำ running number แยกตามขั้นตอน
   // มาจาก login (user.operation) และรีเฟรชจาก machine_day ทุกครั้งที่โหลด (เผื่อ admin แก้)
   const [op, setOp] = useState(user.operation || null);
@@ -531,6 +551,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [loadErr, setLoadErr] = useState("");
 
   const [step, setStep] = useState(STEP.IDLE);
+  const stepRef = useRef(step); stepRef.current = step;   // ★ 2026-10-10 ตรวจรอบ 3: step ล่าสุด (ใช้เช็คหลัง await ใน confirmPart)
   // ★ 2026-10-09: รูปแบบการสแกนของเครื่องนี้ (ตั้งที่ออฟฟิศ › เครื่อง/สถานี) — 'count' = สแกนครั้งเดียวตอนเสร็จ ไม่จับเวลา
   //   (เช่น Drilling-01 นับชิ้นอย่างเดียว) · ค่าเริ่มจากที่จำไว้ในเครื่อง แล้วอัปเดตจาก server
   const [scanMode, setScanMode] = useState(() => (dept === "machine" ? (cachedMachineScanMode(user.machine?.id) || "timed") : "timed"));
@@ -786,7 +807,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   function beginHold(h) {
     setHold(h);
     if (startTsRef.current != null && !pauseRef.current.since) {
-      pauseRef.current = { ...pauseRef.current, since: h.since || Date.now() };
+      // ★ 2026-10-10 ตรวจรอบ 3: หยุดที่เปิดค้างจาก server (เริ่มก่อนงานนี้) → เริ่มนับพักไม่ก่อนเวลาเริ่มงาน (เดิมลบเวลาเดินเครื่องหมด)
+      pauseRef.current = { ...pauseRef.current, since: Math.min(Date.now(), Math.max(h.since || Date.now(), startTsRef.current)) };
       clearInterval(timerRef.current); timerRef.current = null;
       setElapsed(activeSecs());
     }
@@ -873,7 +895,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             if (pz.since && !holdRef.current) { pz.total += Math.max(0, Date.now() - pz.since); pz.since = null; }
             pauseRef.current = pz;
           } else if (holdRef.current && d.startTs) {
-            pauseRef.current = { total: 0, since: holdRef.current.since || Date.now() };
+            pauseRef.current = { total: 0, since: Math.max(holdRef.current.since || Date.now(), d.startTs) };   // ★ 2026-10-10 ตรวจรอบ 3: ไม่ก่อนเวลาเริ่มงาน
           }
           // กล้องไม่เปิดเองตอนกู้ (SCAN → REC)
           const st = d.step === STEP.SCAN ? STEP.REC : d.step;
@@ -1265,7 +1287,17 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   }
 
   // กด OK = บันทึกทันที (ไม่ต้องกด SAVE อีก)
+  // ★ 2026-10-10 ตรวจรอบ 3: กันกด OK ซ้ำระหว่างหน้าต่างถาม (ครั้งที่ 2 ข้ามคำเตือนแล้วบันทึก + ครั้งแรกบันทึกซ้ำอีก)
+  const confirmingRef = useRef(false);
   async function confirmPart() {
+    if (confirmingRef.current || savingRef.current) return;
+    confirmingRef.current = true;
+    try { await confirmPartInner(); } finally { confirmingRef.current = false; }
+  }
+  async function confirmPartInner() {
+    // ★ 2026-10-10 ตรวจรอบ 3: จำรุ่นงาน/ชิ้น/step ก่อนถาม → หลังตอบแล้วงานเปลี่ยน (ยกเลิก/สแกนใหม่) = ไม่บันทึก
+    const gen0 = jobGenRef.current, unit0 = unitRef.current, step0 = stepRef.current;
+    const stillSame = () => gen0 === jobGenRef.current && unit0 === unitRef.current && step0 === stepRef.current;
     if (!status) { flash("เลือกสถานะ In Process หรือ Finished", "warn"); return; }
     // ── กฎเลือกสถานะต่อเครื่อง (กันไว้อีกชั้น เผื่อ draft เก่า/หลุดปุ่ม disabled) ──
     if (statusLock.finishedExists && status === "inprocess") {
@@ -1289,6 +1321,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       confirmText: t("ยืนยัน", "Confirm"),
       cancelText: t("ยกเลิก", "Cancel"),
     }))) return;
+    if (!stillSame()) return;   // ★ 2026-10-10 ตรวจรอบ 3: งานเปลี่ยนระหว่างถาม → ไม่บันทึก
     // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
     //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
     // ★ รอบ 13: เวลาผิดปกติ (เร็ว/ช้ากว่าปกติมาก) → ถามก่อนบันทึก (ครั้งเดียวต่องาน · มีเหตุผลรอบช้าแล้ว = ไม่ถามเรื่องช้า)
@@ -1303,8 +1336,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             `⏱ Unusually long: ${hms(iss.secs)} for ${qty} pc${typ}\n\nDid you forget "Break/Stop"? If this round really was slow, press "Go back" and use REPORT → reason`);
       if (!(await askConfirm({ title: t("ตรวจเวลาก่อนบันทึก", "Check the time"), message: msg, tone: "warn",
         confirmText: t("บันทึกตามนี้", "Save anyway"), cancelText: t("กลับไปตรวจ", "Go back") }))) return;
+      if (!stillSame()) return;   // ★ 2026-10-10 ตรวจรอบ 3: งานเปลี่ยนระหว่างถาม → ไม่บันทึก
     }
-    doSave();
+    await doSave();
   }
 
   // ── บันทึก (เรียกจากปุ่ม OK) ─────────────────────────────────────────────
@@ -1362,6 +1396,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (res.row) { setRows((rs) => [...rs, res.row]); setNewRowId(res.row.id || `${Date.now()}`); anyRow = true; }
       // ขั้นตอนอื่นที่เลือก — มาร์กว่า "ทำแล้ว" ยอด 0 (ไม่บวกซ้ำ) · นับผลไว้แจ้งบนจอ (วินิจฉัยบนแท็บเล็ตได้)
       let coOk = 0, coFail = 0, coReason = "", coParked = 0;
+      // ★ 2026-10-10 ตรวจรอบ 3: token หมดอายุ (เซสชันถูกล้าง) → ไม่ยิงขั้นตอนร่วมต่อ (จะเข้าคิวแบบไม่มีเจ้าของ) · เก็บเข้า "ซิงค์ไม่สำเร็จ" ในชื่อบัญชีนี้แทน
+      let authGone = !!res.authExpired;
+      const coOwner = { emp: user.id, code: user.code || null, name: user.name || null, machine: user.machine?.id || null, machineCode: user.machine?.code || null };
       for (const oid of opIds.slice(1)) {
         const k = String(oid);
         if (!clientIdMapRef.current[k]) clientIdMapRef.current[k] = newClientId();
@@ -1374,7 +1411,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           recordedAt: new Date().toISOString(),
         };
         let cr = null;
-        try { cr = await recordMachineWork(payload); } catch { cr = { ok: false, reason: "exception" }; }
+        if (authGone) cr = { ok: false, reason: "unauthorized" };
+        else { try { cr = await recordMachineWork(payload); } catch { cr = { ok: false, reason: "exception" }; } }
+        if (cr && cr.authExpired) authGone = true;   // ★ 2026-10-10 ตรวจรอบ 3: ตัวนี้เข้าคิวแล้ว แต่ตัวถัดไปหยุด
         if (cr && cr.ok !== false) { coOk++; continue; }
         coFail++; coReason = cr?.reason || coReason;
         // ★ รอบ 11 (B20): ขั้นตอนร่วมที่บันทึกไม่ได้ → เก็บเข้า "ซิงค์ไม่สำเร็จ" + แจ้งออฟฟิศ (เดิมหายเงียบ)
@@ -1384,7 +1423,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           p_material_length: payload.materialLengthMm, p_process_seconds: 0, p_status: status || "inprocess",
           p_client_id: payload.clientId, p_recorded_at: payload.recordedAt, p_operation_id: oid,
         };
-        if (addRejected({ machineWork: mw, release_id: unit.release_id || null, weight: 0, qid: payload.clientId }, cr?.reason || "cotick_failed")) coParked++;
+        if (addRejected({ machineWork: mw, release_id: unit.release_id || null, weight: 0, qid: payload.clientId, owner: coOwner }, cr?.reason || "cotick_failed")) coParked++;
       }
       const savedSteps = 1 + coOk;   // ขั้นตอนหลัก + co-tick ที่สำเร็จ
       if (quick) lastSavedRef.current = { unitId: unit.id, at: Date.now() };   // ★ 2026-10-10 ตรวจรอบ 2: กันป้ายเดิมค้างหน้ากล้อง
@@ -1463,7 +1502,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const asmComplete = !!asmParent && asmParent.bom.every((b) => asmHave(b.child_pm_id) >= b.qty);
 
   // เปลี่ยนขั้นตอน → ล้างสถานะประกอบที่ค้าง (กันสับสนข้ามงาน)
-  useEffect(() => { setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false); }, [op?.id]);
+  const asmOpRestoreRef = useRef(null);   // ★ 2026-10-10 ตรวจรอบ 3: op ที่เพิ่งกู้จาก WIP → ข้ามการล้างรอบนี้ (ไม่งั้นล้าง WIP ที่เพิ่งกู้)
+  useEffect(() => {
+    if (asmOpRestoreRef.current != null && asmOpRestoreRef.current === (op?.id ?? null)) { asmOpRestoreRef.current = null; return; }
+    setAsmParent(null); setAsmChildren([]); asmClientRef.current = null; setPackPhotos([]); setPhotoOpen(false);
+  }, [op?.id]);
 
   // ── กัน "ลูกที่สแกนยังไม่ยืนยัน หายตอน refresh / กดอัปเดต" (โหมดประกอบ/แพ็ก) ──
   //   เก็บ WIP (เบอร์แม่ + ลูกที่สแกนรอบนี้) ลง localStorage แบบสด แล้วกู้กลับตอนเปิดแอปใหม่
@@ -1485,6 +1528,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           setAsmChildren(kids);
           if (w.parentQty != null) setAsmParentQty(Math.max(0, Math.floor(Number(w.parentQty) || 0)));   // กู้ "จำนวนที่จะทำ" + สถานะยืนยันจำนวน (ซับ) — refresh แล้วไม่ต้องตั้งใหม่
           if (w.qtyLocked) setAsmQtyLocked(true);
+          // ★ 2026-10-10 ตรวจรอบ 3: กู้ขั้นตอนที่เลือกไว้ (ถ้ายังเป็นขั้นตอนของสเตชันนี้) — เดิมกู้แล้วบันทึกเป็นขั้นตอนค่าเริ่มต้น
+          const wop = w.opId != null ? machineOps.find((o) => o.id === w.opId) : null;
+          if (wop && wop.id !== op?.id) { asmOpRestoreRef.current = wop.id; setOp(wop); }
           flash(kids.length
             ? t("กู้รายการที่สแกนค้างไว้ (" + kids.length + ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย", "Restored " + kids.length + " scanned item(s) — review & confirm")
             : t("กู้เบอร์แม่ที่ค้างไว้กลับมาแล้ว", "Restored the parent you were working on"), "ok");
@@ -1500,11 +1546,20 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   useEffect(() => {
     if (dept === "machine" || !asmWipLoadedRef.current) return;
     try {
-      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, parentQty: asmParentQty, qtyLocked: asmQtyLocked, savedAt: Date.now() }));
+      if (asmParent) localStorage.setItem(asmWipKey, JSON.stringify({ v: 1, parent: asmParent, children: asmChildren, parentQty: asmParentQty, qtyLocked: asmQtyLocked, opId: op?.id ?? null, savedAt: Date.now() }));   // ★ 2026-10-10 ตรวจรอบ 3: เก็บ opId
       else localStorage.removeItem(asmWipKey);   // ไม่มีเบอร์แม่ (Back / ยืนยันแล้ว) → ล้าง WIP
     } catch { /* เต็ม/ปิด — ข้าม */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asmParent, asmChildren, asmParentQty, asmQtyLocked]);
+  }, [asmParent, asmChildren, asmParentQty, asmQtyLocked, op?.id]);
+  // ★ 2026-10-10 ตรวจรอบ 3: เปิดหน้าค้างไว้ = ยังทำงานอยู่ → ต่ออายุ savedAt ทุก 60 วิ (เดิมงานยาว >6 ชม. รีโหลดแล้วถูกทิ้งเงียบ)
+  useEffect(() => {
+    const bump = (k) => { try { const raw = localStorage.getItem(k); if (!raw) return; const d = JSON.parse(raw); if (d && typeof d === "object") { d.savedAt = Date.now(); localStorage.setItem(k, JSON.stringify(d)); } } catch { /* ignore */ } };
+    const id = setInterval(() => {
+      if (dept === "machine") { if (draftLoadedRef.current && unitRef.current) bump(DKEY); }
+      else if (asmWipLoadedRef.current) bump(asmWipKey);
+    }, 60000);
+    return () => clearInterval(id);
+  }, [dept, DKEY, asmWipKey]);
 
   // แจ้งเตือน "ประกอบเสร็จ" เด้งกลางจอ → หายเองใน 2.6 วิ (หรือแตะ/กดตกลง)
   useEffect(() => {
@@ -2215,6 +2270,8 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (!s) return;
     if (document.querySelector(".mls-confirm-backdrop, .stn-rep-ov")) { errorBeep(); return; }   // มีหน้าต่างถามอยู่ → ไม่สแกนทับ
     if (busy || savingRef.current) { errorBeep(); flash(t("กำลังทำงานอยู่ — รอสักครู่แล้วสแกนใหม่", "Busy — wait a moment and scan again"), "warn"); return; }
+    // ★ 2026-10-10 ตรวจรอบ 3: มีลูกรอยืนยันจำนวนอยู่ → ไม่สแกนทับ (เดิมเปลี่ยนลูกแต่จำนวนที่พิมพ์ค้างของตัวเก่า)
+    if (isAsm && asmPending) { errorBeep(); flash(t("กดใส่/ยกเลิกชิ้นที่สแกนก่อน", "Add or cancel the scanned item first"), "warn"); return; }
     if (isAsm) { warmAudio(); await asmScan(s); return; }
     if (hold) { errorBeep(); flash(holdMsg(), "warn"); return; }
     if (step === STEP.CANCEL) return;
@@ -2916,7 +2973,8 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
     const pqIn = Math.max(1, pq);   // ช่องกรอก (อย่างน้อย 1 · "ไม่ทำเพิ่ม" ใช้ปุ่มด้านล่าง)
     const subName = asmParent.unit?.part_master?.part_name || "";
     const stepBtn = { width: 56, height: 56, borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontSize: 30, fontWeight: 800, cursor: "pointer", lineHeight: 1 };
-    const subBack = () => { if (asmChildren.length > 0 && !window.confirm(t("ทิ้งลูกที่สแกนไว้ แล้วย้อนกลับ?", "Discard scanned children and go back?"))) return; asmReset && asmReset(); };
+    // ★ 2026-10-10 ตรวจรอบ 3: ใช้การ์ดยืนยันในแอป (window.confirm ถูกบล็อกบน kiosk/PWA)
+    const subBack = async () => { if (asmChildren.length > 0 && !(await askConfirm({ message: t("ทิ้งลูกที่สแกนไว้ แล้วย้อนกลับ?", "Discard scanned children and go back?"), tone: "warn", confirmText: t("ทิ้ง", "Discard"), cancelText: t("ยกเลิก", "Cancel") }))) return; asmReset && asmReset(); };
     return (
       <div className="asw">
         <div className="asw-head">
@@ -3010,10 +3068,10 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
   const scannedCount = freeRows.length;
 
   // ยกเลิก/ย้อนกลับ — เคลียร์เบอร์แม่ กลับไปหน้าสแกน · กันเผลอทิ้งที่สแกนค้างไว้รอบนี้
-  const asmBack = () => {
-    if (asmChildren.length > 0 && !window.confirm(
+  const asmBack = async () => {   // ★ 2026-10-10 ตรวจรอบ 3: การ์ดยืนยันในแอปแทน window.confirm (kiosk/PWA บล็อก)
+    if (asmChildren.length > 0 && !(await askConfirm({ message:
       t(`ทิ้ง${childWord}ที่สแกนไว้รอบนี้ ${nc(asmChildren.length)} ชิ้น แล้วย้อนกลับ?`,
-        `Discard ${asmChildren.length} scanned ${childWord}(s) this round and go back?`))) return;
+        `Discard ${asmChildren.length} scanned ${childWord}(s) this round and go back?`), tone: "warn", confirmText: t("ทิ้ง", "Discard"), cancelText: t("ยกเลิก", "Cancel") }))) return;
     asmReset();
   };
 
@@ -3456,7 +3514,7 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
 
         {/* แผงยืนยันต่อชิ้น (โหมดประกอบ) — popup กลางจอ · กรอกจำนวน แล้วกด "ใส่เข้าเบอร์แม่" */}
         {asmPending ? (
-          <PendConfirm pending={asmPending} onAdd={asmAddPending} onCancel={asmCancelPending} busy={busy} t={t} />
+          <PendConfirm key={asmPending.unit_id || asmPending.qr || "p"} pending={asmPending} onAdd={asmAddPending} onCancel={asmCancelPending} busy={busy} t={t} />
         ) : null}
       </div>
     );
@@ -4027,7 +4085,8 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
 function RejectedPanel({ t, onClose, onRetry, onClear }) {
   const items = listRejected();
   const [confirmClear, setConfirmClear] = useState(false);
-  const reasonText = (r) => {
+  // ★ 2026-10-10 ตรวจรอบ 3: เปลี่ยนชื่อ (เดิมชื่อซ้ำ reasonText ระดับไฟล์ → fallback เรียกตัวเอง = วนไม่จบ จอค้าง)
+  const rejReasonText = (r) => {
     if (r === "not_found" || r === "unit_not_found") return t("ไม่พบ QR/ล็อตในระบบ (อาจถูกลบ)", "QR/lot not found (may be deleted)");
     if (r === "qr_cancelled") return t("QR ถูกยกเลิกใน Modify (ออฟฟิศลดจำนวน/ยกเลิก Part)", "QR cancelled by an office Modify");
     if (r === "release_cancelled") return t("Part ถูกยกเลิกใน Modify — ออฟฟิศต้องตัดสิน (สแปร์/คืนงาน)", "Part cancelled by an office Modify");
@@ -4064,7 +4123,7 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
           {items.map((it, i) => (
             <div className="stn-rej-item" key={it.qid || i}>
               <div className="stn-rej-what stn-mono">{whatText(it)}</div>
-              <div className="stn-rej-reason">{reasonText(it.reason)}</div>
+              <div className="stn-rej-reason">{rejReasonText(it.reason)}</div>
               <div className="stn-rej-when stn-mono">{whenText(it)}</div>
             </div>
           ))}
@@ -4154,7 +4213,7 @@ class StationErrorBoundary extends Component {
           <div className="stn-crash-sub">งานที่บันทึกไปแล้วไม่หาย · กด “โหลดใหม่” เพื่อใช้งานต่อ — ถ้ายังไม่หาย แคปข้อความด้านล่างส่งแอดมิน</div>
           <pre className="stn-crash-pre">{String(this.state.err?.message || this.state.err)}{this.state.stack ? "\n\n" + this.state.stack.split("\n").slice(0, 6).join("\n") : ""}</pre>
           <div className="stn-crash-btns">
-            <button className="stn-crash-reload" onClick={stnHardReload}>โหลดใหม่ (ล้างแคช)</button>
+            <button className="stn-crash-reload" onClick={() => stnHardReload(false)}>{/* ★ 2026-10-10 ตรวจรอบ 3: เดิมส่ง event เป็น auto=true → ไม่ล้างแคช */}โหลดใหม่ (ล้างแคช)</button>
             {this.props.onLogout ? <button className="stn-crash-logout" onClick={() => { try { this.props.onLogout(); } catch { stnHardReload(); } }}>ออกจากระบบ</button> : null}
           </div>
         </div>
