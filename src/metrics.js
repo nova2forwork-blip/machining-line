@@ -9,8 +9,6 @@
 //   - per-unit  = 10 กก. (น้ำหนักวัสดุจริง — ถูกต้องสำหรับวัดผลผลิต)
 // รายงานจะเชื่อถือได้ก็ต่อเมื่อเลือกวิธีนับให้ตรงกับคำถาม แล้วแปะป้ายให้ชัด
 
-// ดึงน้ำหนักพร้อม fallback: ค่าที่ปล่อยลงชิ้น → ค่าเริ่มต้นจาก Part Master → 0
-const w = (value, fallback) => Number(value ?? fallback ?? 0);
 // จำนวนชิ้นของ log แต่ละแถว: หน้าเครื่อง = quantity (ล็อต), หน้าสำนักงาน = 1 (สแกน 1 ครั้ง = 1 ชิ้น)
 const q = (l) => Number(l?.quantity ?? 1) || 0;
 // เวลาเดินเครื่อง (วินาที) ของ log แต่ละแถว — มีเฉพาะงานหน้าเครื่อง (report_logs v3)
@@ -55,24 +53,6 @@ export function processedWeight(logs) {
   );
 }
 
-// ── 2) per-unit จาก scan_logs: น้ำหนักวัสดุจริง (นับแต่ละชิ้นครั้งเดียว) ───
-// ใช้เมื่อข้อมูลต้นทางเป็น scan_logs แต่ต้องการน้ำหนักของ "ของ" ไม่ใช่ของ "งาน"
-// (เช่น ในหน้า Report ที่กรองตามช่วงเวลา แต่อยากรู้ว่ามีวัสดุจริงกี่ กก.)
-//   ★ รอบ 11: ต่อป้าย = รวมน้ำหนักต่อขั้นตอน แล้วเอาขั้นตอนที่มากสุด (เดิมเอาแถวแรก = แถว co-tick น้ำหนัก 0
-//     → ชิ้นที่ติ๊กหลายขั้นตอนได้ 0 กก. · ป้ายล็อตสแกนหลายรอบได้แค่รอบล่าสุด)
-export function materialWeight(logs) {
-  const byUnit = new Map();
-  for (const l of logs || []) {
-    if (!l.part_unit_id || q(l) <= 0) continue;
-    const op = l.operation?.name || "?";
-    const m = byUnit.get(l.part_unit_id) || new Map();
-    m.set(op, (m.get(op) || 0) + logWeight(l));
-    byUnit.set(l.part_unit_id, m);
-  }
-  let sum = 0;
-  for (const m of byUnit.values()) sum += Math.max(0, ...m.values());
-  return sum;
-}
 
 // จำนวนชิ้น (distinct) ที่มีความเคลื่อนไหวในชุด logs นี้
 export function distinctUnitCount(logs) {
@@ -80,12 +60,6 @@ export function distinctUnitCount(logs) {
 }
 
 // ── 3) per-unit จาก part_units โดยตรง (Projects/Parts/Finished ใช้) ───────
-// นับแต่ละชิ้นครั้งเดียวเสมอ — onlyFinished=true จะนับเฉพาะชิ้นที่ทำครบทุกขั้นตอน
-export function unitsWeight(units, onlyFinished = false) {
-  return (units || [])
-    .filter((u) => !onlyFinished || u.status === "finished")
-    .reduce((sum, u) => sum + w(u.weight, u.part_master?.unit_weight), 0);
-}
 
 // ── เรียงชื่อขั้นตอนตาม "ลำดับกระบวนการจริง" (seq) ไม่ใช่ตามตัวอักษร ─────────
 // ปัญหาเดิม: Array.from(set).sort() เรียงตาม Unicode ของชื่อไทย → กัด·ตัด·บาก·เจาะ
@@ -296,24 +270,6 @@ export function finishedPiecesV4(rows) {
 }
 
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────
-// ต้องมีคอลัมน์ part_units.steps_done (ดู migration) — ชิ้น 10 กก. ทำ 2/4 ขั้น
-// นับเป็นงานคืบหน้า 5 กก. ให้ภาพความคืบหน้าที่ละเอียดกว่าการนับหัวชิ้น
-export function weightedProgress(units) {
-  let done = 0;
-  let material = 0;
-  for (const u of units || []) {
-    const total = (u.part_master?.routing || []).length;
-    const unitW = w(u.weight, u.part_master?.unit_weight);
-    material += unitW;
-    if (total > 0) {
-      const steps = Number(u.steps_done ?? (u.status === "finished" ? total : 0));
-      done += unitW * Math.min(steps / total, 1);
-    } else if (u.status === "finished") {
-      done += unitW;
-    }
-  }
-  return { done, material, pct: material > 0 ? (done / material) * 100 : 0 };
-}
 
 // ── 6) machine × day matrix (กก./จำนวน/เวลา ต่อวัน ต่อเครื่อง) ─────────────
 // ตอบคำถาม "เครื่องนี้ทำได้กี่กิโล/กี่ชิ้น/ใช้เวลาเท่าไร ต่อวัน"
