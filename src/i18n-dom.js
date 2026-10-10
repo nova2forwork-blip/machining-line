@@ -682,8 +682,17 @@ const origAttr = new Map();   // el -> { placeholder?, title? }
 const touched = new Set();    // node/el ที่แปลไปแล้ว (ไว้ restore ตอนกลับเป็นไทย)
 let observer = null;
 let busy = false;             // กัน observer วนซ้ำระหว่างที่เราแก้เอง
+// ★ 2026-10-10 ตรวจรอบ 3: ค่าที่ "เราเขียนลงไปเอง" ต่อ node/attr — ถ้าค่าปัจจุบันไม่ตรง = React เขียนข้อความใหม่ทับแล้ว
+//   → ต้นฉบับเดิมเก่าไปแล้ว (เดิม EN→TH เขียนต้นฉบับเก่าทับข้อความใหม่ของ React)
+const writtenText = new WeakMap();   // textNode -> ค่าที่เราเขียน
+const writtenAttr = new WeakMap();   // el -> { attr: ค่าที่เราเขียน }
+const ATTRS = ["placeholder", "title", "aria-label"];   // ★ รอบ 13: + aria-label (โปรแกรมอ่านหน้าจอ)
 
 function translateTextNode(n) {
+  // ★ 2026-10-10 ตรวจรอบ 3: React เปลี่ยนข้อความหลังเราแปล → ทิ้งต้นฉบับเก่า (ค่าปัจจุบันคือของใหม่)
+  if (writtenText.has(n) && n.nodeValue !== writtenText.get(n)) {
+    origText.delete(n); touched.delete(n); writtenText.delete(n);
+  }
   const raw = n.nodeValue; if (!raw) return;
   const trimmed = raw.trim();
   if (!trimmed || !THAI.test(trimmed)) return;   // ไม่มีไทย = ข้าม (แปลแล้ว/ตัวเลข)
@@ -691,15 +700,36 @@ function translateTextNode(n) {
   if (!origText.has(n)) { origText.set(n, raw); touched.add(n); }
   const lead = raw.match(/^\s*/)[0], trail = raw.match(/\s*$/)[0];
   n.nodeValue = lead + en + trail;
+  writtenText.set(n, n.nodeValue);
 }
 function translateAttrs(el) {
-  for (const a of ["placeholder", "title", "aria-label"]) {   // ★ รอบ 13: + aria-label (โปรแกรมอ่านหน้าจอ)
-    const v = el.getAttribute && el.getAttribute(a);
+  if (!el.getAttribute) return;
+  for (const a of ATTRS) {
+    const v = el.getAttribute(a);
+    const cur = origAttr.get(el) || {};
+    const wr = writtenAttr.get(el);
+    // ★ 2026-10-10 ตรวจรอบ 3: attr ถูกเขียนใหม่ (ไม่ใช่ค่าที่เราเขียน) → ต้นฉบับเดิมใช้ไม่ได้แล้ว
+    if (cur[a] != null && (!wr || v !== wr[a])) {
+      delete cur[a]; if (wr) delete wr[a];
+      if (!Object.keys(cur).length) { origAttr.delete(el); touched.delete(el); }
+    }
     if (!v || !THAI.test(v)) continue;
     const en = toEN(v.trim()); if (en == null) continue;
-    const cur = origAttr.get(el) || {};
     if (cur[a] == null) { cur[a] = v; origAttr.set(el, cur); touched.add(el); }
     el.setAttribute(a, en);
+    const w2 = writtenAttr.get(el) || {}; w2[a] = en; writtenAttr.set(el, w2);
+  }
+}
+// ★ 2026-10-10 ตรวจรอบ 3: ตัด node ที่หลุดจาก DOM แล้วออกจาก origText/origAttr/touched (เดิมค้างตลอด = หน่วยความจำรั่ว)
+//   เรียกทุกชุดของ observer แต่จำกัดไม่เกิน 1 ครั้ง/5 วิ (จอ TV นาฬิกาเดินทุกวินาที)
+let lastPrune = 0;
+function pruneDetached(force) {
+  const now = Date.now();
+  if (!force && now - lastPrune < 5000) return;
+  lastPrune = now;
+  for (const node of touched) {
+    if (node.isConnected) continue;
+    touched.delete(node); origText.delete(node); origAttr.delete(node);
   }
 }
 function walk(root) {
@@ -713,8 +743,15 @@ function walk(root) {
 }
 function restoreAll() {
   for (const node of touched) {
-    if (node.nodeType === 3) { if (origText.has(node)) node.nodeValue = origText.get(node); }
-    else { const a = origAttr.get(node); if (a) { for (const k in a) node.setAttribute(k, a[k]); } }
+    // ★ 2026-10-10 ตรวจรอบ 3: คืนต้นฉบับเฉพาะเมื่อค่าปัจจุบันยังเป็นค่าที่เราเขียน (React เขียนใหม่แล้ว = คงของ React)
+    if (node.nodeType === 3) {
+      if (origText.has(node) && node.nodeValue === writtenText.get(node)) node.nodeValue = origText.get(node);
+      writtenText.delete(node);
+    } else {
+      const a = origAttr.get(node), wr = writtenAttr.get(node) || {};
+      if (a) { for (const k in a) if (node.getAttribute(k) === wr[k]) node.setAttribute(k, a[k]); }
+      writtenAttr.delete(node);
+    }
   }
   origText.clear(); origAttr.clear(); touched.clear();
 }
@@ -733,11 +770,13 @@ function ensureObserver() {
     try {
       for (const m of muts) {
         if (m.type === "characterData") translateTextNode(m.target);
+        else if (m.type === "attributes") translateAttrs(m.target);   // ★ 2026-10-10 ตรวจรอบ 3: React เปลี่ยน title/placeholder ภายหลัง
         else m.addedNodes && m.addedNodes.forEach((nd) => walk(nd));
       }
+      pruneDetached(false);
     } finally { busy = false; }
   });
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
 }
 
 export function setLang(l) {
