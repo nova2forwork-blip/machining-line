@@ -456,6 +456,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const t = (th, en) => (lang === "en" ? en : th);
   const machine = user.machine; // { id, code, name }
   const DKEY = draftKeyFor(user.id);   // ★ รอบ 11: draft งานค้าง "ของบัญชีนี้"
+  // ★ 2026-10-10 ตรวจรอบ 2: จำ "ความยาววัสดุ + ขั้นตอนที่เลือก" ของบัญชีนี้ไว้ในเครื่อง — กดอัปเดต/รีโหลดแล้วไม่ต้องกรอก/เลือกใหม่
+  //   (เดิมรีโหลดตอนว่าง = ความยาวหาย + ขั้นตอนกลับไปติ๊กทุกอัน → ถ้าไม่ทันสังเกต บันทึกขั้นตอนที่ไม่ได้ทำเพิ่ม)
+  const PKEY = `mls-stn-pref:${user.id || "x"}`;
+  const savedPref = useMemo(() => { try { return JSON.parse(localStorage.getItem(PKEY) || "{}") || {}; } catch { return {}; } }, [PKEY]);
   // ── รายงานปัญหาหน้าเครื่อง ──
   const [reportOpen, setReportOpen] = useState(null);   // null | 'stop' | 'work'
   const [slowArmed, setSlowArmed] = useState(null);     // { reason, note } — แนบกับสแกนถัดไป (ค้างจนกดยกเลิก)
@@ -548,9 +552,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const [modeUnknown, setModeUnknown] = useState(false);   // ออฟไลน์ + ไม่รู้โหมดของเครื่องนี้ (ยังไม่เคยเปิดตอนมีเน็ต)
   useEffect(() => { if (scanMode === "count") setModeUnknown(false); }, [scanMode]);
   useEffect(() => { const on = () => setModeUnknown(false); window.addEventListener("online", on); return () => window.removeEventListener("online", on); }, []);
-  const quick = dept === "machine" && scanMode === "count";
+  // ★ 2026-10-10 ตรวจรอบ 2: งานที่เปิดอยู่ทำต่อ "ในโหมดที่เริ่มไว้" (jobMode) — ออฟฟิศสลับโหมด/ค่าจาก server มาทีหลัง ระหว่างทำงาน
+  //   เดิมสลับกลางงาน: งานจับเวลาที่เดินอยู่ถูกบันทึกเป็น 0 วิ + ความยาวหาย หรือปิดกล้องแล้วงานหายเงียบๆ · โหมดใหม่มีผลที่หน้าว่าง
+  const [jobMode, setJobMode] = useState(null);
+  const quick = dept === "machine" && ((step !== STEP.IDLE && jobMode) ? jobMode : scanMode) === "count";
   const quickRef = useRef(quick); quickRef.current = quick;
-  const [materialLen, setMaterialLen] = useState("");
+  const lastSavedRef = useRef(null);   // ★ 2026-10-10 ตรวจรอบ 2: ป้ายที่เพิ่งบันทึก (โหมดสแกนครั้งเดียว) — กันป้ายเดิมค้างหน้ากล้องแล้วบันทึกซ้ำ
+  const [materialLen, setMaterialLen] = useState(() => (dept === "machine" && typeof savedPref.len === "string" ? savedPref.len : ""));
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(null);
   const startTsRef = useRef(null);   // เวลาเริ่มจริง (ms) — คำนวณเวลาเดินเครื่องแบบไม่ดริฟต์ + กู้ต่อได้ตอนโหลดใหม่
@@ -626,7 +634,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         .sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));   // ★ แสดงเฉพาะ caps ของเครื่องนี้ + เรียงตามลำดับ (seq) ที่ตั้งไว้
       setMachineOps(ops);
       // ★ หน้าเครื่อง: เลือก "ทุกขั้นตอนที่เครื่องทำได้" ไว้ก่อน (CNC ทำหลายขั้นในครั้งเดียว) — คนงานกดออกเหลือเท่าที่ทำจริง · คงการกดออกไว้ (ไม่รีเซ็ตทุกครั้งที่โหลด)
-      if (dept === "machine") setOpSel((prev) => (prev && prev.size ? prev : new Set(ops.map((o) => o.id))));
+      if (dept === "machine") setOpSel((prev) => {
+        if (prev && prev.size) return prev;
+        const keep = Array.isArray(savedPref.sel) ? savedPref.sel.filter((id) => ops.some((o) => o.id === id)) : [];
+        return new Set(keep.length ? keep : ops.map((o) => o.id));   // ★ 2026-10-10 ตรวจรอบ 2: ที่เลือกไว้ก่อนรีโหลด (ที่ยังมีอยู่)
+      });
       setOp((cur) => {
         if (cur && ops.some((o) => o.id === cur.id)) return cur;
         if (ops.length === 1) return ops[0];
@@ -814,10 +826,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         startTs: startTsRef.current,        // เวลาเริ่มจริง (สแกนรอบ 1) → คำนวณเวลาเดินเครื่องต่อได้
         pause: pauseRef.current,            // ★ รอบ 13: ช่วงพัก/หยุดของงานนี้ (ไม่นับเป็นเวลาเดินเครื่อง)
         clientIdMap: clientIdMapRef.current || null,   // ★ client_id ต่อขั้นตอน — กู้กลับได้ ถ้ารีโหลดหลังกด OK แล้วตอบกลับหาย (กัน DB บันทึกซ้ำ)
+        mode: jobMode || scanMode,          // ★ 2026-10-10 ตรวจรอบ 2: โหมดของงานนี้ (กู้แล้วทำต่อแบบเดิม)
         savedAt: Date.now(),
       }));
     } catch { /* localStorage เต็ม/ปิด — ข้าม (ไม่ทำแอปพัง) */ }
-  }, [step, materialLen, qty, status, statusLock, unit, op, progress, dupCount, opSel, hold]);
+  }, [step, materialLen, qty, status, statusLock, unit, op, progress, dupCount, opSel, hold, jobMode]);
+  useEffect(() => {
+    if (dept !== "machine" || !draftLoadedRef.current) return;
+    try { localStorage.setItem(PKEY, JSON.stringify({ len: materialLen || "", sel: [...opSel] })); } catch { /* ignore */ }
+  }, [materialLen, opSel, dept, PKEY]);
 
   // กู้ draft ครั้งเดียวตอนเปิด (ก่อนเขียนทับ) — ถ้ามีงานค้างจากรอบก่อน
   useEffect(() => {
@@ -848,6 +865,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
           clientIdRef.current = d.clientId ?? null;
           if (d.clientIdMap && typeof d.clientIdMap === "object") clientIdMapRef.current = d.clientIdMap;   // ★ กู้ client_id ต่อขั้นตอน → กด OK ซ้ำหลังรีโหลด = ตัวเดิม → DB dedup ไม่บันทึกซ้ำ
           unitRef.current = d.unit ?? null;
+          setJobMode(d.mode === "count" || d.mode === "timed" ? d.mode : (d.startTs ? "timed" : null));   // ★ 2026-10-10 ตรวจรอบ 2
           if (d.startTs) startTsRef.current = d.startTs;   // เวลาเดินเครื่องต่อจากของเดิม (รวมช่วงรีโหลด)
           // ★ รอบ 13: ช่วงพัก — ยังพักอยู่ (hold ในเครื่อง) = นาฬิกาหยุดต่อ · ไม่พักแล้ว = ปิดช่วงพักตอนนี้แล้วเดินต่อ
           if (d.pause && typeof d.pause === "object") {
@@ -929,6 +947,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     stopTimer(); setElapsed(0); setUnit(null); setProgress(null); setDupCount(0); setQty(0);
     if (!keepLen) setMaterialLen("");   // หลังบันทึกให้คงความยาววัสดุไว้ (งานชุดเดียวกันมักยาวเท่ากัน)
     setStatus(null); setStatusLock({ finishedExists: false, inProcessExists: false }); setStep(STEP.IDLE);
+    setJobMode(null);
     clientIdRef.current = null;          // จบชิ้นนี้แล้ว → ครั้งหน้าเป็น client_id ใหม่
     clientIdMapRef.current = null;       // ★ ล้าง client_id ต่อขั้นตอนด้วย (ชิ้นใหม่ = ชุดใหม่)
     unitRef.current = null;              // จบงาน → รอบหน้าสแกนรอบ 1 ใหม่
@@ -1000,6 +1019,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     clientIdRef.current = null; clientIdMapRef.current = null;
     stopTimer(); setElapsed(0);
     setUnit(null); unitRef.current = null; setProgress(null); setDupCount(0); setQty(0); setStatus(null);
+    setJobMode(dept === "machine" ? scanMode : null);   // ★ 2026-10-10 ตรวจรอบ 2: จำโหมดของงานนี้
     setStep(STEP.SCAN);
     return true;
   }
@@ -1101,8 +1121,23 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   //   รอบ 1 = เริ่มจับเวลา · รอบ 2 = ขั้นตอนสแกนเดิม (ใส่จำนวน · สถานะ · OK) เวลาเดินจนกด OK
   async function showScannedUnit(u, gen = jobGenRef.current) {
     if (gen !== jobGenRef.current) return false;   // ★ B23: สแกนนี้เริ่มก่อนกดยกเลิก → ทิ้ง
+    // ★ 2026-10-10 ตรวจรอบ 2: พัก/เครื่องหยุดอยู่ แต่กล้องยังเปิดค้างใต้แผ่นบัง → ป้ายที่ผ่านหน้ากล้องเริ่มจับเวลาเอง (ช่วงพักถูกนับเป็นเวลาทำงาน)
+    if (holdRef.current) { errorBeep(); flash(holdMsg(), "warn"); return false; }
     // ★ โหมดสแกนครั้งเดียว: สแกน = ทำเสร็จแล้ว → ตรวจเหมือนเดิม → หน้าจำนวน + สถานะ → OK (ไม่จับเวลา)
     if (quickRef.current) {
+      // ★ 2026-10-10 ตรวจรอบ 2: ป้ายเดียวกับที่เพิ่งบันทึก (ภายใน 90 วิ) — มักเป็นป้ายเดิมที่ยังค้างหน้ากล้อง → ถามก่อน (กันนับซ้ำ)
+      const ls = lastSavedRef.current;
+      if (ls && u && ls.unitId === u.id && Date.now() - ls.at < 90 * 1000) {
+        errorBeep();
+        const secs = Math.max(1, Math.round((Date.now() - ls.at) / 1000));
+        const again = await askConfirm({
+          message: t(`ป้ายนี้ (${u.part_master?.part_no || ""}) เพิ่งบันทึกไปเมื่อ ${secs} วินาทีที่แล้ว — ทำชิ้นนี้เพิ่มอีกจริงไหม?\n\nถ้าป้ายเดิมยังอยู่หน้ากล้อง กด "ไม่ใช่"`,
+            `This label (${u.part_master?.part_no || ""}) was saved ${secs} s ago — really add it again?\n\nIf the old label is still in front of the camera, press "No"`),
+          tone: "warn", confirmText: t("บันทึกเพิ่ม", "Add again"), cancelText: t("ไม่ใช่ (ปิดกล้อง)", "No (close camera)"),
+        });
+        if (gen !== jobGenRef.current) return false;
+        if (!again) { resetAll(true); return false; }
+      }
       if (!(await loadScannedUnit(u))) return false;
       if (gen !== jobGenRef.current) return false;
       stopTimer(); setElapsed(0);
@@ -1352,6 +1387,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         if (addRejected({ machineWork: mw, release_id: unit.release_id || null, weight: 0, qid: payload.clientId }, cr?.reason || "cotick_failed")) coParked++;
       }
       const savedSteps = 1 + coOk;   // ขั้นตอนหลัก + co-tick ที่สำเร็จ
+      if (quick) lastSavedRef.current = { unitId: unit.id, at: Date.now() };   // ★ 2026-10-10 ตรวจรอบ 2: กันป้ายเดิมค้างหน้ากล้อง
       setStorageFull(false);   // บันทึก/เข้าคิวได้แล้ว = ที่เก็บไม่เต็มแล้ว
       // ★ รอบ 13: แนบเหตุผล "รอบช้า" ได้ทั้งออนไลน์ (record id) และออฟไลน์ (client_id → ส่งหลังงานซิงค์) · ค้างไว้ต่อจนกดยกเลิก
       if (slowArmed) {
@@ -3759,7 +3795,7 @@ function CameraScan({ onDecoded, onManualEntry, onPickUnit, busy, onClose, locke
       if (!v) return;                              // ไม่ stop สตรีม — เก็บไว้ใช้ครั้งหน้า
       v.srcObject = stream;
       try { await v.play(); } catch { /* ignore */ }
-      loop();
+      loop().catch(() => { /* ★ 2026-10-10 ตรวจรอบ 2: โหลดตัวอ่าน QR ไม่ขึ้น (เน็ตกระตุก) — ไม่ปล่อยเป็น error ลอย (ตัวกู้แอปจะล้างแคชทิ้ง) */ });
     }
     // วาดกรอบขาวรอบ QR ที่เจอ (ตามพิกัดมุมจาก jsQR) — พิกัดตรงกับภาพกล้องเพราะ
     // overlay ใช้ object-fit: cover เหมือน <video> (ดู .stn-cam-overlay ใน CSS)
@@ -4079,8 +4115,13 @@ function StationUpdateBanner() {
 
 // ── กันจอขาวหน้าสเตชัน — จับ error ตอนเรนเดอร์ → โชว์การ์ด (ธีมมืด) + ปุ่มโหลดใหม่/ออกจากระบบ ──
 //   ถ้าเป็น error จาก chunk ค้าง (deploy ใหม่ทับของเก่า) กู้เอง 1 ครั้ง (เหมือน auto-heal ใน main.jsx)
-function stnHardReload() {
+function stnHardReload(auto = false) {
   const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+  // ★ 2026-10-10 ตรวจรอบ 2: กู้อัตโนมัติ + มีชุดแอปครบในแคช (sw รุ่นใหม่) → แค่โหลดใหม่ ไม่ล้าง (กันหน้าเครื่องเปิดออฟไลน์ไม่ได้)
+  if (auto && !(typeof navigator !== "undefined" && navigator.onLine === false) && window.caches && caches.match) {
+    caches.match("/__mls-shell-meta").then((m) => { if (m) reload(); else stnHardReload(false); }, () => stnHardReload(false));
+    return;
+  }
   // ★ ออฟไลน์: ห้ามล้างแคช/ถอน service worker (จะทำให้เปิดแอปไม่ได้เลยจนกว่าจะออนไลน์)
   //   — โหลดใหม่จาก app shell ที่แคชไว้เฉยๆ · การล้างแคชช่วยได้เฉพาะตอนออนไลน์ (ดึงเวอร์ชันใหม่ได้)
   if (typeof navigator !== "undefined" && navigator.onLine === false) { reload(); return; }
@@ -4101,7 +4142,7 @@ class StationErrorBoundary extends Component {
       let healed = false;
       try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
       // ★ ออฟไลน์: ไม่ auto-heal (โหลดใหม่ตอนออฟไลน์ไม่ช่วย + เสี่ยงวน) → โชว์การ์ด crash ให้เลือกเอง
-      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(); }
+      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } stnHardReload(true); }
     }
   }
   render() {
@@ -4134,11 +4175,17 @@ export default function StationApp({ dept = "machine" } = {}) {
     // ★ รอบ 11: ออนไลน์ → ลองส่งงานค้างก่อน · งานค้างผูกกับบัญชีนี้ (A1) · มีงานกำลังทำ (B22) → บอกด้วย
     if (typeof navigator === "undefined" || navigator.onLine !== false) { try { await flushScanQueue(); } catch { /* ignore */ } }
     const pending = myQueueCount() + rejectedQueueCount();
-    let running = false;
-    try { const d = JSON.parse(localStorage.getItem(draftKeyFor(user?.id)) || "null"); running = !!(d && d.step && d.step !== "idle"); } catch { /* ignore */ }
+    let running = false, runningCount = false;
+    try {
+      const d = JSON.parse(localStorage.getItem(draftKeyFor(user?.id)) || "null");
+      running = !!(d && d.step && d.step !== "idle" && d.unit);
+      runningCount = running && d.mode === "count";   // ★ 2026-10-10 ตรวจรอบ 2: โหมดสแกนครั้งเดียวไม่มีนาฬิกา/ปุ่มยกเลิกงาน → ข้อความต่างกัน
+    } catch { /* ignore */ }
     const parts = [];
     if (pending > 0) parts.push(t(`ยังมีงานค้างซิงค์ ${nc(pending)} ชิ้น — จะซิงค์อัตโนมัติเมื่อบัญชีนี้ล็อกอินอีกครั้ง (ข้อมูลไม่หาย)`, `${pending} job(s) still waiting to sync — they'll sync when this account logs in again`));
-    if (running) parts.push(t("มีงานที่กำลังทำอยู่ (ยังไม่กด OK) — เก็บไว้ให้บัญชีนี้ทำต่อ · เวลาเดินเครื่องยังนับต่อ ถ้าไม่ได้ทำต่อให้กดยกเลิกงานก่อนออก", "A job is in progress (OK not pressed) — kept for this account · its timer keeps running; cancel the job first if you won't continue"));
+    if (running) parts.push(runningCount
+      ? t("มีชิ้นที่สแกนแล้วแต่ยังไม่กด OK — เก็บไว้ให้บัญชีนี้กด OK ต่อ · ถ้าไม่บันทึกชิ้นนี้ให้กด ✕ ยกเลิก ก่อนออก", "A scanned piece hasn't been saved (OK not pressed) — kept for this account · press ✕ Cancel first if you won't save it")
+      : t("มีงานที่กำลังทำอยู่ (ยังไม่กด OK) — เก็บไว้ให้บัญชีนี้ทำต่อ · เวลาเดินเครื่องยังนับต่อ ถ้าไม่ได้ทำต่อให้กดยกเลิกงานก่อนออก", "A job is in progress (OK not pressed) — kept for this account · its timer keeps running; cancel the job first if you won't continue"));
     const msg = parts.length ? parts.join("\n\n") + "\n\n" + t("ออกจากระบบและปิดแอป?", "Log out and close?") : t("ออกจากระบบและปิดแอป?", "Log out and close?");
     if (!(await askConfirm({ message: msg, tone: "warn", confirmText: "ออกจากระบบ", cancelText: "อยู่ต่อ" }))) return;   // แจ้งเตือนก่อนล็อกเอาต์
     try { await clearActiveJobNow(); } catch { /* ignore */ }   // ★ ล้าง "กำลังทำงาน" ฝั่งออฟฟิศก่อน token หมด
