@@ -20,7 +20,7 @@ import {
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
   importBackupExtra, getPartStationProgress,
-  getStationStatusList, appBuildId, reportSummary, setMachineScanMode,
+  getStationStatusList, appBuildId, reportSummary, setMachineScanMode, prefetchAllScanModes,
 } from "./supabase.js";
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
@@ -1137,6 +1137,9 @@ function Login({ onLogin }) {
   // ★ รอบ 11: ข้อความจากหน้าเครื่อง (ถูกเตะออก / เซสชันหมดอายุ) ที่ฝากไว้ก่อนเด้งมาหน้านี้
   const [notice] = useState(() => { try { const m = sessionStorage.getItem("mls-login-notice"); if (m) sessionStorage.removeItem("mls-login-notice"); return m || ""; } catch { return ""; } });
   const [busy, setBusy] = useState(false);
+  // ★ 2026-10-10: เปิดหน้าล็อกอินตอนมีเน็ต → จำ "รูปแบบการสแกน" ของทุกเครื่องไว้ในแท็บเล็ต
+  //   (ล็อกอินออฟไลน์ทีหลัง หน้าเครื่องจะได้หน้าตาเหมือนตอนออนไลน์)
+  useEffect(() => { prefetchAllScanModes(); }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -1164,6 +1167,11 @@ function Login({ onLogin }) {
     }
     setSession(res.user);
     enterFullscreen();   // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
+    if (res.user.machine?.id && !res.offline) {   // บัญชีหน้าเครื่อง → จำโหมดสแกนให้ทันก่อนเด้งไปหน้าเครื่อง (รอไม่เกิน 4 วิ)
+      setBusy(true);
+      try { await Promise.race([prefetchAllScanModes(), new Promise((r) => setTimeout(r, 4000))]); } catch { /* ignore */ }
+      setBusy(false);
+    }
     onLogin(res.user);   // operator จะถูก goStation เด้งไป /station → แล้วเข้าแผนกตัวเองอัตโนมัติ
   }
 
