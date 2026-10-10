@@ -37,8 +37,27 @@ async function checkVersion() {
            || html.match(/<script[^>]+src="([^"]+)"[^>]+type="module"/i);
     if (!m) return;
     const latest = new URL(m[1], location.href).pathname;
-    if (baselineBundle && latest && latest !== baselineBundle) markUpdateReady();
+    if (baselineBundle && latest && latest !== baselineBundle) readyWhenCached(latest);
   } catch { /* ออฟไลน์/พลาด = ข้าม */ }
+}
+
+// ★ 2026-10-10 ตรวจรอบ 2: เจอเวอร์ชันใหม่ → สั่ง service worker เก็บไฟล์ของเวอร์ชันนั้นให้ครบก่อน แล้วค่อยขึ้นแถบ "มีเวอร์ชันใหม่"
+//   (เดิมขึ้นแถบทันที → กดอัปเดตตอนเน็ตช้า ได้เวอร์ชันเดิมกลับมา + แถบขึ้นซ้ำ · จอ TV รีโหลดวนจนกว่าจะเก็บครบ)
+//   ไม่มี service worker / ตอบช้าเกิน 2 นาที = ขึ้นแถบเลย (แบบเดิม)
+let _preinstall = "";
+function readyWhenCached(latest) {
+  if (window.__mlsUpdateReady || _preinstall === latest) return;
+  _preinstall = latest;
+  const ctl = navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (!ctl || typeof MessageChannel === "undefined") { markUpdateReady(); return; }
+  let done = false;
+  const finish = () => { if (done) return; done = true; markUpdateReady(); };
+  try {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => finish();
+    ctl.postMessage({ type: "mls-install-latest" }, [ch.port2]);
+  } catch { finish(); return; }
+  setTimeout(finish, 120 * 1000);
 }
 
 // เรียกจาก main.jsx: ผูกกับ registration ของ service worker + เริ่มเช็คเวอร์ชันเป็นระยะ
@@ -49,13 +68,14 @@ export function setupUpdateWatcher(reg) {
   // (เสริม) ฟัง service worker เผื่ออนาคต sw.js เปลี่ยน — ปัจจุบันอาจไม่ยิง
   if (reg) {
     const hadController = !!navigator.serviceWorker.controller;
+    // ★ 2026-10-10 ตรวจรอบ 2: sw.js เปลี่ยน ≠ แอปเปลี่ยน → ไปเทียบชื่อไฟล์ bundle ก่อน (เดิมขึ้น "มีเวอร์ชันใหม่" หลอก · จอ TV รีโหลดเปล่าๆ)
     const watch = (w) => w && w.addEventListener("statechange", () => {
-      if (w.state === "installed" && navigator.serviceWorker.controller) markUpdateReady();
+      if (w.state === "installed" && navigator.serviceWorker.controller) checkVersion();
     });
-    if (reg.waiting && navigator.serviceWorker.controller) markUpdateReady();
+    if (reg.waiting && navigator.serviceWorker.controller) checkVersion();
     watch(reg.installing);
     reg.addEventListener("updatefound", () => watch(reg.installing));
-    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController) markUpdateReady(); });
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController) checkVersion(); });
   }
 
   // เช็คเวอร์ชันเป็นระยะ (จอเปิดค้างทั้งวัน) + ตอนกลับมาออนไลน์/กลับมาโฟกัส
