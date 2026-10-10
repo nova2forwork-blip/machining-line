@@ -35,8 +35,12 @@ self.addEventListener("fetch", (e) => {
       fetch(req).then((res) => {
         // เก็บเป็น app shell เฉพาะเมื่อโหลดสำเร็จจริง (res.ok) — กันหน้า error 4xx/5xx
         // ตอน deploy ถูกแคชแล้วเสิร์ฟเป็นหน้าแอปค้างไปเรื่อยๆ
-        if (res && res.ok) {
-          caches.open(CACHE).then((c) => c.put("/index.html", res.clone())).catch(() => {});
+        // ★ 2026-10-10: clone "ทันที" ก่อนส่ง res ให้หน้าเว็บ — เดิม clone ใน then ของ caches.open (ทีหลัง)
+        //   ตอนนั้นหน้าเว็บอ่าน body ไปแล้ว → clone() พัง (body used) เงียบๆ → index.html ในแคชไม่เคยอัปเดต
+        //   → ออฟไลน์เปิดได้แต่ "เวอร์ชันตอนติดตั้งครั้งแรก" ตลอด (ออนไลน์ปกติ ออฟไลน์เป็นหน้าเก่า)
+        if (res && res.ok && res.type === "basic") {
+          const copy = res.clone();
+          e.waitUntil(caches.open(CACHE).then((c) => Promise.all([c.put("/index.html", copy.clone()), c.put("/", copy)])).catch(() => {}));
         }
         return res;
       }).catch(() => caches.match("/index.html").then((r) => r || caches.match("/")))
