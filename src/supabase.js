@@ -125,6 +125,8 @@ export async function listRows(table, { order, ascending = true, filters, strict
 //   กติกาเดียวกับ create_release_batch (lower(trim(part_no))) และ unique index part_master_project_partno_uniq
 //   (เดิมหาแบบตรงตัว: "sa-001" หา "SA-001" ไม่เจอ → สร้างเบอร์ซ้ำ หรือ "ไม่พบเบอร์แม่หลังสร้าง")
 //   ilike ใช้ดึงตัวเลือกมาก่อน (_ % * เป็น wildcard ได้) แล้วเทียบตรงๆ อีกชั้นในนี้ · เจอหลายตัว = เลือกตัวที่ตรงตัวพิมพ์ก่อน
+// ★ 2026-10-10 ตรวจรอบ 3: ilike ใช้แค่ดึงตัวเลือก (_ % เป็น wildcard → "A_1" ดึง "AB1" มาด้วย) → เทียบเบอร์ตรงๆ อีกชั้น
+function samePartNo(a, b) { return String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase(); }
 export async function findPartByNo(projectId, partNo) {
   const key = String(partNo ?? "").trim();
   if (!projectId || !key) return null;
@@ -521,10 +523,11 @@ export async function findUnitByPartNo(partNo) {
   if (!p) return null;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return null;  // ต้องมีเน็ต
   // 1) หาพาร์ทที่ part_no ตรง (ไม่สนตัวพิมพ์เล็ก-ใหญ่/ช่องว่างหัวท้าย)
+  // ★ 2026-10-10 ตรวจรอบ 3: ilike (_ % เป็น wildcard) → เทียบเบอร์ตรงอีกชั้น (ไม่สนตัวพิมพ์) แบบ findPartByNo
   const { data: pms, error: e1 } = await supabase
-    .from("part_master").select("id").ilike("part_no", p);
+    .from("part_master").select("id, part_no").ilike("part_no", p);
   if (e1) { console.warn("findUnitByPartNo (part_master) error", e1); return null; }
-  const ids = (pms || []).map((x) => x.id).filter(Boolean);
+  const ids = (pms || []).filter((x) => samePartNo(x.part_no, p)).map((x) => x.id).filter(Boolean);
   if (!ids.length) return null;                            // ไม่มีพาร์ทเบอร์นี้ในระบบ
 
   // 2) หา "release ที่กำลังทำอยู่" = release ที่เพิ่งมี machine_record ล่าสุดของพาร์ทนี้
@@ -574,10 +577,10 @@ export async function findManualPartOptions(partNo, operationId = null) {
   // 1) part_master (1 ต่อ 1 โปรเจค) ที่ part_no ตรง
   const { data: pms, error: e1 } = await supabase
     .from("part_master").select("id, part_no, part_name, default_length_mm, projects(code, name, status)")
-    .ilike("part_no", p);
+    .ilike("part_no", p);   // ★ 2026-10-10 ตรวจรอบ 3: ilike แค่ดึงตัวเลือก (_ % เป็น wildcard) → เทียบตรงข้างล่าง
   if (e1) { console.warn("findManualPartOptions (part_master) error", e1); return []; }
   // ตัดโปรเจคที่ "ปิดแล้ว" ออก — บันทึกไม่ได้อยู่แล้ว ไม่ต้องให้เลือก (ถ้าต้องแก้งาน ให้แอดมินเปิดโปรเจคก่อน)
-  const masters = (pms || []).filter((m) => m.projects?.status !== "closed");
+  const masters = (pms || []).filter((m) => samePartNo(m.part_no, p) && m.projects?.status !== "closed");
   if (!masters.length) return [];
   const ids = masters.map((m) => m.id);
   // 2) ชิ้นงานของทุก part_master (ไว้ resolve + เอาความยาวเฉพาะชิ้น)
@@ -803,6 +806,7 @@ export async function getAllUnitsFull(statusFilter) {
       .from("part_units")
       .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
       .order("created_at", { ascending: false })
+      .order("id", { ascending: true })   // ★ 2026-10-10 ตรวจรอบ 3: created_at ซ้ำได้ (สร้างทั้งล็อตพร้อมกัน) + แบ่งหน้า OFFSET = แถวซ้ำ/หาย → ต่อท้ายด้วย id
       .range(from, from + pageSize - 1);
     if (statusFilter) q = q.eq("status", statusFilter);
     const { data, error } = await q;
@@ -885,8 +889,10 @@ export async function getReleasesFull() {
       .from("releases")
       .select("*, part_master(part_no, part_name, kind, routing, project_id, material, projects(code, name, status)), employee:employees(name)")
       .order("release_date", { ascending: false })
+      .order("id", { ascending: true })   // ★ 2026-10-10 ตรวจรอบ 3: release_date ซ้ำได้ + แบ่งหน้า OFFSET = แถวซ้ำ/หายเงียบๆ → ต่อท้ายด้วย id
       .range(from, from + pageSize - 1);
-    if (error) { console.warn("getReleasesFull error", error); break; }
+    // ★ 2026-10-10 ตรวจรอบ 3: หน้าไหนโหลดพลาด = โยน error (เดิม break คืนรายการไม่ครบเงียบๆ → ตัวเลือก/ยอดขาดหายโดยไม่รู้ตัว)
+    if (error) { console.warn("getReleasesFull error", error); flagAuth(error); throw error; }
     if (!data || !data.length) break;
     all = all.concat(data);
     if (data.length < pageSize) break;
@@ -1069,13 +1075,25 @@ export async function machineReportSummary(since) {
 const EV_Q_KEY = "mls-stn-events";
 const evListeners = new Set();
 let _evMem = null;   // สำรองเมื่อ localStorage ใช้ไม่ได้
+// ★ 2026-10-10 ตรวจรอบ 3: เขียน localStorage ไม่ได้ (เต็ม) → ในหน่วยความจำใหม่กว่า · เดิมอ่านกลับได้รายการเก่าในที่เก็บ = เรื่องใหม่หายเงียบ
+//   (อ่านจากที่เก็บตามปกติเมื่อเขียนได้ — ให้แท็บอื่นเห็นรายการเดียวกัน)
+let _evMemDirty = false;
 function evRead() {
+  if (_evMemDirty && _evMem) return _evMem;
   try { const raw = localStorage.getItem(EV_Q_KEY); if (raw) return JSON.parse(raw) || []; return _evMem || []; } catch { return _evMem || []; }
 }
+// คืน true = เก็บลงเครื่องได้ (★ 2026-10-10 ตรวจรอบ 3)
 function evWrite(a) {
   _evMem = a;
-  try { localStorage.setItem(EV_Q_KEY, JSON.stringify(a)); } catch (e) { console.warn("evWrite failed (storage full?)", e); }
+  let ok = true;
+  try { localStorage.setItem(EV_Q_KEY, JSON.stringify(a)); _evMemDirty = false; }
+  catch (e) {
+    ok = false; _evMemDirty = true;
+    console.warn("evWrite failed (storage full?)", e);
+    try { window.dispatchEvent(new CustomEvent("mls-storage-full")); } catch (_) { /* ignore */ }
+  }
   evListeners.forEach((f) => { try { f(a.length); } catch (_) { /* ignore */ } });
+  return ok;
 }
 export function onStationEvents(cb) { evListeners.add(cb); return () => evListeners.delete(cb); }
 // จำนวนเรื่องที่ยังไม่ส่ง (ของบัญชีนี้ · ถ้าระบุเครื่อง = เฉพาะเครื่องนั้น)
@@ -1129,7 +1147,7 @@ async function _flushStationEvents() {
       } catch (e) { error = e; }
       if (error) {
         if (isAuthError(error)) { authExpired = true; break; }
-        if (isNetworkErr(error)) break;                                    // เน็ต/server สะดุด → หยุดรอบนี้ (คงลำดับ) ลองใหม่รอบหน้า
+        if (isTransportErr(error)) break;                                  // เน็ตสะดุด → หยุดรอบนี้ (คงลำดับ) ลองใหม่รอบหน้า · ★ 2026-10-10 ตรวจรอบ 3: error ที่มี SQLSTATE นับเป็นครั้งที่ลอง (ไม่ค้างตลอดไป)
         const at = (Number(it.attempts) || 0) + 1;
         if (at >= 20) { done.add(it.qid); _evResults.set(it.qid, { ok: false, reason: "retry_exhausted" }); }
         else { bumped.set(it.qid, at); blockedMachines.add(it.machine_id); }
@@ -1161,10 +1179,18 @@ export async function sendStationEvent(ev) {
     rec_id: ev.recordId || null, rec_client: ev.recordClientId || null,
     at: new Date().toISOString(), qid: newClientId(), owner: queueOwner(), ts: Date.now(),
   };
-  evWrite([...evRead(), it]);
+  const persisted = evWrite([...evRead(), it]);
   if (_evFlushP) await _evFlushP;          // มีรอบส่งค้างอยู่ (ไม่รวมเรื่องนี้) → รอจบแล้วส่งรอบใหม่
   await flushStationEvents();
-  if (evRead().some((x) => x.qid === it.qid)) return { ok: true, queued: true, qid: it.qid };
+  if (evRead().some((x) => x.qid === it.qid)) {
+    // ★ 2026-10-10 ตรวจรอบ 3: เก็บลงเครื่องไม่ได้ + ส่งไม่ผ่าน → แจ้งว่าไม่สำเร็จ (เดิมคืน ok:true แต่เรื่องหายเมื่อรีโหลด)
+    //   เอาออกจากคิวในหน่วยความจำด้วย — กันส่งทีหลังซ้ำกับที่ผู้ใช้กดใหม่
+    if (!persisted) {
+      evWrite(evRead().filter((x) => x.qid !== it.qid));
+      return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
+    }
+    return { ok: true, queued: true, qid: it.qid };
+  }
   const r = _evResults.get(it.qid) || { ok: true };
   _evResults.delete(it.qid);
   return r;
@@ -1418,10 +1444,40 @@ function isNetworkErr(error) {
   const msg = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`;
   return /abort|failed to fetch|network ?error|load failed|timed? ?out|fetch|connection|econn|socket|unavailable|temporar|overload|too many request|rate limit|bad gateway|gateway time|internal server|server error/i.test(msg);
 }
+// ★ 2026-10-10 ตรวจรอบ 3: แยก "ส่งไม่ถึง server" (เน็ต/timeout/abort/502-504) ออกจาก "server รับแล้วแต่ error"
+//   error ที่มี SQLSTATE (เช่น 57014 statement timeout) = server ประมวลผลแล้ว → นับเป็นครั้งที่ลอง (เดิมเข้า regex เน็ตสะดุด
+//   → ไม่นับเพดานเลย ค้างหัวคิวตลอดไป) · ใช้เฉพาะตอนซิงค์คิว (isNetworkErr เดิมยังใช้ตัดสินใจ "เข้าคิว" ตอนบันทึกสด)
+function hasSqlState(error) {
+  const c = String((error && error.code) || "");
+  return /^[0-9A-Z]{5}$/.test(c) && !/^08/.test(c);   // 08xxx = connection exception (ถือเป็นเน็ต)
+}
+function isTransportErr(error) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  if (!error) return false;
+  const st = Number(error.status);
+  if (error.status != null && (st === 0 || st === 502 || st === 503 || st === 504)) return true;
+  if (error.name === "AbortError") return true;
+  if (hasSqlState(error)) return false;
+  return isNetworkErr(error);
+}
 // ★ V7: ตรวจว่า error = "ยังไม่มี RPC record_scan_by_qr_idem" (ยังไม่ได้รัน migration) → fallback ใช้ตัวเดิม
 //   กัน deploy ผิดลำดับ (วางไฟล์ก่อนรัน SQL) แล้วสแกนออฟฟิศพัง
-function isMissingFnErr(error) {
-  return /PGRST202|could not find|does not exist|schema cache|record_scan_by_qr_idem/i.test((error && (error.message || error.hint || error.code)) || "");
+// ★ 2026-10-10 ตรวจรอบ 3: แคบลง — เดิมจับ "does not exist" ทุกแบบ (relation/column ไม่มี ในฟังก์ชันที่มีอยู่จริง)
+//   = เข้าใจผิดว่ายังไม่ได้รัน SQL · ตอนนี้: PGRST202 / "could not find the function" / 42883 "function … does not exist"
+//   fnName (ไม่บังคับ) = ต้องเอ่ยชื่อฟังก์ชันนั้นด้วย (กัน 42883 ของฟังก์ชันอื่นที่ถูกเรียกข้างใน)
+function isMissingFnErr(error, fnName) {
+  if (!error) return false;
+  const code = String(error.code || "");
+  const msg = `${error.message || ""} ${error.details || ""} ${error.hint || ""}`;
+  const missing = code === "PGRST202"
+    || /could not find the .*function/i.test(msg)
+    || ((code === "42883" || !code) && /function\s+\S+.*does not exist/i.test(msg));
+  if (!missing) return false;
+  return !fnName || msg.toLowerCase().includes(String(fnName).toLowerCase());
+}
+// ฟังก์ชันไม่มีแน่ๆ (PostgREST หาไม่เจอใน schema cache + เอ่ยชื่อ) — ใช้ตัดสินใจ "จำถาวร" ในเครื่อง
+function isMissingFnSure(error, fnName) {
+  return !!error && String(error.code || "") === "PGRST202" && isMissingFnErr(error, fnName);
 }
 
 // ── คิว "ซิงค์ไม่สำเร็จถาวร" — งานที่ทำออฟไลน์แล้วพอจะซิงค์ กลับเจอว่า QR/ล็อตถูกลบ
@@ -1458,7 +1514,16 @@ export function onRejectedQueue(cb) { rejectListeners.add(cb); return () => reje
 export function listRejected() { return rjRead(); }
 // เอากลับเข้าคิวลองซิงค์ใหม่ (เช่นหลังออฟฟิศกู้ล็อตคืน)
 let _retryAfterFlush = false;
+// ★ 2026-10-10 ตรวจรอบ 3: หลายแท็บ — ซิงค์คิว / ย้าย rejected กลับคิว ผ่าน Web Lock เดียวกัน (ไม่ทับกันข้ามแท็บ)
+//   เบราว์เซอร์ไม่มี navigator.locks = ทำแบบเดิม (กันได้เฉพาะในแท็บเดียว)
+const SCAN_Q_LOCK = "mls-scan-queue";
+function hasLocks() { try { return typeof navigator !== "undefined" && !!navigator.locks && typeof navigator.locks.request === "function"; } catch { return false; } }
 export function retryRejected() {
+  if (!hasLocks()) { _retryRejected(); return; }
+  try { navigator.locks.request(SCAN_Q_LOCK, () => { _retryRejected(); }).catch((e) => console.warn("retryRejected lock", e)); }
+  catch (e) { console.warn("retryRejected lock", e); _retryRejected(); }
+}
+function _retryRejected() {
   // ★ 2026-10-10: กำลังซิงค์อยู่ = รอให้จบรอบก่อน — ไม่งั้นงานที่รอบนี้เพิ่งย้ายไป rejected (qid อยู่ใน done)
   //   ถูกย้ายกลับคิวหลัก แล้ว commit() ของรอบซิงค์ลบทิ้งตาม qid → หายจากทั้ง 2 คิว
   if (_flushing) { _retryAfterFlush = true; return; }
@@ -1547,9 +1612,11 @@ export async function setBom(parentPmId, components) {
   if (error) { console.warn("authz_set_bom error", error); flagAuth(error); throw error; }
   return data || { ok: false, reason: "unknown" };
 }
-export async function getBom(parentPmId) {
+// ★ 2026-10-10 ตรวจรอบ 3: { strict:true } = อ่านไม่ได้ให้โยน error (หน้าแก้ BOM — เดิมได้ [] แล้วกดบันทึกทับ BOM จริงเป็นว่าง)
+//   ค่าเริ่มต้นเหมือนเดิม (คืน [])
+export async function getBom(parentPmId, { strict = false } = {}) {
   const { data, error } = await supabase.rpc("get_bom", { p_parent_pm_id: parentPmId });
-  if (error) { console.warn("get_bom error", error); return []; }
+  if (error) { console.warn("get_bom error", error); if (strict) { flagAuth(error); throw error; } return []; }
   return data || [];
 }
 
@@ -1577,7 +1644,7 @@ function queueAssembly(p) {
     p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
     p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
     p_parent_qty: p.parentQty ?? 1,   // จำนวนที่จะทำ (ซับ) → machine_record.quantity ฝั่ง server
-  }, qid: p.clientId, ts: Date.now(), owner: queueOwner() });
+  }, qid: p.clientId, ts: Date.now(), owner: p.owner || queueOwner() });   // ★ 2026-10-10 ตรวจรอบ 3: เจ้าของที่จำไว้ก่อนยิง
   if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
   return { ok: true, queued: true };
 }
@@ -1585,7 +1652,8 @@ function queueAssembly(p) {
 // บันทึกการประกอบจากหน้าเครื่อง — คืนผลตรวจครบตาม BOM · เน็ตหลุด/สะดุด = เก็บเข้าคิวซิงค์ทีหลัง
 export async function recordAssembly({ parentQr, childQrs, operationId, clientId, recordedAt, parentQty }, { allowQueue = true } = {}) {
   // childQrs รับได้ทั้ง ["qr",...] (เดิม) และ [{qr,qty},...] (ใหม่ — นับจำนวนรวม) · parentQty = จำนวนที่จะทำของเบอร์แม่
-  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(), parentQty: Math.max(1, Math.floor(Number(parentQty) || 1)) };
+  const p = { parentQr, childQrs, operationId, clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(), parentQty: Math.max(1, Math.floor(Number(parentQty) || 1)),
+    owner: queueOwner() };   // ★ 2026-10-10 ตรวจรอบ 3: จำเจ้าของก่อนยิงคำขอ
   if (allowQueue && typeof navigator !== "undefined" && navigator.onLine === false) return queueAssembly(p);
   const { data, error } = await supabase.rpc("record_assembly", {
     p_token: authToken(), p_parent_qr: p.parentQr, p_child_qrs: p.childQrs,
@@ -1610,7 +1678,12 @@ function rabRead() {
   try { const v = localStorage.getItem(ASM_BATCH_KEY); if (v === "1") _rabState = true; else if (v === "0") _rabState = false; } catch { /* ignore */ }
   return _rabState;
 }
-function rabSet(v) { _rabState = !!v; if (!v) _rabMissingNow = true; try { localStorage.setItem(ASM_BATCH_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
+// ★ 2026-10-10 ตรวจรอบ 3: persist=false → จำแค่ในหน้านี้ (error กำกวม ห้ามจำ "ไม่มี" ถาวรในเครื่อง — เดิมจำถาวรจนกว่าออนไลน์เจอ ok)
+function rabSet(v, persist = true) {
+  _rabState = !!v; if (!v) _rabMissingNow = true;
+  if (!persist) return;
+  try { localStorage.setItem(ASM_BATCH_KEY, v ? "1" : "0"); } catch { /* ignore */ }
+}
 export function assemblyBatchSupported() { return rabRead() === true && !_rabMissingNow; }
 // ★ รอบ 25: server รองรับ "บั้ง" ในรอบบันทึกไหม (get_assembly_batches คืน caps: ['package']) — จำไว้ใช้ตอนออฟไลน์
 const ASM_PACK_KEY = "mls-asm-batch-pack";
@@ -1638,7 +1711,7 @@ function queueAssemblyBatch(p) {
     p_parent_qr: p.parentQr, p_child_qrs: p.children,
     p_operation_id: p.operationId ?? null, p_client_id: p.clientId, p_recorded_at: p.recordedAt ?? null,
     p_parent_qty: p.parentQty,
-  }, qid: p.clientId, ts: Date.now(), owner: queueOwner() });
+  }, qid: p.clientId, ts: Date.now(), owner: p.owner || queueOwner() });   // ★ 2026-10-10 ตรวจรอบ 3: เจ้าของที่จำไว้ก่อนยิง
   if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
   return { ok: true, queued: true };
 }
@@ -1649,6 +1722,7 @@ export async function recordAssemblyBatch({ parentQr, children, parentQty, opera
     parentQr, children: (children || []).map((c) => ({ qr: c.qr, qty: Math.max(1, Math.floor(Number(c.qty) || 1)) })),
     parentQty: Math.max(0, Math.floor(Number(parentQty) || 0)), operationId: operationId ?? null,
     clientId: clientId ?? newClientId(), recordedAt: recordedAt ?? new Date().toISOString(),
+    owner: queueOwner(),   // ★ 2026-10-10 ตรวจรอบ 3: จำเจ้าของก่อนยิงคำขอ
   };
   const legacy = async () => {
     const r = await recordAssembly({ parentQr: p.parentQr, childQrs: p.children, operationId: p.operationId, clientId: p.clientId,
@@ -1662,7 +1736,7 @@ export async function recordAssemblyBatch({ parentQr, children, parentQty, opera
     p_operation_id: p.operationId, p_client_id: p.clientId, p_recorded_at: p.recordedAt,
   });
   if (error) {
-    if (isMissingFnErr(error)) { rabSet(false); return legacy(); }
+    if (isMissingFnErr(error, "record_assembly_batch")) { rabSet(false, isMissingFnSure(error, "record_assembly_batch")); return legacy(); }   // ★ 2026-10-10 ตรวจรอบ 3
     if (allowQueue && isNetworkErr(error)) return queueAssemblyBatch(p);
     console.warn("record_assembly_batch error", error); flagAuth(error); throw error;
   }
@@ -1676,7 +1750,7 @@ export async function getAssemblyBatches(parentQr) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
   const { data, error } = await supabase.rpc("get_assembly_batches", { p_parent_qr: parentQr });
   if (error) {
-    if (isMissingFnErr(error)) { rabSet(false); return null; }
+    if (isMissingFnErr(error, "get_assembly_batches")) { rabSet(false, isMissingFnSure(error, "get_assembly_batches")); return null; }   // ★ 2026-10-10 ตรวจรอบ 3
     console.warn("get_assembly_batches error", error); return null;
   }
   if (data && data.ok) { rabSet(true); rapSet(Array.isArray(data.caps) && data.caps.includes("package")); rnsSet(Array.isArray(data.caps) && data.caps.includes("nested")); }
@@ -1715,7 +1789,7 @@ export async function logAssemblyRemoval({ parentUnitId, childUnitId, qty, opera
       p_token: authToken(), p_parent_unit_id: parentUnitId, p_child_unit_id: childUnitId,
       p_qty: qty ?? null, p_operation_id: operationId ?? null,
     });
-    if (error) { if (isMissingFnErr(error)) rabSet(false); return null; }
+    if (error) { if (isMissingFnErr(error, "assembly_log_removal")) rabSet(false, isMissingFnSure(error, "assembly_log_removal")); return null; }   // ★ 2026-10-10 ตรวจรอบ 3
     return data;
   } catch { return null; }
 }
@@ -1961,13 +2035,14 @@ export async function recordPackingPhotos(parentQr, paths) {
 // สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
 export async function recordScanByQr(qr, { allowQueue = true } = {}) {
   const clientId = newClientId();   // ★ V7: 1 client_id ต่อการสแกน → ใช้ทั้งตอนยิงตรง + ตอนเข้าคิว (idem กันบันทึกซ้ำ)
+  const owner = queueOwner();       // ★ 2026-10-10 ตรวจรอบ 3: จำเจ้าของก่อนยิง (session อาจถูกล้างระหว่างรอ)
   let { data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: qr, p_client_id: clientId });
   if (error && isMissingFnErr(error)) {   // ยังไม่ได้รัน migration idem → ใช้ตัวเดิม (สแกนได้ แต่ยังไม่กันซ้ำ)
     ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr }));
   }
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ qr, qid: clientId, ts: Date.now(), owner: queueOwner() });   // ★ qid = clientId เดิม → flush ส่ง client_id เดิม → idem กันซ้ำข้าม direct↔queue
+      const a = qRead(); a.push({ qr, qid: clientId, ts: Date.now(), owner: owner || queueOwner() });   // ★ qid = clientId เดิม → flush ส่ง client_id เดิม → idem กันซ้ำข้าม direct↔queue
       if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
     }
@@ -1989,7 +2064,17 @@ export async function recordScanByQr(qr, { allowQueue = true } = {}) {
 //   • หยุดรอบทันทีเมื่อ token หมดอายุ / เน็ตหลุด / server สะดุดติดกัน 2 รายการ (เดิมยิงครบทุกรายการทุก 15 วิ)
 let _flushing = false;
 const _syncedQids = new Set();   // qid ที่ server รับแล้ว แต่ยังไม่ได้ลบออกจากที่เก็บ (ไม่นับซ้ำในยอดค้าง)
+let _flushLockWait = false;      // ★ 2026-10-10 ตรวจรอบ 3: รอ Web Lock อยู่ (เรียกซ้อนในแท็บเดียว = ไม่ต่อคิวเพิ่ม)
 export async function flushScanQueue() {
+  if (_flushing || _flushLockWait) return;
+  if (!hasLocks()) return _flushScanQueue();
+  _flushLockWait = true;
+  try {
+    return await navigator.locks.request(SCAN_Q_LOCK, () => { _flushLockWait = false; return _flushScanQueue(); });
+  } catch (e) { console.warn("flushScanQueue lock", e); }
+  finally { _flushLockWait = false; }
+}
+async function _flushScanQueue() {
   if (_flushing) return;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
   const tok = authToken();
@@ -2008,8 +2093,8 @@ export async function flushScanQueue() {
   const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (error ที่ไม่ใช่เน็ต)
   let newRejects = 0;
   let authExpired = false;
-  let netFails = 0;                // server/เน็ตสะดุด "ติดกัน" กี่รายการ (2 = หยุดรอบนี้)
   const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
+  const MAX_ATTEMPTS_SERVER = 40;  // ★ 2026-10-10 ตรวจรอบ 3: server สะดุดชั่วคราว (มี SQLSTATE เช่น statement timeout) → ให้เวลานานกว่า (~10 นาที)
   const commit = () => {           // เขียนคิวใหม่: ลบที่เสร็จ + อัปเดตจำนวนครั้งที่พลาด (อ่านคิวล่าสุดก่อนเสมอ)
     if (!done.size && !bumped.size) return;
     const cur = qRead();
@@ -2052,14 +2137,14 @@ export async function flushScanQueue() {
       if (error) {
         if (isAuthError(error)) { authExpired = true; break; }          // token หมดอายุ → หยุด รอล็อกอินใหม่ (งานคงอยู่)
         if (typeof navigator !== "undefined" && navigator.onLine === false) break;
-        if (isNetworkErr(error)) { if (++netFails >= 2) break; continue; }   // เน็ต/server สะดุด → retry รอบหน้า (ไม่นับเพดาน)
-        netFails = 0;
+        // ★ 2026-10-10 ตรวจรอบ 3: ส่งไม่ถึง server → หยุดรอบนี้ทันที (คงลำดับ · เดิม continue = รายการหลังถูกส่งก่อนรายการแรก)
+        if (isTransportErr(error)) break;
         const at = (Number(item.attempts) || 0) + 1;
-        if (at >= MAX_ATTEMPTS) toRejected(item, "retry_exhausted");
+        const cap = isNetworkErr(error) ? MAX_ATTEMPTS_SERVER : MAX_ATTEMPTS;   // มี SQLSTATE แต่ดูเป็นชั่วคราว (timeout/overload)
+        if (at >= cap) toRejected(item, "retry_exhausted");
         else bumped.set(item.qid, at);
         continue;
       }
-      netFails = 0;
       if (data && data.ok === false) {
         if (data.reason === "unauthorized") { authExpired = true; break; }
         toRejected(item, data.reason);             // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
@@ -2095,11 +2180,18 @@ if (typeof window !== "undefined") {
 const AJ_KEY = "mls-active-job";
 let _ajMem = null;             // สำรองเมื่อ localStorage ใช้ไม่ได้
 let _ajBusy = false, _ajAgain = false, _ajTimer = null, _ajMissing = false;
+// ★ 2026-10-10 ตรวจรอบ 3: เขียน localStorage ไม่ได้ → ใช้ค่าในหน่วยความจำ (เดิมอ่านได้สถานะเก่าในที่เก็บ) · ajWrite คืน true/false
+let _ajMemDirty = false;
 function ajRead() {
+  if (_ajMemDirty) return _ajMem;
   try { const raw = localStorage.getItem(AJ_KEY); if (raw) return JSON.parse(raw); } catch { /* ignore */ }
   return _ajMem;
 }
-function ajWrite(v) { _ajMem = v; try { localStorage.setItem(AJ_KEY, JSON.stringify(v)); } catch { /* ignore */ } }
+function ajWrite(v) {
+  _ajMem = v;
+  try { localStorage.setItem(AJ_KEY, JSON.stringify(v)); _ajMemDirty = false; return true; }
+  catch { _ajMemDirty = true; return false; }
+}
 function ajKey(job) {
   if (!job || !job.releaseId) return "";
   const t = job.startedAt ? new Date(job.startedAt).getTime() : 0;
@@ -2323,7 +2415,8 @@ export async function releaseOrderExists(projectId, releaseOrder) {
     .eq("part_master.project_id", projectId)
     .eq("release_order", ro)
     .limit(1);
-  if (error) { console.warn("releaseOrderExists error", error); return false; }
+  // ★ 2026-10-10 ตรวจรอบ 3: เช็คไม่ได้ = โยน error (เดิมคืน false → ตัวกันใบซ้ำ "ปล่อยผ่าน" ตอนเน็ตสะดุด → สร้าง Release ซ้ำ)
+  if (error) { console.warn("releaseOrderExists error", error); flagAuth(error); throw error; }
   if ((data || []).length > 0) return true;
   // สะกดต่าง (P-9 / P-009) → ดูเลขใบทั้งหมดของโปรเจค (คอลัมน์เดียว · แบ่งหน้า)
   const key = releaseOrderKey(ro);
@@ -2336,7 +2429,7 @@ export async function releaseOrderExists(projectId, releaseOrder) {
       .not("release_order", "is", null)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
-    if (e2) { console.warn("releaseOrderExists error", e2); return false; }
+    if (e2) { console.warn("releaseOrderExists error", e2); flagAuth(e2); throw e2; }   // ★ 2026-10-10 ตรวจรอบ 3: เหมือนข้างบน
     if ((d2 || []).some((r) => releaseOrderKey(r.release_order) === key)) return true;
     if (!d2 || d2.length < pageSize) return false;
   }
@@ -2696,6 +2789,9 @@ export async function recordMachineWork(
     p_recorded_at: recordedAt || new Date().toISOString(), // เวลาจริงตอนสแกน (เครื่องนี้)
     p_operation_id: operationId || null,                   // ขั้นตอนที่เลือกบนจอ (null = ใช้ของบัญชี)
   };
+  // ★ 2026-10-10 ตรวจรอบ 3: จำเจ้าของงาน "ก่อน" ยิงคำขอ — ตอบ unauthorized แล้วแอปล้าง session ไปก่อนเข้าคิว
+  //   = owner null → งานถูกนับเป็นของใครก็ได้ (คนอื่นล็อกอินแล้วซิงค์ในชื่อตัวเอง)
+  const owner = queueOwner();
   const { data, error } = await supabase.rpc("record_machine_work", payload);
   if (error) {
     if (allowQueue && isNetworkErr(error)) {
@@ -2703,7 +2799,7 @@ export async function recordMachineWork(
       //   (น้ำหนักคิดฝั่งเซิร์ฟเวอร์ = จำนวน × น้ำหนักต่อชิ้น · ออฟไลน์เก็บค่าที่คำนวณไว้ล่วงหน้ามาโชว์)
       const a = qRead();
       const { p_token: _omitToken, ...mwNoToken } = payload;   // ★ ไม่เก็บ token ลงคิว (ตอนซิงค์ใช้ token ของคนที่ล็อกอิน)
-      a.push({ machineWork: mwNoToken, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now(), owner: queueOwner() });
+      a.push({ machineWork: mwNoToken, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now(), owner: owner || queueOwner() });
       // ★ ถ้าเขียนคิวไม่ได้ (ที่เก็บเต็ม/โหมดส่วนตัว) อย่าบอกว่าสำเร็จ — งานจะหายเงียบ
       if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
       return { ok: true, queued: true };
@@ -2717,7 +2813,7 @@ export async function recordMachineWork(
   if (allowQueue && data && data.ok === false && data.reason === "unauthorized") {
     const a = qRead();
     const { p_token: _omitToken, ...mwNoToken } = payload;
-    a.push({ machineWork: mwNoToken, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now(), owner: queueOwner() });
+    a.push({ machineWork: mwNoToken, release_id: releaseId || null, weight: Number(weight) || 0, qid: payload.p_client_id, ts: Date.now(), owner: owner || queueOwner() });
     if (qWrite(a)) {
       try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
       return { ok: true, queued: true, authExpired: true };
