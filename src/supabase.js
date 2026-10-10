@@ -999,8 +999,8 @@ export async function setScanMeta(partUnitId, scannedAt, processSeconds, status)
 // แก้ "1 การสแกน" ครบทุกช่องรายสแกน (แอดมิน) — จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน · ดู migration-edit-scan.sql
 // qty=0 → ลบทั้งสแกน · weight=null → คิดอัตโนมัติจากจำนวน · ช่องอื่น null = ไม่แก้
 export async function editScan(partUnitId, scannedAt, opts = {}) {
-  const { qty, weight, secs, status, recordedAt, opIds, matLen, slowReason, slowNote } = opts;
-  const { data, error } = await supabase.rpc("edit_scan", {
+  const { qty, weight, secs, status, recordedAt, opIds, matLen, slowReason, slowNote, machineId } = opts;
+  const args = {
     p_token: authToken(),
     p_part_unit_id: partUnitId,
     p_scanned_at: scannedAt || null,
@@ -1013,7 +1013,10 @@ export async function editScan(partUnitId, scannedAt, opts = {}) {
     p_material_length_mm: matLen == null || matLen === "" ? null : Number(matLen),
     p_slow_reason: slowReason == null ? null : String(slowReason),   // null = ไม่แตะ · '' = ล้าง
     p_slow_note: slowNote == null ? null : String(slowNote),
-  });
+  };
+  // ★ 2026-10-10 ตรวจรอบ 3: ระบุเครื่อง (migration-edit-scan-machine.sql) — ยังไม่ได้รัน SQL = ส่งแบบเดิม
+  let { data, error } = await supabase.rpc("edit_scan", machineId ? { ...args, p_machine_id: machineId } : args);
+  if (error && machineId && isMissingFnErr(error)) ({ data, error } = await supabase.rpc("edit_scan", args));
   if (error) { console.warn("edit_scan error", error); flagAuth(error); throw error; }
   if (data && data.ok === false) throw new Error(data.reason || "failed");
   return data || { ok: true };
