@@ -118,9 +118,6 @@ export function getCachedUnit(qr) {
   if (!qr) return Promise.resolve(null);
   return tx(ST_UNITS, "readonly", (s) => s.get(String(qr).trim()));
 }
-export function cachedUnitCount() {
-  return tx(ST_UNITS, "readonly", (s) => s.count());
-}
 
 // ── Release progress snapshot (สำหรับ running number ออฟไลน์) ──────────────
 export function setCachedProgress(releaseId, done) {
