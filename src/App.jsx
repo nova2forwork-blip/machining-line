@@ -3355,7 +3355,14 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     mlsToast(`${src} ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
   }
   // รายชื่อแผง (flat) → กลุ่มแบบ "ไม่มีลูก" (ปล่อยงานเฉยๆ · kind=panel)
-  function applyPanelAsGroups(parsed, src) {
+  function applyPanelAsGroups(parsed, src, bomErr = null) {
+    // ★ 2026-10-10: รายชื่อแผงมีเบอร์ซ้ำ = จริงๆ เป็นฟอร์ม BOM ที่อ่านไม่ผ่าน (เช่น หัวตารางไม่ครบ) → อย่าใส่แผงซ้ำ 80 แถวเงียบๆ
+    const seen = new Set(); let dup = 0;
+    for (const it of parsed.items) { const k = String(it.code).trim().toLowerCase(); if (seen.has(k)) dup++; else seen.add(k); }
+    if (dup > 0) {
+      setErr(`ข้อมูลนี้ดูเหมือนฟอร์ม BOM (เบอร์แผงซ้ำ ${fmtNum(dup + seen.size)} แถว) แต่อ่านไม่ผ่าน: ${bomErr?.message || "ไม่ทราบสาเหตุ"} — ก็อปให้มีแถวหัวตาราง Panel / Panel Quantity / Code / Quantity (หรือ Sum) มาด้วย`);
+      return;
+    }
     const gs = parsed.items.map((it) => ({ parentKind: "panel", parentCode: it.code, parentDesc: "", parentLen: "", parentQty: String(it.qty || 1), children: [] }));
     setGroups(gs.length ? gs : [emptySubAsmGroup()]);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
@@ -3367,8 +3374,9 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
     try {
       const mod = await import("./excelImport.js");
-      try { applyBom(await mod.parseSubAssemblyExcel(file), "อ่านไฟล์ได้"); }
-      catch { applyPanelAsGroups(await mod.parsePanelReleaseExcel(file), "อ่านไฟล์ได้"); }
+      let bomErr = null;
+      try { applyBom(await mod.parseSubAssemblyExcel(file), "อ่านไฟล์ได้"); return; } catch (eb) { bomErr = eb; }
+      applyPanelAsGroups(await mod.parsePanelReleaseExcel(file), "อ่านไฟล์ได้", bomErr);
     } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
   }
   const pasteRef = useRef(null);
@@ -3384,8 +3392,9 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     setErr("");
     try {
       const mod = await import("./excelImport.js");
-      try { applyBom(mod.parseSubAssemblyText(text), "วางข้อมูลได้"); }
-      catch { applyPanelAsGroups(mod.parsePanelReleaseText(text), "วางข้อมูลได้"); }
+      let bomErr = null;
+      try { applyBom(mod.parseSubAssemblyText(text), "วางข้อมูลได้"); return; } catch (eb) { bomErr = eb; }
+      applyPanelAsGroups(mod.parsePanelReleaseText(text), "วางข้อมูลได้", bomErr);
     } catch (e2) { setErr("อ่านข้อมูลที่วางไม่สำเร็จ: " + (e2?.message || e2)); }
   }
   function onPasteTextarea(e) {
