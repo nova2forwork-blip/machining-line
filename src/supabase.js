@@ -326,11 +326,6 @@ export async function deleteReleaseCascade(releaseId) {
   if (error) { console.warn("deleteReleaseCascade error", error); flagAuth(error); throw error; }
 }
 
-// ลบความสามารถของเครื่อง 1 คู่ (machine_id + operation_id) — composite key ผ่าน RPC
-export async function deleteCap(machineId, operationId) {
-  const { error } = await supabase.rpc("authz_delete_cap", { p_token: authToken(), p_machine_id: machineId, p_operation_id: operationId });
-  if (error) { console.warn("deleteCap error", error); flagAuth(error); throw error; }
-}
 // ตั้ง "ขั้นตอนที่ทำได้" (ความสามารถ) ของเครื่อง/สถานี = แทนที่ทั้งชุด (admin) — ผ่าน RPC เฉพาะ
 // เลี่ยง authz_insert_many (generic) ที่ไม่รองรับตาราง machine_operations → เพิ่ม cap แรกไม่ได้ (forbidden)
 export async function setMachineOps(machineId, operationIds) {
@@ -741,19 +736,6 @@ export async function getStationScanInfo({ releaseId, operationId, machineId, pa
   return { done, dup, lock };
 }
 
-// ประวัติการสแกนทั้งหมดของชิ้นเดียว
-export async function getUnitHistory(partUnitId) {
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*, machine:machines(name,code), operation:operations(name), employee:employees(name)")   // ★ รอบ 12: ไม่ดึงรหัสพนักงาน (ปิดจาก anon)
-    .eq("part_unit_id", partUnitId)
-    .order("scanned_at", { ascending: true });
-  if (error) {
-    console.warn("getUnitHistory error", error);
-    return [];
-  }
-  return data || [];
-}
 
 // นับว่าชิ้นนี้ (part_unit) เคยถูกบันทึก "ขั้นตอนนี้" ไปแล้วกี่ครั้ง — ใช้เตือน rework ตอนสแกน
 // คืน 0 เมื่อไม่มี/ออฟไลน์/ผิดพลาด (ไม่บล็อกการทำงาน — แค่ข้อมูลเสริมสำหรับเตือน)
@@ -797,26 +779,6 @@ export async function getScanStatusLock(releaseId, operationId, machineId, since
   } catch (e) { console.warn("getScanStatusLock exception", e); return none; }
 }
 
-// part_units ทั้งหมด พร้อม part_master + project (ใช้ทำ Finished Part / Parts / Projects summary)
-export async function getAllUnitsFull(statusFilter) {
-  // ดึงแบบแบ่งหน้า (page 1000) เพื่อไม่ให้ติดเพดาน 1,000 แถวของ PostgREST
-  const pageSize = 1000; let from = 0; let all = [];
-  for (;;) {
-    let q = supabase
-      .from("part_units")
-      .select("*, part_master(part_no, part_name, unit_weight, default_length_mm, routing, project_id, projects(name))")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: true })   // ★ 2026-10-10 ตรวจรอบ 3: created_at ซ้ำได้ (สร้างทั้งล็อตพร้อมกัน) + แบ่งหน้า OFFSET = แถวซ้ำ/หาย → ต่อท้ายด้วย id
-      .range(from, from + pageSize - 1);
-    if (statusFilter) q = q.eq("status", statusFilter);
-    const { data, error } = await q;
-    if (error) { console.warn("getAllUnitsFull error", error); break; }
-    all = all.concat(data || []);
-    if (!data || data.length < pageSize) break;
-    from += pageSize;
-  }
-  return all;
-}
 
 // ลบทั้งโปรเจค พร้อม Part Master / Release / QR / ประวัติสแกนทั้งหมดที่อยู่ใต้โปรเจคนั้น
 // (ลบจากลูกไปหาแม่ตามลำดับ FK: scan_logs → part_units → releases → part_master → projects)
@@ -971,30 +933,7 @@ export async function setReleaseMaterialLength(releaseId, length) {
   return data || { ok: true };
 }
 
-// ตั้ง "จำนวนของ 1 การสแกน" ใหม่ (แอดมิน) — เพิ่ม/ลด/ลบ · ใช้หน้า Scans ของเครื่อง (ปุ่ม Edit ท้ายแถว)
-// newQty = 0 → ลบทั้งสแกน · newQty > เดิม → เพิ่ม · newQty < เดิม → ลด (น้ำหนักปรับตามสัดส่วน)
-// ดู migration-set-scan-quantity.sql
-export async function setScanQuantity(partUnitId, scannedAt, newQty) {
-  const { data, error } = await supabase.rpc("set_scan_quantity", {
-    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null, p_new_qty: Number(newQty),
-  });
-  if (error) { console.warn("set_scan_quantity error", error); flagAuth(error); throw error; }
-  if (data && data.ok === false) throw new Error(data.reason || "failed");
-  return data || { ok: true };
-}
 
-// แก้ "เวลาเดินเครื่อง (process_seconds) + สถานะ" ของ 1 การสแกน (แอดมิน) — ใช้คู่กับ setScanQuantity ในฟอร์มแก้ทั้งแถว
-// ดู migration-set-scan-meta.sql
-export async function setScanMeta(partUnitId, scannedAt, processSeconds, status) {
-  const { data, error } = await supabase.rpc("set_scan_meta", {
-    p_token: authToken(), p_part_unit_id: partUnitId, p_scanned_at: scannedAt || null,
-    p_process_seconds: processSeconds == null ? null : Math.round(Number(processSeconds)),
-    p_status: status || null,
-  });
-  if (error) { console.warn("set_scan_meta error", error); flagAuth(error); throw error; }
-  if (data && data.ok === false) throw new Error(data.reason || "failed");
-  return data || { ok: true };
-}
 
 // แก้ "1 การสแกน" ครบทุกช่องรายสแกน (แอดมิน) — จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน · ดู migration-edit-scan.sql
 // qty=0 → ลบทั้งสแกน · weight=null → คิดอัตโนมัติจากจำนวน · ช่องอื่น null = ไม่แก้
@@ -1023,37 +962,11 @@ export async function editScan(partUnitId, scannedAt, opts = {}) {
 }
 
 // ── รายงานปัญหาหน้าเครื่อง (เครื่องหยุด + รอบที่ช้า) · ดู migration-machine-reports.sql ──
-// แจ้งเครื่องหยุด → คืน { ok, id, started_at } · เก็บเวลาเริ่มหยุดหลังบ้าน (หน้าเครื่องไม่โชว์)
-export async function reportMachineStop(machineId, reason, note, operationId) {
-  const { data, error } = await supabase.rpc("report_machine_stop", {
-    p_token: authToken(), p_machine_id: machineId, p_reason: reason || "",
-    p_note: note || null, p_operation_id: operationId || null,
-  });
-  if (error) { console.warn("report_machine_stop error", error); flagAuth(error); throw error; }
-  if (data && data.ok === false) throw new Error(data.reason || "failed");
-  return data || { ok: true };
-}
-// แจ้ง "พร้อมทำงาน" → ปิดการหยุด (บันทึกเวลาสิ้นสุด)
-export async function machineReady(machineId) {
-  const { data, error } = await supabase.rpc("machine_ready", { p_token: authToken(), p_machine_id: machineId });
-  if (error) { console.warn("machine_ready error", error); flagAuth(error); throw error; }
-  if (data && data.ok === false) throw new Error(data.reason || "failed");
-  return data || { ok: true };
-}
 // อ่านการหยุดที่ยังเปิดอยู่ (กู้สถานะตอนรีโหลด) → { open, reason, note, started_at } · พลาด = ถือว่าไม่หยุด
 export async function getOpenDowntime(machineId) {
   const { data, error } = await supabase.rpc("get_open_downtime", { p_token: authToken(), p_machine_id: machineId });
   if (error) { console.warn("get_open_downtime error", error); return { ok: false, open: false }; }
   return data || { ok: true, open: false };
-}
-// แนบเหตุผล "รอบช้า" กับ record ที่เพิ่งสแกน
-export async function setScanSlowReason(recordId, reason, note) {
-  const { data, error } = await supabase.rpc("set_scan_slow_reason", {
-    p_token: authToken(), p_record_id: recordId, p_reason: reason || "", p_note: note || null,
-  });
-  if (error) { console.warn("set_scan_slow_reason error", error); flagAuth(error); throw error; }
-  if (data && data.ok === false) throw new Error(data.reason || "failed");
-  return data || { ok: true };
 }
 // รายการรายงานของเครื่องนี้ ตั้งแต่ since (คนงานหน้าเครื่องดูได้) → { downtime:[...], slow:[...] } · พลาด = ว่าง
 export async function listMachineReports(machineId, since) {
@@ -1400,13 +1313,6 @@ export async function getEmployees() {
 
 // ── RPC wrappers (atomic operations ฝั่ง DB — ดู migration-fixes.sql) ─────────
 
-// บันทึกการสแกน 1 ครั้งแบบ atomic — เครื่อง/ขั้นตอน/พนักงาน ดึงจาก session token ฝั่ง DB
-// (ปลอมไม่ได้) คืน { ok, reason?, finished?, out_of_order?, step?, total?, op?, part_no? }
-export async function recordScan({ unitId }) {
-  const { data, error } = await supabase.rpc("record_scan", { p_token: authToken(), p_unit_id: unitId });
-  if (error) { console.warn("record_scan error", error); flagAuth(error); return { ok: false, reason: "error", message: error.message }; }
-  return data || { ok: false, reason: "error" };
-}
 
 // ── Offline scan queue (localStorage) — โหมดหน้าเครื่องกันสแกนหายเมื่อเน็ตสะดุด ────
 const SCAN_Q_KEY = "mls-scan-queue";
@@ -1425,7 +1331,6 @@ function qWrite(a) {
     return false;
   }
 }
-export function scanQueueCount() { return qRead().length; }
 export function onScanQueue(cb) { scanQListeners.add(cb); return () => scanQListeners.delete(cb); }
 // รวมจำนวนชิ้นที่ค้างคิว (ยังไม่ซิงค์) ของ release หนึ่ง — ใช้ทำ running number ให้ตรงตอนออฟไลน์
 // ★ แยกตาม "ขั้นตอน (operation)" ด้วย — กันเครื่องหลายขั้นตอนที่สลับงานบน release เดียวกัน
@@ -1701,11 +1606,6 @@ export function assemblyPackSupported() {
 const ASM_NEST_KEY = "mls-asm-batch-nest";
 let _rnsState = null;
 function rnsSet(v) { _rnsState = !!v; try { localStorage.setItem(ASM_NEST_KEY, v ? "1" : "0"); } catch { /* ignore */ } }
-export function assemblyNestSupported() {
-  if (_rabMissingNow) return false;
-  if (_rnsState === null) { try { _rnsState = localStorage.getItem(ASM_NEST_KEY) === "1"; } catch { _rnsState = false; } }
-  return !!_rnsState;
-}
 
 function queueAssemblyBatch(p) {
   const a = qRead();
@@ -1797,16 +1697,6 @@ export async function logAssemblyRemoval({ parentUnitId, childUnitId, qty, opera
   } catch { return null; }
 }
 
-// บันทึกงานประกอบ "ซับ" แบบนับจำนวนรวม (สแกนแม่ + จำนวนที่ทำ · ลูกเช็ก BOM ที่สเตชัน) — ปิดงานเบอร์แม่
-export async function recordSubassembly({ parentQr, qty, operationId, clientId, recordedAt }) {
-  const { data, error } = await supabase.rpc("record_subassembly", {
-    p_token: authToken(), p_parent_qr: parentQr, p_qty: qty,
-    p_operation_id: operationId ?? null, p_client_id: clientId ?? newClientId(),
-    p_recorded_at: recordedAt ?? new Date().toISOString(),
-  });
-  if (error) { console.warn("record_subassembly error", error); flagAuth(error); throw error; }
-  return data || { ok: false, reason: "error" };
-}
 
 // เอาลูกที่ติดตั้งแล้วออกจากเบอร์แม่ (ไว้ "แก้" งานที่เสร็จแล้ว) — ต้องออนไลน์ (ลบทันที ไม่เข้าคิว)
 export async function removeAssemblyChild(parentUnitId, childUnitId) {
@@ -2022,10 +1912,6 @@ export async function uploadPackingPhoto(blob, keyHint = "pack") {
   if (error) { console.warn("uploadPackingPhoto error", error); throw error; }
   return data?.path || path;
 }
-export function packingPhotoUrl(path) {
-  try { return supabase.storage.from("packing-photos").getPublicUrl(path).data.publicUrl; }
-  catch { return null; }
-}
 // ผูก path รูปกับเบอร์แพ็ก (เรียกหลังอัปโหลดรูปสำเร็จ)
 export async function recordPackingPhotos(parentQr, paths) {
   const list = (paths || []).filter(Boolean);
@@ -2035,26 +1921,6 @@ export async function recordPackingPhotos(parentQr, paths) {
   return data || { ok: false };
 }
 
-// สแกนด้วย QR (โหมดหน้าเครื่อง) — จบใน 1 round trip; ถ้าเน็ตหลุด เก็บเข้าคิวไว้ซิงค์ทีหลัง
-export async function recordScanByQr(qr, { allowQueue = true } = {}) {
-  const clientId = newClientId();   // ★ V7: 1 client_id ต่อการสแกน → ใช้ทั้งตอนยิงตรง + ตอนเข้าคิว (idem กันบันทึกซ้ำ)
-  const owner = queueOwner();       // ★ 2026-10-10 ตรวจรอบ 3: จำเจ้าของก่อนยิง (session อาจถูกล้างระหว่างรอ)
-  let { data, error } = await supabase.rpc("record_scan_by_qr_idem", { p_token: authToken(), p_qr: qr, p_client_id: clientId });
-  if (error && isMissingFnErr(error)) {   // ยังไม่ได้รัน migration idem → ใช้ตัวเดิม (สแกนได้ แต่ยังไม่กันซ้ำ)
-    ({ data, error } = await supabase.rpc("record_scan_by_qr", { p_token: authToken(), p_qr: qr }));
-  }
-  if (error) {
-    if (allowQueue && isNetworkErr(error)) {
-      const a = qRead(); a.push({ qr, qid: clientId, ts: Date.now(), owner: owner || queueOwner() });   // ★ qid = clientId เดิม → flush ส่ง client_id เดิม → idem กันซ้ำข้าม direct↔queue
-      if (!qWrite(a)) return { ok: false, reason: "storage_full", message: "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ" };
-      return { ok: true, queued: true };
-    }
-    console.warn("record_scan_by_qr error", error);
-    flagAuth(error);   // token หมดอายุ → เด้ง login (network-err ไปเข้าคิวข้างบนแล้ว)
-    return { ok: false, reason: "error", message: error.message };
-  }
-  return data || { ok: false, reason: "error" };
-}
 
 // พยายามส่งคิวที่ค้างขึ้น server (เรียกตอนเน็ตกลับ/เป็นระยะ)
 // ⚠️ ปลอดภัยต่อการเรียกซ้อน: มี guard กันรันพร้อมกัน + เอาออกจากคิวตาม "qid" (ไม่ทับของ
@@ -2318,7 +2184,6 @@ export async function saveMaterial({ id = null, projectId = null, inv, wpm, len,
   return r;
 }
 let _matDescMissing = false;
-export const materialDescMissing = () => _matDescMissing;
 // เพิ่มหลายรายการ (วางจาก Excel) · onDup: "skip" | "update" → { ok, added, updated, skipped:[{inv, reason}] }
 export async function upsertMaterials(projectId, items, onDup = "skip") {
   const { data, error } = await supabase.rpc("materials_upsert_many", {
@@ -2535,11 +2400,6 @@ export async function snapshotAllProjects(kind = "manual") {
   if (error) { console.warn("snapshot_all_projects", error); throw error; }
   return data;
 }
-export async function snapshotProject(projectId, kind = "manual") {
-  const { data, error } = await supabase.rpc("snapshot_project", { p_token: authToken(), p_project_id: projectId, p_kind: kind });
-  if (error) { console.warn("snapshot_project", error); throw error; }
-  return data;
-}
 export async function restoreBackup(backupId, mode = "merge") {
   const { data, error } = await supabase.rpc("restore_backup", { p_token: authToken(), p_backup_id: backupId, p_mode: mode });
   if (error) { console.warn("restore_backup", error); throw error; }
@@ -2716,26 +2576,6 @@ export async function getMachineOps() {
   return list;
 }
 
-// ── ขั้นตอน "พื้นฐานทั้งหมด" ที่แอดมินตั้งไว้ (ทุก op ในระบบ) — หน้าเครื่องใช้โชว์ให้เลือกครบ ──
-// ไม่จำกัดแค่ caps ของเครื่อง · anon SELECT ตาราง operations ได้ · แคช localStorage ให้ทำงานออฟไลน์
-const ALLOPS_KEY = "mls-all-ops";
-export async function getAllOperations() {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
-  }
-  try {
-    const { data, error } = await supabase.from("operations").select("id, name, seq, op_type, is_assembly").order("seq");
-    if (error) {
-      console.warn("getAllOperations error", error);
-      try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
-    }
-    const list = data || [];
-    try { localStorage.setItem(ALLOPS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
-    return list;
-  } catch {
-    try { return JSON.parse(localStorage.getItem(ALLOPS_KEY)) || []; } catch { return []; }
-  }
-}
 
 // สร้างภาพ "วันนี้" ตอนออฟไลน์ = snapshot ล่าสุด + งานที่ยังค้างคิว (ยังไม่ซิงค์)
 async function offlineMachineDay() {
