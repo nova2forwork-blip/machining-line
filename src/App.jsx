@@ -4,14 +4,13 @@ import { QRCodeSVG } from "qrcode.react";
 import {
   listRows, findPartByNo, insertRow, insertRows, updateRow, updateRows, deleteRow, deleteRows,
   deleteReleaseCascade, deleteProjectCascade, getProjectImpact,
-  findUnitByQr, getUnitHistory, getScanLogsBetween, getAssemblyLogsBetween, getAllUnitsFull, getReleasesFull,
+  findUnitByQr, getScanLogsBetween, getAssemblyLogsBetween, getReleasesFull,
   setReleaseMdf, releaseMdf, listReleaseIdsOfOrder, recalcRecordWeights, countReleaseStationRecords, updatePartMaster,
-  deleteCap, setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, setScanQuantity, setScanMeta, editScan, setReleaseMachineDone, supabase,
+  setMachineOps, getUnitStatsByReleaseIds, getReleaseOpProgress, getReleaseMachineProgress, getReleaseMaterialLengths, setReleaseMachineStatus, setReleaseMaterialLength, editScan, setReleaseMachineDone, supabase,
   getColumnPrefs, setColumnPref, setColumnPrefsBulk, clearColumnPref, clearColumnPrefs,
   getReleaseModifyInfo, applyReleaseModify, revertReleaseModify, setReleaseModDate, getReleaseMachineStatus,
   getMaterials, saveMaterial, upsertMaterials, deleteMaterial, addMaterialsFromRelease, backfillMaterials,
   machineReportSummary, listScanSlow,
-  recordScan, recordScanByQr, scanQueueCount, onScanQueue, flushScanQueue,
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
@@ -22,7 +21,7 @@ import {
   importBackupExtra, getPartStationProgress,
   getStationStatusList, appBuildId, reportSummary, setMachineScanMode, prefetchAllScanModes, getMultiSessionIds, setEmployeeMultiSession,
 } from "./supabase.js";
-import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogin, isAdmin, canManage } from "./auth.js";
+import { ROLE_LABELS, getSession, setSession, clearSession, appLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { tsvToRows } from "./tsv.js";
@@ -116,16 +115,6 @@ function useTableSort(defaultKey = null, defaultDir = "asc") {
     return arr;
   };
   return { key, dir, toggle, set, sortRows };
-}
-// หัวคอลัมน์ที่กดเรียงได้ (โชว์ลูกศร ▲/▼ ตัวที่กำลังเรียง) — เดสก์ท็อป
-function SortTh({ k, sort, children, style }) {
-  const active = sort.key === k;
-  return (
-    <th onClick={() => sort.toggle(k)} style={{ cursor: "pointer", userSelect: "none", ...style }} title="กดเพื่อเรียงลำดับ">
-      {children}
-      <span style={{ marginLeft: 5, fontSize: 11, opacity: active ? 1 : 0.5 }}>{active ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-    </th>
-  );
 }
 // ตัวเลือกเรียงลำดับสำหรับมือถือ/แท็บเล็ต (หัวตารางถูกซ่อนตอนเป็นการ์ด) — โชว์เฉพาะ ≤820px
 function SortControl({ sort, options }) {
@@ -534,10 +523,9 @@ function UndoHint() {
 // เพื่อไม่ให้ไลบรารี xlsx (ก้อนใหญ่) ถูกโหลดตั้งแต่หน้า Login
 import {
   processedWeight, distinctUnitCount, machineOpMatrix, partOpMatrix, totalPieces,
-  machineDailyMatrix, missingWeightParts, logWeight, logWeightNeedsBackfill, finishedPiecesV4,
-} from "./metrics.js";
+  machineDailyMatrix, missingWeightParts, logWeight, logWeightNeedsBackfill, } from "./metrics.js";
 import Icon from "./icons.jsx";
-import { askConfirm, askChoice, ConfirmHost, NumInput, groupNum, nc } from "./confirm.jsx";
+import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import { SimpleBarChart } from "./svgcharts.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
@@ -582,31 +570,6 @@ const fmtHrs = (secs) => {
 
 // ─── เสียง + สั่น ตอบรับการสแกน (สำคัญบนหน้าโรงงานที่ไม่ได้จ้องจอ) ───────────────
 let _audioCtx = null;
-function beep(kind) {
-  try {
-    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (_audioCtx.state === "suspended") _audioCtx.resume();
-    const ctx = _audioCtx;
-    const play = (freq, start, dur, vol = 0.18) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "square"; o.frequency.value = freq; o.connect(g); g.connect(ctx.destination);
-      const t = ctx.currentTime + start;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.start(t); o.stop(t + dur + 0.02);
-    };
-    if (kind === "success") play(950, 0, 0.13);
-    else if (kind === "warning") { play(600, 0, 0.1); play(600, 0.14, 0.1); }
-    else { play(240, 0, 0.32, 0.22); } // error/danger — ต่ำและยาว
-  } catch (_) { /* บางเบราว์เซอร์บล็อกเสียงก่อน user gesture */ }
-}
-function feedback(tone) {
-  beep(tone === "danger" ? "danger" : tone === "warning" ? "warning" : "success");
-  try {
-    if (navigator.vibrate) navigator.vibrate(tone === "success" ? 60 : tone === "warning" ? [40, 50, 40] : [120, 70, 120]);
-  } catch (_) {}
-}
 
 // ─── Date range presets ─────────────────────────────────────────────────────
 const PRESETS = [
@@ -724,14 +687,6 @@ function PeriodBar({ rangeMode, setRangeMode, preset, setPreset, monthValue, set
 }
 
 // ─── Routing helpers ─────────────────────────────────────────────────────────
-function progressFor(routing, doneOpNames) {
-  const done = new Set(doneOpNames);
-  return (routing || []).map((op) => ({ op, done: done.has(op) }));
-}
-function nextOpFor(routing, doneOpNames) {
-  const done = new Set(doneOpNames);
-  return (routing || []).find((op) => !done.has(op)) || null;
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // UI ATOMS
@@ -1088,35 +1043,6 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
   );
 }
 
-// Signature element: the routing rail — a numbered track of the real
-// operation sequence a part unit must travel through.
-function RoutingRail({ routing, doneOps }) {
-  const [lang] = useLang();
-  const steps = routing || [];
-  const doneSet = new Set(doneOps || []);
-  let currentAssigned = false;
-  if (steps.length === 0) {
-    return <div style={{ fontSize: 12.5, color: "var(--muted)" }}>ยังไม่ได้กำหนด Routing สำหรับ Part นี้</div>;
-  }
-  return (
-    <div className="rail">
-      {steps.map((op, i) => {
-        const done = doneSet.has(op);
-        const isCurrent = !done && !currentAssigned;
-        if (isCurrent) currentAssigned = true;
-        return (
-          <div className="rail-node-wrap" key={op}>
-            {i > 0 && <div className={`rail-line ${doneSet.has(steps[i - 1]) ? "done" : ""}`} />}
-            <div className="rail-node">
-              <div className={`rail-dot ${done ? "done" : isCurrent ? "current" : ""}`}>{done ? "✓" : i + 1}</div>
-              <div className={`rail-label ${done ? "done" : isCurrent ? "current" : ""}`}>{opLabel(op, lang)}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // LOGIN
@@ -1619,86 +1545,6 @@ function QuickAddProjectModal({ onClose, onCreated }) {
 }
 
 // ─── Quick-create: Part (+ Routing) ─────────────────────────────────────────
-// A project needs at least one Part before it can be Released, so this
-// mirrors PartMasterCrud but scoped to one project and reachable inline.
-function QuickAddPartModal({ project, onClose, onCreated }) {
-  const [operations, setOperations] = useState([]);
-  const [lang] = useLang();
-  const [form, setForm] = useUndoable({ routing: [] });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  useEffect(() => { listRows("operations", { order: "seq" }).then(setOperations); }, []);
-
-  function toggleOp(name) {
-    setForm((f) => {
-      const has = (f.routing || []).includes(name);
-      return { ...f, routing: has ? f.routing.filter((x) => x !== name) : [...(f.routing || []), name] };
-    });
-  }
-
-  async function submit(e) {
-    e.preventDefault();
-    const part_no = (form.part_no || "").trim();
-    if (!part_no) { setErr("กรอกรหัส Part ให้ครบ"); return; }
-    setBusy(true); setErr("");
-    try {
-      const part = await insertRow("part_master", {
-        project_id: project.id, part_no, part_name: (form.part_name || "").trim() || part_no,
-        material: (form.material || "").trim() || null,
-        unit_weight: Number(form.unit_weight || 0),
-        default_length_mm: form.default_length_mm === "" || form.default_length_mm == null ? null : Number(form.default_length_mm),
-        routing: form.routing || [],
-      });
-      onCreated(part);
-      onClose();
-    } catch (e2) {
-      setErr(isDuplicateError(e2) ? `Part "${part_no}" มีอยู่แล้วในโปรเจคนี้` : isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : "เกิดข้อผิดพลาด: " + e2.message);
-    }
-    setBusy(false);
-  }
-
-  return (
-    <Modal title="Part ใหม่" sub={`ในโปรเจค ${project.code} — ${project.name}`} onClose={onClose}>
-      <form onSubmit={submit}>
-        <div className="grid-2">
-          <Field label="รหัส Part *">
-            <Input autoFocus value={form.part_no || ""} onChange={(e) => setForm({ ...form, part_no: e.target.value })} />
-          </Field>
-          <Field label="ชื่อ Part">
-            <Input value={form.part_name || ""} onChange={(e) => setForm({ ...form, part_name: e.target.value })} />
-          </Field>
-          <Field label="วัสดุ">
-            <Input value={form.material || ""} onChange={(e) => setForm({ ...form, material: e.target.value })} />
-          </Field>
-          <Field label="น้ำหนัก/ชิ้น (กก.)">
-            <NumField step="0.01" value={form.unit_weight || ""} onChange={(e) => setForm({ ...form, unit_weight: e.target.value })} />
-          </Field>
-          <Field label="ความยาว/ชิ้น (มม.)">
-            <NumField step="0.1" value={form.default_length_mm || ""} onChange={(e) => setForm({ ...form, default_length_mm: e.target.value })} />
-          </Field>
-        </div>
-        <div className="label-el">Routing — เลือกขั้นตอนที่ part นี้ต้องผ่านตามลำดับ</div>
-        <div className="chip-row" style={{ marginBottom: 6 }}>
-          {operations.map((o) => {
-            const active = (form.routing || []).includes(o.name);
-            return (
-              <span key={o.id} onClick={() => toggleOp(o.name)} className={`chip ${active ? "active" : ""}`}>
-                {opLabel(o.name, lang)}{active ? ` (${form.routing.indexOf(o.name) + 1})` : ""}
-              </span>
-            );
-          })}
-          {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปตั้งค่าที่ Setup ก่อน</span>}
-        </div>
-        {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 8 }}>{err}</div>}
-        <div className="modal-actions">
-          <Btn type="button" variant="ghost" onClick={onClose}>ยกเลิก</Btn>
-          <Btn type="submit" variant="accent" disabled={busy}>{busy ? "กำลังสร้าง..." : "สร้าง Part"}</Btn>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 // ══ บันทึก Material (INV Code) — แยกตามโปรเจค + Center Stock ════════════════════════════
 //   ข้อมูล: materials_list / material_save / materials_upsert_many / material_delete / materials_backfill
@@ -2712,15 +2558,6 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
     const code = row.code.trim().toLowerCase();
     if (!code) return null;
     return partsInProject.find((p) => p.part_no.trim().toLowerCase() === code) || null;
-  }
-  // เบอร์เดียวกันที่มีอยู่ใน "โปรเจคอื่น" — เตือนให้รู้ว่ามี routing อื่นอยู่ (อาจต่างกันโดยตั้งใจ)
-  // คนละโปรเจค = คนละ Part เสมอ จึงไม่ดึง routing ข้ามโปรเจคมาให้ แต่โชว์ให้ดูเป็นข้อมูลอ้างอิง
-  function otherProjectMatches(row) {
-    const code = row.code.trim().toLowerCase();
-    if (!code) return [];
-    return parts
-      .filter((p) => p.part_no.trim().toLowerCase() === code && p.project_id !== projectId)
-      .map((p) => ({ part: p, project: projects.find((pr) => pr.id === p.project_id) }));
   }
   const isNewPartRow = (row) => row.code.trim() && !existingPartFor(row);
   const newPartCount = validRows.filter(isNewPartRow).length;
@@ -9079,7 +8916,6 @@ function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onCl
   const totWt = grouped.reduce((s, g) => s + (Number(g.weight) || 0), 0);
   const showMachine = mode === "part";
   const showPart = mode === "machine";
-  const colCount = 5 + (showMachine ? 1 : 0) + (showPart ? 1 : 0);
   const statCell = { flex: 1, minWidth: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px" };
   const statLbl = { fontSize: 12, color: "var(--muted)" };
   const pill = (st) => {
@@ -9486,7 +9322,6 @@ function ReportPage({ goTo }) {
   const avgWeightPerDay = activeDays > 0 ? processed / activeDays : 0;
   // ── เรียงลำดับตารางรายงาน (กดหัวคอลัมน์) ──────────────────────────────────
   const sortM = useTableSort();   // ตารางเครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)
-  const sortW = useTableSort();   // ตารางปริมาณงานที่แต่ละเครื่องประมวลผล
   const sortP = useTableSort();   // ตาราง Release × Part × ขั้นตอน
   // ★ รอบ 11: จับคู่ค่าเฉลี่ย/วัน ด้วยรหัสเครื่อง (เครื่องชื่อซ้ำไม่ปนกัน) · ไม่มีรหัส = ใช้ชื่อ
   const dmByName = (name, code) => dailyMatrix.machines.find((x) => (code ? x.code === code : x.name === name));
@@ -10109,10 +9944,8 @@ function MachineScanDetail({ machine, onBack }) {
     for (const [rid, d] of Object.entries(machDone)) out[rid] = d;
     return out;
   }, [mine, machDone]);
-  const colCount = 9 + (admin ? 1 : 0);
   // ── ค่าระดับล็อต/พาร์ท (ต่อ release) สำหรับคอลัมน์ + ฟอร์มแก้ ──
   const partLenOf = (rid) => { const ri = relInfo[rid]; const v = ri?.length_mm ?? ri?.default_length_mm; return (v == null || v === "") ? null : v; };
-  const matLenTextOf = (rid) => { const a = matLenMap[rid] || []; if (!a.length) return "-"; return a.length === 1 ? fmtNum(a[0]) : a.map((n) => fmtNum(n)).join(" · "); };
   // แปลงเวลา ↔ ช่อง datetime-local (เวลาเครื่องผู้ใช้)
   const toDTLocal = (iso) => { try { const d = new Date(iso); if (isNaN(d)) return ""; const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; } catch { return ""; } };
   const fromDTLocal = (s) => { try { const d = new Date(s); return isNaN(d) ? null : d.toISOString(); } catch { return null; } };
@@ -10704,7 +10537,6 @@ const drDeptOfOpType = (ty) => (ty === "assembly" ? "sub" : ty === "panel" ? "pa
 const DR_KEY = "daily_report";
 const DR_DEFAULT = { start: "08:00", end: "17:00", breakStart: "12:00", breakMin: 60, targets: {} };
 const hmToMin = (s) => { const [h, m] = String(s || "0:0").split(":").map((x) => Number(x) || 0); return h * 60 + m; };
-const minToHm = (n) => `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(Math.round(n % 60)).padStart(2, "0")}`;
 // เวลาทำงานตามแผน (นาที) ของวัน — กะ − พัก · วันนี้ = นับถึงตอนนี้ (planned-to-date)
 function drPlannedMin(cfg, dayStr, nowMs = Date.now()) {
   const s = hmToMin(cfg.start), e = hmToMin(cfg.end);
@@ -11396,7 +11228,6 @@ function DailyReportPage() {
   const selStyle = { height: 38, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", padding: "0 10px", fontFamily: "inherit", fontSize: 13.5, minWidth: 150 };
   const dayLabel = new Date(`${day}T12:00:00`).toLocaleDateString(lang === "en" ? "en-GB" : "th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const exceptions = machineRows.filter((m) => m.sev > 0).sort((a, b) => b.sev - a.sev);
-  const pctDone = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
   return (
     <div className="dr-page">
@@ -13395,53 +13226,6 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
   );
 }
 
-// เครื่องจักร + ความสามารถ (ทำขั้นตอนไหนได้บ้าง) — ใช้ตรวจตอนสแกนว่าเครื่องนี้
-// ทำขั้นตอนนั้นได้จริง และให้หน้ารายงานแยกน้ำหนักของเครื่องออกเป็นราย-ขั้นตอนได้
-function MachineCapModal({ machine, operations, caps, onClose, onSaved }) {
-  const initial = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
-  const [selected, setSelected] = useUndoable(initial);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  function toggle(opId) {
-    setSelected((s) => { const n = new Set(s); n.has(opId) ? n.delete(opId) : n.add(opId); return n; });
-  }
-
-  async function save() {
-    setBusy(true); setErr("");
-    try {
-      await setMachineOps(machine.id, [...selected]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
-      onSaved();
-    } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
-    }
-    setBusy(false);
-  }
-
-  return (
-    <Modal title={`ความสามารถของเครื่อง — ${machine.code}`} sub="เลือกขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง) — หน้าสแกนจะเตือนถ้าเครื่องทำขั้นตอนที่ไม่ได้ตั้งไว้" onClose={onClose}>
-      <div className="label-el">ขั้นตอนที่เครื่องนี้ทำได้</div>
-      <div className="chip-row" style={{ marginBottom: 10 }}>
-        {operations.map((o) => (
-          <span key={o.id} tabIndex={0} onClick={() => toggle(o.id)}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(o.id); } }}
-            className={`chip ${selected.has(o.id) ? "active" : ""}`}>{o.name}</span>
-        ))}
-        {operations.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>ยังไม่มีขั้นตอนงาน — ไปเพิ่มที่แท็บ "ขั้นตอนงาน" ก่อน</span>}
-      </div>
-      {selected.size === 0 && (
-        <div style={{ fontSize: 12, color: "var(--warning)", marginBottom: 8 }}>
-          ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้จะสแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ
-        </div>
-      )}
-      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
-      <div className="modal-actions">
-        <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-        <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
-      </div>
-    </Modal>
-  );
-}
 
 function MachineCrud() {
   const [rows, setRows] = useState([]);
