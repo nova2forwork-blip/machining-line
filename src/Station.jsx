@@ -5,10 +5,10 @@ import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
 import {
-  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, getReleaseProgress, getScanStatusLock, lookupCancelledQr,
-  scanQueueCount, onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
+  findUnitByQr, findManualPartOptions, getMachineDay, recordMachineWork, lookupCancelledQr,
+  onScanQueue, flushScanQueue, logoutSession, prefetchUnitsForOffline, prefetchAssemblyForOffline,
   rejectedQueueCount, onRejectedQueue, retryRejected, sessionHeartbeat, getMachineOps, reportDeadLetter,
-  countUnitOpRecords, listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
+  listRejected, clearRejected, getAssemblyState, recordAssembly, removeAssemblyChild,
   recordAssemblyBatch, getAssemblyBatches, logAssemblyRemoval, assemblyBatchSupported, assemblyPackSupported, assemblyChildParents,
   uploadPackingPhoto, recordPackingPhotos, getPartMeta, listAssemblyParents, listGlazingParents,
   getOpenDowntime, listMachineReports,
@@ -2795,15 +2795,6 @@ function AsmManualInput({ onSubmit, placeholder, t }) {
 }
 
 // ── ประกอบ: จำแนกบทบาทชิ้นจากชื่อ (ใช้วาดผัง + ป้ายจุดติดตั้ง) ────────────────
-function asmRole(name) {
-  const d = String(name || "").toUpperCase();
-  if (/SCREW|BOLT|RIVET|\bNUT\b|WASHER/.test(d)) return "fastener";
-  if (/MULLION/.test(d) && !/STIFF/.test(d)) return "mullion";
-  if (/TRANSOM|\bSILL\b|\bRAIL\b|\bHEAD\b/.test(d)) return "transom";
-  if (/GLASS/.test(d) && !/SUPPORT|BEAD|SPACER|GASKET|SETTING|CLIP/.test(d)) return "glass";
-  if (/BACKPAN|GALVAN/.test(d)) return "infill";
-  return "accessory";
-}
 
 // แผงยืนยันต่อชิ้น (โหมดประกอบ/แพ็กอิสระ) — สแกนลูก → กรอกจำนวน → กดใส่เข้าเบอร์แม่
 function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
@@ -2859,99 +2850,6 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
   );
 }
 
-// ── สเตชัน "ประกอบ ซับ (subassembly)" — BOM + กรอกจำนวน (นับจำนวนรวม ไม่ผูก QR รายชิ้น) [ปัจจุบันไม่ใช้] ──
-//    สแกนเบอร์แม่ → ใส่จำนวนที่จะทำ → กรอกจำนวนลูกตาม BOM (ต้องได้ครบ BOM×จำนวน) → ครบ = เสร็จอัตโนมัติ
-//    ลูกเป็น "แผง" ไม่ได้ (ซับมีลูกเป็น part/ซับเท่านั้น) → กรอง kind='panel' ออก
-function SubAsmWorksheet({ asmParent, onConfirm, onReset, busy, t }) {
-  const bom = (asmParent.bom || []).filter((b) => b.kind !== "panel");
-  const [qty, setQty] = useState("1");
-  const [got, setGot] = useState({});
-  const firedRef = useRef(false);
-  const [autoIn, setAutoIn] = useState(0);
-  const nQty = Math.max(0, Math.floor(Number(qty) || 0));
-  const need = (b) => (Number(b.qty) || 0) * nQty;
-  const gotOf = (b) => Math.max(0, Math.floor(Number(got[b.child_pm_id]) || 0));
-  const allDone = bom.length > 0 && nQty > 0 && bom.every((b) => gotOf(b) >= need(b));
-  const fire = () => { if (!firedRef.current) { firedRef.current = true; onConfirm(nQty); } };
-
-  // ครบ BOM → เสร็จอัตโนมัติ (หน่วง 3 วิ กันกรอกพลาด · แก้ตัวเลขจะยกเลิกนับถอยหลัง)
-  useEffect(() => {
-    if (!allDone || busy) { setAutoIn(0); if (!allDone) firedRef.current = false; return; }
-    if (firedRef.current) return;
-    setAutoIn(3);
-    const iv = setInterval(() => setAutoIn((n) => { if (n <= 1) { clearInterval(iv); fire(); return 0; } return n - 1; }), 1000);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allDone, busy, nQty]);
-
-  const partNo = asmParent.unit?.part_master?.part_no || asmParent.unit?.qr_code;
-  const partName = asmParent.unit?.part_master?.part_name || "";
-  const inStyle = { width: 92, padding: "9px 10px", fontSize: 18, fontWeight: 700, textAlign: "center", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'IBM Plex Mono', monospace" };
-
-  return (
-    <div className="stn-part-panel" style={{ maxWidth: 760, margin: "0 auto", width: "100%" }}>
-      {/* หัว: เบอร์แม่ + จำนวนที่จะทำ */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "10px 4px 16px", borderBottom: "1px solid #23402f" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{t("เบอร์แม่ (ซับ)", "Subassembly")}</div>
-          <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace", color: "#eafff5", wordBreak: "break-all" }}>{partNo}</div>
-          {partName ? <div style={{ fontSize: 13, color: "#cfe7dc" }}>{partName}</div> : null}
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 12.5, color: "#9fd8bf", marginBottom: 5 }}>{t("จำนวนที่จะทำ", "Qty to make")}</div>
-          <NumInput strict inputMode="numeric" min={1} value={qty} disabled={busy}
-            onChange={(e) => { firedRef.current = false; setQty(e.target.value.replace(/[^0-9]/g, "")); }}
-            style={{ ...inStyle, width: 120, fontSize: 22 }} />
-        </div>
-      </div>
-
-      {/* BOM: กรอกจำนวนลูกแต่ละพาร์ท */}
-      {bom.length === 0 ? (
-        <div style={{ color: "#e6b877", fontSize: 14, padding: 22, textAlign: "center", lineHeight: 1.7 }}>
-          {t("เบอร์นี้ยังไม่ได้ตั้ง BOM (รายการลูก) — กำหนดที่ office ก่อน แล้วปล่อยงานใหม่", "no BOM set — define children in the office first")}
-        </div>
-      ) : (
-        <table className="asw-tab" style={{ marginTop: 12 }}>
-          <thead><tr>
-            <th className="c-n">#</th>
-            <th className="c-pn">{t("เบอร์ลูก", "Child")}</th>
-            <th className="c-len">{t("ต้องใช้", "Need")}</th>
-            <th className="c-qty">{t("กรอกจำนวน", "Got")}</th>
-            <th className="c-prog">{t("สถานะ", "")}</th>
-          </tr></thead>
-          <tbody>
-            {bom.map((b, i) => {
-              const nd = need(b); const g = gotOf(b); const ok = nQty > 0 && g >= nd;
-              return (
-                <tr key={b.child_pm_id || i} className={"asw-r" + (ok ? " done" : " partial")}>
-                  <td className="c-n"><span className="nb">{i + 1}</span></td>
-                  <td className="c-pn">{b.part_no}{b.part_name ? <div style={{ fontSize: 11, color: "#7fa694" }}>{b.part_name}</div> : null}</td>
-                  <td className="c-len">{nd}<span className="u"> {t("ชิ้น", "pcs")}</span></td>
-                  <td className="c-qty">
-                    <NumInput strict inputMode="numeric" min={0} disabled={busy}
-                      value={got[b.child_pm_id] ?? ""} placeholder="0"
-                      onChange={(e) => { firedRef.current = false; setGot((s) => ({ ...s, [b.child_pm_id]: e.target.value.replace(/[^0-9]/g, "") })); }}
-                      style={inStyle} />
-                  </td>
-                  <td className="c-prog" style={{ textAlign: "center", fontWeight: 800, color: ok ? "#43d693" : "#e0a44a" }}>{ok ? "✓" : `${g}/${nc(nd)}`}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {/* สรุป + ปุ่ม */}
-      <div className="stn-row-btns" style={{ marginTop: 16 }}>
-        <button className="stn-pill no" onClick={onReset} disabled={busy}>{t("← เปลี่ยนเบอร์แม่", "← Change")}</button>
-        <button className="stn-pill ok" onClick={fire} disabled={busy || !allDone}>
-          {allDone ? t(`✓ ครบ — บันทึกเสร็จ${autoIn ? ` (${autoIn})` : ""}`, `✓ Complete — save${autoIn ? ` (${autoIn})` : ""}`)
-            : t("กรอกให้ครบ BOM ก่อน", "fill the BOM first")}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ── หน้าประกอบ/แพ็ก (สเตชัน) = ตารางรายการชิ้นงาน (เช็กลิสต์) + สแกนติ๊กความคืบหน้า ───────────────
 //    คอลัมน์: # · เบอร์ชิ้น/ยูนิต · รายละเอียด · ขนาด/ยาว(ประกอบ)|น้ำหนัก(แพ็ก) · จำนวน · ประกอบแล้ว/แพ็กแล้ว (X/Y)
@@ -3486,8 +3384,6 @@ function WorkArea({ step, elapsed, unit, progress, qty, setQty, status, setStatu
       return <CameraScan onDecoded={asmDecoded} onManualEntry={asmManual} onPickUnit={() => {}} busy={busy} onClose={closeScan} locked={true} />;
     }
     const isPack = isPackingDept(asmType);
-    const modeTitle = isPack ? t("โหมดแพ็ก", "Packing mode") : t("โหมดประกอบ", "Assembly mode");
-    const parentWord = isPack ? t("เบอร์แพ็ก", "package") : t("เบอร์แม่", "parent");
     const childWord = isPack ? t("ของที่ใส่", "item") : t("ลูก", "child");
     const confirmVerb = isPack ? t("ยืนยันแพ็ก", "Confirm pack") : t("ยืนยันประกอบ", "Confirm assembly");
     if (isPack && photoOpen) {
