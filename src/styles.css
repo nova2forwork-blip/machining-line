@@ -788,28 +788,6 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
 }
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 
-/* ── Routing rail (signature element) ────────────────────────────
-   Encodes the actual sequence of operations a part must travel
-   through — numbered stations on a track, like a progress tracker. */
-.rail { display: flex; align-items: center; overflow-x: auto; padding: 6px 2px 10px; }
-.rail-node-wrap { display: flex; align-items: center; flex-shrink: 0; }
-.rail-node {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 58px;
-}
-.rail-dot {
-  width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display); font-size: 12px; font-weight: 600; flex-shrink: 0;
-  border: 2px solid var(--border); background: var(--surface-2); color: var(--muted);
-  transition: all .2s ease;
-}
-.rail-dot.done { background: var(--success); border-color: var(--success); color: #fff; }
-.rail-dot.current { border-color: var(--accent); color: var(--accent-dk); background: var(--accent-tint); box-shadow: 0 0 0 4px rgba(16,185,129,.16); }
-.rail-label { font-size: 10.5px; color: var(--muted); text-align: center; white-space: nowrap; }
-.rail-label.done { color: var(--success); font-weight: 500; }
-.rail-label.current { color: var(--accent-dk); font-weight: 600; }
-.rail-line { width: 26px; height: 2px; background: var(--border); flex-shrink: 0; margin: 0 -2px 20px; }
-.rail-line.done { background: var(--success); }
-
 /* ── Login ─────────────────────────────────────────────────────── */
 .login-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
