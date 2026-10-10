@@ -2561,10 +2561,17 @@ export async function getPartStationProgress() {
   if (error) { if (!isMissingFnErr(error)) console.warn("part_station_progress error", error); return null; }
   return data || {};
 }
+// ★ 2026-10-10 ตรวจรอบ 3 (ฐานข้อมูล): part_summary คืนแบบ TABLE → API ตัดที่ 1,000 แถว (ตอนนี้ part_master ~940 เบอร์)
+//   → อ่านเป็นหน้าละ 1,000 (เรียง id ให้หน้าไม่ซ้ำ/ไม่หาย) แล้วเรียงจำนวนมาก→น้อยเหมือนเดิม
 export async function getPartSummary() {
-  const { data, error } = await supabase.rpc("part_summary");
-  if (error) { console.warn("part_summary error", error); return []; }
-  return data || [];
+  const all = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.rpc("part_summary").order("id", { ascending: true }).range(from, from + 999);
+    if (error) { console.warn("part_summary error", error); return all.length ? all : []; }
+    all.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return all.sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
 }
 
 // scan log ทั้งหมดในช่วงเวลา สำหรับรายงาน — รวม scan_logs (สำนักงาน) +
