@@ -155,9 +155,12 @@ export function machineOpMatrix(logs, opOrder) {
     //    ★ รอบ 11 (B9): แยก cycle time — สแกนที่ทำขั้นตอนเดียว (solo) vs ทำหลายขั้นตอนพร้อมกัน (combos)
     //      เดิม "วินาที/ชิ้น" ของขั้นตอนที่ติ๊กร่วม = 0 (เวลาทั้งหมดไปอยู่ที่ขั้นตอนหลัก)
     const asc = [...mv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
-    let cur = null;
-    const flush = () => {
-      if (!cur) return;
+    // ★ 2026-10-10 ตรวจรอบ 3: เดิมใช้ตัวชี้ cur ตัวเดียว → สแกนของชิ้นอื่นแทรกระหว่างตัวหลักกับติ๊กร่วม (ห่าง ~0.3-2 วิ)
+    //   ติ๊กร่วมกลายเป็นกำพร้า · ใช้ Map สแกนที่เปิดอยู่ คีย์ = ชิ้น|สถานะ (กลุ่มนี้เป็นเครื่องเดียวอยู่แล้ว)
+    //   flush ทั้งหมดตอนท้ายตามลำดับตัวหลัก (ผลรวมเท่าเดิม · ลำดับ combos เท่าเดิม)
+    const open = new Map();
+    const scans = [];
+    const flush = (cur) => {
       const timed = cur.sec > 0;
       if (timed) entry.total.timedCount += cur.qty;
       const list = sortOpNames(cur.ops, opOrder);
@@ -174,19 +177,21 @@ export function machineOpMatrix(logs, opOrder) {
       const qv = q(l);
       const puid = l.part_unit_id;
       const st = String(l.status || "").toLowerCase();
+      const k = `${puid ?? ""}|${st}`;
+      const cur = open.get(k);
       if (qv > 0) {                                   // record หลัก → เริ่มสแกนใหม่ + เครดิตขั้นตอนหลัก
-        flush();
-        cur = { qty: qv, puid, st, ops: new Set([op]), sec: sec(l) };
+        const sc = { qty: qv, puid, st, ops: new Set([op]), sec: sec(l) };
+        open.set(k, sc); scans.push(sc);
         entry.total.count += qv;
         ensureOp(op).count += qv;
-      } else if (cur && cur.puid === puid && cur.st === st) {   // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
+      } else if (cur) {                               // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
         if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
         cur.sec += sec(l);
       } else {
         ensureOp(op);                                 // ติ๊กร่วมกำพร้า (ไม่มีตัวหลักคู่) → มีคอลัมน์ไว้ แต่ไม่เครดิต
       }
     }
-    flush();
+    scans.forEach(flush);
     byMachine.set(mv.code || mv.name, entry);
   }
 
@@ -239,17 +244,21 @@ export function partOpMatrix(logs, opOrder) {
 
     // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
     const asc = [...kv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
-    let cur = null;
+    // ★ 2026-10-10 ตรวจรอบ 3: เดิมตัวชี้ cur ตัวเดียวต่อ Release+Part → ตัวหลักของเครื่อง/ชิ้นอื่นแทรกก่อนติ๊กร่วม
+    //   ทำให้ติ๊กร่วมกำพร้า/ไปเครดิตผิดสแกน · ใช้ Map สแกนที่เปิดอยู่ คีย์ = ชิ้น|เครื่อง|สถานะ
+    const open = new Map();
     for (const l of asc) {
       const op = l.operation?.name || "ไม่ระบุ";
       const qv = q(l);
       const puid = l.part_unit_id;
       const st = String(l.status || "").toLowerCase();
+      const k = `${puid ?? ""}|${l.machine?.code || l.machine?.name || ""}|${st}`;
+      const cur = open.get(k);
       if (qv > 0) {                                   // record หลัก → เริ่มสแกนใหม่ + เครดิตขั้นตอนหลัก
-        cur = { qty: qv, puid, st, ops: new Set([op]) };
+        open.set(k, { qty: qv, puid, st, ops: new Set([op]) });
         entry.total.count += qv;
         ensureOp(op).count += qv;
-      } else if (cur && cur.puid === puid && cur.st === st) {   // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
+      } else if (cur) {                               // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
         if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
       } else {
         ensureOp(op);                                 // ติ๊กร่วมกำพร้า → มีคอลัมน์ไว้ แต่ไม่เครดิต
