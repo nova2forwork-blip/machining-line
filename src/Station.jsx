@@ -390,6 +390,13 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
     setSession(res.user);
     enterFullscreen();          // ล็อกอินสำเร็จ = user gesture → เข้าเต็มจอทันที
     warmCameraPermission();     // ขอสิทธิ์กล้อง "ครั้งเดียว" ตอนนี้เลย → SCAN ครั้งต่อไปไม่ถามซ้ำ
+    // ★ 2026-10-10: ดึง + จำ "รูปแบบการสแกน" ของเครื่องก่อนเข้าหน้าเครื่อง → จอแรกถูกแบบตั้งแต่แรก
+    //   และออฟไลน์ครั้งต่อไปก็หน้าตาเหมือนออนไลน์ (ใช้ค่าที่จำไว้) · รอไม่เกิน 4 วิ (เน็ตช้า = ใช้ค่าที่จำไว้)
+    if (dept === "machine" && res.user.machine?.id && !res.offline) {
+      setBusy(true);
+      try { await Promise.race([getMachineScanMode(res.user.machine.id), new Promise((r) => setTimeout(r, 4000))]); } catch { /* ignore */ }
+      setBusy(false);
+    }
     onLogin(res.user);
   }
 
