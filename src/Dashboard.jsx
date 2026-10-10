@@ -69,7 +69,9 @@ function bangkokTodayRange() {
 // ─── ตัวเลขวิ่ง count-up (ease-out) ─────────────────────────────────────────
 function CountNumber({ value, format = fmtInt, className = "" }) {
   const [disp, setDisp] = useState(value);
-  const fromRef = useRef(value);
+  // ★ 2026-10-10 ตรวจรอบ 3: เดิม fromRef อัปเดตเฉพาะตอนจบอนิเมชัน → ค่าใหม่มากลางทาง ตัวเลขกระโดดถอยไปค่าเก่า
+  //   → เก็บ "ค่าที่แสดงอยู่ตอนนี้" ทุกเฟรม แล้วเริ่มอนิเมชันใหม่จากค่านั้น
+  const fromRef = useRef(Number(value) || 0);
   const rafRef = useRef(0);
   useEffect(() => {
     const from = fromRef.current, to = Number(value) || 0;
@@ -79,9 +81,10 @@ function CountNumber({ value, format = fmtInt, className = "" }) {
       if (!start) start = ts;
       const p = Math.min((ts - start) / dur, 1);
       const eased = 1 - Math.pow(1 - p, 3);
-      setDisp(from + (to - from) * eased);
+      const v = p < 1 ? from + (to - from) * eased : to;
+      fromRef.current = v;
+      setDisp(v);
       if (p < 1) rafRef.current = requestAnimationFrame(step);
-      else fromRef.current = to;
     };
     rafRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafRef.current);
@@ -98,21 +101,25 @@ const keyOf = (l) => `${l.part_unit_id || "?"}|${l.scanned_at}|${l.operation?.na
 function groupScans(rows) {
   const asc = [...(rows || [])].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
   const out = [];
-  let cur = null;
+  // ★ 2026-10-10 ตรวจรอบ 3: เดิมเทียบแค่ชิ้น+สถานะกับตัวชี้ cur ตัวเดียว (ไม่เทียบเครื่อง · เครื่องอื่นแทรกแล้วกำพร้า)
+  //   → Map สแกนที่เปิดอยู่ คีย์ = ชิ้น|เครื่อง|สถานะ (เหมือน metrics.js)
+  const open = new Map();
   for (const l of asc) {
     const qv = Number(l.quantity) || 0;
     const op = l.operation?.name || null;
+    const k = `${l.part_unit_id ?? ""}|${l.machine?.code || l.machine?.name || ""}|${String(l.status || "").toLowerCase()}`;
+    const cur = open.get(k);
     if (qv > 0) {                                        // record หลัก (มีจำนวนจริง) → เริ่มรายการใหม่
-      cur = {
+      const sc = {
         fkey: keyOf(l), key: `${l.part_unit_id || "?"}|${l.scanned_at}`,
         part_no: l.part_unit?.part_master?.part_no || "—",
         machine_code: l.machine?.code || "", machine_name: l.machine?.name || "",
         scanned_at: l.scanned_at, status: l.status, part_unit_id: l.part_unit_id,
         ops: op ? [op] : [], qty: qv,
       };
-      out.push(cur);
-    } else if (cur && cur.part_unit_id === l.part_unit_id
-               && String(cur.status).toLowerCase() === String(l.status).toLowerCase()) {
+      open.set(k, sc);
+      out.push(sc);
+    } else if (cur) {
       if (op && !cur.ops.includes(op)) cur.ops.push(op);   // ขั้นตอนที่ติ๊กเพิ่ม (จำนวน 0) → เติมเข้ารายการเดียวกัน
     } else {                                             // record จำนวน 0 ที่ไม่มีตัวหลักคู่ (หายาก) → รายการเดี่ยว
       out.push({
@@ -372,9 +379,11 @@ export default function Dashboard() {
     // ★ รอบ 13: เครื่องที่ "หยุด" ขึ้นก่อน (เห็นในหน้าแรกเสมอ) · ที่เหลือเรียงเหมือนเดิม
     const all = [...active, ...idle].map((m) => ({ ...m, st: mstat ? mstat[m.code] || null : null }));
     const stopped = all.filter((m) => m.st && m.st.state === "stopped");
+    // ★ 2026-10-10 ตรวจรอบ 3: scanCount เดิม = logs.length (นับแถวติ๊กร่วมจำนวน 0 ด้วย → 1 สแกนหลายขั้นตอนนับหลายครั้ง) → นับสแกนที่ยุบแล้ว
+    const scans = groupScans(logs);
     return {
-      totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: logs.length,
-      machines: [...stopped, ...all.filter((m) => !(m.st && m.st.state === "stopped"))], maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: groupScans(logs).slice(0, 9),
+      totalPieces: tPieces, totalKg: tKg, totalSec: tSec, scanCount: scans.length,
+      machines: [...stopped, ...all.filter((m) => !(m.st && m.st.state === "stopped"))], maxKg: Math.max(1, ...mach.map((m) => m.weight)), feed: scans.slice(0, 9),
     };
   }, [logs, allMachines, mstat]);
   const stSum = useMemo(() => {
@@ -400,7 +409,11 @@ export default function Dashboard() {
   // สำคัญ: ทำให้ "อ้างอิงข้อมูลคงที่" เมื่อค่าไม่เปลี่ยน (นาฬิกาเดินทุกวินาที
   // ไม่ควรทำให้กราฟรีเซ็ต/กระพริบใหม่) — Recharts จะขยับก็ต่อเมื่อค่าจริงเปลี่ยน
   const HOUR = 3600 * 1000;
-  const curH = new Date(Date.now() + 7 * HOUR).getUTCHours();   // คำนวณสดตอน render (อัปเดตทุกครั้งที่ fetch ~5 วิ) — ไม่พึ่ง state now แล้ว
+  // ★ 2026-10-10 ตรวจรอบ 3: เดิมคำนวณเฉพาะตอน render → ไม่มีสแกนใหม่ (fetch แล้วข้อมูลเดิม = ไม่ re-render) ข้ามชั่วโมงแล้วกราฟไม่ขยับ
+  //   → state นาที tick ทุก 60 วิ (re-render แค่นาทีละครั้ง · hourly คงอ้างอิงเดิมถ้าค่าไม่เปลี่ยน)
+  const [, setMinuteTick] = useState(0);
+  useEffect(() => { const id = setInterval(() => setMinuteTick((n) => n + 1), 60000); return () => clearInterval(id); }, []);
+  const curH = new Date(Date.now() + 7 * HOUR).getUTCHours();   // คำนวณสดตอน render (fetch ~5 วิ + minuteTick) — ไม่พึ่ง state now แล้ว
   const hourly = useMemo(() => {
     const bkkHour = (iso) => new Date(new Date(iso).getTime() + 7 * HOUR).getUTCHours();
     const perHour = new Array(24).fill(0);      // จำนวนชิ้น (นับต่อขั้นตอน)
