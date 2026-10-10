@@ -804,6 +804,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     try {
       // "กำลังทำงาน" = กด START แล้ว (timer เดิน / สแกน / เลือกจำนวน) — step ไม่ใช่ IDLE
       if (step === STEP.IDLE) { localStorage.removeItem(DKEY); return; }   // จบ/ยกเลิก/บันทึกแล้ว → ล้าง draft
+      // ★ 2026-10-10: ยังไม่ได้สแกนชิ้นไหนเลย (แค่กดเริ่ม/เปิดกล้อง) = ไม่มีอะไรต้องกู้ → ไม่เก็บ draft
+      //   (เดิมเก็บไว้ → ล็อกอินใหม่แล้วเด้งเป็น "ยกเลิกงาน / ① สแกนเพื่อเริ่ม" เหมือนงานเริ่มเอง)
+      if (!unit) { localStorage.removeItem(DKEY); return; }
       localStorage.setItem(DKEY, JSON.stringify({
         v: 1, step, materialLen, qty, status, statusLock,
         unit, op, progress, dupCount,
@@ -826,7 +829,12 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       if (raw) {
         const d = JSON.parse(raw);
         const tooOld = d && d.savedAt && (Date.now() - d.savedAt > DRAFT_MAX_AGE_MS);
-        if (d && d.v === 1 && d.step && d.step !== STEP.IDLE && !tooOld) {
+        if (d && d.v === 1 && d.step && d.step !== STEP.IDLE && !tooOld && !d.unit) {
+          // ★ 2026-10-10: draft ที่ยังไม่ได้สแกนชิ้นงาน (แค่กดเริ่ม/เปิดกล้อง) → ไม่กู้เป็นงานค้าง
+          //   คงไว้แค่ความยาววัสดุ · กลับหน้าพร้อมเริ่มงาน (ไม่เด้ง "ยกเลิกงาน" เอง)
+          if (d.materialLen) setMaterialLen(d.materialLen);
+          localStorage.removeItem(DKEY);
+        } else if (d && d.v === 1 && d.step && d.step !== STEP.IDLE && !tooOld) {
           setMaterialLen(d.materialLen ?? "");
           setUnit(d.unit ?? null);
           setQty(Number(d.qty) || 0);
