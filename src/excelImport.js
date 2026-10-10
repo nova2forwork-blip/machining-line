@@ -17,12 +17,31 @@ const LABEL_ALIASES = {
 
 const COLUMN_ALIASES = {
   code: [/code/i, /เบอร์พาท/],
-  qty: [/qty/i, /q'?ty/i, /จำนวน/],
+  qty: [/qty/i, /q'?ty/i, /quantity/i, /จำนวน/],   // ★ 2026-10-10 ตรวจรอบ 3: + "Quantity"
   length: [/length/i, /ความยาว/],
   weightPerM: [/weight/i, /น้ำหนัก/],
   material: [/material/i, /วัตถุดิบ/],
   remark: [/remark/i, /หมายเหตุ/],
 };
+
+// ★ 2026-10-10 ตรวจรอบ 3: หัวที่ "เจาะจง" ลองก่อน แล้วค่อย fallback ไป COLUMN_ALIASES
+//   เดิม "Material Code" (อยู่ก่อน) ถูกจับเป็น Code · "Total Weight" (อยู่ก่อน) ถูกจับเป็น Weight/M → น้ำหนักผิด
+const COLUMN_PREFERRED = {
+  code: [/^\s*(part\s*)?code\s*$/i],
+  weightPerM: [/weight\s*\/\s*m|kg\s*\/\s*m|ต่อเมตร|\/m\b/i],
+};
+
+// ★ 2026-10-10 ตรวจรอบ 3: เดิมอ่านชีตแรกเสมอ แม้ถูกซ่อน (ชีตข้อมูลอ้างอิง/แม่แบบที่ซ่อนไว้ข้างหน้า)
+//   → เลือกชีตแรกที่ไม่ซ่อน (SheetJS: wb.Workbook.Sheets[i].Hidden 0 = แสดง, 1 = ซ่อน, 2 = very hidden)
+function firstVisibleSheet(wb) {
+  const meta = wb.Workbook && Array.isArray(wb.Workbook.Sheets) ? wb.Workbook.Sheets : null;
+  if (meta) {
+    for (let i = 0; i < wb.SheetNames.length; i++) {
+      if (!(meta[i] && meta[i].Hidden)) return wb.Sheets[wb.SheetNames[i]];
+    }
+  }
+  return wb.Sheets[wb.SheetNames[0]];
+}
 
 function matches(value, patterns) {
   // ★ 2026-10-09: หัวตารางที่ขึ้นบรรทัดใหม่ในเซลล์ (เช่น "Sum⏎Quantity", "Panel⏎Quantity") → ยุบเป็นช่องว่างเดียวก่อนเทียบ
@@ -32,14 +51,21 @@ function matches(value, patterns) {
 }
 
 // หาค่าที่อยู่ "ถัดจาก" label ในแถวเดียวกัน เช่น [B4:"Release Order:", C4:"P-012"]
+// ★ 2026-10-10 ตรวจรอบ 3: รองรับ "Release Order: P-012" ในเซลล์เดียวกัน · เซลล์ถัดไปที่ลงท้าย ":" = label อื่น
+//   (เช่นค่าว่างแล้วตามด้วย "Project:") → หยุด ไม่เอา label อื่น/ค่าของ label อื่นมาเป็นค่า · เซลล์ ":" เดี่ยว = ข้าม
 function findLabeledValue(rows, patterns) {
   for (const row of rows) {
     for (let i = 0; i < row.length; i++) {
       if (matches(row[i], patterns)) {
+        const same = String(row[i] ?? "").match(/[:：]\s*(.+)$/);
+        if (same && same[1].trim()) return same[1].trim();
         for (let j = i + 1; j < row.length; j++) {
           const v = row[j];
           if (v !== undefined && v !== null && String(v).trim() !== "") {
-            return String(v).trim();
+            const t = String(v).trim();
+            if (/^[:：]$/.test(t)) continue;
+            if (/[:：]$/.test(t)) break;
+            return t;
           }
         }
       }
@@ -54,7 +80,8 @@ function findHeaderRow(rows) {
     const row = rows[r];
     const colMap = {};
     for (const [field, patterns] of Object.entries(COLUMN_ALIASES)) {
-      const idx = row.findIndex((cell) => matches(cell, patterns));
+      let idx = COLUMN_PREFERRED[field] ? row.findIndex((cell) => matches(cell, COLUMN_PREFERRED[field])) : -1;
+      if (idx === -1) idx = row.findIndex((cell) => matches(cell, patterns));
       if (idx !== -1) colMap[field] = idx;
     }
     if (colMap.code !== undefined && colMap.qty !== undefined) {
@@ -74,7 +101,7 @@ function toNumber(v) {
 export async function parseReleaseExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = firstVisibleSheet(wb);
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
 
   const releaseOrder = findLabeledValue(rows, LABEL_ALIASES.releaseOrder);
@@ -170,7 +197,7 @@ function parseHeaderMeta(rows) {
 export async function parseSubAssemblyExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = firstVisibleSheet(wb);
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
   return parseSubAssemblyRows(rows);
 }
@@ -311,7 +338,7 @@ function parsePanelBody(body, cols) {
 export async function parsePanelReleaseExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = firstVisibleSheet(wb);
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
   return parsePanelReleaseRows(rows);
 }
@@ -354,7 +381,7 @@ function parsePanelReleaseRows(rows) {
 export async function parseBunkExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = firstVisibleSheet(wb);
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
   return parseBunkSheet(rows);
 }
