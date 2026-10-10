@@ -151,7 +151,7 @@ const DICT = {
   "⧉ ล็อกอินได้หลายเครื่อง": "⧉ Multi-device login",
   "⚠️ ต้องรัน migration-multi-session.sql ใน Supabase ก่อน ถึงจะเปิดตัวเลือกนี้ได้": "⚠️ Run migration-multi-session.sql in Supabase first to enable this option",
   "ปกติ 1 บัญชีหน้าเครื่องใช้ได้ทีละเครื่อง (ล็อกอินเครื่องใหม่ = เครื่องเก่าหลุด) · ติ๊ก = ใช้บัญชีนี้หลายแท็บเล็ตพร้อมกันได้ ไม่เตะกัน · ยอดทุกเครื่องรวมเป็นเครื่อง/สถานีเดียวกัน": "Normally one station account works on one device at a time (a new login kicks the old one) · ticked = this account can be used on several tablets at once · all their totals count toward the same machine/station", "▸ ย่อทั้งหมด": "▸ Collapse all", "▾ ขยายทั้งหมด": "▾ Expand all",
-  "แตะเพื่อขยาย": "Tap to expand", "ย่อ": "Collapse", "ไม่มีลูก": "no children", "(ยังไม่กรอกเบอร์)": "(no code yet)",
+  "แตะเพื่อขยาย": "Tap to expand", "แตะเพื่อปิด": "Tap to close", "ย่อ": "Collapse", "ไม่มีลูก": "no children", "(ยังไม่กรอกเบอร์)": "(no code yet)",
   "รูปแบบการสแกนหน้าเครื่อง": "Station scan mode", "ข้าม — ตั้งทีหลัง": "Skip — set later",
   "เพิ่มเครื่องแล้ว ✓ — ตั้งรูปแบบการสแกน + ขั้นตอนที่ทำได้ต่อเลย หรือกด \"ข้าม\" ไว้ตั้งทีหลังด้วยปุ่ม แก้ไข": "Machine added ✓ — set the scan mode + operations now, or press \"Skip\" and use Edit later", "สแกน 2 ครั้ง · จับเวลา (ปกติ)": "Scan twice · timed (normal)",
   "สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา": "Scan once when done · no timer", "⚡ สแกนครั้งเดียว · ไม่จับเวลา": "⚡ Scan once · no timer",
@@ -440,7 +440,7 @@ const DICT = {
   "เพิ่มเบอร์แม่": "Add parent",
   "บันทึก + ปล่อยงาน": "Save + release",
   "เช่น P-076": "e.g. P-076",
-  "⬇ วางตารางที่นี่ด้วย Ctrl+V — ก็อปจาก Excel รวมแถวหัว (Code / Quantity / Sum) · ได้ทั้งฟอร์ม BOM และรายชื่อแผง": "⬇ Paste the table here with Ctrl+V — copy from Excel including the header row (Code / Quantity / Sum) · works for BOM forms and panel lists",
+  "⬇ วางตารางที่นี่ด้วย Ctrl+V — ก็อปจาก Excel รวมแถวหัว (Panel / Sub-01 / Sub-02 / Part No. / Quantity หรือ Code / Quantity / Sum) · ได้ทั้งฟอร์ม BOM และรายชื่อแผง": "⬇ Paste the table here with Ctrl+V — copy from Excel including the header row (Panel / Sub-01 / Sub-02 / Part No. / Quantity or Code / Quantity / Sum) · works for BOM forms and panel lists",
   "เช่น SAAN04-001 / UA1501B": "e.g. SAAN04-001 / UA1501B",
   "ลบเบอร์แม่นี้": "Remove this parent",
   "นำเข้าฟอร์มบั้ง (Packing List)": "Import bundle form (Packing List)",
@@ -579,10 +579,16 @@ const DICT = {
     "Part weight/length = the default · a release with its own weight uses that first (change it with ✎ Edit on the Release page)",
   "ตั้งเครื่อง/สถานี/ขั้นตอนประจำที่นี่ — หน้าสแกนจะใช้ค่านี้แทนการเลือกเอง": "Set the home machine/station/operation here — the scan screen uses it instead of asking",
   "* ถ้าไม่ตั้งเครื่อง/สถานี/ขั้นตอนประจำ พนักงานคนนี้จะสแกนงานไม่ได้": "* without a home machine/station/operation this employee can't scan work",
+  // ── 2026-10-09: ฟอร์มเบอร์ประกอบ + แผง — ตารางลูก ──
+  "ลูก (Code)": "Child (Code)", "ต่อชุด *": "Per set *", "รวมทุกแม่": "Total (all parents)", "เพิ่มลูก": "Add child", "ลบลูก": "Remove child",
 };
 
 // ── กฎ regex สำหรับข้อความที่มีตัวเลข/ตัวแปรแทรก (node เดียว) ─────────────────
 const RULES = [
+  // ── 2026-10-09: ฟอร์มเบอร์ประกอบ — ชนิด #N (เดิมแปลแค่ #1) · ผลอ่านฟอร์ม BOM แผง ──
+  [/^ชนิด #(\d+)$/, (m) => `Type #${m[1]}`],
+  [/^วางข้อมูลได้: ฟอร์ม BOM แผง (\d+) แผง · ซับ (\d+) เบอร์ — ตรวจแล้วกดบันทึก$/, (m) => `Pasted: panel BOM — ${m[1]} panel(s) · ${m[2]} sub-assemblies — check, then save`],
+  [/^อ่านไฟล์ได้: ฟอร์ม BOM แผง (\d+) แผง · ซับ (\d+) เบอร์ — ตรวจแล้วกดบันทึก$/, (m) => `File read: panel BOM — ${m[1]} panel(s) · ${m[2]} sub-assemblies — check, then save`],
   // ── 2026-10-08: หน้าพิมพ์ QR ──
   [/^\(([\d,]+) เบอร์\)$/, (m) => `(${m[1]} parts)`],
   [/^เลือกแล้ว ([\d,]+) เบอร์$/, (m) => `${m[1]} selected`],
