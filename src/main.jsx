@@ -31,6 +31,14 @@ if (typeof window !== "undefined") {
     try { if (typeof navigator !== "undefined" && navigator.onLine === false) return; } catch { /* ignore */ }
     try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ }
     const reload = () => { try { location.reload(); } catch { /* ignore */ } };
+    // ★ 2026-10-10 ตรวจรอบ 2: service worker รุ่นใหม่ (มี /__mls-shell-meta) เก็บแอป "ครบชุด" ไว้แล้ว → แค่โหลดใหม่ ไม่ล้างแคช
+    //   (Wi-Fi โรงงานที่ขึ้นว่าออนไลน์แต่เน็ตกระตุก → เดิมล้างแอปออฟไลน์ทิ้งทั้งชุด แล้วเปิดไม่ได้จนกว่าเน็ตจะกลับ)
+    if (window.caches && caches.match) {
+      caches.match("/__mls-shell-meta").then((m) => { if (m) reload(); else wipe(); }, () => wipe());
+      return;
+    }
+    wipe();
+    function wipe() {
     const clearCaches = () =>
       (window.caches && caches.keys)
         ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
@@ -40,6 +48,7 @@ if (typeof window !== "undefined") {
         ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {})
         : Promise.resolve();
     Promise.all([clearCaches(), unregSW()]).finally(reload);
+    }
   };
   const looksStale = (msg) =>
     /Minified React error #130|React error #130|Loading chunk|ChunkLoadError|Importing a module script failed|dynamically imported module|error loading dynamically/i.test(String(msg || ""));
@@ -97,6 +106,13 @@ function onChunkError(e) {
       }
     } catch { /* ignore */ }
     if (!hardHeal) return reloadNow();
+    // ★ 2026-10-10 ตรวจรอบ 2: มีชุดแอปครบในแคชของ service worker รุ่นใหม่ → ไม่ล้าง (แค่โหลดใหม่) · กันแอปออฟไลน์หายตอนเน็ตกระตุก
+    if (window.caches && caches.match) {
+      caches.match("/__mls-shell-meta").then((m) => { if (m) reloadNow(); else hardWipe(); }, () => hardWipe());
+      return;
+    }
+    hardWipe();
+    function hardWipe() {
     const cc = (window.caches && caches.keys)
       ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
       : Promise.resolve();
@@ -104,6 +120,7 @@ function onChunkError(e) {
       ? navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {})
       : Promise.resolve();
     Promise.all([cc, sw]).finally(reloadNow);
+    }
   };
   if (tries < 3) {
     try { sessionStorage.setItem("mls-load-retry", String(tries + 1)); } catch { /* ignore */ }
