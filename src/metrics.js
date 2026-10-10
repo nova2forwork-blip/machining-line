@@ -136,8 +136,10 @@ export function machineOpMatrix(logs, opOrder) {
   }
 
   for (const [, mv] of byMachineLogs) {
-    const entry = { name: mv.name, code: mv.code, total: { count: 0, weight: 0, seconds: 0 }, ops: {}, combos: {} };
-    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0, soloCount: 0, soloSeconds: 0, coCount: 0 });
+    // ★ 2026-10-10 ตรวจรอบ 2: timedCount = ชิ้นของสแกนที่ "มีเวลา" (> 0 วิ) — ตัวหารของวินาที/ชิ้น
+    //   (เครื่องโหมดสแกนครั้งเดียวบันทึก 0 วิ → ถ้าหารด้วยชิ้นทั้งหมด รอบเวลาจะต่ำกว่าจริง · หน้า Report อ่านฟิลด์นี้)
+    const entry = { name: mv.name, code: mv.code, total: { count: 0, weight: 0, seconds: 0, timedCount: 0 }, ops: {}, combos: {} };
+    const ensureOp = (op) => (entry.ops[op] = entry.ops[op] || { count: 0, weight: 0, seconds: 0, soloCount: 0, soloSeconds: 0, soloTimedCount: 0, coCount: 0 });
 
     // 1) น้ำหนัก/เวลา/ยอดรวม — รวมจาก record จริงทุกแถว (co-tick มีค่า 0 อยู่แล้ว)
     for (const l of mv.rows) {
@@ -156,12 +158,14 @@ export function machineOpMatrix(logs, opOrder) {
     let cur = null;
     const flush = () => {
       if (!cur) return;
+      const timed = cur.sec > 0;
+      if (timed) entry.total.timedCount += cur.qty;
       const list = sortOpNames(cur.ops, opOrder);
-      if (list.length === 1) { const o = ensureOp(list[0]); o.soloCount += cur.qty; o.soloSeconds += cur.sec; }
+      if (list.length === 1) { const o = ensureOp(list[0]); o.soloCount += cur.qty; o.soloSeconds += cur.sec; if (timed) o.soloTimedCount += cur.qty; }
       else {
         const key = list.join(" + ");
-        const c = entry.combos[key] = entry.combos[key] || { ops: list, count: 0, seconds: 0 };
-        c.count += cur.qty; c.seconds += cur.sec;
+        const c = entry.combos[key] = entry.combos[key] || { ops: list, count: 0, seconds: 0, timedCount: 0 };
+        c.count += cur.qty; c.seconds += cur.sec; if (timed) c.timedCount += cur.qty;
         list.forEach((op) => { ensureOp(op).coCount += cur.qty; });
       }
     };
