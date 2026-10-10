@@ -1457,7 +1457,11 @@ export function rejectedQueueCount() { return rjRead().length; }
 export function onRejectedQueue(cb) { rejectListeners.add(cb); return () => rejectListeners.delete(cb); }
 export function listRejected() { return rjRead(); }
 // เอากลับเข้าคิวลองซิงค์ใหม่ (เช่นหลังออฟฟิศกู้ล็อตคืน)
+let _retryAfterFlush = false;
 export function retryRejected() {
+  // ★ 2026-10-10: กำลังซิงค์อยู่ = รอให้จบรอบก่อน — ไม่งั้นงานที่รอบนี้เพิ่งย้ายไป rejected (qid อยู่ใน done)
+  //   ถูกย้ายกลับคิวหลัก แล้ว commit() ของรอบซิงค์ลบทิ้งตาม qid → หายจากทั้ง 2 คิว
+  if (_flushing) { _retryAfterFlush = true; return; }
   const rj = rjRead(); if (!rj.length) return;
   const q = qRead();
   // ★ ตัด attempts ออกด้วย — ไม่งั้น item ที่เคยพลาด 11 ครั้งจะชน MAX_ATTEMPTS ทันทีที่ retry (ลองใหม่ไม่ได้จริง)
@@ -2067,6 +2071,7 @@ export async function flushScanQueue() {
   } finally {
     _flushing = false;                             // ★ ปลดล็อกก่อนเสมอ — กันค้างถาวรถ้าเขียน localStorage พลาด (B4)
     try { commit(); } catch (e) { console.warn("flush finalize failed", e); }
+    if (_retryAfterFlush) { _retryAfterFlush = false; setTimeout(() => { try { retryRejected(); } catch (_) { /* ignore */ } }, 0); }
     if (newRejects) { try { reportDeadLetter(); } catch (_) { /* ignore */ } }
     if (authExpired && typeof window !== "undefined") {
       try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
