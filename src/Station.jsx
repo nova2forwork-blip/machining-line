@@ -15,7 +15,7 @@ import {
   stationStop, stationReady, stationSlowReason, onStationEvents, stationEventsPending, stationPing, getStationDayOps, getTypicalTime, appBuildId,
   reportActiveJob, clearActiveJobNow,
   getStationScanInfo, queueForeignOwners, myQueueCount, addRejected, releaseMdf,
-  getMachineScanMode, cachedMachineScanMode,
+  getMachineScanMode, cachedMachineScanMode, prefetchAllScanModes,
 } from "./supabase.js";
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras, getCameraErrorKind } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
@@ -365,6 +365,13 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // ★ 2026-10-10: เปิดหน้าล็อกอินตอนมีเน็ต → จำโหมดสแกนของทุกเครื่องไว้ (ล็อกอินออฟไลน์ทีหลังได้หน้าถูกแบบ)
+  useEffect(() => {
+    prefetchAllScanModes();
+    const on = () => prefetchAllScanModes();
+    window.addEventListener("online", on);
+    return () => window.removeEventListener("online", on);
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -526,11 +533,21 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   useEffect(() => {
     if (dept !== "machine" || !machine?.id) return undefined;
     let ok = true;
-    const load = () => getMachineScanMode(machine.id).then((m) => { if (ok) setScanMode(m); }).catch(() => {});
+    const load = () => {
+      prefetchAllScanModes();
+      return getMachineScanMode(machine.id).then((m) => { if (ok) setScanMode(m); }).catch(() => {});
+    };
     load();
+    // ออฟไลน์ + ยังไม่เคยจำโหมดของเครื่องนี้ → บอกให้ชัด (ใช้แบบปกติไปก่อน · เน็ตกลับมาจะสลับให้เอง)
+    if (typeof navigator !== "undefined" && navigator.onLine === false && !cachedMachineScanMode(machine.id)) {
+      setTimeout(() => { if (ok) setModeUnknown(true); }, 0);
+    }
     window.addEventListener("online", load);
     return () => { ok = false; window.removeEventListener("online", load); };
   }, [dept, machine?.id]);
+  const [modeUnknown, setModeUnknown] = useState(false);   // ออฟไลน์ + ไม่รู้โหมดของเครื่องนี้ (ยังไม่เคยเปิดตอนมีเน็ต)
+  useEffect(() => { if (scanMode === "count") setModeUnknown(false); }, [scanMode]);
+  useEffect(() => { const on = () => setModeUnknown(false); window.addEventListener("online", on); return () => window.removeEventListener("online", on); }, []);
   const quick = dept === "machine" && scanMode === "count";
   const quickRef = useRef(quick); quickRef.current = quick;
   const [materialLen, setMaterialLen] = useState("");
@@ -2317,6 +2334,13 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             <span><Icon name="refresh" size={15} className="stn-ico" />{t("กำลังซิงค์งานค้าง", "Syncing")} · {pending} {t("ชิ้น", "pcs")}
               {evPending > 0 ? ` · ${t("แจ้งหยุด/พร้อม/เหตุผล", "stop/ready/reasons")} ${evPending}` : ""}</span>
           )}
+        </div>
+      )}
+      {modeUnknown && !online && dept === "machine" && (
+        <div className="stn-rejected" style={{ background: "#b45309" }}>
+          <Icon name="warn" size={15} className="stn-ico" />
+          {t("แท็บเล็ตนี้ยังไม่รู้รูปแบบการสแกนของเครื่องนี้ (ยังไม่เคยเปิดตอนมีเน็ต) — ใช้แบบปกติไปก่อน · ต่อเน็ตแล้วจะสลับเป็นแบบที่ตั้งไว้ให้เอง",
+             "This tablet doesn't know this machine's scan mode yet (never opened online) — using the normal mode for now · it switches automatically once online")}
         </div>
       )}
       {foreign.length > 0 && (
