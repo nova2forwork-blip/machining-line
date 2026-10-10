@@ -3315,10 +3315,305 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported, initia
 // บันทึกต่อกลุ่ม 3 ขั้น: (1) release เบอร์แม่ (createReleaseBatch → part+QR) (2) ตั้ง kind=subassembly
 //   (3) upsert ลูก + ตั้ง BOM (ต่อชุด = จำนวนรวมของลูก ÷ จำนวนแม่)
 // รองรับทั้งกรอกมือและนำเข้า Excel (ปุ่มนำเข้าเติมกลุ่มให้ แล้วผู้ใช้ตรวจก่อนบันทึก)
+// ══ ฟอร์ม BOM แผงแบบใหม่ (2026-10-09) ═══════════════════════════════════════════
+// หัวตาราง: Panel | Panel Description | Panel Quantity | Rev | Code หรือ Part No. | Description | Length | Height | Finish | Material | (Wast) | Material Length | Quantity | (Sum Quantity)
+//   (ไม่มีคอลัมน์ "Sum" แบบฟอร์มเก่า → ตัวอ่านเดิมไม่รู้จัก แล้วตกไปอ่านเป็น "รายชื่อแผง" ได้แผงซ้ำ 1 แถว = 1 แผง)
+// กฎ:
+//  • แถวซับ = Part No./Code ขึ้นต้น SA หรือ Material = SUB / SUB 1st / SUB 2nd …
+//  • ใครเป็นลูกใคร:
+//    (ก) ช่อง Part No. มีย่อหน้า (ไฟล์ .xlsx = Indent ของเซลล์ · วางจาก Excel = อ่านจาก HTML ที่ Excel ส่งมา · หรือเว้นวรรคหน้า)
+//        → ย่อหน้ามากกว่าซับที่เปิดอยู่ = ลูกของซับนั้น · เท่ากัน/น้อยกว่า = ปิดซับ (ย่อหน้าเท่าซับชั้น 1 = ลูกตรงของแผง)
+//    (ข) ไม่มีย่อหน้า: SUB 1st/SUB = ลูกแผง · SUB 2nd = ลูกของ SUB 1st ที่เปิดอยู่ · แถวแรกหลังซับ = ลูกของซับเสมอ
+//        Description ว่าง = ลูกของซับชั้นในสุดที่เปิดอยู่ · มี Description = ลูกตรงของแผง (ปิดซับทั้งหมด)
+//  • แถวที่ Part No. ขีดฆ่า (แก้ Rev แล้ว) / แถวที่ซ่อน = ข้าม + บอกในสรุป (ไฟล์ .xlsx และวางจาก Excel)
+//  • Quantity = จำนวนต่อแผง 1 ชุด → รวมทั้งใบ = Quantity × Panel Quantity · ซับเบอร์เดียวกันหลายที่ = รวมเป็นกลุ่มเดียว
+class PbCell { constructor(v, ind, strike) { this.v = v; this.ind = Number(ind) || 0; this.strike = !!strike; } }
+const pbNorm = (v) => String(v ?? "").toLowerCase().replace(/[\s._:\-()/]+/g, "");
+function pbCellText(v) {
+  if (v == null) return "";
+  if (v instanceof PbCell) return pbCellText(v.v);
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "object") {
+    if (Array.isArray(v.richText)) return v.richText.map((t) => t.text || "").join("");
+    if (v.result != null) return pbCellText(v.result);
+    if (v.text != null) return pbCellText(v.text);
+    if (v.error) return "";
+    return "";
+  }
+  return String(v);
+}
+const pbNum = (v) => { const n = Number(String(v ?? "").replace(/,/g, "").trim()); return Number.isFinite(n) ? n : null; };
+// ย่อหน้าของเซลล์: Indent (ไฟล์/HTML) + เว้นวรรคนำหน้า (พิมพ์เอง)
+const pbIndent = (c) => (c instanceof PbCell ? c.ind * 4 : 0) + (pbCellText(c).match(/^[ \u00a0\u3000]*/)[0].length);
+// TSV จาก Excel: เซลล์ที่มีขึ้นบรรทัดใหม่จะถูกครอบด้วย "…" (เช่นหัว "Panel⏎Quantity")
+function pbSplitTsv(text) {
+  const rows = []; let row = []; let cell = ""; let q = false;
+  const s = String(text || "").replace(/\r\n?/g, "\n");
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (q) {
+      if (ch === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"' && cell === "") q = true;
+    else if (ch === "\t") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+// HTML ที่ Excel ใส่ในคลิปบอร์ดตอนก็อป (มีย่อหน้า/ขีดฆ่า ที่ข้อความธรรมดาไม่มี) → ตาราง PbCell
+function pbParseHtml(html) {
+  if (!html || typeof DOMParser === "undefined" || !/<t[dh][\s>]/i.test(html)) return null;
+  let doc;
+  try { doc = new DOMParser().parseFromString(String(html), "text/html"); } catch { return null; }
+  const tbl = [...doc.querySelectorAll("table")].sort((a, b) => b.rows.length - a.rows.length)[0];
+  if (!tbl || !tbl.rows.length) return null;
+  const css = {};
+  const cssText = [...doc.querySelectorAll("style")].map((s) => s.textContent || "").join("\n");
+  cssText.replace(/\.([A-Za-z][\w-]*)\s*\{([^}]*)\}/g, (m, cls, body) => { css[cls] = (css[cls] || "") + ";" + body; return m; });
+  const styleOf = (el) => (el.getAttribute("class") || "").split(/\s+/).filter(Boolean).map((c) => css[c] || "").join(";") + ";" + (el.getAttribute("style") || "");
+  const isStrikeEl = (el) => /^(s|strike|del)$/i.test(el.tagName) || /text-decoration[^;:]*:[^;]*line-through|text-line-through\s*:\s*(single|double)/i.test(styleOf(el));
+  const strikeOf = (td) => {
+    const all = (td.textContent || "").trim();
+    if (!all) return false;
+    if (isStrikeEl(td)) return true;
+    return [...td.querySelectorAll("*")].some((el) => isStrikeEl(el) && (el.textContent || "").trim() === all);
+  };
+  const indentOf = (td) => {
+    const st = styleOf(td);
+    const m = st.match(/mso-char-indent-count\s*:\s*([\d.]+)/i);
+    if (m) return Number(m[1]) || 0;
+    const p = st.match(/padding-left\s*:\s*([\d.]+)px/gi);
+    const px = p ? Number(p[p.length - 1].replace(/[^\d.]/g, "")) : 0;
+    return px > 3 ? Math.max(1, Math.round(px / 12)) : 0;
+  };
+  const textOf = (td) => {
+    const c = td.cloneNode(true);
+    c.querySelectorAll("br").forEach((br) => br.replaceWith("\u2028"));
+    return (c.textContent || "").replace(/^[\r\n\t ]+/, "").replace(/[\r\n\t ]+/g, " ").replace(/\u2028/g, "\n").replace(/\u00a0/g, " ").replace(/[ ]+$/, "");
+  };
+  const grid = [];
+  [...tbl.rows].forEach((tr, ri) => {
+    grid[ri] = grid[ri] || [];
+    let ci = 0;
+    for (const td of tr.cells) {
+      while (grid[ri][ci] !== undefined) ci++;
+      const cs = Math.max(1, Number(td.colSpan) || 1), rs = Math.max(1, Math.min(500, Number(td.rowSpan) || 1));
+      const cell = new PbCell(textOf(td), indentOf(td), strikeOf(td));
+      for (let dr = 0; dr < rs; dr++) {
+        grid[ri + dr] = grid[ri + dr] || [];
+        for (let dc = 0; dc < cs; dc++) grid[ri + dr][ci + dc] = dr === 0 && dc === 0 ? cell : "";
+      }
+      ci += cs;
+    }
+  });
+  return Array.from(grid, (r) => Array.from(r || [], (c) => (c === undefined ? "" : c)));
+}
+function parsePanelBomRows(rows0) {
+  const raw = rows0 || [];
+  const rows = raw.map((r) => Array.from(r || [], (c) => pbCellText(c).trim()));
+  let hi = -1; let col = null;
+  for (let i = 0; i < Math.min(rows.length, 40); i++) {
+    const n = rows[i].map(pbNorm);
+    const find = (...names) => n.findIndex((x) => names.includes(x));
+    const c = { panel: find("panel", "panelno", "panelnumber"), code: find("code", "partno", "partnumber", "partcode"), qty: find("quantity", "qty"), sum: find("sum") };
+    if (c.panel >= 0 && c.code >= 0 && c.qty >= 0) {
+      if (c.sum >= 0) return null;   // ฟอร์มเก่า (มีคอลัมน์ Sum) → ให้ตัวอ่านเดิมทำ
+      hi = i;
+      col = { ...c, panelDesc: find("paneldescription", "paneldesc"), panelQty: find("panelquantity", "panelqty"),
+        desc: find("description", "desc"), len: find("length", "lengthmm"), mat: find("material"),
+        // ★ 2026-10-10 ตรวจรอบ 2: คอลัมน์ Sub-01 / Sub-02 / … = เบอร์ซับชั้น 1/2/… ที่แถวนี้อยู่ข้างใน (ชัดกว่าเดาจากย่อหน้า)
+        subs: n.map((x, j) => { const m = x.match(/^sub0*(\d{1,2})$/); return m ? { lvl: Number(m[1]), j } : null; })
+          .filter(Boolean).sort((a, b) => a.lvl - b.lvl) };
+      break;
+    }
+  }
+  if (hi < 0) return null;
+  // หัวเอกสารเหนือตาราง (ถ้ามี): Release Order / Project
+  let releaseOrder = "", projectName = "";
+  for (let i = 0; i < hi; i++) {
+    const r = rows[i];
+    r.forEach((c, j) => {
+      const k = pbNorm(c);
+      const next = r.slice(j + 1).find((x) => x);
+      if (!releaseOrder && /releaseorder|relno|releaseno/.test(k)) { const m = (next || c).match(/P\s*-?\s*\d+/i); if (m) releaseOrder = m[0].replace(/\s+/g, ""); }
+      if (!projectName && /^project(name|no)?$/.test(k) && next) projectName = next;
+    });
+  }
+  const at = (r, i) => (i >= 0 ? (r[i] ?? "") : "");
+  // รอบ 1: เก็บแถวที่ใช้ได้ (ข้ามแถวซ่อน/ขีดฆ่า)
+  const items = []; const struck = []; let hidden = 0; let lastPanel = "";
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i]; const rr = raw[i] || [];
+    const code = at(r, col.code);
+    const pRaw = at(r, col.panel);
+    if (!code && !pRaw) continue;
+    if (/^total/i.test(code) || /^total/i.test(pRaw)) break;
+    const pCode = pRaw || lastPanel;
+    if (!pCode || !code) continue;
+    if (rr.hidden) { hidden++; continue; }
+    const cc = rr[col.code];
+    if (cc instanceof PbCell && cc.strike) { struck.push(code); continue; }
+    lastPanel = pCode;
+    const mat = at(r, col.mat);
+    const mm = pbNorm(mat).match(/^sub(\d+)?(st|nd|rd|th)?$/);
+    items.push({
+      pCode, code, desc: at(r, col.desc), qty: pbNum(at(r, col.qty)) || 0, len: pbNum(at(r, col.len)),
+      panelDesc: at(r, col.panelDesc), panelQty: Math.max(1, Math.round(pbNum(at(r, col.panelQty)) || 1)),
+      isSub: /^sa/i.test(code) || !!mm, lvl: mm && mm[1] ? Number(mm[1]) : null, ind: pbIndent(cc),
+      path: col.subs.map((sc) => at(r, sc.j)).filter(Boolean),
+    });
+  }
+  // ★ 2026-10-10 ตรวจรอบ 2: มีคอลัมน์ Sub-01/Sub-02 และกรอกไว้ = ใช้บอกชั้นตรงๆ (ไม่ต้องเดาจากย่อหน้า/Description)
+  const bySub = col.subs.length > 0 && items.some((it) => it.path.length > 0);
+  // ช่อง Part No. ใช้ย่อหน้าบอกชั้นหรือไม่: ซับส่วนใหญ่มีแถวถัดไป (แผงเดียวกัน) ย่อหน้าลึกกว่า
+  //   (ต้องเป็นส่วนใหญ่ — กันเว้นวรรคหน้าเผลอพิมพ์ในเซลล์เดียวแล้วพลิกทั้งแผ่น)
+  let subNext = 0, subDeeper = 0;
+  items.forEach((it, k) => { const nx = items[k + 1]; if (it.isSub && nx && nx.pCode === it.pCode) { subNext++; if (nx.ind > it.ind) subDeeper++; } });
+  const byIndent = !bySub && subDeeper > 0 && subDeeper * 2 > subNext;
+  const descUnderSub = [];   // ย่อหน้าบอกว่าอยู่ใต้ซับ แต่มี Description (ปกติ = ชิ้นของแผง) → บอกให้ตรวจ
+  // รอบ 2: จัดโครงสร้าง แผง → ซับชั้น 1 → ซับชั้น 2 …
+  const panels = new Map();   // code → { code, desc, qty, kids: Map(code → {code, desc, len, per}) }
+  const subs = new Map();     // code → { code, desc, len, total, depth, kids: Map(code → {code, desc, len, total}) }
+  const order = [];           // ลำดับกลุ่ม: แผง แล้วตามด้วยซับของแผงนั้น (ตามลำดับที่พบ)
+  let curPanel = null, stack = [], justOpened = false;
+  const lc = (v) => String(v || "").trim().toLowerCase();
+  const subByLc = new Map();   // ชื่อเบอร์ (ไม่สนตัวพิมพ์) → ซับ
+  const getSub = (code, desc, len, depth) => {
+    let sb = subByLc.get(lc(code));
+    if (!sb) {
+      sb = { code, desc: desc || "", len: len ?? null, total: 0, depth, kids: new Map(), ownRow: false };
+      subByLc.set(lc(code), sb); subs.set(code, sb); order.push({ t: "sub", code });
+    }
+    if (depth > sb.depth) sb.depth = depth;
+    return sb;
+  };
+  const noOwnRow = [];
+  for (const it of items) {
+    if (bySub) {
+      if (!curPanel || curPanel.code !== it.pCode) {
+        curPanel = panels.get(it.pCode);
+        if (!curPanel) {
+          curPanel = { code: it.pCode, desc: it.panelDesc, qty: it.panelQty, kids: new Map() };
+          panels.set(it.pCode, curPanel); order.push({ t: "panel", code: it.pCode });
+        }
+      }
+      const self = it.path.findIndex((x) => lc(x) === lc(it.code));
+      const ppath = self >= 0 ? it.path.slice(0, self) : it.path;
+      const isSub = self >= 0 || (it.isSub && !ppath.some((x) => lc(x) === lc(it.code)));
+      ppath.forEach((x, k) => getSub(x, "", null, k + 1));
+      const parent = ppath.length ? subByLc.get(lc(ppath[ppath.length - 1])) : null;
+      const total = it.qty * curPanel.qty;
+      if (parent) {
+        const key = lc(it.code);
+        const k = parent.kids.get(key) || { code: it.code, desc: it.desc, len: it.len, total: 0 };
+        k.total += total; parent.kids.set(key, k);
+      } else {
+        const key = lc(it.code);
+        const pk = curPanel.kids.get(key) || { code: it.code, desc: it.desc, len: it.len, per: 0 };
+        pk.per += it.qty; curPanel.kids.set(key, pk);
+      }
+      if (isSub) {
+        const sb = getSub(it.code, it.desc, it.len, ppath.length + 1);
+        if (!sb.desc && it.desc) sb.desc = it.desc;
+        if (sb.len == null && it.len != null) sb.len = it.len;
+        sb.total += total; sb.ownRow = true;
+      }
+      continue;
+    }
+    if (!curPanel || curPanel.code !== it.pCode) {
+      curPanel = panels.get(it.pCode);
+      if (!curPanel) {
+        curPanel = { code: it.pCode, desc: it.panelDesc, qty: it.panelQty, kids: new Map() };
+        panels.set(it.pCode, curPanel); order.push({ t: "panel", code: it.pCode });
+      }
+      stack = []; justOpened = false;
+    }
+    if (byIndent) {
+      while (stack.length && stack[stack.length - 1].ind >= it.ind) stack.pop();
+    } else if (it.isSub) {
+      stack.length = Math.min(stack.length, Math.max(0, (it.lvl || 1) - 1));
+    } else if (!justOpened && it.desc) {
+      stack.length = 0;   // มี Description (ไม่ใช่แถวแรกหลังซับ) = ชิ้นของแผงโดยตรง
+    }
+    const parent = stack.length ? stack[stack.length - 1].sb : null;
+    if (parent && parent.code === it.code) { justOpened = false; continue; }   // ซับอ้างตัวเอง = ข้อมูลผิด ข้าม
+    if (byIndent && parent && !it.isSub && !justOpened && it.desc) descUnderSub.push(`${it.code} → ${parent.code}`);
+    const total = it.qty * curPanel.qty;
+    if (parent) {
+      const k = parent.kids.get(it.code) || { code: it.code, desc: it.desc, len: it.len, total: 0 };
+      k.total += total; parent.kids.set(it.code, k);
+    } else {
+      const pk = curPanel.kids.get(it.code) || { code: it.code, desc: it.desc, len: it.len, per: 0 };
+      pk.per += it.qty; curPanel.kids.set(it.code, pk);
+    }
+    if (it.isSub) {
+      let sb = subs.get(it.code);
+      if (!sb) { sb = { code: it.code, desc: it.desc, len: it.len, total: 0, depth: stack.length + 1, kids: new Map() }; subs.set(it.code, sb); order.push({ t: "sub", code: it.code }); }
+      sb.total += total;
+      stack.push({ sb, ind: it.ind });
+      justOpened = true;
+    } else justOpened = false;
+  }
+  if (!panels.size) return null;
+  if (bySub) for (const sb of subs.values()) if (!sb.ownRow) noOwnRow.push(sb.code);
+  const groups = order.map((o) => {
+    if (o.t === "panel") {
+      const p = panels.get(o.code);
+      return { parentKind: "panel", parentCode: p.code, parentDesc: p.desc, parentLen: "", parentQty: p.qty,
+        children: [...p.kids.values()].map((k) => ({ code: k.code, desc: k.desc, len: k.len ?? "", totalQty: k.per * p.qty })) };
+    }
+    const sb = subs.get(o.code);
+    return { parentKind: "subassembly", parentCode: sb.code, parentDesc: sb.desc, parentLen: sb.len ?? "", parentQty: Math.max(1, Math.round(sb.total || 0)), depth: sb.depth,
+      children: [...sb.kids.values()].map((k) => ({ code: k.code, desc: k.desc, len: k.len ?? "", totalQty: k.total })) };
+  });
+  const nested = [...subs.values()].filter((s) => s.depth > 1).length;
+  return { format: "panel-bom", groups, releaseOrder, projectName, panels: panels.size, subs: subs.size, rows: items.length,
+    nested, byIndent, bySub, noOwnRow, struck, hidden, descUnderSub,
+    nestedNoIndent: !byIndent && !bySub && items.some((it) => it.isSub && (it.lvl || 1) > 1) };
+}
+const parsePanelBomText = (text) => parsePanelBomRows(pbSplitTsv(text));
+// วางจาก Excel: ใช้ HTML ก่อน (เห็นย่อหน้า/ขีดฆ่า) · จำนวนแถวต้องตรงกับข้อความธรรมดา ไม่งั้นใช้ข้อความธรรมดา (กันอ่าน HTML เพี้ยน)
+function parsePanelBomPaste(text, html) {
+  const t = parsePanelBomText(text);
+  let h = null;
+  try { const g = pbParseHtml(html); h = g ? parsePanelBomRows(g) : null; } catch { h = null; }
+  if (h && (!t || h.rows + h.struck.length === t.rows)) return h;
+  return t;
+}
+async function parsePanelBomFile(file) {
+  let ExcelJS = null;
+  try { const mod = await import("exceljs"); ExcelJS = mod.default || mod; } catch { return null; }
+  const wb = new ExcelJS.Workbook();
+  try { await wb.xlsx.load(await file.arrayBuffer()); } catch { return null; }   // .xls เก่า / ไฟล์เสีย → ให้ตัวอ่านเดิมลอง
+  const strikeOf = (cell) => {
+    const v = cell.value;
+    const runs = v && typeof v === "object" && Array.isArray(v.richText) ? v.richText.filter((t) => String(t.text || "").trim()) : null;
+    if (runs && runs.length) return runs.every((t) => (t.font && t.font.strike != null ? !!t.font.strike : !!cell.font?.strike));
+    return !!cell.font?.strike;
+  };
+  for (const ws of wb.worksheets) {
+    if (ws.state && ws.state !== "visible") continue;
+    const rows = [];
+    ws.eachRow({ includeEmpty: true }, (row, rn) => {
+      const out = [];
+      row.eachCell({ includeEmpty: true }, (cell, cn) => { out[cn - 1] = new PbCell(cell.value, cell.alignment?.indent, strikeOf(cell)); });
+      if (row.hidden) out.hidden = true;
+      rows[rn - 1] = out;
+    });
+    const res = parsePanelBomRows(Array.from(rows, (r) => r || []));
+    if (res) return { ...res, sheet: ws.name };
+  }
+  return null;
+}
+
 function emptySubAsmChild() { return { code: "", desc: "", len: "", perSet: "" }; }
 function emptySubAsmGroup() { return { parentKind: "subassembly", parentCode: "", parentDesc: "", parentLen: "", parentQty: "1", children: [] }; }
 
 function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject, initialProjectId = "" }) {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
   // ★ รอบ 12 (D): ไม่เลือกโปรเจคแรกให้เอง (เดิมเผลอบันทึกเข้าโปรเจคผิด) — มีโปรเจคเดียว = เลือกให้
@@ -3327,11 +3622,14 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [progress, setProgress] = useState("");
+  const [note, setNote] = useState(null);   // ★ 2026-10-09: สรุปผลอ่านฟอร์ม + จำนวนที่หารไม่ลงตัว (ปัดเศษ)
   const fileRef = useRef(null);
 
-  const setParent = (gi, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, [key]: val } : g)));
+  // ★ 2026-10-10 ตรวจรอบ 2: แก้จำนวนแม่/ต่อชุด/เบอร์ลูกเอง = เลิกเทียบกับยอดจากไฟล์ (_fileTotal) — กันคำเตือน "ไม่ลงตัว" ค้างผิดตัวเลข
+  const setParent = (gi, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi
+    ? { ...g, [key]: val, ...(key === "parentQty" ? { children: g.children.map((c) => (c._fileTotal != null ? { ...c, _fileTotal: null } : c)) } : {}) } : g)));
   const setChild = (gi, ci, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi
-    ? { ...g, children: g.children.map((c, j) => (j === ci ? { ...c, [key]: val } : c)) } : g)));
+    ? { ...g, children: g.children.map((c, j) => (j === ci ? { ...c, [key]: val, ...((key === "perSet" || key === "code") ? { _fileTotal: null } : {}) } : c)) } : g)));
   const addChild = (gi) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, children: [...g.children, emptySubAsmChild()] } : g)));
   const removeChild = (gi, ci) => setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, children: g.children.filter((_, j) => j !== ci) } : g)));
   const addGroup = () => setGroups((gs) => [...gs, emptySubAsmGroup()]);
@@ -3347,23 +3645,49 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     const pj = projects.find((p) => (p.name || "").toLowerCase() === nm || (p.code || "").toLowerCase() === nm);
     if (pj) setProjectId(pj.id);
   }
-  function applyBom(parsed, src) {
+  function applyBom(parsed0, src) {
+    // ★ 2026-10-10 ตรวจรอบ 2: เบอร์แม่เดียวกันหลายกลุ่ม (เช่นซับเดียวกันอยู่ในหลายแผง — ตัวอ่านฟอร์ม Sum) → รวมเป็นกลุ่มเดียว
+    //   (จำนวนแม่บวกกัน · ลูกเบอร์เดียวกันบวกยอดรวม) — เดิมบันทึกไม่ได้ ("เบอร์แม่ซ้ำ 2 กลุ่ม") ต้องรวมมือแล้วคำเตือนเพี้ยน
+    const byCode = new Map();
+    for (const g of parsed0.groups || []) {
+      const k = String(g.parentCode || "").trim().toLowerCase();
+      const cur = k ? byCode.get(k) : null;
+      if (!cur) { byCode.set(k || Symbol("blank"), { ...g, parentQty: Number(g.parentQty) || 1, children: (g.children || []).map((c) => ({ ...c })) }); continue; }
+      cur.parentQty += Number(g.parentQty) || 1;
+      for (const c of g.children || []) {
+        const ck = String(c.code || "").trim().toLowerCase();
+        const hit = cur.children.find((x) => String(x.code || "").trim().toLowerCase() === ck);
+        if (hit) hit.totalQty = (Number(hit.totalQty) || 0) + (Number(c.totalQty) || 0); else cur.children.push({ ...c });
+      }
+    }
+    const parsed = { ...parsed0, groups: [...byCode.values()] };
+    const rounded = [];   // ลูกที่ "จำนวนรวม ÷ จำนวนแม่" ไม่ลงตัว → ปัดเป็นจำนวนเต็ม (BOM เก็บต่อชุดเป็นจำนวนเต็ม) · บอกผู้ใช้
     const gs = parsed.groups.map((g) => ({
       parentKind: g.parentKind || "subassembly",
       parentCode: g.parentCode, parentDesc: g.parentDesc,
       parentLen: g.parentLen ?? "", parentQty: String(g.parentQty || 1),
       // ไฟล์/วาง คืน "จำนวนรวมทุกแม่" (totalQty) → แปลงเป็น "ต่อชุด" (÷ จำนวนแม่) ให้ฟอร์มใหม่ที่กรอกต่อชุดตรง ๆ
-      children: g.children.map((c) => ({
-        code: c.code, desc: c.desc, len: c.len ?? "",
-        perSet: Number(c.totalQty) > 0 ? String(Math.max(1, Math.round(Number(c.totalQty) / (Number(g.parentQty) || 1)))) : "",
-        _fileTotal: Number(c.totalQty) > 0 ? Number(c.totalQty) : null,   // ★ 2026-10-10: ยอดรวมจากไฟล์ — ไว้เตือนเมื่อหารต่อชุดไม่ลงตัว
-      })),
+      children: g.children.map((c) => {
+        const tot = Number(c.totalQty), pq = Number(g.parentQty) || 1;
+        const per = tot > 0 ? Math.max(1, Math.round(tot / pq)) : 0;
+        if (tot > 0 && Math.abs(tot / pq - per) > 1e-9) rounded.push(`${g.parentCode} › ${c.code}: ${fmtNum(tot)} ÷ ${fmtNum(pq)} = ${fmtNum(Math.round((tot / pq) * 100) / 100)} → ${per}`);
+        return { code: c.code, desc: c.desc, len: c.len ?? "", perSet: per > 0 ? String(per) : "",
+          _fileTotal: tot > 0 ? tot : null };   // ★ 2026-10-10: ยอดรวมจากไฟล์ — ไว้เตือนเมื่อหารต่อชุดไม่ลงตัว
+      }),
       _collapsed: parsed.groups.length > 3,   // นำเข้าหลายเบอร์ → เริ่มแบบย่อ (เห็นภาพรวม แตะเพื่อขยายดูลูก)
     }));
     setGroups(gs.length ? gs : [emptySubAsmGroup()]);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
     matchProject(parsed.projectName);
-    mlsToast(`${src} ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
+    const nPanel = gs.filter((g) => g.parentKind === "panel").length, nSub = gs.filter((g) => g.parentKind === "subassembly").length;
+    setNote(parsed.format === "panel-bom"
+      ? { kind: "panel-bom", rows: parsed.rows, panels: nPanel, subs: nSub, rounded, nested: parsed.nested || 0, byIndent: !!parsed.byIndent,
+          struck: parsed.struck || [], hidden: parsed.hidden || 0, nestedNoIndent: !!parsed.nestedNoIndent, descUnderSub: parsed.descUnderSub || [],
+          bySub: !!parsed.bySub, noOwnRow: parsed.noOwnRow || [] }
+      : (rounded.length ? { kind: "bom", rounded } : null));
+    mlsToast(parsed.format === "panel-bom"
+      ? `${src}: ฟอร์ม BOM แผง ${nPanel} แผง · ซับ ${nSub} เบอร์ — ตรวจแล้วกดบันทึก`
+      : `${src} ${gs.length} เบอร์แม่ — ตรวจแล้วกดบันทึก`, "success");
   }
   // รายชื่อแผง (flat) → กลุ่มแบบ "ไม่มีลูก" (ปล่อยงานเฉยๆ · kind=panel)
   function applyPanelAsGroups(parsed, src, bomErr = null) {
@@ -3388,6 +3712,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     }
     const gs = parsed.items.map((it) => ({ parentKind: "panel", parentCode: it.code, parentDesc: "", parentLen: "", parentQty: String(it.qty || 1), children: [] }));
     setGroups(gs.length ? gs : [emptySubAsmGroup()]);
+    setNote(null);
     if (parsed.releaseOrder) setReleaseOrder(parsed.releaseOrder);
     matchProject(parsed.projectName);
     mlsToast(`${src} ${gs.length} แผง (ปล่อยงานเฉยๆ) — ตรวจแล้วกดบันทึก`, "success");
@@ -3396,6 +3721,9 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   async function onPickFile(e) {
     const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
     try {
+      // ★ 2026-10-09: ฟอร์ม BOM แผงแบบใหม่ (Panel · Code · Quantity ไม่มี Sum) อ่านก่อน · ไม่ใช่ → ตัวอ่านเดิม
+      const pb = await parsePanelBomFile(file);
+      if (pb) { applyBom(pb, "อ่านไฟล์ได้"); return; }
       const mod = await import("./excelImport.js");
       let bomErr = null;
       try { applyBom(await mod.parseSubAssemblyExcel(file), "อ่านไฟล์ได้"); return; } catch (eb) { bomErr = eb; }
@@ -3404,7 +3732,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   }
   const pasteRef = useRef(null);
   const lastPasteRef = useRef(0);
-  async function handlePastedText(text) {
+  async function handlePastedText(text, html) {
     if (!text || (!text.includes("\t") && !text.includes("\n"))) {
       setErr("ยังไม่ใช่ตาราง — ก็อปจาก Excel โดยลากคลุมทั้งตาราง (รวมแถวหัว Code/Quantity/Sum) ก่อน");
       return;
@@ -3414,6 +3742,8 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     lastPasteRef.current = now;
     setErr("");
     try {
+      const pb = parsePanelBomPaste(text, html);   // ★ 2026-10-09: ฟอร์ม BOM แผงแบบใหม่ก่อน (HTML จาก Excel = เห็นย่อหน้า/ขีดฆ่า)
+      if (pb) { applyBom(pb, "วางข้อมูลได้"); return; }
       const mod = await import("./excelImport.js");
       let bomErr = null;
       try { applyBom(mod.parseSubAssemblyText(text), "วางข้อมูลได้"); return; } catch (eb) { bomErr = eb; }
@@ -3424,7 +3754,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     const text = e.clipboardData?.getData("text") || "";
     if (!text.includes("\t") && !text.includes("\n")) return;   // ค่าเดียว → วางปกติ
     e.preventDefault();
-    handlePastedText(text);
+    handlePastedText(text, e.clipboardData?.getData("text/html") || "");
   }
   // วางด้วย Ctrl+V ได้เลย: โฟกัสช่องวางอัตโนมัติตอนเปิด + ฟัง paste ทั้งหน้าเป็นสำรอง (เผื่อโฟกัสหลุด)
   useEffect(() => {
@@ -3436,7 +3766,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       const text = ev.clipboardData?.getData("text") || "";
       if (!text.includes("\t") && !text.includes("\n")) return;
       ev.preventDefault();
-      handlePastedText(text);
+      handlePastedText(text, ev.clipboardData?.getData("text/html") || "");
     };
     document.addEventListener("paste", onDocPaste);
     return () => document.removeEventListener("paste", onDocPaste);
@@ -3499,6 +3829,22 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     const clean = groups
       .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.perSet) > 0) }))
       .filter((g) => g.parentCode);   // มีเบอร์แม่พอ · มีลูก = ตั้ง BOM · ไม่มีลูก = ปล่อยงานเฉยๆ (เช่นแผง)
+    // ★ 2026-10-09: บันทึก "ลูก" ก่อน "แม่" เสมอ (ซับชั้น 2 → ซับชั้น 1 → แผง) — ถ้าแม่ไปก่อน ลูกที่เป็นซับจะถูกสร้างเป็น
+    //   part_master เปล่า (ไม่มี release) แล้วตอนถึงกลุ่มของมันเอง ระบบเห็นว่า "มีอยู่แล้ว" → ข้ามการปล่อยงาน/QR
+    const byCode = new Map(clean.map((g) => [g.parentCode.toLowerCase(), g]));
+    const height = new Map();
+    const hOf = (g, seen = new Set()) => {
+      const key = g.parentCode.toLowerCase();
+      if (height.has(key)) return height.get(key);
+      if (seen.has(key)) return 0;   // วนกันเอง (ข้อมูลผิด) — กันค้าง
+      seen.add(key);
+      let h = 0;
+      for (const c of g.children) { const cg = byCode.get(c.code.trim().toLowerCase()); if (cg && cg !== g) h = Math.max(h, hOf(cg, seen) + 1); }
+      height.set(key, h);
+      return h;
+    };
+    clean.forEach((g) => hOf(g));
+    clean.sort((a, b) => height.get(a.parentCode.toLowerCase()) - height.get(b.parentCode.toLowerCase()));
     if (clean.length === 0) { setErr("ต้องมีอย่างน้อย 1 เบอร์แม่ (กรอก Code)"); return; }
     for (const g of clean) {
       const pq = Number(g.parentQty);
@@ -3551,10 +3897,15 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         .map((p) => [String(p.part_no || "").trim().toLowerCase(), p.id]));
       const ids = [...new Set(clean.map((g) => pmByCode.get(g.parentCode.toLowerCase())).filter(Boolean))];
       const released = new Set();
-      for (let i = 0; i < ids.length; i += 100) {
-        const { data, error } = await supabase.from("releases").select("part_master_id").in("part_master_id", ids.slice(i, i + 100));
-        if (error) throw error;
-        (data || []).forEach((r) => released.add(r.part_master_id));
+      // ★ 2026-10-10 ตรวจรอบ 2: อ่านเป็นหน้า (PostgREST ตัดที่ ~1,000 แถว) — เบอร์ที่มีหลาย release/Modify เยอะ เดิมอาจหลุด → ปล่อยงานซ้ำ
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        for (let off = 0; ; off += 1000) {
+          const { data, error } = await supabase.from("releases").select("part_master_id").in("part_master_id", chunk).order("id").range(off, off + 999);
+          if (error) throw error;
+          (data || []).forEach((r) => released.add(r.part_master_id));
+          if (!data || data.length < 1000) break;
+        }
       }
       for (const g of clean) {
         const k = g.parentCode.toLowerCase();
@@ -3628,7 +3979,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>หรือก็อปตารางจาก Excel แล้ว <b>กด Ctrl+V</b> (ช่องด้านล่างพร้อมวางแล้ว)</span>
       </div>
       <textarea ref={pasteRef} onPaste={onPasteTextarea} rows={2} disabled={busy}
-        placeholder="⬇ วางตารางที่นี่ด้วย Ctrl+V — ก็อปจาก Excel รวมแถวหัว (Code / Quantity / Sum) · ได้ทั้งฟอร์ม BOM และรายชื่อแผง"
+        placeholder="⬇ วางตารางที่นี่ด้วย Ctrl+V — ก็อปจาก Excel รวมแถวหัว (Panel / Sub-01 / Sub-02 / Part No. / Quantity หรือ Code / Quantity / Sum) · ได้ทั้งฟอร์ม BOM และรายชื่อแผง"
         style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: "11px 12px", borderRadius: 8, marginBottom: 10,
           border: "2px dashed var(--accent, #10b981)", background: "var(--surface-2, #f4f8f6)",
           fontSize: 13, fontFamily: "inherit", color: "var(--muted)" }} />
@@ -3636,6 +3987,49 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         หรือกรอกมือด้านล่าง · รวม <b>{fmtNum(totalParents)}</b> เบอร์ · ปล่อยงาน <b>{fmtNum(totalUnits)}</b> ชิ้น (QR)
       </div>
 
+      {note ? (
+        <div className="pbom-note" style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 10, padding: "8px 12px", borderRadius: 10,
+          background: (note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length) ? "var(--warn-tint, #fff6e0)" : "var(--accent-tint, #e5f9f1)", border: `1px solid ${(note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length) ? "#f3d27a" : "#9fd9c1"}` }}>
+          {note.kind === "panel-bom" ? (
+            <div>✓ {L(`อ่านเป็นฟอร์ม BOM แผง: ${fmtNum(note.rows)} แถว → แผง ${fmtNum(note.panels)} · ซับ ${fmtNum(note.subs)} เบอร์ (ลูกของแต่ละซับอยู่ในกลุ่มซับ) · จำนวน = ต่อแผง 1 ชุด × Panel Quantity`,
+              `Read as a panel BOM: ${fmtNum(note.rows)} rows → ${fmtNum(note.panels)} panel(s) · ${fmtNum(note.subs)} sub-assemblies (each sub's parts are in its own group) · Quantity = per panel × Panel Quantity`)}</div>
+          ) : null}
+          {note.kind === "panel-bom" && note.nested > 0 ? (
+            <div>✓ {note.bySub
+              ? L(`ซับซ้อนซับ ${fmtNum(note.nested)} เบอร์ — แยกชั้นตามคอลัมน์ Sub-01 / Sub-02 · บันทึกซับชั้นในก่อนให้เอง`, `${fmtNum(note.nested)} nested sub-assemblies — levels taken from the Sub-01 / Sub-02 columns · inner subs are saved first`)
+              : note.byIndent
+              ? L(`ซับซ้อนซับ ${fmtNum(note.nested)} เบอร์ (SUB 2nd) — แยกชั้นตามย่อหน้าในช่อง Part No. · บันทึกซับชั้นในก่อนให้เอง`, `${fmtNum(note.nested)} nested sub-assemblies (SUB 2nd) — levels taken from the Part No. indent · inner subs are saved first`)
+              : L(`ซับซ้อนซับ ${fmtNum(note.nested)} เบอร์ (SUB 2nd) — บันทึกซับชั้นในก่อนให้เอง`, `${fmtNum(note.nested)} nested sub-assemblies (SUB 2nd) — inner subs are saved first`)}</div>
+          ) : null}
+          {note.kind === "panel-bom" && note.bySub && !note.nested ? (
+            <div>✓ {L("อ่านชั้นซับจากคอลัมน์ Sub-01 / Sub-02", "Sub levels read from the Sub-01 / Sub-02 columns")}</div>
+          ) : null}
+          {note.kind === "panel-bom" && note.noOwnRow?.length ? (
+            <div>⚠ {L(`ซับที่อยู่ในคอลัมน์ Sub แต่ไม่มีแถวของตัวเอง (ไม่รู้จำนวน · ตั้งเป็น 1) ${fmtNum(note.noOwnRow.length)} เบอร์: `, `${fmtNum(note.noOwnRow.length)} sub(s) named in a Sub column but with no row of their own (quantity unknown · set to 1): `)}
+              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.noOwnRow.slice(0, 8).join(" · ")}{note.noOwnRow.length > 8 ? " …" : ""}</span></div>
+          ) : null}
+          {note.kind === "panel-bom" && note.nestedNoIndent ? (
+            <div>⚠ {L("มีซับชั้น 2 แต่ข้อมูลไม่มีย่อหน้าบอกชั้น — ชิ้นที่อยู่ถัดจากลูกของซับชั้น 2 อาจถูกนับเข้าซับชั้น 2 · ตรวจกลุ่มซับชั้น 2 หรือใช้ \"นำเข้าจากไฟล์ Excel\" แทน",
+              "Has SUB 2nd rows but no indent to show levels — parts right after a SUB 2nd's parts may be counted in the SUB 2nd · check those groups, or use \"Import from Excel file\" instead")}</div>
+          ) : null}
+          {note.kind === "panel-bom" && note.struck?.length ? (
+            <div>✂ {L(`ข้ามแถวที่ขีดฆ่า (แก้ Rev แล้ว) ${fmtNum(note.struck.length)} แถว: `, `Skipped ${fmtNum(note.struck.length)} struck-through row(s) (superseded by a Rev): `)}
+              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.struck.slice(0, 10).join(" · ")}{note.struck.length > 10 ? " …" : ""}</span></div>
+          ) : null}
+          {note.kind === "panel-bom" && note.descUnderSub?.length ? (
+            <div>ⓘ {L(`มี Description แต่ย่อหน้าอยู่ใต้ซับ ${fmtNum(note.descUnderSub.length)} แถว — จัดเป็นลูกของซับตามย่อหน้า ตรวจว่าถูก: `, `${fmtNum(note.descUnderSub.length)} row(s) have a Description but are indented under a sub — put in that sub by indent, please check: `)}
+              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.descUnderSub.slice(0, 8).join(" · ")}{note.descUnderSub.length > 8 ? " …" : ""}</span></div>
+          ) : null}
+          {note.kind === "panel-bom" && note.hidden > 0 ? (
+            <div>👁 {L(`ข้ามแถวที่ซ่อนอยู่ในไฟล์ ${fmtNum(note.hidden)} แถว (เช่นกรองไว้) — ถ้าต้องการ ให้ยกเลิกตัวกรอง/เลิกซ่อนแล้วนำเข้าใหม่`, `Skipped ${fmtNum(note.hidden)} hidden row(s) in the file (e.g. filtered) — unhide/clear the filter and import again if needed`)}</div>
+          ) : null}
+          {note.rounded?.length ? (
+            <div>⚠ {L(`จำนวนต่อชุดหารไม่ลงตัว ${note.rounded.length} รายการ — ปัดเป็นจำนวนเต็มให้แล้ว ตรวจ/แก้ก่อนบันทึก:`, `${note.rounded.length} per-set quantities don't divide evenly — rounded to whole numbers, check before saving:`)}
+              <span style={{ display: "block", fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.rounded.slice(0, 8).join(" · ")}{note.rounded.length > 8 ? " …" : ""}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
       {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
 
@@ -7352,6 +7746,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const [deptFilter, setDeptFilter] = useState("machine"); // แยกแผนก (เหมือนหน้า Release/รายงาน): machine/assembly/packing
   const gridRef = useRef(null);   // กรอบเลื่อนตาราง QR (ใช้ปุ่ม "ขึ้นบนสุด")
   const [committedKey, setCommittedKey] = useState(""); // ★ โหลด QR เฉพาะหลังกด "ค้นหา" (กันโหลดหมื่นใบทันที)
+  const [searchNonce, setSearchNonce] = useState(0);    // ★ 2026-10-10 ตรวจรอบ 2: กด "ค้นหา QR" ซ้ำ (ตัวกรองเดิม) = โหลดใหม่จริง (เดิมไม่ทำอะไร)
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -7362,14 +7758,26 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   }, []);
 
   // มาจากปุ่ม "พิมพ์ QR" ในหน้ารายละเอียด Release — เลือกล็อต + ค้นหาให้อัตโนมัติ
+  const initDeptRef = useRef(null);   // ★ 2026-10-10 ตรวจรอบ 2: ล็อตของแผนกอื่น (ซับ/แผง/แพ็ก) → สลับแท็บแผนกให้ตรง (เดิมค้างแท็บ Machine = "ตัวกรองเปลี่ยนแล้ว" + กดค้นหาไม่ได้)
   useEffect(() => {
     if (initialReleaseId) {
       setReleaseIds([initialReleaseId]);
       setCommittedKey(initialReleaseId);   // จากปุ่มพิมพ์ QR = โชว์เลย ไม่ต้องกดค้นหา
+      initDeptRef.current = initialReleaseId;
       onConsumeInitial && onConsumeInitial();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialReleaseId]);
+  useEffect(() => {
+    const rid = initDeptRef.current;
+    if (!rid || !releases.length || !parts.length) return;
+    const r = releases.find((x) => x.id === rid);
+    if (!r) return;
+    initDeptRef.current = null;
+    const d = deptOfKind(parts.find((p) => p.id === r.part_master_id)?.kind);
+    if (d && d !== deptFilter) setDeptFilter(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [releases, parts]);
 
   function partOf(r) { return parts.find((p) => p.id === r.part_master_id); }
 
@@ -7400,9 +7808,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
   // โหลดชิ้นงาน (QR) — เฉพาะ "หลังกดค้นหา" (committedKey) เท่านั้น · แบ่ง batch กัน URL ยาว + แบ่งหน้ากันเกิน 1000
   useEffect(() => {
-    if (!committedKey) { setUnits([]); setSelected(new Set()); setLoading(false); return; }
+    if (!committedKey) { setUnits([]); setSelected(new Set()); setLoading(false); setLoadFailed(false); return; }
     let alive = true;
-    setLoading(true);
+    setLoading(true); setLoadFailed(false);
     (async () => {
       const ids = committedKey.split(",");
       const out = []; let failed = false;
@@ -7425,11 +7833,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       }
       // ★ 2026-10-10: โหลดบางชุดไม่สำเร็จ (เน็ตสะดุด) → เดิมหายเงียบ ป้ายไม่ครบ · ตอนนี้แจ้งให้กดค้นหาใหม่
       if (alive && failed) mlsToast("โหลด QR บางส่วนไม่สำเร็จ — ป้ายอาจไม่ครบ กด “ค้นหา QR” อีกครั้ง", "warn");
-      if (alive) { setUnits(out); setLoading(false); }
+      if (alive) { setUnits(out); setLoading(false); setLoadFailed(failed); }
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedKey]);
+  }, [committedKey, searchNonce]);
 
   // ★ เรียงทีละล็อต: ล็อต (Release) เรียงตามเบอร์ Part (หรือ Release Order → เบอร์) · ในล็อตเรียงตามเลขชิ้น 1 OF N
   //   (QR โหลดมาเรียง release_id + unit_no อยู่แล้ว → จัดกลุ่มแล้วเรียงเฉพาะกลุ่ม = เร็วแม้หมื่นใบ)
@@ -7582,7 +7990,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
   }
 
-  function doSearch() { setCommittedKey(activeIdsKey); }   // กดค้นหา = โหลด/แสดง QR ตามตัวกรองปัจจุบัน
+  function doSearch() { setCommittedKey(activeIdsKey); setSearchNonce((n) => n + 1); }   // กดค้นหา = โหลด/แสดง QR ตามตัวกรองปัจจุบัน (กดซ้ำ = โหลดใหม่)
   function clearSearch() { setProjectFilter(""); setReleaseOrder(""); setSearch(""); setReleaseIds([]); setCommittedKey(""); }   // ล้างทั้งหมด
   const searchDirty = activeIdsKey !== committedKey;   // ตัวกรองเปลี่ยนหลังค้นหา → ต้องกดค้นหาใหม่
 
@@ -7879,7 +8287,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       {!loading && committedKey && displayed.length === 0 && (
         <div className="empty-state">
           <Icon name="qr" size={32} />
-          <div className="empty-state-title">ไม่พบชิ้นงาน (QR) ในตัวกรองนี้</div>
+          <div className="empty-state-title">{loadFailed ? "โหลด QR ไม่สำเร็จ (เน็ตสะดุด) — กด “ค้นหา QR” อีกครั้ง" : "ไม่พบชิ้นงาน (QR) ในตัวกรองนี้"}</div>
         </div>
       )}
     </div>
@@ -10548,7 +10956,13 @@ function DailyReportPage() {
   const plannedMachines = planSet(activeMachines);
   const tPcs = targetOK ? sum(plannedMachines, (k) => tgts[k]?.pcs) : 0;
   const tKg = targetOK ? sum(plannedMachines, (k) => tgts[k]?.kg) : 0;
-  const nPlanned = plannedMachines.filter((k) => !untimedM.has(k)).length;   // เครื่องไม่จับเวลา = ไม่มีเวลาตามแผนให้เทียบ
+  // ★ 2026-10-10 ตรวจรอบ 2: "ไม่จับเวลา" ดูจากข้อมูลของวันนั้นจริง (มีงานแต่ไม่มีเวลาเลย) — ไม่ใช้โหมดปัจจุบันกับทุกวัน
+  //   (เดิมเปลี่ยนเครื่องเป็นสแกนครั้งเดียววันนี้ → วันก่อนๆ ที่เคยจับเวลาถูกตัดออก → % ย้อนหลังเพี้ยน · เทียบ ▼▲ ผิดทั้งสัปดาห์)
+  //   ไม่มีงานวันนั้น = ใช้โหมดปัจจุบัน
+  const untimedOn = (k, has, timed) => (has.has(k) ? !timed.has(k) : untimedM.has(k));
+  const hasToday = new Set(rows.map((g) => g.mkey));
+  const timedToday = new Set(rows.filter((g) => g.secs > 0).map((g) => g.mkey));
+  const nPlanned = plannedMachines.filter((k) => !untimedOn(k, hasToday, timedToday)).length;   // เครื่องไม่จับเวลา = ไม่มีเวลาตามแผนให้เทียบ
   const plannedMinTotal = plannedNow * nPlanned;
   const util = plannedMinTotal > 0 ? (totSec / 60) / plannedMinTotal : null;
   const stops = (stopsAll || []).map((s) => ({ ...s, ...drStopMin(s, cfg, day, nowMs) })).filter((s) => s.day > 0 || (s.started_at && localDayStr(new Date(s.started_at)) === day));
@@ -10559,9 +10973,9 @@ function DailyReportPage() {
 
   // ── สิ่งเทียบ: วันทำงานก่อนหน้า + เฉลี่ย 7 วัน (เฉพาะวันที่มีงาน) ──
   const byDay = {};
-  histRows.forEach((g) => { const e = byDay[g.day] || (byDay[g.day] = { pcs: 0, tpcs: 0, kg: 0, secs: 0, ms: new Set() }); e.pcs += Number(g.qty) || 0; if (g.secs > 0) e.tpcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0; e.ms.add(g.mkey); });
+  histRows.forEach((g) => { const e = byDay[g.day] || (byDay[g.day] = { pcs: 0, tpcs: 0, kg: 0, secs: 0, ms: new Set(), tms: new Set() }); e.pcs += Number(g.qty) || 0; if (g.secs > 0) { e.tpcs += Number(g.qty) || 0; e.tms.add(g.mkey); } e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0; e.ms.add(g.mkey); });
   const workDays = Object.keys(byDay).filter((d) => byDay[d].pcs > 0).sort();
-  workDays.forEach((d) => { const n = planSet([...byDay[d].ms]).filter((k) => !untimedM.has(k)).length; byDay[d].util = plannedFull > 0 && n > 0 ? (byDay[d].secs / 60) / (plannedFull * n) : null; });
+  workDays.forEach((d) => { const n = planSet([...byDay[d].ms]).filter((k) => !untimedOn(k, byDay[d].ms, byDay[d].tms)).length; byDay[d].util = plannedFull > 0 && n > 0 ? (byDay[d].secs / 60) / (plannedFull * n) : null; });
   const prevDay = workDays.length ? workDays[workDays.length - 1] : null;
   const prev = prevDay ? byDay[prevDay] : null;
   const avg = workDays.length ? {
@@ -10666,7 +11080,7 @@ function DailyReportPage() {
       if (e.scans === 0 && !st.length) flags.push({ tone: "warn", t: L("ยังไม่มีงาน", "no work yet") });
       if (st.length && !st.some((s) => s.open)) flags.push({ tone: "warn", t: L(`หยุด ${nc(st.length)} ครั้ง`, `${st.length} stop(s)`) });
       if (e.slow) flags.push({ tone: "warn", t: L(`รอบช้า ${e.slow}`, `${e.slow} slow`) });
-      const untimed = untimedM.has(e.mkey);          // เครื่องไม่จับเวลา → ไม่มี % เวลา/ว่าง/นาทีต่อชิ้น ("—")
+      const untimed = untimedOn(e.mkey, hasToday, timedToday);   // เครื่องไม่จับเวลา (วันนี้) → ไม่มี % เวลา/ว่าง/นาทีต่อชิ้น ("—")
       return {
         ...e, untimed, empText: [...e.emps].join(", "), nParts: e.parts.size, cycle: e.tpcs > 0 ? runM / e.tpcs : null,
         stops: st.length, stopMin: stopM, runMin: runM, planned,
@@ -12955,6 +13369,7 @@ function MachineCrud() {
           machine={editing} operations={operations} caps={caps}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
+          onReload={() => load()}
         />
       )}
     </Card>
@@ -12971,7 +13386,7 @@ const QUICK_ADD_CHIPS = [
   { key: "milling",    name: "กัด",           op_type: "machining",  match: (o) => { const n = String(o.name || "").trim(); return n === "กัด" || n.toUpperCase() === "MILLING"; } },
   { key: "glazing",    name: "ติดกระจก",      op_type: "glazing",    match: (o) => o.op_type === "glazing" },   // ★ รอบ 22
 ];
-function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) {
+function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, onReload }) {
   const fresh = !!machine.__fresh;   // ★ เพิ่งสร้าง → หัวข้อ "ตั้งรายละเอียด" + ปุ่ม "ข้าม" (ไม่บังคับ)
   const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
   // ★ 2026-10-09: รูปแบบการสแกนหน้าเครื่อง — undefined = ยังไม่ได้รัน migration-scan-mode.sql (คอลัมน์ไม่มี)
@@ -13017,15 +13432,17 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       await setMachineOps(machine.id, [...new Set(finalIds)]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
       // ★ 2026-10-10: ตั้งรูปแบบการสแกน "หลังสุด" — ถ้าพลาด (เช่นยังไม่รัน SQL) ชื่อ/ขั้นตอนยังบันทึกครบ
       if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
-        let r;
+        let r, why = "";
         try { r = await setMachineScanMode(machine.id, scanMode); }
         catch (e) {
           const m = String(e?.message || e);
-          throw new Error(/authz_set_machine_scan_mode|schema cache|PGRST202|does not exist/i.test(m) && !/permission denied/i.test(m)
+          why = /authz_set_machine_scan_mode|schema cache|PGRST202|does not exist/i.test(m) && !/permission denied/i.test(m)
             ? "ยังไม่ได้รัน migration-scan-mode.sql ใน Supabase — รันก่อนแล้วตั้งรูปแบบการสแกนใหม่"
-            : m);
+            : m;
         }
-        if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ"));
+        if (!why && r && r.ok === false) why = r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ");
+        // ★ 2026-10-10 ตรวจรอบ 2: ชื่อ/ขั้นตอนบันทึกแล้ว — บอกให้ชัดว่าพลาดแค่รูปแบบการสแกน + โหลดตารางใหม่ (เดิมขึ้น "บันทึกไม่สำเร็จ" ทั้งที่ส่วนอื่นบันทึกแล้ว)
+        if (why) { setErr(`บันทึกชื่อ/ขั้นตอนแล้ว · แต่ตั้งรูปแบบการสแกนไม่สำเร็จ: ${why}`); setBusy(false); try { onReload && onReload(); } catch { /* ignore */ } return; }
       }
       onSaved();
     } catch (e) {
@@ -13270,7 +13687,7 @@ const multiOpNeedsMachine = (lang) => (lang === "en"
   : "เลือกเครื่อง/สถานีก่อน — ขั้นตอนหลายอันเก็บไว้กับเครื่อง (ถ้าไม่ผูกเครื่อง จะเก็บได้ขั้นตอนเดียว)");
 
 // ★ 2026-10-10: ช่องติ๊ก "ล็อกอินได้หลายเครื่องพร้อมกัน" (เฉพาะบัญชีที่ผูกเครื่อง · ต้องรัน migration-multi-session.sql)
-function MultiSessionToggle({ checked, onChange, missing, disabled }) {
+function MultiSessionToggle({ checked, onChange, missing, disabled, failed = false }) {   // ★ 2026-10-10 ตรวจรอบ 2: failed = โหลดรายชื่อไม่สำเร็จ → ล็อกช่อง (ไม่โชว์ค่าผิด)
   return (
     <div style={{ margin: "4px 0 10px", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2, #f6f8f7)" }}>
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: disabled || missing ? "default" : "pointer", fontSize: 13.5, fontWeight: 600 }}>
@@ -13279,7 +13696,9 @@ function MultiSessionToggle({ checked, onChange, missing, disabled }) {
         ล็อกอินได้หลายเครื่องพร้อมกัน
       </label>
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, lineHeight: 1.55 }}>
-        {missing
+        {failed
+          ? "⚠️ โหลดสถานะไม่สำเร็จ (เน็ตสะดุด) — ปิดหน้าต่างแล้วเปิดใหม่ก่อนแก้ช่องนี้"
+          : missing
           ? "⚠️ ต้องรัน migration-multi-session.sql ใน Supabase ก่อน ถึงจะเปิดตัวเลือกนี้ได้"
           : "ปกติ 1 บัญชีหน้าเครื่องใช้ได้ทีละเครื่อง (ล็อกอินเครื่องใหม่ = เครื่องเก่าหลุด) · ติ๊ก = ใช้บัญชีนี้หลายแท็บเล็ตพร้อมกันได้ ไม่เตะกัน · ยอดทุกเครื่องรวมเป็นเครื่อง/สถานีเดียวกัน"}
       </div>
@@ -13436,7 +13855,8 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
           onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
       </Field>
       {form.machine_id && (
-        <MultiSessionToggle checked={multi} onChange={setMulti} missing={!!(multiSession && multiSession.missing)} disabled={busy || !multiSession} />
+        <MultiSessionToggle checked={multi} onChange={setMulti} missing={!!(multiSession && multiSession.missing)}
+          failed={!!(multiSession && !multiSession.ok && !multiSession.missing)} disabled={busy || !multiSession || !multiSession.ok} />
       )}
       {(!form.machine_id || opSel.size === 0) && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
@@ -14000,10 +14420,15 @@ function UpdateBanner() {
 // ── กันจอขาว: ถ้าเรนเดอร์พังตรงไหน โชว์ข้อความ + ปุ่มโหลดใหม่ แทนหน้าจอว่างเปล่า ──
 //   (ก่อนหน้านี้ error ระหว่าง render ทำให้ React ถอดทั้งหน้า = จอขาว หาสาเหตุยาก)
 // กู้อัตโนมัติจาก chunk ที่ค้างไม่ตรงเวอร์ชัน: ล้างแคช SW + ถอน SW แล้วโหลดใหม่
-function mlsHardReload() {
+function mlsHardReload(auto = false) {
   const reload = () => { try { location.reload(); } catch { /* ignore */ } };
   // ★ ออฟไลน์: ห้ามล้างแคช/ถอน SW (จะเปิดแอปไม่ได้จนกว่าจะออนไลน์) — โหลดใหม่จาก shell ที่แคชไว้เฉยๆ
   if (typeof navigator !== "undefined" && navigator.onLine === false) { reload(); return; }
+  // ★ 2026-10-10 ตรวจรอบ 2: กู้อัตโนมัติ + มีชุดแอปครบในแคช (sw รุ่นใหม่) → แค่โหลดใหม่ (ไม่ล้าง · กันแอปออฟไลน์หายตอนเน็ตกระตุก)
+  if (auto && window.caches && caches.match) {
+    caches.match("/__mls-shell-meta").then((m) => { if (m) reload(); else mlsHardReload(false); }, () => mlsHardReload(false));
+    return;
+  }
   try {
     const cc = (window.caches && caches.keys)
       ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {})
@@ -14026,7 +14451,7 @@ class ErrorBoundary extends Component {
       let healed = false;
       try { healed = sessionStorage.getItem("mls-healed") === "1"; } catch { /* ignore */ }
       // ★ ออฟไลน์: ไม่ auto-heal (โหลดใหม่ตอนออฟไลน์ไม่ช่วย + เสี่ยงวน) → โชว์การ์ด crash ให้เลือกเอง
-      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } mlsHardReload(); }
+      if (!healed && !(typeof navigator !== "undefined" && navigator.onLine === false)) { try { sessionStorage.setItem("mls-healed", "1"); } catch { /* ignore */ } mlsHardReload(true); }
     }
   }
   render() {
