@@ -1839,19 +1839,8 @@ function oddMsg(list, L) {   // list = [{ name, wpm?, len? }]
 }
 // ข้อความที่ก็อปจาก Excel → ตาราง [[cell]] — รองรับเซลล์ในเครื่องหมายคำพูด (มีขึ้นบรรทัด/แท็บในเซลล์) · CRLF / CR / LF
 function matParseTsv(text) {
-  const src = String(text || "").replace(/\r\n?/g, "\n");
-  const out = []; let row = []; let cell = ""; let q = false;
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
-    if (q) {
-      if (ch === '"') { if (src[i + 1] === '"') { cell += '"'; i++; } else q = false; }
-      else cell += ch;
-    } else if (ch === '"' && cell === "") q = true;
-    else if (ch === "\t") { row.push(cell); cell = ""; }
-    else if (ch === "\n") { row.push(cell); out.push(row); row = []; cell = ""; }
-    else cell += ch;
-  }
-  if (cell !== "" || row.length) { row.push(cell); out.push(row); }
+  // ★ 2026-10-10 ตรวจรอบ 3: ใช้ tsvToRows ตัวเดียวกัน — ตัวแยกเดิมเจอ " ตัวเดียว (ditto / 6") แล้วกลืนหลายแถวเป็นเซลล์เดียว
+  const out = tsvToRows(text);
   // ★ รอบ 12 (B37): ตัดเฉพาะแถวว่าง "หัว/ท้าย" — แถวว่างกลางช่วงเก็บไว้ (วางตามตำแหน่งแล้วค่าไม่เลื่อนแถว)
   const rows = out.map((r) => r.map((c) => c.replace(/\s+/g, " ").trim()));
   const filled = (r) => r.some((c) => c !== "");
@@ -3342,26 +3331,14 @@ function pbCellText(v) {
   }
   return String(v);
 }
-const pbNum = (v) => { const n = Number(String(v ?? "").replace(/,/g, "").trim()); return Number.isFinite(n) ? n : null; };
+// ★ 2026-10-10 ตรวจรอบ 3: ช่องว่าง = null (เดิม Number("") = 0 → ความยาวว่างถูกบันทึกเป็น 0 มม.)
+const pbNum = (v) => { const t = String(v ?? "").replace(/,/g, "").trim(); if (!t) return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
 // ย่อหน้าของเซลล์: Indent (ไฟล์/HTML) + เว้นวรรคนำหน้า (พิมพ์เอง)
 const pbIndent = (c) => (c instanceof PbCell ? c.ind * 4 : 0) + (pbCellText(c).match(/^[ \u00a0\u3000]*/)[0].length);
 // TSV จาก Excel: เซลล์ที่มีขึ้นบรรทัดใหม่จะถูกครอบด้วย "…" (เช่นหัว "Panel⏎Quantity")
-function pbSplitTsv(text) {
-  const rows = []; let row = []; let cell = ""; let q = false;
-  const s = String(text || "").replace(/\r\n?/g, "\n");
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (q) {
-      if (ch === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else q = false; }
-      else cell += ch;
-    } else if (ch === '"' && cell === "") q = true;
-    else if (ch === "\t") { row.push(cell); cell = ""; }
-    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
-    else cell += ch;
-  }
-  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
-  return rows;
-}
+// ★ 2026-10-10 ตรวจรอบ 3: ใช้ tsvToRows (tsv.js) — ตัวแยกเดิมเจอ " ตัวเดียว (ditto "ตามข้างบน") แล้วกลืนหลายแถวเป็นเซลล์เดียว
+//   → ลูกหาย/จำนวนเป็น 0 เงียบๆ
+const pbSplitTsv = (text) => tsvToRows(text);
 // HTML ที่ Excel ใส่ในคลิปบอร์ดตอนก็อป (มีย่อหน้า/ขีดฆ่า ที่ข้อความธรรมดาไม่มี) → ตาราง PbCell
 function pbParseHtml(html) {
   if (!html || typeof DOMParser === "undefined" || !/<t[dh][\s>]/i.test(html)) return null;
@@ -3443,24 +3420,29 @@ function parsePanelBomRows(rows0) {
   }
   const at = (r, i) => (i >= 0 ? (r[i] ?? "") : "");
   // รอบ 1: เก็บแถวที่ใช้ได้ (ข้ามแถวซ่อน/ขีดฆ่า)
-  const items = []; const struck = []; let hidden = 0; let lastPanel = "";
+  const items = []; const struck = []; const noQty = []; let hidden = 0; let lastPanel = "", lastPanelQty = "", lastPanelDesc = "";
   for (let i = hi + 1; i < rows.length; i++) {
     const r = rows[i]; const rr = raw[i] || [];
     const code = at(r, col.code);
     const pRaw = at(r, col.panel);
     if (!code && !pRaw) continue;
     if (/^total/i.test(code) || /^total/i.test(pRaw)) break;
+    // ★ 2026-10-10 ตรวจรอบ 3: จำแผง (+ จำนวน/รายละเอียดแผง) ก่อนข้ามแถวขีดฆ่า/ซ่อน — เดิมแถวแรกของแผงถูกขีดฆ่า
+    //   = ชิ้นที่เหลือของแผงนั้นไปเข้าแผงก่อนหน้า (แผงหายทั้งแผง) · Panel Quantity อยู่แค่แถวแรกของแผง
+    if (pRaw) { lastPanel = pRaw; lastPanelQty = at(r, col.panelQty); lastPanelDesc = at(r, col.panelDesc); }
     const pCode = pRaw || lastPanel;
     if (!pCode || !code) continue;
     if (rr.hidden) { hidden++; continue; }
     const cc = rr[col.code];
     if (cc instanceof PbCell && cc.strike) { struck.push(code); continue; }
-    lastPanel = pCode;
+    const pQtyRaw = at(r, col.panelQty) || (pRaw ? "" : lastPanelQty);
+    const qRaw = at(r, col.qty);
+    if (pbNum(qRaw) == null) noQty.push(code);   // ★ ตรวจรอบ 3: Quantity ว่าง/ไม่ใช่ตัวเลข → บอกผู้ใช้ (เดิมเป็น 0 เงียบๆ)
     const mat = at(r, col.mat);
     const mm = pbNorm(mat).match(/^sub(\d+)?(st|nd|rd|th)?$/);
     items.push({
-      pCode, code, desc: at(r, col.desc), qty: pbNum(at(r, col.qty)) || 0, len: pbNum(at(r, col.len)),
-      panelDesc: at(r, col.panelDesc), panelQty: Math.max(1, Math.round(pbNum(at(r, col.panelQty)) || 1)),
+      pCode, code, desc: at(r, col.desc), qty: pbNum(qRaw) || 0, len: pbNum(at(r, col.len)),
+      panelDesc: at(r, col.panelDesc) || (pRaw ? "" : lastPanelDesc), panelQty: Math.max(1, Math.round(pbNum(pQtyRaw) || 1)),
       isSub: /^sa/i.test(code) || !!mm, lvl: mm && mm[1] ? Number(mm[1]) : null, ind: pbIndent(cc),
       path: col.subs.map((sc) => at(r, sc.j)).filter(Boolean),
     });
@@ -3570,7 +3552,7 @@ function parsePanelBomRows(rows0) {
   });
   const nested = [...subs.values()].filter((s) => s.depth > 1).length;
   return { format: "panel-bom", groups, releaseOrder, projectName, panels: panels.size, subs: subs.size, rows: items.length,
-    nested, byIndent, bySub, noOwnRow, struck, hidden, descUnderSub,
+    nested, byIndent, bySub, noOwnRow, struck, hidden, descUnderSub, noQty,
     nestedNoIndent: !byIndent && !bySub && items.some((it) => it.isSub && (it.lvl || 1) > 1) };
 }
 const parsePanelBomText = (text) => parsePanelBomRows(pbSplitTsv(text));
@@ -3612,9 +3594,11 @@ async function parsePanelBomFile(file) {
 //   เรียงตอนนำเข้าเท่านั้น (ไม่เรียงสดตอนพิมพ์ กันกลุ่มกระโดดหนีตอนแก้เบอร์) · ลำดับบันทึกยังจัดลูกก่อนแม่ใน doSave เหมือนเดิม
 const ASM_KIND_ORDER = { panel: 0, subassembly: 1, package: 2 };
 function sortAsmGroups(gs) {
+  const code = (g) => String(g.parentCode || "").trim();
   return [...gs].sort((a, b) =>
     ((ASM_KIND_ORDER[a.parentKind || "subassembly"] ?? 9) - (ASM_KIND_ORDER[b.parentKind || "subassembly"] ?? 9))
-    || String(a.parentCode || "").localeCompare(String(b.parentCode || ""), "en", { numeric: true, sensitivity: "base" }));
+    || ((code(a) ? 0 : 1) - (code(b) ? 0 : 1))   // ยังไม่มีเบอร์ = ไว้ท้ายชนิดนั้น (ไม่ขึ้นบนสุด)
+    || code(a).localeCompare(code(b), "en", { numeric: true, sensitivity: "base" }));
 }
 
 function emptySubAsmChild() { return { code: "", desc: "", len: "", perSet: "" }; }
@@ -3633,6 +3617,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   const [progress, setProgress] = useState("");
   const [note, setNote] = useState(null);   // ★ 2026-10-09: สรุปผลอ่านฟอร์ม + จำนวนที่หารไม่ลงตัว (ปัดเศษ)
   const fileRef = useRef(null);
+  // ★ 2026-10-10 ตรวจรอบ 3: กันกดบันทึกซ้ำ (ดับเบิลคลิก) — busy ตั้งหลัง await ตรวจเบอร์เดิม → 2 รอบปล่อยงาน/QR ซ้ำทุกเบอร์
+  const savingRef = useRef(false);
+  const busyRef = useRef(false); busyRef.current = busy;
+  const groupsRef = useRef(groups); groupsRef.current = groups;
 
   // ★ 2026-10-10 ตรวจรอบ 2: แก้จำนวนแม่/ต่อชุด/เบอร์ลูกเอง = เลิกเทียบกับยอดจากไฟล์ (_fileTotal) — กันคำเตือน "ไม่ลงตัว" ค้างผิดตัวเลข
   const setParent = (gi, key, val) => setGroups((gs) => gs.map((g, i) => (i === gi
@@ -3692,7 +3680,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     setNote(parsed.format === "panel-bom"
       ? { kind: "panel-bom", rows: parsed.rows, panels: nPanel, subs: nSub, rounded, nested: parsed.nested || 0, byIndent: !!parsed.byIndent,
           struck: parsed.struck || [], hidden: parsed.hidden || 0, nestedNoIndent: !!parsed.nestedNoIndent, descUnderSub: parsed.descUnderSub || [],
-          bySub: !!parsed.bySub, noOwnRow: parsed.noOwnRow || [] }
+          bySub: !!parsed.bySub, noOwnRow: parsed.noOwnRow || [], noQty: parsed.noQty || [] }
       : (rounded.length ? { kind: "bom", rounded } : null));
     mlsToast(parsed.format === "panel-bom"
       ? `${src}: ฟอร์ม BOM แผง ${nPanel} แผง · ซับ ${nSub} เบอร์ — ตรวจแล้วกดบันทึก`
@@ -3749,6 +3737,12 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     const now = Date.now();
     if (now - lastPasteRef.current < 400) return;   // กันประมวลผลซ้ำ (ช่องวาง + ตัวฟังทั้งหน้า ยิงพร้อมกัน)
     lastPasteRef.current = now;
+    // ★ 2026-10-10 ตรวจรอบ 3: วางระหว่างกำลังบันทึก = ไม่ทำ · ฟอร์มมีข้อมูลอยู่แล้ว = ถามก่อนแทนที่ (เดิมทับทั้งฟอร์มเงียบๆ)
+    if (busyRef.current || savingRef.current) return;
+    if (groupsRef.current.some((g) => g.parentCode.trim())) {
+      const ok = await askConfirm({ title: "แทนที่ข้อมูลในฟอร์ม?", message: "ฟอร์มมีเบอร์กรอกไว้แล้ว — ข้อมูลที่วางจะแทนที่ทั้งหมด", tone: "warn", confirmText: "แทนที่", cancelText: "ยกเลิก" });
+      if (!ok) return;
+    }
     setErr("");
     try {
       const pb = parsePanelBomPaste(text, html);   // ★ 2026-10-09: ฟอร์ม BOM แผงแบบใหม่ก่อน (HTML จาก Excel = เห็นย่อหน้า/ขีดฆ่า)
@@ -3831,10 +3825,24 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   }
 
   async function doSave() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try { await doSaveInner(); } finally { savingRef.current = false; }
+  }
+  async function doSaveInner() {
     const ro = normalizeReleaseOrder(releaseOrder);
     if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-076'); return; }
     if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
     if (!date) { setErr("กรุณาเลือกวันที่"); return; }
+    // ★ 2026-10-10 ตรวจรอบ 3: ลูกที่มีเบอร์แต่ "ต่อชุด" ว่าง/0 → เดิมถูกตัดออกจาก BOM เงียบๆ (เช่น Quantity ว่างในไฟล์)
+    {
+      const miss = [];
+      for (const g of groups) {
+        if (!g.parentCode.trim()) continue;
+        for (const c of g.children) if (c.code.trim() && !(Number(c.perSet) > 0)) miss.push(`${g.parentCode.trim()} › ${c.code.trim()}`);
+      }
+      if (miss.length) { setErr(`ลูก ${miss.length} รายการมีเบอร์แต่ยังไม่กรอก "ต่อชุด": ${miss.slice(0, 8).join(", ")}${miss.length > 8 ? " …" : ""} — กรอกจำนวน หรือลบแถวนั้นก่อนบันทึก`); return; }
+    }
     const clean = groups
       .map((g) => ({ ...g, parentCode: g.parentCode.trim(), children: g.children.filter((c) => c.code.trim() && Number(c.perSet) > 0) }))
       .filter((g) => g.parentCode);   // มีเบอร์แม่พอ · มีลูก = ตั้ง BOM · ไม่มีลูก = ปล่อยงานเฉยๆ (เช่นแผง)
@@ -3945,8 +3953,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         parentKind: g.parentKind || "subassembly",
         parentCode: g.parentCode, parentDesc: g.parentDesc, parentLen: g.parentLen, parentQty: String(g.parentQty),
         children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet), _fileTotal: c._fileTotal ?? null })),
+        _collapsed: !!g._collapsed,   // ★ 2026-10-10: คงสถานะย่อเดิม (เดิมกางหมดหลังบันทึกพัง)
       }));
-      setGroups(remaining.length ? remaining : [emptySubAsmGroup()]);
+      // ★ 2026-10-10: clean ถูกเรียงตามลำดับบันทึก (ลูกก่อนแม่) → เรียงกลับเป็นแผงก่อน/A-Z ให้ตรงกับที่แสดง (doSave จัดลำดับบันทึกใหม่เองอยู่แล้ว)
+      setGroups(remaining.length ? sortAsmGroups(remaining) : [emptySubAsmGroup()]);
       setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : (e2?.message || e2)}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
       setBusy(false); setProgress("");
       return;
@@ -3998,7 +4008,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
 
       {note ? (
         <div className="pbom-note" style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 10, padding: "8px 12px", borderRadius: 10,
-          background: (note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length) ? "var(--warn-tint, #fff6e0)" : "var(--accent-tint, #e5f9f1)", border: `1px solid ${(note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length) ? "#f3d27a" : "#9fd9c1"}` }}>
+          background: (note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length || note.noQty?.length) ? "var(--warn-tint, #fff6e0)" : "var(--accent-tint, #e5f9f1)", border: `1px solid ${(note.rounded?.length || note.nestedNoIndent || note.noOwnRow?.length || note.noQty?.length) ? "#f3d27a" : "#9fd9c1"}` }}>
           {note.kind === "panel-bom" ? (
             <div>✓ {L(`อ่านเป็นฟอร์ม BOM แผง: ${fmtNum(note.rows)} แถว → แผง ${fmtNum(note.panels)} · ซับ ${fmtNum(note.subs)} เบอร์ (ลูกของแต่ละซับอยู่ในกลุ่มซับ) · จำนวน = ต่อแผง 1 ชุด × Panel Quantity`,
               `Read as a panel BOM: ${fmtNum(note.rows)} rows → ${fmtNum(note.panels)} panel(s) · ${fmtNum(note.subs)} sub-assemblies (each sub's parts are in its own group) · Quantity = per panel × Panel Quantity`)}</div>
@@ -4016,6 +4026,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
           {note.kind === "panel-bom" && note.noOwnRow?.length ? (
             <div>⚠ {L(`ซับที่อยู่ในคอลัมน์ Sub แต่ไม่มีแถวของตัวเอง (ไม่รู้จำนวน · ตั้งเป็น 1) ${fmtNum(note.noOwnRow.length)} เบอร์: `, `${fmtNum(note.noOwnRow.length)} sub(s) named in a Sub column but with no row of their own (quantity unknown · set to 1): `)}
               <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.noOwnRow.slice(0, 8).join(" · ")}{note.noOwnRow.length > 8 ? " …" : ""}</span></div>
+          ) : null}
+          {note.kind === "panel-bom" && note.noQty?.length ? (
+            <div>⚠ {L(`ช่อง Quantity ว่าง/ไม่ใช่ตัวเลข ${fmtNum(note.noQty.length)} แถว (นับเป็น 0 — ลูกที่ต่อชุดว่างจะบันทึกไม่ได้ ต้องกรอกก่อน): `, `${fmtNum(note.noQty.length)} row(s) with a blank/non-numeric Quantity (counted as 0 — children with a blank per-set must be filled before saving): `)}
+              <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{note.noQty.slice(0, 10).join(" · ")}{note.noQty.length > 10 ? " …" : ""}</span></div>
           ) : null}
           {note.kind === "panel-bom" && note.nestedNoIndent ? (
             <div>⚠ {L("มีซับชั้น 2 แต่ข้อมูลไม่มีย่อหน้าบอกชั้น — ชิ้นที่อยู่ถัดจากลูกของซับชั้น 2 อาจถูกนับเข้าซับชั้น 2 · ตรวจกลุ่มซับชั้น 2 หรือใช้ \"นำเข้าจากไฟล์ Excel\" แทน",
@@ -4045,9 +4059,10 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       {groups.length > 1 && (
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 8 }}>
           {/* ★ 2026-10-10: ย่อ/ขยายทั้งหมด รวมเป็นปุ่มเดียว — มีกลุ่มที่ขยายอยู่ = ย่อทั้งหมด · ย่อหมดแล้ว = ขยายทั้งหมด */}
+          {/*   key แยก = สร้างปุ่มใหม่ทุกครั้งที่สลับ · ข้อความผ่าน L() — ไม่ให้ตัวแปลภาษา (i18n-dom) จำข้อความเดิมของปุ่มแล้วคืนผิดตอนสลับกลับเป็นไทย */}
           {groups.some((g) => !g._collapsed)
-            ? <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(true)}>▸ ย่อทั้งหมด</Btn>
-            : <Btn type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(false)}>▾ ขยายทั้งหมด</Btn>}
+            ? <Btn key="collapse-all" type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(true)}>{L("▸ ย่อทั้งหมด", "▸ Collapse all")}</Btn>
+            : <Btn key="expand-all" type="button" variant="ghost" size="sm" onClick={() => setAllCollapsed(false)}>{L("▾ ขยายทั้งหมด", "▾ Expand all")}</Btn>}
         </div>
       )}
       <div style={{ maxHeight: "48vh", overflow: "auto", paddingRight: 4 }}>
@@ -4284,13 +4299,25 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
       if (!pm?.id) throw new Error(`สร้าง/หายูนิต ${unitNo} ไม่สำเร็จ`);
       components.push({ child_pm_id: pm.id, qty });
     }
-    if (components.length) await setBom(parentPm.id, components);
+    // ★ 2026-10-10 ตรวจรอบ 3: RPC ตอบ ok:false (ไม่ throw) → เดิมขึ้น "สำเร็จ" ทั้งที่ BOM/รายการบั้งไม่ถูกตั้ง
+    if (components.length) {
+      const rb = await setBom(parentPm.id, components);
+      if (rb && rb.ok === false) throw new Error(`ตั้ง BOM ของบั้ง ${code} ไม่สำเร็จ (${rb.reason || "error"})`);
+    }
     // ★ ติดป้ายชนิดการแพ็ก (pack_type) ลง pkg_meta → สเตชันแพ็กแผง/แพ็กไซต์ไอเทมกรองบั้งของตัวเอง
-    await setPkgManifest(parentPm.id, bunk.units, { ...(bunk.meta || {}), pack_type: packType, weight_unit: wUnit });
+    const rm = await setPkgManifest(parentPm.id, bunk.units, { ...(bunk.meta || {}), pack_type: packType, weight_unit: wUnit });
+    if (rm && rm.ok === false) throw new Error(`บันทึกรายการในบั้ง ${code} ไม่สำเร็จ (${rm.reason || "error"})`);
     return { createdUnits, existed };
   }
 
+  // ★ 2026-10-10 ตรวจรอบ 3: กันดับเบิลคลิกบันทึก (busy ตั้งหลัง await → บั้งละ 2 release)
+  const savingRef = useRef(false);
   async function doSave() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try { await doSaveInner(); } finally { savingRef.current = false; }
+  }
+  async function doSaveInner() {
     const ro = normalizeReleaseOrder(releaseOrder);
     if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('เลขที่ Release Order ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-100'); return; }
     if (!projectId) { setErr("กรุณาเลือกโปรเจค"); return; }
@@ -4298,6 +4325,12 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
     if (!bunks.length) { setErr("ยังไม่มีบั้ง — นำเข้าไฟล์ หรือวางฟอร์มบั้งก่อน"); return; }
     const bad = bunks.find((b) => !String(b.meta?.bunk_no || "").trim());
     if (bad) { setErr("มีบั้งที่ไม่มีเลข BUNK NO. — ตรวจไฟล์อีกครั้ง"); return; }
+    // ★ 2026-10-10 ตรวจรอบ 3: BUNK NO. ซ้ำในการนำเข้าเดียว → บั้งหลังทับรายการบั้งแรก (ยูนิตบั้งแรกหาย)
+    {
+      const seen = new Set(); const dup = new Set();
+      for (const b of bunks) { const k = String(b.meta.bunk_no).trim().toLowerCase(); if (seen.has(k)) dup.add(String(b.meta.bunk_no).trim()); seen.add(k); }
+      if (dup.size) { setErr(`BUNK NO. ซ้ำในไฟล์: ${[...dup].slice(0, 8).join(", ")} — รวมเป็นบั้งเดียว/แก้เลขก่อนบันทึก`); return; }
+    }
 
     // ★ รอบ 12 (B31): บั้งที่มีอยู่แล้ว = อัปเดตรายการในบั้งเท่านั้น (ไม่สร้าง QR ใหม่) → ถามก่อน + บอกในผลลัพธ์
     let existingB = [];
@@ -4996,8 +5029,27 @@ async function fetchReleaseFinishedPieces(ids) {
 let _finRpcWarned = false;
 // release_op_progress (ราย op — ใช้โชว์ชิปขั้นตอน) + release_finished_pieces (ราย release — ใช้นับเสร็จ)
 //   ผลลัพธ์รูปเดิม { <release_id>: [ops] } + แนบ __fin (non-enumerable ไม่โผล่ใน Object.keys/entries)
+// ★ 2026-10-10 ตรวจรอบ 3: แบ่งก้อนละ 400 id (เหมือน Finished Parts) — หน้ารายการ Release ส่งทุก release ในครั้งเดียว
+//   → ผลแบบแถวโดนตัดที่ 1,000 / body ใหญ่ → ใบหลังๆ ได้ 0% (แต่หน้ารายละเอียดถูก)
+const STATS_CHUNK = 400;
+async function getUnitStatsChunked(ids) {
+  if (!ids || ids.length <= STATS_CHUNK) return getUnitStatsByReleaseIds(ids || []);
+  const out = {};
+  for (let i = 0; i < ids.length; i += STATS_CHUNK) Object.assign(out, await getUnitStatsByReleaseIds(ids.slice(i, i + STATS_CHUNK)));
+  return out;
+}
 async function getReleaseOpProgressFin(ids) {
   if (!ids || ids.length === 0) return {};
+  if (ids.length > STATS_CHUNK) {
+    const out = {}; let fin = {};
+    for (let i = 0; i < ids.length; i += STATS_CHUNK) {
+      const part = await getReleaseOpProgressFin(ids.slice(i, i + STATS_CHUNK));
+      Object.assign(out, part);
+      if (fin && part.__fin) Object.assign(fin, part.__fin); else fin = null;
+    }
+    try { Object.defineProperty(out, "__fin", { value: fin, enumerable: false, configurable: true }); } catch { /* ignore */ }
+    return out;
+  }
   const [op, fin] = await Promise.all([
     getReleaseOpProgress(ids),
     fetchReleaseFinishedPieces(ids).catch((e) => {
@@ -5428,6 +5480,7 @@ function modErrText(res, lang = "th") {
 function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, onSaved }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
+  const modUncertain = useRef(false);   // ★ 2026-10-10 ตรวจรอบ 3: บันทึกครั้งก่อนหมดเวลา (ผลไม่แน่ชัด)
   const limits = info?.limits || {};
   const usedNos = useMemo(() => new Set((info?.mods || []).map((m) => Number(m.version_no))), [info]);
   const autoNo = Number(info?.next_no) || 1;
@@ -5593,12 +5646,19 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
       tone: qrOut || moved ? "danger" : "warn", confirmText: L(`บันทึก ${chosen}`, `Save ${chosen}`), cancelText: L("กลับไปแก้", "Back to edit"),
     });
     if (!ok) return;
+    // ★ 2026-10-10 ตรวจรอบ 3: ครั้งก่อนหมดเวลา/เน็ตหลุด = ฝั่ง DB อาจบันทึกไปแล้ว → ห้ามกดซ้ำ (กัน M ซ้ำ 2 ชุด = จำนวน/QR เบิ้ล)
+    if (modUncertain.current) { setErr(L("ครั้งก่อนไม่แน่ใจว่าบันทึกสำเร็จหรือไม่ — ปิดหน้าต่างนี้แล้วดูประวัติ M ก่อน (ถ้ายังไม่มี ค่อยทำใหม่)", "The previous save may have gone through — close this and check the M history first")); return; }
     setBusy(true); setErr("");
     const res = await applyReleaseModify({
       projectId, releaseOrder, reason: reason.trim(), items, docDate,
       versionNo: (verBlank || chosenNo === autoNo) ? null : chosenNo,   // อัตโนมัติ = ให้ DB เลือกเลขถัดไป (กันชนกันถ้ามีคนแก้พร้อมกัน)
     });
     setBusy(false);
+    if (res && !res.ok && res.reason === "error" && /abort|time ?out|network|failed to fetch|load failed|connection/i.test(String(res.message || ""))) {
+      modUncertain.current = true;
+      setErr(L("เน็ตช้า/หลุดระหว่างบันทึก — ไม่แน่ใจว่าบันทึกแล้วหรือยัง · ปิดหน้าต่างแล้วดูประวัติ M ก่อน อย่ากดบันทึกซ้ำ", "Connection dropped while saving — it may have been saved · close and check the M history before trying again"));
+      return;
+    }
     if (!res || !res.ok) { setErr(modErrText(res, lang)); return; }
     auditRecord("release_modify", "release_order", releaseOrder, { version: res.version, items, project_id: projectId, doc_date: docDate });
     mlsToast(L(`บันทึก ${fmtM(res.version)} แล้ว (${nc(items.length)} รายการ) · ของเดิมเก็บเป็นหลักฐาน`, `Saved ${fmtM(res.version)} (${items.length} change(s)) · previous values kept as evidence`), "ok");
@@ -7375,19 +7435,26 @@ function ReleasePage({ user, goTo }) {
   const [orderSearch, setOrderSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("machine"); // แยกตามแผนก (เหมือนรายงาน): machine / assembly / packing
 
+  const [relLoadErr, setRelLoadErr] = useState("");
   const load = useCallback(async () => {
-    setLoading(true);
-    setProjects(await listRows("projects", { order: "code" }));
-    setParts(await listRows("part_master", { order: "part_no" }));
-    const releases = await getReleasesFull();
+    setLoading(true); setRelLoadErr("");
+    // ★ 2026-10-10 ตรวจรอบ 3: getReleasesFull โยน error เมื่อโหลดหน้าใดหน้าหนึ่งไม่ได้ (เดิมคืนรายการครึ่งๆ เงียบๆ)
+    //   → แจ้ง + ปุ่มลองใหม่ (เดิมถ้าโยน = หมุนโหลดค้าง)
+    let releases;
+    try {
+      setProjects(await listRows("projects", { order: "code" }));
+      setParts(await listRows("part_master", { order: "part_no" }));
+      releases = await getReleasesFull();
+    } catch (e) { setRelLoadErr(String(e?.message || e)); setLoading(false); return; }
     setRecent(releases);
     setLoading(false);
     // โหลด stats ความคืบหน้าแบบ background (ไม่บล็อก UI)
     if (releases.length > 0) {
       const ids = releases.map((r) => r.id);
       // โหลดทั้งสแกนออฟฟิศ + งานหน้าเครื่อง พร้อมกัน → คิด "เสร็จ" แบบ MAX(ออฟฟิศ, หน้าเครื่อง) ให้ตรงกับหน้ารายละเอียด
-      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids)])
-        .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); setStatsLoaded(true); });
+      Promise.all([getUnitStatsChunked(ids), getReleaseOpProgressFin(ids)])
+        .then(([s, op]) => { setAllUnitStats(s); setAllOpProg(op || {}); setStatsLoaded(true); })
+        .catch(() => setStatsLoaded(true));
     }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -7438,6 +7505,7 @@ function ReleasePage({ user, goTo }) {
         </div>
         <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen)} />
       </div>
+      {relLoadErr && <LoadStateBanner state={{ error: relLoadErr }} onRetry={load} />}
 
       <Card title="ค้นหา Release">
         {(() => {
@@ -7578,6 +7646,9 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
         const res = await Promise.all(chunks.map((c) => fetchReleaseFinishedPieces(c)));
         res.forEach((x) => Object.assign(fin, x || {}));
       } catch (e) {
+        // ★ 2026-10-10 ตรวจรอบ 3: เน็ตสะดุด/หมดเวลา ≠ "ยังไม่ได้รัน SQL" → แจ้งโหลดไม่สำเร็จ (เดิมขึ้นเตือน migration + ตัวเลขประมาณ)
+        const em = String(e?.message || e) + " " + String(e?.code || "");
+        if (!/PGRST202|could not find the function|function[^\n]*release_finished_pieces[^\n]*does not exist|42883/i.test(em)) throw e;
         needSql = true;
         console.warn("release_finished_pieces ยังไม่มีใน DB — ใช้ค่าประมาณจาก release_op_progress", e);
         const res = await Promise.all(chunks.map((c) => getReleaseOpProgress(c)));
@@ -8358,7 +8429,9 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
       // เปลี่ยนเป็นเลขที่ "มีอยู่แล้ว" ในโปรเจคนี้ = รวมสองใบเข้าด้วยกัน → ถามก่อน
       if (roChanged && ro && projectId) {
         let exists = false;
-        try { exists = await releaseOrderExists(projectId, ro); } catch (_) { exists = false; }
+        // ★ 2026-10-10 ตรวจรอบ 3: ตรวจไม่ได้ (เน็ตสะดุด) = หยุด — เดิมถือว่า "ไม่มี" แล้วรวมสองใบเข้ากันโดยไม่ถาม
+        try { exists = await releaseOrderExists(projectId, ro); }
+        catch (e) { setErr("ตรวจเลข Release Order ซ้ำไม่สำเร็จ (เน็ตสะดุด) — ลองบันทึกอีกครั้ง: " + (e?.message || e)); setBusy(false); return; }
         if (exists) {
           const ok = await askConfirm({
             message: `Release Order "${ro}" มีอยู่แล้วในโปรเจคนี้\nบันทึกแล้วสองใบจะรวมเป็นใบเดียว — ยืนยันหรือไม่?`,
@@ -8491,11 +8564,15 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
 
   useEffect(() => {
     Promise.all([
-      listRows("part_units", { filters: { release_id: release.id }, order: "unit_no" }),
+      // ★ 2026-10-10 ตรวจรอบ 3: strict — ล็อตใหญ่ (>1,000 QR) โหลดหน้า 2 ไม่ขึ้น เดิมได้รายการครึ่งเดียวเงียบๆ
+      //   → เพิ่มจำนวนแล้วเลข QR ชนของเดิม / นับชิ้นที่สแกนแล้วผิด
+      listRows("part_units", { filters: { release_id: release.id }, order: "unit_no", strict: true }),
       getReleaseMachineProgress(release.id),
       getReleaseMaterialLengths([release.id]),
       listRows("machines", { order: "code" }),
-    ]).then(([u, ms, ml, allM]) => {
+    ]).catch((e) => { setErr("โหลดข้อมูลล็อตไม่สำเร็จ — ปิดแล้วเปิดใหม่อีกครั้ง: " + (e?.message || e)); return null; }).then((res) => {
+      if (!res) return;
+      const [u, ms, ml, allM] = res;
       const units2 = u || [];
       const arr = Array.isArray(ms) ? ms : [];
       setUnits(units2); setMachines(arr); setAllMachines(Array.isArray(allM) ? allM : []);
@@ -8508,7 +8585,9 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
   }, [release.id]);
 
   const selM = machines.find((m) => m.machine_id === selMachine) || null;
-  const origStatus = selM ? machStatus(selM) : officeStatus(units);
+  // ★ 2026-10-10 ตรวจรอบ 3: เลือกเครื่องที่ยังไม่มีงาน (ไม่อยู่ใน machines) = ยังเป็นสถานะ "ของเครื่อง" (เดิมตกไปปิดงานทั้งล็อตระดับสำนักงาน)
+  const origStatus = selM ? machStatus(selM) : (selMachine ? "inprocess" : officeStatus(units));
+  const selCode = selM?.code || allMachines.find((m) => m.id === selMachine)?.code || "";
   const onSelMachine = (id) => { setSelMachine(id); const m = machines.find((x) => x.machine_id === id); if (m) setProdStatus(machStatus(m)); setDoneTarget(String(m ? Number(m.done) || 0 : 0)); };
   const curDoneOf = (mid) => machines.find((m) => m.machine_id === mid)?.done ?? 0;   // done ปัจจุบันของเครื่องนั้น
 
@@ -8544,6 +8623,17 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
     // ★ รอบ 11 (A7): ใบที่มีประวัติ Modify ย้าย Part ไปเลขอื่นไม่ได้ (ประวัติ M ผูกกับเลขเดิม)
     if (modLocked && (ro || "") !== (release.release_order || "")) {
       setErr(`ใบ ${release.release_order} มีประวัติ Modify แล้ว — เปลี่ยนเลข Release Order ของ Part นี้ไม่ได้`); return;
+    }
+    // ★ 2026-10-10 ตรวจรอบ 3: Part No. ใหม่ชนเบอร์ที่มีอยู่ → หยุดก่อนเขียนอะไร (เดิมบันทึกยอด/น้ำหนัก/QR ไปแล้ว
+    //   ค่อยพังที่ part_master แล้วขึ้น "บันทึกไม่สำเร็จ" ทั้งที่บันทึกไปครึ่งหนึ่ง)
+    {
+      const pno = (partNo || "").trim();
+      const pid = release.part_master?.project_id;
+      if (pno && pid && pno.toLowerCase() !== String(release.part_master?.part_no || "").toLowerCase()) {
+        let hit = null;
+        try { hit = await findPartByNo(pid, pno); } catch (e) { setErr("ตรวจ Part No. ซ้ำไม่สำเร็จ — ลองอีกครั้ง"); return; }
+        if (hit && hit.id !== release.part_master_id) { setErr(`Part No. "${pno}" มีอยู่แล้วในโปรเจคนี้ — ใช้เบอร์อื่น (ยังไม่ได้บันทึกอะไร)`); return; }
+      }
     }
     // ★ รอบ 11: ถามยืนยัน "ก่อน" เขียนอะไรทั้งหมด (เดิมบันทึกช่องอื่นไปแล้วค่อยถาม → กดยกเลิกก็บันทึกไปครึ่งหนึ่ง)
     let doneChange = null;   // { tgt } ถ้ายืนยันเปลี่ยนยอดเสร็จของเครื่อง
@@ -8644,8 +8734,8 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
       //   มีงานหน้าเครื่อง → เปลี่ยนสถานะของ "เครื่องที่เลือก" (machine_records)
       //   ไม่มีงานหน้าเครื่อง → ระดับสำนักงาน (part_units): finished=ปิดงาน · inprocess=คำนวณใหม่จากสแกน
       if (prodStatus !== origStatus) {
-        if (selM) {
-          await setReleaseMachineStatus(release.id, selM.machine_id, prodStatus);
+        if (selMachine) {
+          await setReleaseMachineStatus(release.id, selMachine, prodStatus);
         } else if (prodStatus === "finished") {
           await updateRows("part_units", { release_id: release.id }, { status: "finished" });
         } else if (release.part_master_id) {
@@ -8782,10 +8872,10 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
           })()}
           {prodStatus !== origStatus && (
             <div style={{ fontSize: 12, color: prodStatus === "finished" ? "var(--alert, #d97a00)" : "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-              {selM
+              {selMachine
                 ? (lang === "en"
-                    ? `Set machine ${selM.code || ""} to “${prodStatus === "finished" ? "Finished" : "In Process"}”`
-                    : `เปลี่ยนสถานะเครื่อง ${selM.code || ""} เป็น “${prodStatus === "finished" ? "เสร็จแล้ว" : "กำลังทำ"}”`)
+                    ? `Set machine ${selCode} to “${prodStatus === "finished" ? "Finished" : "In Process"}”`
+                    : `เปลี่ยนสถานะเครื่อง ${selCode} เป็น “${prodStatus === "finished" ? "เสร็จแล้ว" : "กำลังทำ"}”`)
                 : (prodStatus === "finished"
                     ? (lang === "en" ? `Close — count all ${nc(units.length)} pcs as Finished` : `ปิดงาน — นับทุกชิ้น (${units.length}) เป็นเสร็จ`)
                     : (lang === "en" ? "Reopen — recompute from actual scans" : "เปิดงานต่อ — คำนวณสถานะใหม่จากงานที่สแกนจริง"))}
@@ -9168,11 +9258,14 @@ function TrendView({ filters }) {
   const [res, setRes] = useState(null);
   const H = TREND_H.find((x) => x.v === hz) || TREND_H[0];
   const fkey = JSON.stringify(filters);
-  const bk = useMemo(() => bkkBuckets(H.kind, H.n), [H.kind, H.n]);
+  // ★ 2026-10-10 ตรวจรอบ 3: คิดช่วงสัปดาห์/เดือนใหม่ทุกครั้งที่โหลด (เดิมจำ "ถึงตอนนี้" ไว้ตั้งแต่เปิดหน้า → เปลี่ยนตัวกรองตอนบ่าย
+  //   ไม่รวมงานหลังเวลาที่เปิดหน้า · เปิดข้ามสัปดาห์ = ช่วงเลื่อนไม่ทัน)
+  const [bk, setBk] = useState(() => bkkBuckets(H.kind, H.n));
   useEffect(() => {
     let alive = true; setRes(null);
     try { localStorage.setItem("mls.trend.h", hz); } catch { /* ignore */ }
-    reportSummary({ from: bk.from, to: bk.to, bucket: H.kind, group: "none", filters }).then((r) => { if (alive) setRes(r); });
+    const b = bkkBuckets(H.kind, H.n); setBk(b);
+    reportSummary({ from: b.from, to: b.to, bucket: H.kind, group: "none", filters }).then((r) => { if (alive) setRes(r); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hz, fkey]);
@@ -9268,7 +9361,8 @@ function ReportPage({ goTo }) {
   // โหลด releases ครั้งเดียว → map release→โปรเจค (สำหรับกรอง log) + รายชื่อโปรเจค (สำหรับ dropdown)
   // ใช้ release_id เพราะ 1 release ผูกโปรเจคเดียวชัดเจน — เลี่ยงปัญหา part_no ซ้ำข้ามโปรเจค (K)
   useEffect(() => {
-    getReleasesFull().then((rels) => {
+    // ★ 2026-10-10 ตรวจรอบ 3: โหลดไม่สำเร็จ = แจ้ง (เดิม unhandled → dropdown โปรเจคว่างเงียบๆ)
+    getReleasesFull().catch((e) => { mlsToast("โหลดรายการ Release ไม่สำเร็จ — กดรีเฟรชหน้าอีกครั้ง: " + (e?.message || e), "error"); return []; }).then((rels) => {
       setAllRels(rels || []);   // ใช้ซ้ำใน Finished Part (ไม่ต้องโหลด releases ซ้ำ)
       const rp = {};
       const pmap = new Map();
@@ -9346,6 +9440,13 @@ function ReportPage({ goTo }) {
   )).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   [logs, projectFilter, relProj]);
+  // ★ 2026-10-10 ตรวจรอบ 3: เลข Release เดียวกันอยู่กี่โปรเจค (ในช่วงนี้) — ไว้บอกในตัวเลือกว่ารวมหลายโปรเจค
+  const roProjCount = useMemo(() => {
+    const m = new Map();
+    for (const l of logs) { if (!l.release_order) continue; const pid = logProjectId(l); if (!pid) continue; const st = m.get(l.release_order) || new Set(); st.add(pid); m.set(l.release_order, st); }
+    return new Map([...m].map(([k, st]) => [k, st.size]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs, relProj]);
   // ตัวเลือกโปรเจค — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (มิเรอร์การ์ดล้างข้อมูลสแกน)
   const projectOptions = [...projects]
     .sort((a, b) => ((a.status === "closed") - (b.status === "closed"))
@@ -9603,9 +9704,12 @@ function ReportPage({ goTo }) {
               {/* Release: เฉพาะที่มีงานในช่วงเวลานี้ (ตามโปรเจคที่เลือก) */}
               <label className={"rf-f" + (releaseFilter ? " on" : "")}>
                 <span className="rf-fl">Release{releaseOrders.length ? <em> · {nc(releaseOrders.length)}</em> : null}</span>
-                <Select value={releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} disabled={!releaseOrders.length && !releaseFilter}
-                  placeholder={releaseOrders.length ? (lang === "en" ? "All releases" : "ทุก Release") : (lang === "en" ? "No release in this period" : "ไม่มี Release ในช่วงนี้")}
-                  options={releaseOrders.map((ro) => ({ value: ro, label: ro }))} />
+                {/* ★ 2026-10-10 ตรวจรอบ 3: แท็บซับ/แผง/แพ็ก (ภาพรวม) ไม่ได้กรองตาม Release → ปิดช่องไว้ (เดิมเลือกได้แต่ตัวเลขไม่เปลี่ยน)
+                    · เลข Release ซ้ำข้ามโปรเจค (ไม่ได้เลือกโปรเจค) = บอกในตัวเลือกว่ารวมหลายโปรเจค */}
+                {(() => { const relOff = view === "overview" && deptFilter !== "machine"; return (
+                <Select value={relOff ? "" : releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} disabled={relOff || (!releaseOrders.length && !releaseFilter)}
+                  placeholder={relOff ? (lang === "en" ? "Machine tab only" : "ใช้ได้เฉพาะแท็บเครื่องจักร") : releaseOrders.length ? (lang === "en" ? "All releases" : "ทุก Release") : (lang === "en" ? "No release in this period" : "ไม่มี Release ในช่วงนี้")}
+                  options={releaseOrders.map((ro) => { const n = projectFilter ? 1 : (roProjCount.get(ro) || 1); return { value: ro, label: n > 1 ? `${ro} (${n} ${lang === "en" ? "projects" : "โปรเจครวมกัน"})` : ro }; })} />); })()}
               </label>
               <div className={"rf-f" + (partFilter ? " on" : "")}>
                 <span className="rf-fl">Part</span>
@@ -9690,7 +9794,7 @@ function ReportPage({ goTo }) {
         ) : (
           <DataTable id="report-machine-op" wrapClass="table-wrap tall-scroll" tableClass="data-table"
             rows={matrix.machines} rowKey={(m) => m.code || m.name} sort={sortM} sortAccessors={machineAcc}
-            rowCtx={(m) => ({ dm: dailyMatrix.machines.find((x) => x.name === m.name) })}
+            rowCtx={(m) => ({ dm: dmByName(m.name, m.code) })}   // ★ 2026-10-10 ตรวจรอบ 3: จับคู่ด้วยรหัสเครื่อง (ชื่อซ้ำได้) — ตรงกับ Excel/การเรียง
             rowProps={(m) => ({
               className: "release-row", style: { cursor: "pointer" },
               onClick: () => setDrill({
@@ -9844,16 +9948,21 @@ function MachineScanDetail({ machine, onBack }) {
     const ids = [...new Set((logs || []).map((l) => l.release_id).filter(Boolean))];
     if (!ids.length) { setOrderQty({}); setRelInfo({}); setMatLenMap({}); return; }
     let alive = true;
-    supabase.from("releases").select("id, qty, length_mm, part_master_id, part_master(material, default_length_mm)").in("id", ids)
-      .then(({ data }) => { if (alive && Array.isArray(data)) {
-        const oq = {}, ri = {};
-        data.forEach((r) => {
+    // ★ 2026-10-10 ตรวจรอบ 3: แบ่งก้อนละ 150 id (เหมือนรายงานประจำวัน) — เครื่องงานเยอะ 30 วัน/12 เดือน = หลายพัน id
+    //   ใน URL เดียว → โดนตัด/พัง แล้วคอลัมน์ สั่ง/INV/ความยาว ว่างเงียบๆ (+ แก้ Part No./INV ถูกข้าม)
+    (async () => {
+      const oq = {}, ri = {};
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await supabase.from("releases").select("id, qty, length_mm, part_master_id, part_master(material, default_length_mm, project_id, part_name)").in("id", ids.slice(i, i + 150));
+        if (error) throw error;
+        (data || []).forEach((r) => {
           oq[r.id] = Number(r.qty) || 0;
-          ri[r.id] = { qty: Number(r.qty) || 0, length_mm: r.length_mm, part_master_id: r.part_master_id, material: r.part_master?.material || "", default_length_mm: r.part_master?.default_length_mm };
+          ri[r.id] = { qty: Number(r.qty) || 0, length_mm: r.length_mm, part_master_id: r.part_master_id, material: r.part_master?.material || "", default_length_mm: r.part_master?.default_length_mm,
+            project_id: r.part_master?.project_id || null, part_name: r.part_master?.part_name || "" };
         });
-        setOrderQty(oq); setRelInfo(ri);
-      } })
-      .catch(() => {});
+      }
+      if (alive) { setOrderQty(oq); setRelInfo(ri); }
+    })().catch((e) => { if (alive) mlsToast("โหลดข้อมูลล็อต (จำนวนสั่ง/INV/ความยาว) ไม่สำเร็จ: " + (e?.message || e), "error"); });
     getReleaseMaterialLengths(ids).then((m) => { if (alive) setMatLenMap(m || {}); }).catch(() => {});
     // ★ รอบ 11 (B8): "ทำแล้ว" ของเครื่องนี้ต่อ release แบบทั้งหมด (ไม่ขึ้นกับช่วงวันที่) + กติกาเดียวกับหน้า Release
     //   (ต่อป้าย max ข้ามขั้นตอน) — เดิมบวกทุกสแกนในช่วง → ตัด 16 + เจาะ 16 แยกสแกน = "สแปร์ 16" หลอก
@@ -9999,9 +10108,14 @@ function MachineScanDetail({ machine, onBack }) {
 
   // ── เปิดฟอร์มแก้ทั้งแถว — เติมค่าเดิมทุกฟิลด์ (รายสแกน + ระดับล็อต) ──
   const openEdit = (g) => {
-    setEditRow(g);
+    // ★ 2026-10-10 ตรวจรอบ 3: ข้อมูลล็อตยังไม่มา → ไม่เปิดฟอร์ม (เดิมช่อง INV/ความยาวว่าง แล้วพอข้อมูลมา
+    //   กดบันทึก = ถือว่า "แก้เป็นว่าง" → ล้าง INV ของพาร์ท + ความยาวทุก QR ในล็อต)
+    const ri0 = g.release_id ? relInfo[g.release_id] : null;
+    if (g.release_id && !ri0) { mlsToast("กำลังโหลดข้อมูลล็อต — รอสักครู่แล้วกดอีกครั้ง", "info"); return; }
+    // เก็บค่าเดิม ณ ตอนเปิดฟอร์ม ไว้เทียบตอนบันทึก (ไม่อ่าน relInfo ใหม่ตอนบันทึก)
+    setEditRow({ ...g, _ri: { ...(ri0 || {}) }, _ml: [...(matLenMap[g.release_id] || [])], _oq: orderQty[g.release_id] });
     setNewQty(Math.max(0, Number(g.qty) || 0));
-    const ri = relInfo[g.release_id] || {};
+    const ri = ri0 || {};
     const ml = matLenMap[g.release_id] || [];
     const pl = ri.length_mm ?? ri.default_length_mm;
     setEdForm({
@@ -10025,8 +10139,8 @@ function MachineScanDetail({ machine, onBack }) {
     const g = editRow;
     const cur = Number(g.qty) || 0;
     const nq = Math.max(0, Math.floor(Number(newQty) || 0));
-    const ri = relInfo[g.release_id] || {};
-    const ml0 = matLenMap[g.release_id] || [];
+    const ri = g._ri || {};          // ★ ตรวจรอบ 3: ค่าเดิม ณ ตอนเปิดฟอร์ม
+    const ml0 = g._ml || [];
     // ── ค่าเดิม (เทียบว่าฟิลด์ไหนถูกแก้จริง) ──
     const origDT = toDTLocal(g.time);
     const origWeight = g.weight != null ? Number(g.weight) : 0;
@@ -10035,7 +10149,7 @@ function MachineScanDetail({ machine, onBack }) {
     const origOps = opIdsOf(g);
     const origPartNo = (g.part_no && g.part_no !== "—") ? g.part_no : "";
     const origRO = (g.release_order && g.release_order !== "—") ? g.release_order : "";
-    const origOrdered = ri.qty != null ? Number(ri.qty) : (orderQty[g.release_id] != null ? Number(orderQty[g.release_id]) : null);
+    const origOrdered = ri.qty != null ? Number(ri.qty) : (g._oq != null ? Number(g._oq) : null);
     const origMat = ri.material || "";
     const origPartLen = (ri.length_mm ?? ri.default_length_mm ?? "");
     const origMatLen = g.material_length_mm != null ? Number(g.material_length_mm) : (ml0.length === 1 ? Number(ml0[0]) : null);
@@ -10048,7 +10162,7 @@ function MachineScanDetail({ machine, onBack }) {
     const nStatus = edForm.status || origStatus;
     const nOps = Array.isArray(edForm.opIds) ? edForm.opIds : [];
     const nPartNo = (edForm.partNo || "").trim();
-    const nRO = (edForm.releaseOrder || "").trim();
+    const nRO = normalizeReleaseOrder((edForm.releaseOrder || "").trim());
     const nOrdered = edForm.ordered === "" ? null : Math.max(0, Math.floor(Number(edForm.ordered) || 0));
     const nMat = (edForm.mat || "").trim();
     const nPartLen = edForm.partLen;
@@ -10075,6 +10189,19 @@ function MachineScanDetail({ machine, onBack }) {
     const lotChanged = partNoChanged || roChanged || orderedChanged || matChanged || plChanged;
 
     if (!isDelete && !scanChanged && !lotChanged) { setEditRow(null); return; }
+    // ★ 2026-10-10 ตรวจรอบ 3: กติกาเดียวกับหน้าแก้ Release — จำนวนสั่งเปลี่ยนผ่าน ✎ Modify เท่านั้น (เดิมแก้ตรงนี้ได้
+    //   แต่ไม่มี QR เพิ่ม/ไม่มีประวัติ M → ป้าย "21 OF 25" ที่ไม่มีจริง) · เลข Release ต้องเป็น P-ตัวเลข · ใบที่มีประวัติ Modify เปลี่ยนเลขไม่ได้
+    if (orderedChanged) { mlsToast("เปลี่ยนจำนวนสั่งใช้ปุ่ม ✎ Modify ที่หน้า Release (สร้าง/ยกเลิก QR + เก็บประวัติให้)", "error"); return; }
+    if (roChanged) {
+      if (nRO && !RELEASE_ORDER_RE.test(nRO)) { mlsToast('เลข Release ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-009', "error"); return; }
+      if (origRO && ri.project_id) {
+        let locked = false;
+        try { const mi = normModInfo(await getReleaseModifyInfo(ri.project_id, origRO)); locked = !!(mi && mi.ok && (mi.mods || []).length); }
+        catch (e) { mlsToast("ตรวจประวัติ Modify ไม่สำเร็จ — ลองอีกครั้ง", "error"); return; }
+        if (locked) { mlsToast(`ใบ ${origRO} มีประวัติ Modify แล้ว — เปลี่ยนเลข Release ไม่ได้ (ประวัติผูกกับเลขเดิม)`, "error"); return; }
+      }
+    }
+    if ((partNoChanged || matChanged) && !ri.part_master_id) { mlsToast("ไม่พบข้อมูลพาร์ทของล็อตนี้ — แก้ Part No./INV ไม่ได้ (โหลดหน้าใหม่แล้วลองอีกครั้ง)", "error"); return; }
 
     const ok = await askConfirm({
       message: isDelete
@@ -10086,11 +10213,28 @@ function MachineScanDetail({ machine, onBack }) {
     });
     if (!ok) return;
     setBusy(true);
+    const doneSteps = [];   // ★ 2026-10-10 ตรวจรอบ 3: ทำทีละขั้น (ไม่มี transaction) → พลาดกลางทาง = บอกว่าอะไรบันทึกไปแล้ว
     try {
       if (isDelete) {
         await editScan(g.part_unit_id, g.time, { qty: 0 });
         auditRecord("delete_scan", "scan_data", g.release_id, { part_no: g.part_no, release_order: g.release_order, machine: mkey, at: g.time, qty: cur });   // ★ รอบ 12 (B14)
       } else {
+        // ★ ตรวจรอบ 3: ระดับพาร์ท/ล็อต "ก่อน" รายสแกน — ที่พลาดบ่อยสุดคือ Part No. ชนเบอร์เดิม (unique) → พลาดก่อนแตะสแกน
+        // ── ระดับพาร์ท (part_master: Part No. + INV) — มีผลทุก Release ของพาร์ทนี้ ──
+        const pmPatch = {};
+        if (partNoChanged) {
+          pmPatch.part_no = nPartNo;
+          // ★ ตรวจรอบ 3: เปลี่ยนชื่อพาร์ทตามเฉพาะเมื่อชื่อเดิม = เบอร์เดิม (เดิมทับคำอธิบายจริงด้วยเบอร์)
+          if (!ri.part_name || ri.part_name === origPartNo) pmPatch.part_name = nPartNo;
+        }
+        if (matChanged) pmPatch.material = nMat || null;
+        if (Object.keys(pmPatch).length) { await updateRow("part_master", ri.part_master_id, pmPatch); doneSteps.push(partNoChanged ? "Part No./INV" : "INV"); }
+        // ── ระดับ Release (release_order + ความยาวพาร์ท) ──
+        const relPatch = {};
+        if (roChanged) relPatch.release_order = nRO || null;
+        if (plChanged) relPatch.length_mm = (nPartLen === "" ? null : Number(nPartLen));
+        if (Object.keys(relPatch).length) { await updateRow("releases", g.release_id, relPatch); doneSteps.push(roChanged ? "เลข Release" : "ความยาวพาร์ท"); }
+        if (plChanged) { await updateRows("part_units", { release_id: g.release_id }, { length_mm: (nPartLen === "" ? null : Number(nPartLen)) }); doneSteps.push("ความยาว QR ในล็อต"); }
         // ── รายสแกน (แถวนี้) — RPC เดียวครบ: จำนวน/น้ำหนัก/เวลา/สถานะ/วันเวลา/ขั้นตอน ──
         if (scanChanged) {
           await editScan(g.part_unit_id, g.time, {
@@ -10104,19 +10248,8 @@ function MachineScanDetail({ machine, onBack }) {
             slowReason: slowChanged ? nSlowReason : null, // รายงานการทำงาน = เฉพาะสแกนนี้ (null = ไม่แตะ · '' = ล้าง)
             slowNote: slowChanged ? nSlowNote : null,
           });
+          doneSteps.push("ข้อมูลสแกน");
         }
-        // ── ระดับพาร์ท (part_master: Part No. + INV) — มีผลทุก Release ของพาร์ทนี้ ──
-        const pmPatch = {};
-        if (partNoChanged) { pmPatch.part_no = nPartNo; pmPatch.part_name = nPartNo; }
-        if (matChanged) pmPatch.material = nMat || null;
-        if (Object.keys(pmPatch).length && ri.part_master_id) await updateRow("part_master", ri.part_master_id, pmPatch);
-        // ── ระดับ Release (release_order + จำนวนสั่ง + ความยาวพาร์ท) ──
-        const relPatch = {};
-        if (roChanged) relPatch.release_order = nRO || null;
-        if (orderedChanged) relPatch.qty = nOrdered;
-        if (plChanged) relPatch.length_mm = (nPartLen === "" ? null : Number(nPartLen));
-        if (Object.keys(relPatch).length) await updateRow("releases", g.release_id, relPatch);
-        if (plChanged) await updateRows("part_units", { release_id: g.release_id }, { length_mm: (nPartLen === "" ? null : Number(nPartLen)) });
         // ★ รอบ 12 (B14): บันทึกเป็น "แก้สแกน" พร้อมค่าก่อน/หลังของช่องที่แก้ (เดิมขึ้น "ล้างข้อมูลสแกน" ไม่มีรายละเอียด)
         const before = {}, after = {};
         const put = (k, a, b, on) => { if (on) { before[k] = a; after[k] = b; } };
@@ -10130,7 +10263,6 @@ function MachineScanDetail({ machine, onBack }) {
         put("slow", origSlowReason, nSlowReason, slowChanged);
         put("part_no", origPartNo, nPartNo, partNoChanged);
         put("release_order", origRO, nRO, roChanged);
-        put("ordered", origOrdered, nOrdered, orderedChanged);
         put("inv", origMat, nMat, matChanged);
         put("part_len", origPartLen, nPartLen, plChanged);
         auditRecord("edit_scan", "scan_data", g.release_id, { part_no: g.part_no, release_order: g.release_order, machine: mkey, at: g.time, before, after });
@@ -10139,7 +10271,13 @@ function MachineScanDetail({ machine, onBack }) {
       setReloadTick((t) => t + 1);
       mlsToast(isDelete ? "ลบสแกนแล้ว" : "บันทึกการแก้ไขแล้ว", "ok");
     } catch (e) {
-      mlsToast("ไม่สำเร็จ: " + (e?.message || e), "err");
+      const em = String(e?.message || e);
+      const dupNo = /duplicate key|unique/i.test(em) && partNoChanged;
+      if (doneSteps.length) {
+        // บางส่วนบันทึกแล้ว → ปิดฟอร์ม + โหลดใหม่ (ค่าเดิมในฟอร์มไม่ตรงแล้ว กดซ้ำจะผิด)
+        setEditRow(null); setReloadTick((t) => t + 1);
+        mlsToast(`บันทึกแล้วบางส่วน (${doneSteps.join(", ")}) · ส่วนที่เหลือไม่สำเร็จ: ${em}`, "err");
+      } else mlsToast(dupNo ? `ไม่สำเร็จ: Part No. "${nPartNo}" มีอยู่แล้วในโปรเจคนี้` : "ไม่สำเร็จ: " + em, "err");
     } finally { setBusy(false); }
   }
 
@@ -10353,7 +10491,8 @@ function MachineScanDetail({ machine, onBack }) {
               <Input value={edForm.releaseOrder} onChange={(e) => setEdForm((f) => ({ ...f, releaseOrder: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. P-184" : "เช่น P-184"} />
             </Field>
             <Field label={lang === "en" ? "Ordered (pcs)" : "จำนวนสั่ง (ชิ้น)"}>
-              <NumField min={0} value={edForm.ordered} onChange={(e) => setEdForm((f) => ({ ...f, ordered: e.target.value }))} disabled={nq === 0} />
+              <NumField min={0} value={edForm.ordered} onChange={(e) => setEdForm((f) => ({ ...f, ordered: e.target.value }))} disabled
+                title={lang === "en" ? "Change the ordered qty with ✎ Modify on the Release page" : "เปลี่ยนจำนวนสั่งที่ปุ่ม ✎ Modify หน้า Release"} />
             </Field>
             <Field label="INV Code">
               <Input value={edForm.mat} onChange={(e) => setEdForm((f) => ({ ...f, mat: e.target.value }))} disabled={nq === 0} placeholder={lang === "en" ? "e.g. 23AN01600C" : "เช่น 23AN01600C"} />
@@ -11575,15 +11714,18 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   useEffect(() => { loadLists(); }, [loadLists]);
 
   const load = useCallback(async () => {
-    const all = await getReleasesFull();
+    let all;
+    try { all = await getReleasesFull(); }
+    catch (e) { mlsToast("โหลดรายการ Release ไม่สำเร็จ: " + (e?.message || e), "error"); return; }   // ★ ตรวจรอบ 3
     const mine = all.filter((r) => r.part_master?.project_id === project.id);
     setRels(mine);
     const ids = mine.map((r) => r.id);
     setStatsReady(false);
     if (ids.length) {
       // โหลดทั้งสแกนสำนักงาน + งานหน้าเครื่อง เพื่อคำนวณ %เสร็จ ให้ตรงกับหน้าอื่น
-      Promise.all([getUnitStatsByReleaseIds(ids), getReleaseOpProgressFin(ids)])
-        .then(([s, op]) => { setStats(s); setOpProg(op || {}); setStatsReady(true); });
+      Promise.all([getUnitStatsChunked(ids), getReleaseOpProgressFin(ids)])
+        .then(([s, op]) => { setStats(s); setOpProg(op || {}); setStatsReady(true); })
+        .catch(() => setStatsReady(true));
     } else { setStats({}); setOpProg({}); setStatsReady(true); }
   }, [project.id]);
   useEffect(() => { load(); }, [load]);
@@ -11840,6 +11982,7 @@ function ProjectsPage({ user, goTo }) {
 function PartsSummaryPage() {
   // รวมยอดฝั่ง DB ผ่าน RPC (เรียงตามจำนวนมาก→น้อยมาจาก DB แล้ว) — แก้ H6
   const [rows, setRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);   // ★ 2026-10-10 ตรวจรอบ 3: ระหว่างโหลดอย่าขึ้น "ยังไม่มีข้อมูล"
   const sort = useTableSort();
   // ★ รอบ 12 (B15): "เสร็จแล้ว" รวมงานหน้าเครื่อง (เดิมนับเฉพาะสแกนออฟฟิศ → Part ที่ทำหน้าเครื่องขึ้น 0) — ใช้ค่าที่มากกว่า เหมือนหน้า Projects
   useEffect(() => {
@@ -11850,8 +11993,8 @@ function PartsSummaryPage() {
         const f = st && st[r.id] ? Number(st[r.id].finished) || 0 : 0;
         return f > (Number(r.finished) || 0) ? { ...r, finished: f } : r;
       });
-      setRows(list);
-    });
+      setRows(list); setLoaded(true);
+    }).catch(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
   }, []);
   return (
@@ -11871,8 +12014,8 @@ function PartsSummaryPage() {
           empty={
             <div className="empty-state" style={{ padding: "24px 0" }}>
               <Icon name="grid" size={30} />
-              <div className="empty-state-title">ยังไม่มีข้อมูลการปล่อยงาน</div>
-              <div className="empty-state-sub">เมื่อมีการปล่อยงาน/สแกน จะเห็นสรุปแยกตาม Part ที่นี่</div>
+              <div className="empty-state-title">{loaded ? "ยังไม่มีข้อมูลการปล่อยงาน" : "กำลังโหลด…"}</div>
+              {loaded && <div className="empty-state-sub">เมื่อมีการปล่อยงาน/สแกน จะเห็นสรุปแยกตาม Part ที่นี่</div>}
             </div>
           }
           columns={[
@@ -11901,7 +12044,9 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
   const [delKey, setDelKey] = useState(null);   // Release Order ที่กำลังลบ (โชว์ progress)
   const [delProg, setDelProg] = useState(0);
   useEffect(() => {
-    getReleasesFull().then((all) => setRels(all.filter((r) => r.part_master?.project_id === project.id)));
+    // ★ ตรวจรอบ 3: โหลดไม่ได้ = แจ้ง (เดิมค้าง "กำลังโหลด" ตลอด)
+    getReleasesFull().then((all) => setRels(all.filter((r) => r.part_master?.project_id === project.id)))
+      .catch((e) => { setErr("โหลดรายการ Release ไม่สำเร็จ: " + (e?.message || e)); setRels([]); });
   }, [project.id]);
 
   // ลบ Release Order ทั้งชุด (ทุก Part ในเลขที่นั้น) — ใช้ deleteReleaseCascade ต่อ release (ลบ QR+ประวัติสแกนด้วย) แบบขนานจำกัด
@@ -12491,7 +12636,7 @@ function ClearScansCard() {
   const [progress, setProgress] = useState("");
   const [msg, setMsg] = useState(null);
   const [scanned, setScanned] = useState(null);   // Set ของ release_id ที่มีข้อมูลสแกน (null=ยังไม่โหลด)
-  useEffect(() => { getReleasesFull().then(setReleases); }, []);
+  useEffect(() => { getReleasesFull().then(setReleases).catch((e) => setMsg({ ok: false, text: "โหลดรายการ Release ไม่สำเร็จ: " + (e?.message || e) })); }, []);   // ★ ตรวจรอบ 3
 
   // โปรเจค (dedupe จาก releases) — ที่ยังทำอยู่ขึ้นก่อน · ปิดแล้วไว้ท้าย (ลิสต์สั้น เลือกง่าย)
   const projects = useMemo(() => {
@@ -13287,7 +13432,7 @@ function MachineCapModal({ machine, operations, caps, onClose, onSaved }) {
 function MachineCrud() {
   const [rows, setRows] = useState([]);
   const [operations, setOperations] = useState([]);
-  const [caps, setCaps] = useState([]);
+  const [caps, setCaps] = useState(null);   // ★ 2026-10-10 ตรวจรอบ 3: null = ยังโหลดไม่เสร็จ/โหลดไม่ได้ → ปุ่มแก้ไขปิดไว้
   const [form, setForm] = useUndoable({});
   const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข (ชื่อ/ประเภท/ความสามารถ/ลบ)
   const [err, setErr] = useState("");
@@ -13295,10 +13440,13 @@ function MachineCrud() {
   const L = (th, en) => (lang === "en" ? en : th);
   const sort = useTableSort("code");
 
+  // ★ 2026-10-10 ตรวจรอบ 3: เดิมโหลดความสามารถเครื่องแบบไม่ strict (พลาด = []) แล้วกดแก้ไขชื่อ → บันทึกขั้นตอนเป็นว่าง
+  //   = เครื่องกลายเป็น "ไม่จำกัด" เงียบๆ · ตอนนี้โหลดไม่ได้ = แจ้ง + ห้ามเปิดแก้ไข
   const load = useCallback(async () => {
     setRows(await listRows("machines", { order: "code" }));
     setOperations(await listRows("operations", { order: "seq" }));
-    setCaps(await listRows("machine_operations"));
+    try { setCaps(await listRows("machine_operations", { strict: true })); }
+    catch (e) { setCaps(null); setErr("โหลดขั้นตอนที่เครื่องทำได้ไม่สำเร็จ — กดรีเฟรชหน้า: " + (e?.message || e)); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -13319,13 +13467,13 @@ function MachineCrud() {
     }
   }
   function capNames(machineId) {
-    const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
+    const ids = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
     const names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
     return names;
   }
   // หน้าปลายทาง (แผนก/URL) ที่สเตชันนี้จะเข้า — คิดจาก "ประเภทงาน" ของขั้นตอนที่ตั้งไว้ (ไม่ใช่ชื่อสเตชัน)
   function capDests(machineId) {
-    const ids = new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
+    const ids = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
     const sel = operations.filter((o) => ids.has(o.id));
     return destsOfSelected(sel, new Set(sel.map((o) => o.id)));
   }
@@ -13373,11 +13521,11 @@ function MachineCrud() {
               </>
             ); } },
           { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" },
-            cell: (r) => <button type="button" className="row-act" onClick={() => setEditing(r)}>แก้ไข</button> },
+            cell: (r) => <button type="button" className="row-act" disabled={caps === null} title={caps === null ? "กำลังโหลด…" : undefined} onClick={() => setEditing(r)}>แก้ไข</button> },
         ]} />
       {editing && (
         <MachineEditModal
-          machine={editing} operations={operations} caps={caps}
+          machine={editing} operations={operations} caps={caps || []}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
           onReload={() => load()}
@@ -13404,6 +13552,9 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
   const hasScanMode = Object.prototype.hasOwnProperty.call(machine, "scan_mode");
   const [scanMode, setScanMode] = useState(machine.scan_mode === "count" ? "count" : "timed");
   const [opSel, setOpSel] = useUndoable(() => new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id)));
+  // ★ 2026-10-10 ตรวจรอบ 3: ขั้นตอนตั้งต้น — ไม่ได้แตะชิป = ไม่ส่ง setMachineOps (กันทับด้วยชุดที่โหลดมาไม่ครบ)
+  const initOps = useRef(null);
+  if (initOps.current === null) initOps.current = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -13440,7 +13591,9 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
           finalIds.push(id);
         }
       }
-      await setMachineOps(machine.id, [...new Set(finalIds)]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
+      const nextOps = new Set(finalIds);
+      const opsChanged = nextOps.size !== initOps.current.size || [...nextOps].some((id) => !initOps.current.has(id));
+      if (opsChanged) await setMachineOps(machine.id, [...nextOps]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
       // ★ 2026-10-10: ตั้งรูปแบบการสแกน "หลังสุด" — ถ้าพลาด (เช่นยังไม่รัน SQL) ชื่อ/ขั้นตอนยังบันทึกครบ
       if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
         let r, why = "";
@@ -13646,7 +13799,13 @@ function SimpleCrud({ table, fields }) {
 
   async function add() {
     if (!form[fields[0].key]) return;
-    await insertRow(table, form);
+    // ★ 2026-10-10 ตรวจรอบ 3: เดิมไม่มี try → ชื่อซ้ำ/ไม่มีสิทธิ์ = กดแล้วเงียบ
+    try { await insertRow(table, form); }
+    catch (e) {
+      const m = String(e?.message || e);
+      mlsToast(/duplicate key|unique/i.test(m) ? "เพิ่มไม่ได้ — มีชื่อนี้อยู่แล้ว" : isForbiddenMsg(m) ? NO_OFFICE_RIGHT_TH : "เพิ่มไม่สำเร็จ: " + m, "error");
+      return;
+    }
     setForm({}); load();
   }
   async function remove(id) {
@@ -13767,6 +13926,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
     if (!form.name.trim()) { setErr("กรอกชื่อให้ครบ"); return; }
     if (!form.machine_id && opSel.size > 1) { setErr(multiOpNeedsMachine(lang)); return; }
     setBusy(true); setErr("");
+    let empSaved = false;   // ★ 2026-10-10 ตรวจรอบ 3: ข้อมูลหลักบันทึกแล้ว แต่ขั้นตอน/หลายเครื่องพลาด → บอกให้ชัด (เดิม "บันทึกไม่สำเร็จ" ทั้งก้อน)
     try {
       const opIds = orderedOpIds(operations, opSel);
       // ขั้นตอนตั้งต้น: ยังอยู่ในชุดที่เลือก → คงของเดิม · ไม่อยู่แล้ว → ตัวแรกตามลำดับ
@@ -13783,6 +13943,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         operation_id: defOp,   // ขั้นตอนตั้งต้น (fallback ตอนสแกน)
         active: employee.active,
       });
+      empSaved = true;
       // ★ รอบ 12 (B14): บันทึกการแก้พนักงาน (สิทธิ์/รหัสผ่าน/เครื่อง) — ไม่เก็บรหัสผ่านจริง บอกแค่ว่าเปลี่ยน
       auditRecord("employee_update", "employee", employee.id, {
         code: employee.code, name: form.name.trim(),
@@ -13799,7 +13960,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
       }
       onSaved();
     } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + e.message);
+      setErr(empSaved ? `บันทึกชื่อ/สิทธิ์/รหัสผ่านแล้ว · แต่ส่วนที่เหลือ (ขั้นตอน/ล็อกอินหลายเครื่อง) ไม่สำเร็จ: ${e?.message || e}` : "บันทึกไม่สำเร็จ: " + (e?.message || e));
     }
     setBusy(false);
   }
@@ -14001,6 +14162,8 @@ function EmployeeCrud() {
     setForm({ role: "operator" }); setOpSel(new Set()); setOpsDirty(false); setMachineTouched(false); setBusy(false); load();
   }
   async function toggle(r) {
+    // ★ 2026-10-10 ตรวจรอบ 3: แตะป้ายครั้งเดียว = ปิดบัญชีทันที (พนักงานล็อกอินไม่ได้) → ถามก่อนเฉพาะตอน "ปิด"
+    if (r.active && !(await askConfirm({ message: `ปิดใช้งานบัญชี ${r.code || ""} ${r.name || ""}?\nปิดแล้วล็อกอินไม่ได้ (ประวัติงานยังอยู่ · เปิดคืนได้)`, tone: "warn", confirmText: "ปิดใช้งาน", cancelText: "ยกเลิก" }))) return;
     try { await setEmployeeActive(r.id, !r.active); load(); }
     catch (e) { mlsToast("เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "error"); }
   }
@@ -14107,6 +14270,8 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
   const [pickQty, setPickQty] = useState(1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");   // ★ 2026-10-10 ตรวจรอบ 3: โหลด BOM เดิมไม่ได้ → ห้ามบันทึก (กันทับ BOM จริงเป็นว่าง)
+  const [loadTick, setLoadTick] = useState(0);
 
   const candidates = useMemo(
     () => allParts.filter((p) => p.project_id === parent.project_id && p.id !== parent.id),
@@ -14114,10 +14279,13 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
   );
 
   useEffect(() => {
-    getBom(parent.id).then((b) => setRows((b || []).map((x) => ({
+    let alive = true;
+    setRows(null); setLoadErr("");
+    getBom(parent.id, { strict: true }).then((b) => { if (alive) setRows((b || []).map((x) => ({
       child_pm_id: x.child_pm_id, qty: x.qty, part_no: x.part_no, part_name: x.part_name, kind: x.kind,
-    }))));
-  }, [parent.id]);
+    }))); }).catch((e) => { if (alive) setLoadErr(String(e?.message || e)); });
+    return () => { alive = false; };
+  }, [parent.id, loadTick]);
 
   function addChild() {
     if (!pick || !rows) return;
@@ -14146,7 +14314,12 @@ function BomEditorModal({ parent, allParts, onClose, onSaved }) {
 
   return (
     <Modal title={`กำหนด BOM — ${parent.part_no}`} sub={`${kindLabel(parent.kind)} · ประกอบจากลูก (ต้องอยู่โปรเจคเดียวกัน)`} onClose={onClose} locked={busy} wide>
-      {rows === null ? (
+      {loadErr ? (
+        <div style={{ fontSize: 13, color: "var(--danger-hi)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          โหลด BOM เดิมไม่สำเร็จ — ยังแก้ไม่ได้ (กันบันทึกทับ BOM จริง) · {loadErr.slice(0, 120)}
+          <Btn variant="ghost" size="sm" onClick={() => setLoadTick((t) => t + 1)}>ลองใหม่</Btn>
+        </div>
+      ) : rows === null ? (
         <div style={{ fontSize: 13, color: "var(--muted)" }}>กำลังโหลด...</div>
       ) : (
         <>
@@ -14478,7 +14651,7 @@ class ErrorBoundary extends Component {
             {String(this.state.err?.message || this.state.err)}
             {this.state.stack ? "\n\nComponent stack:" + this.state.stack.split("\n").slice(0, 8).join("\n") : ""}
           </pre>
-          <button onClick={mlsHardReload}
+          <button onClick={() => mlsHardReload(false)}
             style={{ background: "#10b981", color: "#fff", border: "none", borderRadius: 10, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
             โหลดใหม่ (ล้างแคช)
           </button>
