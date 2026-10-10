@@ -1,17 +1,7 @@
 import { supabase } from "./supabase.js";
 
 // ─── Password hashing (client-side) — DEPRECATED for login ───────────────────
-// เดิมใช้ hash รหัสผ่านฝั่ง client แล้วเทียบใน browser ซึ่งไม่ปลอดภัย (ดึง hash ของ
-// พนักงานทุกคนลงมาได้). ตอนนี้ย้ายการตรวจไปทำใน DB (verify_login RPC) แล้ว และการ
-// สร้าง/ตั้งรหัสพนักงานก็ทำผ่าน upsert_employee RPC (DB hash ด้วย bcrypt เอง)
-// จึงไม่ควรเรียกฟังก์ชันนี้อีก — คงไว้เพื่อ backward-compat เท่านั้น
-export async function hashPassword(pw) {
-  const enc = new TextEncoder().encode(pw);
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
-export const ROLES = ["admin", "office", "operator"];
 export const ROLE_LABELS = {
   admin: "ผู้ดูแลระบบ (Admin)",
   office: "พนักงานออฟฟิศ",
@@ -41,20 +31,6 @@ function mapLoginRow(row) {
 }
 
 // ─── Login (ตรวจฝั่ง DB ผ่าน RPC — client ไม่เห็น password_hash อีกต่อไป) ──────
-export async function verifyLogin(code, password) {
-  const { data, error } = await supabase.rpc("verify_login", {
-    p_code: code.trim(),
-    p_password: password,
-  });
-  if (error) {
-    console.warn("verify_login error", error);
-    if (tooManyAttempts(error)) return { locked: true };
-    return null;
-  }
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) return null;
-  return mapLoginRow(row);
-}
 
 // ─── Offline login (หน้าเครื่อง) ──────────────────────────────────────────
 // เก็บ credential ที่ล็อกอินสำเร็จ "ตอนออนไลน์" ไว้ในเครื่อง เพื่อให้ล็อกอินซ้ำได้แม้ไม่มีเน็ต
