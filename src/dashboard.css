@@ -214,7 +214,8 @@ body.dash-body {
 .dash-st .dt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; opacity: .9; }
 .dash-st .du { flex-shrink: 0; margin-left: auto; font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; opacity: .85; }
 .dash-st.st-running { color: var(--dash-green); }
-.dash-st.st-running .ic { animation: dashPulse 1.6s ease-in-out infinite; }
+/* ★ 2026-10-10 ตรวจรอบ 3: เดิมใช้ชื่อ dashPulse ซ้ำกับวงแหวนจุด LIVE (ตัวหลังทับตัวแรก → วงแหวนไม่กระเพื่อม) → แยกชื่อ */
+.dash-st.st-running .ic { animation: dashBlink 1.6s ease-in-out infinite; }
 .dash-st.st-stopped { color: #ff5b5b; }
 .dash-st.st-paused { color: #7fb4ff; }
 .dash-st.st-idle, .dash-st.st-off { color: var(--dash-ink-2); font-weight: 600; }
@@ -223,7 +224,7 @@ body.dash-body {
 .dash-mach.st-off { opacity: .45; }
 .dash-sum-stop { color: #ff5b5b; }
 .dash-machines.dense .dash-st { font-size: 1.1vh; margin-top: .4vh; }
-@keyframes dashPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes dashBlink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes dashStop { 0%, 100% { box-shadow: 0 0 0 1px rgba(255,91,91,.35), 0 0 10px -6px rgba(255,91,91,.5); } 50% { box-shadow: 0 0 0 2px rgba(255,91,91,.6), 0 0 22px -4px rgba(255,91,91,.8); } }
 @media (max-width: 900px) { .dash-st { font-size: 12px; } .dash-machines.dense .dash-st { font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) { .dash-st.st-running .ic, .dash-mach.st-stopped { animation: none; } }
