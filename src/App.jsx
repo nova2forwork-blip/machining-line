@@ -25,6 +25,7 @@ import {
 import { ROLE_LABELS, getSession, setSession, clearSession, verifyLogin, appLogin, isAdmin, canManage } from "./auth.js";
 import { enterFullscreen } from "./fullscreen.js";
 import { printLabels, LABEL_PRESETS } from "./labels.js";
+import { tsvToRows } from "./tsv.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 
@@ -617,10 +618,12 @@ const PRESETS = [
 function rangeFor(preset) {
   const to = new Date();
   const from = new Date(to);
-  if (preset === "day") from.setHours(0, 0, 0, 0);
-  else if (preset === "week") from.setDate(to.getDate() - 7);
-  else if (preset === "month") from.setDate(to.getDate() - 30);
-  else from.setFullYear(to.getFullYear() - 1);
+  // ★ 2026-10-10: เริ่มที่เที่ยงคืนเสมอ (วันเต็ม) — เดิม "7 วัน" = ย้อน 7×24 ชม. จากตอนนี้ → วันแรกได้แค่ครึ่งวัน
+  //   (ตารางรายวัน/เฉลี่ยต่อวันมีวันแหว่งปน) · 7 วัน = วันนี้ + 6 วันก่อน · 30 วัน = วันนี้ + 29 วันก่อน
+  from.setHours(0, 0, 0, 0);
+  if (preset === "week") from.setDate(from.getDate() - 6);
+  else if (preset === "month") from.setDate(from.getDate() - 29);
+  else if (preset !== "day") { from.setFullYear(from.getFullYear() - 1); from.setDate(from.getDate() + 1); }
   return { from: from.toISOString(), to: to.toISOString() };
 }
 // ─── Month / custom range helpers (used by Report's flexible date filter) ──
@@ -879,7 +882,7 @@ function MultiCheckSelect({ value, onChange, options, placeholder = "— เล�
             })}
           </div>
           <div style={{ padding: 8, display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--surface-2)" }}>
-            <button type="button" className="btn btn-accent btn-sm" onClick={() => { setOpen(false); setQuery(""); }}>เสร็จ</button>
+            <button type="button" className="btn btn-accent btn-sm" onClick={() => { setOpen(false); setQuery(""); }}>ตกลง</button>
           </div>
         </div>
       )}
@@ -1539,9 +1542,8 @@ function looksLikeHeader(cells) {
 }
 
 function parsePastedRows(text) {
-  const lines = String(text).replace(/\r/g, "").split("\n");
-  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
-  const grid = lines.map((l) => l.split("\t")).filter((cells) => cells.some((c) => String(c).trim() !== ""));
+  // ★ 2026-10-10: ใช้ tsvToRows — เซลล์ที่มีขึ้นบรรทัดใหม่ (Excel ครอบด้วย "...") ไม่แตกเป็นแถวปลอม (เดิมได้พาร์ทผี 1 QR)
+  const grid = tsvToRows(text).filter((cells) => cells.some((c) => String(c).trim() !== ""));
   if (grid.length === 0) return [];
 
   // ── โหมดมีหัวตาราง: จับคอลัมน์จากชื่อหัว (รองรับ MDF/REV + สลับลำดับ) ──
@@ -2668,10 +2670,10 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
       const ensure = (idx) => { while (next.length <= idx) next.push(BLANK_ROW()); };
 
       if (isMultiCol) {
-        const lines = String(text).replace(/\r/g, "").split("\n");
-        while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+        // ★ 2026-10-10: tsvToRows (เซลล์หลายบรรทัดไม่แตกเป็นแถว)
+        const gridAll = tsvToRows(text);
+        while (gridAll.length && gridAll[gridAll.length - 1].every((c) => String(c).trim() === "")) gridAll.pop();
         // ★ รอบ 12 (B37): วางตามตำแหน่ง = เก็บแถวว่างกลางช่วงไว้ (เดิมตัดทิ้ง → ค่าด้านล่างเลื่อนขึ้นไปลงผิดแถว)
-        const gridAll = lines.map((l) => l.split("\t"));
         const firstFilled = gridAll.findIndex((cells) => cells.some((c) => String(c).trim() !== ""));
         const grid = firstFilled < 0 ? [] : gridAll.slice(firstFilled);
         if (grid.length && looksLikeHeader(grid[0])) {
@@ -2692,7 +2694,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
           });
         }
       } else {
-        const values = text.replace(/\r/g, "").split("\n");
+        const values = tsvToRows(text).map((cells) => String(cells[0] ?? ""));
         while (values.length && values[values.length - 1].trim() === "") values.pop();
         values.forEach((v, i) => {
           const idx = rowIndex + i;
@@ -3174,7 +3176,7 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported, initia
       ...it,
       unit_weight: hasW ? it.unit_weight : (autoW ?? it.unit_weight),
       autoW: autoW != null, invState: inv,
-      fileWpm: gnum(it.weight_per_m) ?? (hasW && len ? Number((Number(it.unit_weight) / (len / 1000)).toFixed(4)) : null),
+      fileWpm: gnum(it.weight_per_m ?? it.weightPerM) ?? (hasW && len ? Number((Number(it.unit_weight) / (len / 1000)).toFixed(4)) : null),
       existingPart: partsInProject.find((p) => p.part_no.trim().toLowerCase() === it.code.trim().toLowerCase()),
     };
   });
@@ -3354,6 +3356,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       children: g.children.map((c) => ({
         code: c.code, desc: c.desc, len: c.len ?? "",
         perSet: Number(c.totalQty) > 0 ? String(Math.max(1, Math.round(Number(c.totalQty) / (Number(g.parentQty) || 1)))) : "",
+        _fileTotal: Number(c.totalQty) > 0 ? Number(c.totalQty) : null,   // ★ 2026-10-10: ยอดรวมจากไฟล์ — ไว้เตือนเมื่อหารต่อชุดไม่ลงตัว
       })),
       _collapsed: parsed.groups.length > 3,   // นำเข้าหลายเบอร์ → เริ่มแบบย่อ (เห็นภาพรวม แตะเพื่อขยายดูลูก)
     }));
@@ -3367,6 +3370,18 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     // ★ 2026-10-10: รายชื่อแผงมีเบอร์ซ้ำ = จริงๆ เป็นฟอร์ม BOM ที่อ่านไม่ผ่าน (เช่น หัวตารางไม่ครบ) → อย่าใส่แผงซ้ำ 80 แถวเงียบๆ
     const seen = new Set(); let dup = 0;
     for (const it of parsed.items) { const k = String(it.code).trim().toLowerCase(); if (seen.has(k)) dup++; else seen.add(k); }
+    // มีหัว Code = ตั้งใจเป็นฟอร์ม BOM แต่อ่านไม่ผ่าน → แจ้ง · ไม่มีหัว Code = รายชื่อแผงที่ซ้ำตามชั้น (Level) → รวมจำนวน
+    const looksBom = !!bomErr && !/หาหัวตาราง \(Code/.test(String(bomErr.message || ""));
+    if (dup > 0 && !looksBom) {
+      const merged = new Map();
+      for (const it of parsed.items) {
+        const k = String(it.code).trim().toLowerCase();
+        const cur = merged.get(k);
+        if (cur) cur.qty += Number(it.qty) || 0; else merged.set(k, { code: String(it.code).trim(), qty: Number(it.qty) || 0 });
+      }
+      parsed = { ...parsed, items: [...merged.values()] };
+      dup = 0;
+    }
     if (dup > 0) {
       setErr(`ข้อมูลนี้ดูเหมือนฟอร์ม BOM (เบอร์แผงซ้ำ ${fmtNum(dup + seen.size)} แถว) แต่อ่านไม่ผ่าน: ${bomErr?.message || "ไม่ทราบสาเหตุ"} — ก็อปให้มีแถวหัวตาราง Panel / Panel Quantity / Code / Quantity (หรือ Sum) มาด้วย`);
       return;
@@ -3428,20 +3443,23 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
   }, []);
 
   // บันทึก 1 กลุ่ม (เบอร์แม่ + ลูก) — atomic เฉพาะขั้น release; BOM/kind เป็นขั้นต่อเนื่อง
-  async function saveOneGroup(g, ro) {
+  async function saveOneGroup(g, ro, skipRelease) {
     const parentCode = g.parentCode.trim();
     const pQty = parseInt(g.parentQty, 10) || 1;
-    // 1) release เบอร์แม่ → หา/สร้าง part_master (ถ้ายังไม่มี) + release + QR
-    //    ★ หาแม่ก่อนเสมอ (เหมือน saveOneBunk) — ถ้ามีแล้วข้าม createReleaseBatch
-    //    กัน retry หลังพลาดกลางกลุ่ม สร้าง release + QR ซ้ำ (createReleaseBatch ไม่ idempotent)
+    // 1) release เบอร์แม่ → release + QR (create_release_batch หา/สร้าง part_master ให้เอง)
+    //    ★ 2026-10-10: ข้ามเฉพาะเบอร์ที่ "เคยปล่อยงานแล้ว" (skipRelease = มี release อยู่ก่อน + ที่เพิ่งปล่อยในรอบนี้)
+    //    เดิมข้ามถ้า "มี part_master" → แผงบันทึกก่อนสร้างเบอร์ซับไว้เป็นลูก (ยังไม่มี release)
+    //    → พอถึงกลุ่มซับ เจอ part_master แล้วข้าม = ซับไม่ถูกปล่อยงาน ไม่มี QR (ทั้งที่ขึ้นว่าสำเร็จ)
+    const lc = parentCode.toLowerCase();
     let parentPm = (await findPartByNo(projectId, parentCode));
-    if (!parentPm) {
+    if (!skipRelease.has(lc)) {
       await createReleaseBatch({
         projectId, releaseOrder: ro, releaseDate: dateToIso(date), releasedBy: user.id, makeQr: true,
         rows: [{ code: parentCode, qty: pQty, unit_weight: 0,
           length_mm: g.parentLen === "" || g.parentLen == null ? null : Number(g.parentLen),
           material: null, remark: null, routing: [] }],
       });
+      skipRelease.add(lc);   // ปล่อยแล้ว → retry/กลุ่มซ้ำ ไม่ปล่อยซ้ำ
       parentPm = (await findPartByNo(projectId, parentCode));
     }
     if (!parentPm) throw new Error(`ไม่พบเบอร์แม่ ${parentCode} หลังสร้าง`);
@@ -3466,7 +3484,11 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       const perUnit = Math.max(1, Math.round(Number(ch.perSet)));   // "ต่อชุด" = qty ใน BOM โดยตรง (ไม่ต้องหารแล้ว)
       components.push({ child_pm_id: pm.id, qty: perUnit });
     }
-    if (components.length) await setBom(parentPm.id, components);
+    if (components.length) {
+      const r = await setBom(parentPm.id, components);
+      // ★ 2026-10-10: RPC ตอบ ok:false (ไม่ throw) → เดิมถือว่าสำเร็จเงียบๆ (BOM ไม่ถูกตั้ง)
+      if (r && r.ok === false) throw new Error(`ตั้ง BOM ของ ${parentCode} ไม่สำเร็จ (${r.reason || "error"})`);
+    }
   }
 
   async function doSave() {
@@ -3485,13 +3507,59 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
         const ps = Number(c.perSet);
         if (!Number.isInteger(ps) || ps < 1) { setErr(`จำนวนต่อชุดของลูก "${c.code}" ใน "${g.parentCode}" ต้องเป็นจำนวนเต็ม ≥ 1`); return; }
       }
+      // ★ 2026-10-10: ลูกเบอร์ซ้ำในแม่เดียวกัน → BOM ชนกัน (บันทึกพัง/จำนวนหาย) — ให้รวมเป็นแถวเดียวก่อน
+      const seenCh = new Set();
+      for (const c of g.children) {
+        const k = c.code.trim().toLowerCase();
+        if (seenCh.has(k)) { setErr(`ลูก "${c.code}" ซ้ำ 2 แถวใน "${g.parentCode}" — รวมจำนวนเป็นแถวเดียวก่อนบันทึก`); return; }
+        seenCh.add(k);
+      }
+    }
+    // ★ 2026-10-10: เบอร์แม่ซ้ำ 2 กลุ่ม → ปล่อยงานได้แค่กลุ่มแรก (จำนวนกลุ่มหลังหาย) — ให้รวมก่อน
+    {
+      const seen = new Set();
+      for (const g of clean) {
+        const k = g.parentCode.toLowerCase();
+        if (seen.has(k)) { setErr(`เบอร์แม่ "${g.parentCode}" ซ้ำ 2 กลุ่ม — รวมจำนวนเป็นกลุ่มเดียวก่อนบันทึก`); return; }
+        seen.add(k);
+      }
+    }
+    // ★ 2026-10-10: ต่อชุดที่ไฟล์หารไม่ลงตัว (เช่น 13 ชิ้นสำหรับซับ 26 ชุด = 0.5/ชุด) → ถูกปัดเป็นจำนวนเต็ม
+    //   BOM จะต้องการลูกเกิน/ขาดจากที่ปล่อยจริง → ถามยืนยันก่อน
+    const fracs = [];
+    for (const g of clean) {
+      const pq = Number(g.parentQty) || 1;
+      for (const c of g.children) {
+        if (c._fileTotal != null && Number(c.perSet) * pq !== c._fileTotal) fracs.push(`${g.parentCode} › ${c.code}: ไฟล์ ${fmtNum(c._fileTotal)} ชิ้น = ${fmtNum(Math.round((c._fileTotal / pq) * 1000) / 1000)}/ชุด → BOM ${c.perSet}/ชุด (= ${fmtNum(Number(c.perSet) * pq)} ชิ้น)`);
+      }
+    }
+    if (fracs.length) {
+      const ok = await askConfirm({
+        title: "จำนวนต่อชุดไม่ลงตัว",
+        message: `ลูก ${fracs.length} รายการ หารต่อชุดไม่ลงตัว — BOM เก็บได้แค่จำนวนเต็ม จึงต่างจากไฟล์:\n\n${fracs.slice(0, 10).join("\n")}${fracs.length > 10 ? `\n… (+${fracs.length - 10})` : ""}\n\nหน้าประกอบจะตรวจครบตาม BOM นี้ · แก้ "ต่อชุด" ในฟอร์มก่อนได้ หรือกดบันทึกตามนี้`,
+        tone: "warn", confirmText: "บันทึกตามนี้", cancelText: "กลับไปแก้",
+      });
+      if (!ok) return;
     }
     // ★ รอบ 12 (B31): เบอร์แม่ที่ "มีอยู่แล้ว" ในโปรเจค = ไม่ปล่อยงาน/ไม่สร้าง QR ใหม่ (อัปเดตชนิด + BOM เท่านั้น)
     //   เดิมข้ามเงียบๆ แต่ขึ้น "สำเร็จ" → ถามก่อน + บอกในผลลัพธ์
+    // ★ 2026-10-10: "มีอยู่แล้ว" = เคยปล่อยงาน (มี release) — ไม่ใช่แค่มี part_master (ลูกที่ถูกสร้างเป็นชิ้นส่วนของ BOM ยังไม่เคยปล่อยงาน)
     let existing = [];
+    const skipRelease = new Set();
     try {
-      const have = new Set((await listRows("part_master", { filters: { project_id: projectId }, strict: true })).map((p) => String(p.part_no || "").trim().toLowerCase()));
-      existing = clean.filter((g) => have.has(g.parentCode.toLowerCase())).map((g) => g.parentCode);
+      const pmByCode = new Map((await listRows("part_master", { filters: { project_id: projectId }, strict: true }))
+        .map((p) => [String(p.part_no || "").trim().toLowerCase(), p.id]));
+      const ids = [...new Set(clean.map((g) => pmByCode.get(g.parentCode.toLowerCase())).filter(Boolean))];
+      const released = new Set();
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data, error } = await supabase.from("releases").select("part_master_id").in("part_master_id", ids.slice(i, i + 100));
+        if (error) throw error;
+        (data || []).forEach((r) => released.add(r.part_master_id));
+      }
+      for (const g of clean) {
+        const k = g.parentCode.toLowerCase();
+        if (released.has(pmByCode.get(k))) { existing.push(g.parentCode); skipRelease.add(k); }
+      }
     } catch (e0) { setErr("ตรวจเบอร์ที่มีอยู่แล้วไม่สำเร็จ: " + (e0?.message || e0)); return; }
     if (existing.length) {
       const ok = await askConfirm({
@@ -3507,7 +3575,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
     try {
       for (const g of clean) {
         setProgress(`กำลังบันทึก ${g.parentCode} (${nc(done + 1)}/${nc(clean.length)})...`);
-        await saveOneGroup(g, ro);
+        await saveOneGroup(g, ro, skipRelease);
         done++;
       }
       onSaved({ releaseOrder: ro, groups: clean.length, existing, kinds: [...new Set(clean.map((g) => g.parentKind || "subassembly"))] });
@@ -3516,7 +3584,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
       const remaining = clean.slice(done).map((g) => ({
         parentKind: g.parentKind || "subassembly",
         parentCode: g.parentCode, parentDesc: g.parentDesc, parentLen: g.parentLen, parentQty: String(g.parentQty),
-        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet) })),
+        children: g.children.map((c) => ({ code: c.code, desc: c.desc, len: c.len, perSet: String(c.perSet), _fileTotal: c._fileTotal ?? null })),
       }));
       setGroups(remaining.length ? remaining : [emptySubAsmGroup()]);
       setErr(`บันทึกไม่สำเร็จที่เบอร์ "${clean[done]?.parentCode || "-"}": ${isForbiddenMsg(e2?.message) ? NO_OFFICE_RIGHT_TH : (e2?.message || e2)}` + (done > 0 ? ` · บันทึกสำเร็จไปแล้ว ${done} เบอร์ (เอาออกจากฟอร์มให้แล้ว ไม่ต้องทำซ้ำ)` : ""));
@@ -3649,7 +3717,15 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
                           <td><Input value={c.code} title={c.code} placeholder="AN04-001A" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "code", e.target.value)} /></td>
                           <td><Input value={c.desc} title={c.desc} placeholder="ANCHOR BASE PLATE" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "desc", e.target.value)} /></td>
                           <td><NumField strict={false} value={c.len} title={c.len} inputMode="decimal" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "len", e.target.value)} /></td>
-                          <td><NumField strict={false} value={c.perSet} inputMode="numeric" placeholder="ใส่จำนวน" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "perSet", e.target.value)} /></td>
+                          <td>
+                            <NumField strict={false} value={c.perSet} inputMode="numeric" placeholder="ใส่จำนวน" style={{ width: "100%" }} onChange={(e) => setChild(gi, ci, "perSet", e.target.value)} />
+                            {c._fileTotal != null && pq > 0 && per > 0 && per * pq !== c._fileTotal ? (
+                              <div style={{ fontSize: 10.5, color: "var(--warning, #b45309)", marginTop: 2, lineHeight: 1.3 }}
+                                title={`ไฟล์ ${c._fileTotal} ชิ้น ÷ ${pq} ชุด = ${Math.round((c._fileTotal / pq) * 1000) / 1000}/ชุด`}>
+                                ⚠ ไฟล์ {fmtNum(c._fileTotal)} = {fmtNum(Math.round((c._fileTotal / pq) * 1000) / 1000)}/ชุด
+                              </div>
+                            ) : null}
+                          </td>
                           <td style={{ textAlign: "center", color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{totalTxt}</td>
                           <td style={{ textAlign: "center" }}>
                             <span onClick={() => removeChild(gi, ci)} title="ลบลูก" style={{ cursor: "pointer", color: "var(--danger-hi)" }}>✕</span>
@@ -7259,7 +7335,9 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   // ★ 2026-10-09: เลือกชนิดป้าย "แยกรายเบอร์" ได้ — release_id → 'unit' | 'lot' (ไม่มี = ใช้ค่าหลัก labelScope)
   //   เช่น เบอร์ชิ้นใหญ่ = 1 OF N ทุกชิ้น · เบอร์ชิ้นเล็ก = ป้ายรวมล็อตใบเดียว · พิมพ์รวดเดียวกันได้
   const [scopeOverride, setScopeOverride] = useState({});
-  const setLabelScope = (v) => { setLabelScopeState(v); setScopeOverride({}); };   // ปุ่มหลัก = ตั้งทุกเบอร์
+  // ★ 2026-10-10: scopeEpoch → กดปุ่มหลักซ้ำ (ค่าเดิม) ก็เลือกป้ายใหม่ทั้งหมดตามชนิด (เดิมล้างแยกรายเบอร์ แต่ติ๊กค้างแบบเก่า)
+  const [scopeEpoch, setScopeEpoch] = useState(0);
+  const setLabelScope = (v) => { setLabelScopeState(v); setScopeOverride({}); setScopeEpoch((n) => n + 1); };   // ปุ่มหลัก = ตั้งทุกเบอร์
   const scopeOf = (rid) => scopeOverride[rid] || labelScope;
   const [lotFilter, setLotFilter] = useState("");   // ค้นหาเบอร์ในรายการเลือกชนิดป้าย
   // ★ ติ๊กเลือกหลายเบอร์ในกล่อง 2 ฝั่ง แล้วย้ายทีเดียว (release_id ที่ติ๊กไว้ · Shift+คลิก = เลือกเป็นช่วง)
@@ -7312,19 +7390,22 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const hasFilter = !!(projectFilter || releaseOrder || q || releaseIds.length);
 
   // ★ ล็อตที่จะโชว์ QR: เลือก Part เจาะจง = ล็อตนั้น · เลือกแค่ Project/Release = "ทุกล็อต" ในตัวกรอง
-  const activeReleaseIds = releaseIds.length
-    ? releaseIds
+  // ★ 2026-10-10: Part ที่เลือกไว้แต่ "ถูกตัวกรอง/ช่องค้นหาซ่อนไปแล้ว" ไม่นับ (เดิมยังโหลดตัวที่มองไม่เห็น ทั้งที่ช่องขึ้น "— เลือก —")
+  const filteredIdSet = new Set(filteredReleases.map((r) => r.id));
+  const pickedVisible = releaseIds.filter((id) => filteredIdSet.has(id));
+  const activeReleaseIds = pickedVisible.length
+    ? pickedVisible
     : ((projectFilter || releaseOrder || q) ? filteredReleases.map((r) => r.id) : []);
   const activeIdsKey = activeReleaseIds.join(",");
 
   // โหลดชิ้นงาน (QR) — เฉพาะ "หลังกดค้นหา" (committedKey) เท่านั้น · แบ่ง batch กัน URL ยาว + แบ่งหน้ากันเกิน 1000
   useEffect(() => {
-    if (!committedKey) { setUnits([]); setSelected(new Set()); return; }
+    if (!committedKey) { setUnits([]); setSelected(new Set()); setLoading(false); return; }
     let alive = true;
     setLoading(true);
     (async () => {
       const ids = committedKey.split(",");
-      const out = [];
+      const out = []; let failed = false;
       for (let i = 0; i < ids.length; i += 60) {
         const chunk = ids.slice(i, i + 60);
         let from = 0;
@@ -7335,12 +7416,15 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
             .in("release_id", chunk)
             .order("release_id", { ascending: true }).order("unit_no", { ascending: true })
             .range(from, from + 999);
-          if (error || !data || !data.length) break;
+          if (error) { failed = true; break; }
+          if (!data || !data.length) break;
           out.push(...data);
           if (data.length < 1000) break;
           from += 1000;
         }
       }
+      // ★ 2026-10-10: โหลดบางชุดไม่สำเร็จ (เน็ตสะดุด) → เดิมหายเงียบ ป้ายไม่ครบ · ตอนนี้แจ้งให้กดค้นหาใหม่
+      if (alive && failed) mlsToast("โหลด QR บางส่วนไม่สำเร็จ — ป้ายอาจไม่ครบ กด “ค้นหา QR” อีกครั้ง", "warn");
       if (alive) { setUnits(out); setLoading(false); }
     })();
     return () => { alive = false; };
@@ -7398,8 +7482,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   // เลือกทุกใบที่แสดงโดยอัตโนมัติ (ตอนค้นหา/เปลี่ยนชนิดป้ายหลัก)
   useEffect(() => {
     setSelected(new Set(displayed.map((u) => u.id)));
+    // ★ 2026-10-10: ผูกกับ "ชุดข้อมูล units" (ไม่ใช่แค่จำนวน) — ค้นหาใหม่ที่จำนวนเท่าเดิม เดิมติ๊กค้างของชุดเก่า → พิมพ์ไม่ครบเงียบๆ
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedKey, labelScope, units.length]);
+  }, [units, labelScope, scopeEpoch]);
+  // จำนวนที่จะพิมพ์จริง = ใบที่ติ๊ก "และ" อยู่ในรายการที่แสดง
+  const selCount = useMemo(() => displayed.reduce((a, u) => a + (selected.has(u.id) ? 1 : 0), 0), [displayed, selected]);
 
   // เปลี่ยนชนิดป้าย "เฉพาะเบอร์นี้" — ปรับการเลือกเฉพาะใบของเบอร์นั้น (ใบอื่นที่ติ๊กออกไว้คงเดิม)
   function setLotScope(rid, scope) {
@@ -7429,7 +7516,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAll() {
-    setSelected((s) => (s.size === displayed.length ? new Set() : new Set(displayed.map((u) => u.id))));
+    setSelected(() => (selCount === displayed.length ? new Set() : new Set(displayed.map((u) => u.id))));
   }
 
   function currentSize() {
@@ -7561,7 +7648,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       {!loading && displayed.length > 0 && (
         <Card title={`ป้ายที่จะพิมพ์ (${fmtNum(displayed.length)})`} right={
-          <Btn size="sm" onClick={toggleAll}>{selected.size === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
+          <Btn size="sm" onClick={toggleAll}>{selCount === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
         }>
           <Field label={multi ? "ชนิดป้าย (ตั้งทุกเบอร์)" : "ชนิดป้าย"}>
             <div className="chip-row">
@@ -7726,7 +7813,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               const nUnit = mixed ? displayed.reduce((a, u) => a + (selected.has(u.id) && scopeOf(u.release_id) === "unit" ? 1 : 0), 0) : 0;
               return (
                 <div className={`qr-toolbar-print${mixed ? " mixed" : ""}`}>
-                  <span className="qr-count">เลือก {fmtNum(selected.size)} / {fmtNum(displayed.length)}</span>
+                  <span className="qr-count">เลือก {fmtNum(selCount)} / {fmtNum(displayed.length)}</span>
                   <div className="qr-print-actions">
                     {mixed && (
                       <div className="qr-only">
@@ -7742,7 +7829,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                       </div>
                     )}
                     <Btn variant="accent" onClick={() => doPrint()} disabled={preparingPrint}>
-                      <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `${mixed ? "พิมพ์ทั้งหมด" : "พิมพ์"} (${fmtNum(selected.size)})`}
+                      <Icon name="printer" size={15} />{preparingPrint ? "กำลังเตรียมป้าย..." : `${mixed ? "พิมพ์ทั้งหมด" : "พิมพ์"} (${fmtNum(selCount)})`}
                     </Btn>
                   </div>
                 </div>
@@ -7775,7 +7862,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               </div>
             )}
             {displayed.length > 600 && (
-              <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 2px", textAlign: "center" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selected.size)})</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 2px", textAlign: "center" }}>* แสดงตัวอย่าง 600 ใบแรก — เวลาพิมพ์จะพิมพ์ครบทุกใบที่เลือก ({fmtNum(selCount)})</div>
             )}
           </div>
 
@@ -8886,7 +8973,7 @@ function ReportPage({ goTo }) {
   const machineAcc = {
     code: (m) => m.code || "", name: (m) => m.name, total: (m) => m.total.count, weight: (m) => m.total.weight,
     time: (m) => m.total.seconds,
-    secPer: (m) => (m.total.count > 0 ? m.total.seconds / m.total.count : 0),   // cycle-time วินาที/ชิ้น
+    secPer: (m) => (m.total.timedCount > 0 ? m.total.seconds / m.total.timedCount : 0),   // cycle-time วินาที/ชิ้น (เฉพาะชิ้นที่จับเวลา)
     avgKg: (m) => dmByName(m.name, m.code)?.avg.weight || 0, avgPcs: (m) => dmByName(m.name, m.code)?.avg.count || 0,
   };
   matrix.opNames.forEach((op) => { machineAcc[`op:${op}`] = (m) => m.ops[op]?.count || 0; });
@@ -8933,7 +9020,7 @@ function ReportPage({ goTo }) {
       row["รวม (ชิ้น)"] = m.total.count;
       row["น้ำหนัก (กก.)"] = round2(m.total.weight);
       row["เวลาเดินเครื่อง (วินาที)"] = Math.round(m.total.seconds || 0);
-      row["วินาที/ชิ้น"] = m.total.count > 0 ? round2(m.total.seconds / m.total.count) : "";
+      row["วินาที/ชิ้น"] = m.total.timedCount > 0 ? round2(m.total.seconds / m.total.timedCount) : "";
       const dm = dmByName(m.name, m.code);
       row["เฉลี่ย กก./วัน"] = dm ? round2(dm.avg.weight) : "";
       row["เฉลี่ย ชิ้น/วัน"] = dm ? round2(dm.avg.count) : "";
@@ -8949,7 +9036,7 @@ function ReportPage({ goTo }) {
         cycleRows.push({
           "เครื่องจักร": m.name, "ขั้นตอน": op, "แบบ": "ขั้นตอนเดียว", "จำนวน (ชิ้น)": c.soloCount,
           "เวลา (วินาที)": Math.round(c.soloSeconds || 0),
-          "วินาที/ชิ้น": c.soloCount > 0 ? round2((c.soloSeconds || 0) / c.soloCount) : "",
+          "วินาที/ชิ้น": c.soloTimedCount > 0 ? round2((c.soloSeconds || 0) / c.soloTimedCount) : "",
         });
       });
       Object.entries(m.combos || {}).forEach(([key, c]) => {
@@ -8957,7 +9044,7 @@ function ReportPage({ goTo }) {
         cycleRows.push({
           "เครื่องจักร": m.name, "ขั้นตอน": key, "แบบ": "หลายขั้นตอนพร้อมกัน", "จำนวน (ชิ้น)": c.count,
           "เวลา (วินาที)": Math.round(c.seconds || 0),
-          "วินาที/ชิ้น": c.count > 0 ? round2((c.seconds || 0) / c.count) : "",
+          "วินาที/ชิ้น": c.timedCount > 0 ? round2((c.seconds || 0) / c.timedCount) : "",
         });
       });
     });
@@ -9206,7 +9293,7 @@ function ReportPage({ goTo }) {
               { key: "total", header: "รวม (ชิ้น)", sortKey: "total", align: "right", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (m) => `${m.total.count.toLocaleString()} ชิ้น` },
               { key: "weight", header: "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m) => m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—" },
               { key: "time", header: "เวลาเดินเครื่อง", sortKey: "time", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
-              { key: "secPer", header: "วินาที/ชิ้น", sortKey: "secPer", align: "right", tdStyle: { fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => (m.total.seconds && m.total.count) ? `${(m.total.seconds / m.total.count).toFixed(1)} วิ` : "—" },
+              { key: "secPer", header: "วินาที/ชิ้น", sortKey: "secPer", align: "right", tdStyle: { fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => (m.total.seconds && m.total.timedCount) ? `${(m.total.seconds / m.total.timedCount).toFixed(1)} วิ` : "—" },
               { key: "avgKg", header: "เฉลี่ย กก./วัน", sortKey: "avgKg", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m, i, c) => c.dm ? `${fmtNum(c.dm.avg.weight)} กก.` : "—" },
               { key: "avgPcs", header: "เฉลี่ย ชิ้น/วัน", sortKey: "avgPcs", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" },
                 cell: (m, i, c) => c.dm ? <span>{fmtNum(c.dm.avg.count)} ชิ้น{c.dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(c.dm.avg.seconds)}</span> : null}</span> : "—" },
@@ -10337,6 +10424,9 @@ function DailyReportPage() {
 
   const opType = useMemo(() => { const m = {}; ops.forEach((o) => { if (o && o.name) m[o.name] = o.op_type; }); return m; }, [ops]);
   const machineName = useMemo(() => { const m = {}; machinesAll.forEach((x) => { if (x.code) m[x.code] = x.name || ""; }); return m; }, [machinesAll]);
+  // ★ 2026-10-10: เครื่องโหมด "สแกนครั้งเดียว" (ไม่จับเวลา เช่น DR-001) — ไม่นับในเวลาเดินเครื่อง %/นาทีต่อชิ้น
+  //   (เดิมชิ้นของเครื่องพวกนี้ (0 วินาที) ไปหารรวม → นาที/ชิ้นต่ำเกินจริง · เวลาตามแผนของมันทำให้ % ต่ำเกินจริง)
+  const untimedM = useMemo(() => new Set(machinesAll.filter((x) => x.code && x.scan_mode === "count").map((x) => x.code)), [machinesAll]);
 
   // ── 1 สแกน = 1 แถว: ยุบแถว co-tick (จำนวน 0) เข้ากับแถวหลักของเครื่องเดียวกัน ──
   const groupLogs = (list) => {
@@ -10364,9 +10454,12 @@ function DailyReportPage() {
       const mkey = l.machine?.code || l.machine?.name || "—";
       const qv = Number(l.quantity) || 0;
       const op = l.operation?.name || null;
-      const c = cur.get(mkey);
-      if (qv > 0) { const g = mk(l, qv); cur.set(mkey, g); out.push(g); }
-      else if (c && c.part_unit_id === l.part_unit_id && String(c.status).toLowerCase() === String(l.status).toLowerCase()) {
+      // ★ 2026-10-10: จับคู่ co-tick ด้วย เครื่อง+ป้าย+สถานะ (เดิมแค่เครื่อง → บัญชีที่ล็อกอินหลายแท็บเล็ตสแกนสลับกัน
+      //   ตัวติ๊กร่วมของแท็บเล็ต A ไปเจอแถวหลักของแท็บเล็ต B → หลุดเป็นแถวกำพร้า)
+      const gk = `${mkey}|${l.part_unit_id || ""}|${String(l.status).toLowerCase()}`;
+      const c = cur.get(gk);
+      if (qv > 0) { const g = mk(l, qv); cur.set(gk, g); out.push(g); }
+      else if (c && Math.abs(new Date(l.scanned_at) - new Date(c.time)) < 10 * 60 * 1000) {   // ติ๊กร่วมบันทึกตามหลังไม่กี่ ms
         if (op && !c.ops.includes(op)) c.ops.push(op);
         c.weight += logWeight(l); c.secs += Number(l.process_seconds) || 0;
       } else { out.push(mk(l, 0)); }
@@ -10432,6 +10525,7 @@ function DailyReportPage() {
   const totPcs = sum(rows, (g) => g.qty);
   const totKg = sum(rows, (g) => g.weight);
   const totSec = sum(rows, (g) => g.secs);
+  const timedPcs = sum(rows.filter((g) => g.secs > 0), (g) => g.qty);   // ชิ้นที่มีเวลาจริง (ตัวหารของนาที/ชิ้น)
   const finPcs = sum(rows.filter((g) => String(g.status).toLowerCase() === "finished"), (g) => g.qty);
   const inpPcs = sum(rows.filter((g) => String(g.status).toLowerCase() === "inprocess"), (g) => g.qty);
   const nSlow = rows.filter((g) => g.slow_reason).length;
@@ -10454,30 +10548,30 @@ function DailyReportPage() {
   const plannedMachines = planSet(activeMachines);
   const tPcs = targetOK ? sum(plannedMachines, (k) => tgts[k]?.pcs) : 0;
   const tKg = targetOK ? sum(plannedMachines, (k) => tgts[k]?.kg) : 0;
-  const nPlanned = plannedMachines.length;
+  const nPlanned = plannedMachines.filter((k) => !untimedM.has(k)).length;   // เครื่องไม่จับเวลา = ไม่มีเวลาตามแผนให้เทียบ
   const plannedMinTotal = plannedNow * nPlanned;
   const util = plannedMinTotal > 0 ? (totSec / 60) / plannedMinTotal : null;
   const stops = (stopsAll || []).map((s) => ({ ...s, ...drStopMin(s, cfg, day, nowMs) })).filter((s) => s.day > 0 || (s.started_at && localDayStr(new Date(s.started_at)) === day));
   const stopsF = stops.filter((s) => !machineF || s.machine === machineF);
   const stopMin = sum(stopsF, (s) => s.day);
   const openStops = stopsF.filter((s) => s.open);
-  const cycleMin = totPcs > 0 ? (totSec / 60) / totPcs : null;
+  const cycleMin = timedPcs > 0 ? (totSec / 60) / timedPcs : null;
 
   // ── สิ่งเทียบ: วันทำงานก่อนหน้า + เฉลี่ย 7 วัน (เฉพาะวันที่มีงาน) ──
   const byDay = {};
-  histRows.forEach((g) => { const e = byDay[g.day] || (byDay[g.day] = { pcs: 0, kg: 0, secs: 0, ms: new Set() }); e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0; e.ms.add(g.mkey); });
+  histRows.forEach((g) => { const e = byDay[g.day] || (byDay[g.day] = { pcs: 0, tpcs: 0, kg: 0, secs: 0, ms: new Set() }); e.pcs += Number(g.qty) || 0; if (g.secs > 0) e.tpcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0; e.ms.add(g.mkey); });
   const workDays = Object.keys(byDay).filter((d) => byDay[d].pcs > 0).sort();
-  workDays.forEach((d) => { const n = planSet([...byDay[d].ms]).length; byDay[d].util = plannedFull > 0 && n > 0 ? (byDay[d].secs / 60) / (plannedFull * n) : null; });
+  workDays.forEach((d) => { const n = planSet([...byDay[d].ms]).filter((k) => !untimedM.has(k)).length; byDay[d].util = plannedFull > 0 && n > 0 ? (byDay[d].secs / 60) / (plannedFull * n) : null; });
   const prevDay = workDays.length ? workDays[workDays.length - 1] : null;
   const prev = prevDay ? byDay[prevDay] : null;
   const avg = workDays.length ? {
     pcs: sum(workDays, (d) => byDay[d].pcs) / workDays.length,
     kg: sum(workDays, (d) => byDay[d].kg) / workDays.length,
     secs: sum(workDays, (d) => byDay[d].secs) / workDays.length,
-    cyc: (() => { const p = sum(workDays, (d) => byDay[d].pcs); return p > 0 ? (sum(workDays, (d) => byDay[d].secs) / 60) / p : null; })(),
+    cyc: (() => { const p = sum(workDays, (d) => byDay[d].tpcs); return p > 0 ? (sum(workDays, (d) => byDay[d].secs) / 60) / p : null; })(),
     util: (() => { const u = workDays.map((d) => byDay[d].util).filter((x) => x != null); return u.length ? u.reduce((a, b) => a + b, 0) / u.length : null; })(),
   } : null;
-  if (prev) prev.cyc = prev.pcs > 0 ? (prev.secs / 60) / prev.pcs : null;
+  if (prev) prev.cyc = prev.tpcs > 0 ? (prev.secs / 60) / prev.tpcs : null;
   const isToday = day === today;
   const prevLbl = prevDay ? new Date(`${prevDay}T12:00:00`).toLocaleDateString(lang === "en" ? "en-GB" : "th-TH", { day: "numeric", month: "short" }) : "";
   // ▲▼ — ยอดสะสม (ชิ้น/กก.) ของวันนี้ที่ยังไม่จบวัน: เทียบกับ "สัดส่วนเดียวกันของวัน" (× paceRatio) ไม่งั้นช่วงเช้าจะดูแย่ตลอด
@@ -10537,11 +10631,12 @@ function DailyReportPage() {
   })();
   const machineRows = (() => {
     const m = new Map();
-    const blank = (k) => ({ mkey: k, name: machineName[k] || "", emps: new Set(), parts: new Set(), scans: 0, pcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: null, last: null });
+    const blank = (k) => ({ mkey: k, name: machineName[k] || "", emps: new Set(), parts: new Set(), scans: 0, pcs: 0, tpcs: 0, kg: 0, secs: 0, fin: 0, inp: 0, slow: 0, first: null, last: null });
     for (const g of rows) {
       const e = m.get(g.mkey) || blank(g.mkey);
       if (!e.name) e.name = g.machine_name || "";
       e.scans += 1; e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.secs += Number(g.secs) || 0;
+      if (g.secs > 0) e.tpcs += Number(g.qty) || 0;
       if (g.employee) e.emps.add(g.employee);
       e.parts.add(`${g.project_id}|${g.part_no}`);
       const st = String(g.status).toLowerCase();
@@ -10571,11 +10666,12 @@ function DailyReportPage() {
       if (e.scans === 0 && !st.length) flags.push({ tone: "warn", t: L("ยังไม่มีงาน", "no work yet") });
       if (st.length && !st.some((s) => s.open)) flags.push({ tone: "warn", t: L(`หยุด ${nc(st.length)} ครั้ง`, `${st.length} stop(s)`) });
       if (e.slow) flags.push({ tone: "warn", t: L(`รอบช้า ${e.slow}`, `${e.slow} slow`) });
+      const untimed = untimedM.has(e.mkey);          // เครื่องไม่จับเวลา → ไม่มี % เวลา/ว่าง/นาทีต่อชิ้น ("—")
       return {
-        ...e, empText: [...e.emps].join(", "), nParts: e.parts.size, cycle: e.pcs > 0 ? runM / e.pcs : null,
+        ...e, untimed, empText: [...e.emps].join(", "), nParts: e.parts.size, cycle: e.tpcs > 0 ? runM / e.tpcs : null,
         stops: st.length, stopMin: stopM, runMin: runM, planned,
-        stopPlMin: stopPl, idleMin: Math.max(0, planned - runM - stopPl),
-        util: planned > 0 ? runM / planned : null,
+        stopPlMin: stopPl, idleMin: untimed ? null : Math.max(0, planned - runM - stopPl),
+        util: !untimed && planned > 0 ? runM / planned : null,
         tPcs: tp, tKg: tk, pctT: tp > 0 ? e.pcs / tp : null,
         avg7: histByMachine[e.mkey] ?? null, flags, sev: flags.some((f) => f.tone === "bad") ? 2 : flags.length ? 1 : 0,
       };
@@ -10630,7 +10726,7 @@ function DailyReportPage() {
     { key: "cycle", header: L("นาที/ชิ้น", "Min/pc"), sortKey: "cycle", align: "right", cell: (m) => (m.cycle != null ? fmtKpi(m.cycle) : "—"), exp: (m) => (m.cycle != null ? Math.round(m.cycle * 10) / 10 : "") },
     ...(manage ? [{ key: "stops", header: L("เวลาหยุด", "Downtime"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap" },
       cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }}>{fmtDur(m.stopMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${nc(Math.round(m.stopMin))} min · ${m.stops}×` : "") }] : []),
-    { key: "idle", header: L("ว่าง/อื่นๆ", "Idle/other"), sortKey: "idle", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)" }, cell: (m) => fmtDur(m.idleMin, lang), exp: (m) => Math.round(m.idleMin) },
+    { key: "idle", header: L("ว่าง/อื่นๆ", "Idle/other"), sortKey: "idle", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)" }, cell: (m) => (m.idleMin == null ? "—" : fmtDur(m.idleMin, lang)), exp: (m) => (m.idleMin == null ? "" : Math.round(m.idleMin)) },
     { key: "scans", header: L("สแกน", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
     { key: "fin", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "fin", align: "right", cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
     { key: "inp", header: L("กำลังทำ (ชิ้น)", "In process (pcs)"), sortKey: "inp", align: "right", cell: (m) => fmtNum(m.inp), exp: (m) => m.inp },
@@ -10862,7 +10958,7 @@ function DailyReportPage() {
                 <Card title={L("การใช้เวลาเครื่อง (ตามแผน)", "Machine time (planned)")}
                   right={<span className="dr-legend"><i className="sq run" /> {L("เดินเครื่อง", "running")} <i className="sq stop" /> {L("หยุด", "down")} <i className="sq idle" /> {L("ว่าง/อื่นๆ", "idle/other")}</span>}>
                   <div className="dr-time">
-                    {[...machineRows].sort((a, b) => b.runMin - a.runMin).slice(0, 12).map((m) => {
+                    {[...machineRows].filter((m) => !m.untimed).sort((a, b) => b.runMin - a.runMin).slice(0, 12).map((m) => {
                       const tot = Math.max(m.planned, m.runMin + m.stopPlMin, 1);
                       const w = (v) => `${(v / tot) * 100}%`;
                       return (
@@ -12898,17 +12994,6 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
     setBusy(true); setErr("");
     try {
       await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
-      if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
-        let r;
-        try { r = await setMachineScanMode(machine.id, scanMode); }
-        catch (e) {
-          const m = String(e?.message || e);
-          throw new Error(/authz_set_machine_scan_mode|function|schema cache/i.test(m)
-            ? "ยังไม่ได้รัน migration-scan-mode.sql ใน Supabase — รันก่อนแล้วตั้งรูปแบบการสแกนใหม่"
-            : m);
-        }
-        if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ"));
-      }
       // แปลงชิปชั่วคราว (new:<key>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent · เช็ก/หาเจอด้วย match)
       const finalIds = [];
       for (const id of opSel) {
@@ -12930,6 +13015,18 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
         }
       }
       await setMachineOps(machine.id, [...new Set(finalIds)]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
+      // ★ 2026-10-10: ตั้งรูปแบบการสแกน "หลังสุด" — ถ้าพลาด (เช่นยังไม่รัน SQL) ชื่อ/ขั้นตอนยังบันทึกครบ
+      if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
+        let r;
+        try { r = await setMachineScanMode(machine.id, scanMode); }
+        catch (e) {
+          const m = String(e?.message || e);
+          throw new Error(/authz_set_machine_scan_mode|schema cache|PGRST202|does not exist/i.test(m) && !/permission denied/i.test(m)
+            ? "ยังไม่ได้รัน migration-scan-mode.sql ใน Supabase — รันก่อนแล้วตั้งรูปแบบการสแกนใหม่"
+            : m);
+        }
+        if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ"));
+      }
       onSaved();
     } catch (e) {
       setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
@@ -12979,8 +13076,8 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved }) 
       </Field>
       <Field label="รูปแบบการสแกนหน้าเครื่อง">
         <div className="chip-row">
-          <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => setScanMode("timed")}>สแกน 2 ครั้ง · จับเวลา (ปกติ)</span>
-          <span className={`chip ${scanMode === "count" ? "active" : ""}`} onClick={() => setScanMode("count")}>สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา</span>
+          <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("timed")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>สแกน 2 ครั้ง · จับเวลา (ปกติ)</span>
+          <span className={`chip ${scanMode === "count" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("count")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, lineHeight: 1.55 }}>
           {scanMode === "count"
@@ -13217,7 +13314,12 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
   const [autoPicked, setAutoPicked] = useState(!!codeMatch);
   // multiSession = { ok, missing, ids:Set } จาก EmployeeCrud · null = ยังโหลดไม่เสร็จ
   const multiInit = !!(multiSession && multiSession.ids && multiSession.ids.has(employee.id));
-  const [multi, setMulti] = useState(multiInit);
+  // ★ 2026-10-10: เขียนเฉพาะเมื่อ "ติ๊กเปลี่ยนเอง" (multiDirty) — เดิมเปิดหน้าต่างก่อนรายชื่อโหลดเสร็จ = ค่าเริ่ม false
+  //   แล้วกดบันทึกเรื่องอื่น (เช่นชื่อ) → ปิด "ล็อกอินหลายเครื่อง" ไปเงียบๆ
+  const [multiDirty, setMultiDirty] = useState(false);
+  const [multiPick, setMultiPick] = useState(false);
+  const multi = multiDirty ? multiPick : multiInit;
+  const setMulti = (v) => { setMultiPick(v); setMultiDirty(true); };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -13260,7 +13362,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
       });
       // ซิงค์ความสามารถของเครื่องให้ตรงกับที่เลือก (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้) — เฉพาะเมื่อแตะชิปขั้นตอน
       if (form.machine_id && opsDirty) await syncMachineOps(form.machine_id, opIds, caps);
-      if (multi !== multiInit) {
+      if (multiDirty && multi !== multiInit) {
         const r = await setEmployeeMultiSession(employee.id, multi);
         if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้ง \"ล็อกอินได้หลายเครื่อง\" ได้" : (r.reason || "ตั้งล็อกอินหลายเครื่องไม่สำเร็จ"));
         auditRecord("employee_update", "employee", employee.id, { code: employee.code, name: form.name.trim(), before: { multi_session: multiInit }, after: { multi_session: multi }, fields: ["ล็อกอินหลายเครื่อง"] });
