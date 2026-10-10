@@ -342,8 +342,35 @@ export async function setMachineOps(machineId, operationIds) {
 //   'timed' (ค่าเริ่มต้น) = สแกน 2 ครั้ง + จับเวลา · 'count' = สแกนครั้งเดียวตอนทำเสร็จ ไม่จับเวลา (นับชิ้นอย่างเดียว)
 //   หน้าเครื่องอ่านค่าตอนเข้า + จำไว้ในเครื่อง (ออฟไลน์ใช้ค่าล่าสุด) · ยังไม่รัน SQL = คอลัมน์ไม่มี → 'timed' (ทำงานแบบเดิม)
 const SCAN_MODE_KEY = (id) => "mls-scan-mode:" + (id || "x");
+const SCAN_MODES_ALL_KEY = "mls-scan-modes";   // ★ 2026-10-10: จำโหมดของ "ทุกเครื่อง" { machineId: mode } — ดึงครั้งเดียวได้ทั้งหมด
+function _readAllModes() { try { return JSON.parse(localStorage.getItem(SCAN_MODES_ALL_KEY) || "{}") || {}; } catch { return {}; } }
 export function cachedMachineScanMode(machineId) {
-  try { const v = localStorage.getItem(SCAN_MODE_KEY(machineId)); return v === "count" ? "count" : v === "timed" ? "timed" : null; } catch { return null; }
+  try {
+    const v = localStorage.getItem(SCAN_MODE_KEY(machineId));
+    if (v === "count" || v === "timed") return v;
+  } catch { /* ignore */ }
+  const m = _readAllModes()[machineId];
+  return m === "count" || m === "timed" ? m : null;
+}
+// ดึงโหมดของทุกเครื่องมาจำไว้ (ตารางเล็ก) — เรียกตอนเปิดหน้าล็อกอิน/หน้าเครื่องขณะมีเน็ต
+//   → แท็บเล็ตที่เคยเปิดแอปตอนมีเน็ต (บัญชีไหนก็ได้ หรือแค่หน้าล็อกอิน) รู้โหมดของทุกเครื่อง
+//   → ล็อกอินออฟไลน์ครั้งแรกด้วยบัญชีเครื่องอื่นก็ยังได้หน้าถูกแบบ
+let _allModesInflight = null;
+export function prefetchAllScanModes() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.resolve(false);
+  if (_allModesInflight) return _allModesInflight;
+  _allModesInflight = (async () => {
+    try {
+      const { data, error } = await supabase.from("machines").select("id, scan_mode");
+      if (error || !Array.isArray(data)) return false;   // ยังไม่รัน migration-scan-mode.sql → ไม่มีคอลัมน์
+      const map = {};
+      for (const r of data) if (r && r.id) map[r.id] = r.scan_mode === "count" ? "count" : "timed";
+      try { localStorage.setItem(SCAN_MODES_ALL_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+      for (const [id, mode] of Object.entries(map)) { try { localStorage.setItem(SCAN_MODE_KEY(id), mode); } catch { /* ignore */ } }
+      return true;
+    } catch { return false; } finally { _allModesInflight = null; }
+  })();
+  return _allModesInflight;
 }
 export async function getMachineScanMode(machineId) {
   if (!machineId) return "timed";
@@ -354,6 +381,7 @@ export async function getMachineScanMode(machineId) {
     if (error || !data) return cached || "timed";
     const mode = data.scan_mode === "count" ? "count" : "timed";
     try { localStorage.setItem(SCAN_MODE_KEY(machineId), mode); } catch { /* ignore */ }
+    try { const all = _readAllModes(); all[machineId] = mode; localStorage.setItem(SCAN_MODES_ALL_KEY, JSON.stringify(all)); } catch { /* ignore */ }
     return mode;
   } catch { return cached || "timed"; }
 }
