@@ -38,17 +38,43 @@ function safeSheetName(name, used) {
 }
 
 // ชนิดคอลัมน์: int (จำนวนเต็ม) / dec (ทศนิยม 2) / text — ใช้เลือก numFmt + การจัดวาง
-function colKinds(headers, rows) {
+// ★ 2026-10-10 ตรวจรอบ 3: เดิมดูทศนิยมจากหัวไทยอย่างเดียว → หัวอังกฤษ "Weight (kg)", "kg/h", "sec/pc", "Avg ..."
+//   และ "(ชม.)" ได้รูปแบบจำนวนเต็ม (5.25 โชว์ 5) · เพิ่มหัวอังกฤษ + ดูจากข้อมูลจริง: มีค่าไม่เต็มสักตัว → ทศนิยม
+const DEC_HEAD = /กก\.|วินาที\/ชิ้น|เฉลี่ย|\(ชม\.\)|\bkg\b|\/h\b|sec\/pc|\bavg\b|average/i;
+export function colKinds(headers, rows) {
   return headers.map((h) => {
-    const decimal = /กก\.|วินาที\/ชิ้น|เฉลี่ย/.test(h);
+    let decimal = DEC_HEAD.test(h);
     let anyNum = false, anyText = false;
     for (const r of rows) {
       const v = r[h];
-      if (typeof v === "number" && Number.isFinite(v)) anyNum = true;
+      if (typeof v === "number" && Number.isFinite(v)) { anyNum = true; if (!Number.isInteger(v)) decimal = true; }
       else if (v !== "" && v != null) anyText = true;
     }
     if (anyNum && !anyText) return decimal ? "dec" : "int";
     return "text";
+  });
+}
+
+// ★ 2026-10-10 ตรวจรอบ 3: คอลัมน์ที่ผู้เรียกส่งเป็นสตริงทศนิยม (toFixed → "5.20") ทั้งคอลัมน์ → แปลงเป็นตัวเลข
+//   (ไม่งั้นใน Excel เป็นข้อความ รวม/กรองตัวเลขไม่ได้) · ปลอดภัย: ต้องมีจุดทศนิยม + ไม่มีศูนย์นำหน้า
+//   (รหัส/เลขที่ "00123", "2024" คงเป็นข้อความ) และทุกค่าที่ไม่ว่างในคอลัมน์ต้องเป็นตัวเลข/สตริงทศนิยม
+const DEC_STR = /^-?(0|[1-9]\d*)\.\d+$/;
+export function normalizeNumericStrings(headers, rows) {
+  const conv = headers.filter((h) => {
+    let anyStr = false;
+    for (const r of rows) {
+      const v = r[h];
+      if (v === "" || v == null || (typeof v === "number" && Number.isFinite(v))) continue;
+      if (typeof v === "string" && DEC_STR.test(v.trim())) { anyStr = true; continue; }
+      return false;
+    }
+    return anyStr;
+  });
+  if (!conv.length) return rows;
+  return rows.map((r) => {
+    const o = { ...r };
+    for (const h of conv) if (typeof o[h] === "string" && o[h].trim() !== "") o[h] = Number(o[h]);
+    return o;
   });
 }
 
@@ -124,7 +150,8 @@ export async function downloadSheets(filename, sheets) {
       continue;
     }
     const headers = Object.keys(rows[0]);
-    styleWorksheet(ws, headers, rows, colKinds(headers, rows));
+    const nrows = normalizeNumericStrings(headers, rows);   // ★ 2026-10-10 ตรวจรอบ 3
+    styleWorksheet(ws, headers, nrows, colKinds(headers, nrows));
   }
 
   const buf = await wb.xlsx.writeBuffer();
