@@ -636,14 +636,24 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
     if (res && res.ok !== false) {
       setDaily(res.daily || { quantity: 0, weight: 0, process_seconds: 0 });
       setRows(res.records || []);
-      setLoadErr("");
+      // ★ 2026-10-14: ออนไลน์แต่โหลดตารางจาก server ไม่สำเร็จ → โชว์ข้อมูลในเครื่อง + บอกให้รู้ (เดิมเงียบ)
+      setLoadErr(res.stale
+        ? t("ตารางเป็นข้อมูลที่เก็บในเครื่อง — โหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (งานที่ซิงค์แล้วอยู่ในระบบ) · ", "Showing on-device data — couldn't load from the server (synced work is safe) · ") + (res.error || "")
+        : "");
       // หมายเหตุ: ไม่ตั้ง op จาก machine_day ที่นี่ — เพราะ reload ทำงานหลังบันทึกทุกครั้ง
       //   ถ้าตั้งจะไปทับ "ขั้นตอนที่คนงานเลือกเอง" · การตั้ง default ทำที่ effect โหลด machineOps
     } else {
       setLoadErr(res?.message || "โหลดข้อมูลไม่สำเร็จ");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onKicked]);
   useEffect(() => { reload(); }, [reload]);
+  // ★ 2026-10-14: คิวออฟไลน์ซิงค์ขึ้นแล้ว → โหลดตารางจาก server ทันที (เดิมรอรอบ 45 วิ)
+  useEffect(() => {
+    const on = () => { reload(); };
+    window.addEventListener("mls-queue-synced", on);
+    return () => window.removeEventListener("mls-queue-synced", on);
+  }, [reload]);
 
   // โหลดขั้นตอนที่บัญชีทำได้ → กรอง "เฉพาะแผนกของหน้านี้" (machine / assembly / packing) + ตั้ง default
   useEffect(() => {
