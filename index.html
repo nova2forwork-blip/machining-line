@@ -6,16 +6,33 @@
          (removeChild: The node to be removed is not a child of this node) · แอปมีปุ่มสลับ TH/EN ของตัวเองอยู่แล้ว -->
     <meta name="google" content="notranslate" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
-    <meta name="theme-color" content="#111418" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="หน้าเครื่อง" />
-    <meta name="description" content="ระบบบันทึกการทำงานเครื่องจักร — Release, สแกน QR หน้าเครื่อง, รายงาน" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
-    <title>Machining Line System</title>
+    <meta name="apple-mobile-web-app-title" content="Artclad" />
+    <meta name="description" content="Artclad Production — ระบบบันทึกการผลิต: Release, สแกน QR หน้าเครื่อง, รายงาน" />
+    <!-- ★ 2026-10-15: Artclad Production · ไอคอน 2 แบบ: สำนักงาน = A ฟ้าบนพื้นขาว · หน้าเครื่อง/ประกอบ/แพ็ก/TV (ธีมมืด) = A ฟ้าบนพื้นเข้ม
+         (สคริปต์ด้านล่างสลับตาม path ก่อนเบราว์เซอร์ใช้ → "เพิ่มลงหน้าจอ" ได้ไอคอน/ชื่อ/หน้าเริ่มต้นตามโหมดที่ใช้) -->
+    <title>Artclad Production</title>
+    <link id="mls-manifest" rel="manifest" href="/manifest-office.webmanifest" />
+    <link id="mls-apple-icon" rel="apple-touch-icon" href="/icons/artclad-light-apple-180.png" />
+    <link id="mls-favicon" rel="icon" type="image/png" href="/icons/artclad-light-favicon-64.png" />
+    <script>
+      (function () {
+        try {
+          var p = location.pathname.replace(/\/+$/, "").toLowerCase();
+          var dark = /^\/(station|assembly|panel|glazing|packing|dashboard)(\/|-|$)/.test(p);
+          if (!dark) return;
+          document.getElementById("mls-manifest").href = "/manifest.webmanifest";
+          document.getElementById("mls-apple-icon").href = "/icons/artclad-dark-apple-180.png";
+          document.getElementById("mls-favicon").href = "/icons/artclad-dark-favicon-64.png";
+          var t = document.querySelector('meta[name="theme-color"]'); if (t) t.content = "#111418";
+          var a = document.querySelector('meta[name="apple-mobile-web-app-title"]'); if (a) a.content = "Artclad หน้าเครื่อง";
+          document.title = p.indexOf("/dashboard") === 0 ? "Artclad Production — TV" : "Artclad Production — หน้าเครื่อง";
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #eef3f1; }
