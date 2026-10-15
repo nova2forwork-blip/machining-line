@@ -1,0 +1,13 @@
+# ห้ามขึ้น GitHub (repo นี้เป็น public)
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+
+# ทดลอง Supabase บนเครื่อง (supabase start) — ไฟล์ dump มีข้อมูลจริง/รหัสผ่านแบบ hash
+roles.sql
+schema.sql
+data.sql
+supabase/.temp/
+supabase/.branches/
