@@ -6,7 +6,10 @@ import {
 } from "./offline.js";
 
 // ── ใส่ค่าจาก Supabase Project Settings → API ────────────────────────────────
-const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL || "";
+// ★ 2026-10-15: "same-origin" = เรียก API ผ่านที่อยู่เดียวกับหน้าเว็บ (ใช้ตอนทดลองบนคอม: vite dev proxy ส่งต่อไป Supabase ในเครื่อง
+//   → แท็บเล็ตในวง LAN เปิด http://<IP คอม>:5173 ได้ โดยเปิดพอร์ตเดียว) · ตัวจริงบน Vercel ยังเป็น URL เต็มเหมือนเดิม
+const RAW_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_URL  = RAW_SUPABASE_URL === "same-origin" && typeof window !== "undefined" ? window.location.origin : RAW_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 if (!SUPABASE_URL || !SUPABASE_ANON) {
