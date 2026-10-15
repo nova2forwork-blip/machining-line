@@ -14046,9 +14046,17 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
           {L(`✓ เลือกเครื่อง ${codeMatch.code} ให้แล้ว (รหัสตรงกับพนักงาน) — กด "บันทึก" เพื่อผูก · เปลี่ยนได้ที่ช่องเครื่อง/สถานี`, `✓ Machine ${codeMatch.code} selected for you (same code as the employee) — press "Save" to assign · change it in the machine/station field`)}
         </div>
       )}
-      <Field label="ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)">
+      <Field label={employee?.id ? "ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)" : "รหัสผ่าน"}>
+        {/* ★ 2026-10-15: เดิม placeholder เป็นจุด •••• → กดตาแล้วนึกว่าเห็นรหัสเดิมไม่ได้ · ช่องนี้ว่างเสมอ (ระบบเก็บรหัสแบบเข้ารหัส ดูรหัสเดิมไม่ได้) */}
         <PasswordField className="input" value={form.password} autoComplete="new-password"
-          onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
+          onChange={(e) => setForm({ ...form, password: e.target.value })}
+          placeholder={employee?.id ? "พิมพ์รหัสใหม่ — ไม่ใส่ = ใช้รหัสเดิม" : "ตั้งรหัสผ่าน"} />
+        {employee?.id && (
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 5, lineHeight: 1.45 }}>
+            {L("ดูรหัสเดิมไม่ได้ (ระบบเก็บแบบเข้ารหัส) · ถ้าพนักงานลืม ให้พิมพ์รหัสใหม่ที่นี่ กดตาเพื่อตรวจ แล้วบันทึก",
+               "The current password can't be shown (it's stored encrypted) · if the employee forgot it, type a new one here, tap the eye to check, then save")}
+          </div>
+        )}
       </Field>
       {form.machine_id && (
         <MultiSessionToggle checked={multi} onChange={setMulti} missing={!!(multiSession && multiSession.missing)}

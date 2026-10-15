@@ -105,6 +105,8 @@ const DICT = {
   "เพิ่มพนักงาน": "Add employee", "เพิ่มพนักงานใหม่": "Add new employee", "เพิ่มเครื่อง/สถานีใหม่ + ตั้งความสามารถ": "Add machine/station + capabilities",
   "รหัสผ่านเริ่มต้น": "Default password", "ใช้งาน": "Active", "ปิดใช้งาน": "Disabled",
   "ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)": "Set new password (blank = keep)",
+  "พิมพ์รหัสใหม่ — ไม่ใส่ = ใช้รหัสเดิม": "Type a new password — leave blank to keep",
+  "ตั้งรหัสผ่าน": "Set password",
 
   // Report
   "สรุปผลการสแกนตามช่วงเวลาและ Part ที่เลือก": "Scan summary by period and selected Part",

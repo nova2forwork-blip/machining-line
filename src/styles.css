@@ -1582,6 +1582,7 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .pw-eye { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; display: flex; align-items: center; justify-content: center;
   background: none; border: 0; padding: 0; color: var(--muted, #6b7780); cursor: pointer; border-radius: 0 10px 10px 0; }
 .pw-eye:hover { color: var(--text, #111417); }
-.pw-eye:focus-visible { outline: 2px solid var(--accent, #0B8CE9); outline-offset: -4px; }
+.pw-eye:focus { outline: none; }
+.pw-eye:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent-tint, rgba(11,140,233,.25)); }
 .pw-eye[aria-pressed="true"] { color: var(--accent, #0B8CE9); }
 .pw-input::-ms-reveal, .pw-input::-ms-clear { display: none; }   /* Edge มีตาของตัวเอง — ซ่อนไม่ให้ซ้อนกัน */
