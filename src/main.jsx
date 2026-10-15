@@ -2,6 +2,29 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 
+// ★ 2026-10-15: กันจอพัง "Failed to execute 'removeChild' on 'Node'" (เจอที่แท็บเล็ตหน้าเครื่องที่เปิด "แปลหน้านี้" ของ Chrome)
+//   ตัวแปลของเบราว์เซอร์/ส่วนขยาย ย้ายข้อความไปห่อใน <font> → React จะลบ/แทรก node ที่ไม่ได้อยู่ที่เดิมแล้ว → โยน error ทั้งหน้า
+//   index.html ปิดการแปลแล้ว (translate="no") · ชั้นนี้กันอีกชั้น: node ไม่ได้เป็นลูกแล้ว = ข้ามเงียบๆ แทนที่จะพังทั้งจอ
+//   (วิธีมาตรฐานจาก facebook/react#11538)
+if (typeof Node === "function" && Node.prototype && !Node.prototype.__mlsSafeDom) {
+  try {
+    const origRemove = Node.prototype.removeChild;
+    Node.prototype.removeChild = function (child) {
+      if (child && child.parentNode !== this) {
+        if (child.parentNode) { try { return child.parentNode.removeChild(child); } catch { /* ignore */ } }
+        return child;
+      }
+      return origRemove.call(this, child);
+    };
+    const origInsert = Node.prototype.insertBefore;
+    Node.prototype.insertBefore = function (newNode, ref) {
+      if (ref && ref.parentNode !== this) return origInsert.call(this, newNode, null);
+      return origInsert.call(this, newNode, ref);
+    };
+    Node.prototype.__mlsSafeDom = true;
+  } catch { /* ignore */ }
+}
+
 // ─── Route split: /station = machine terminal (หน้าเครื่อง) ──────────────
 //    ทุก path อื่น = แอปปกติ (สำนักงาน)  ·  ทั้งสองใช้ Supabase/ฐานข้อมูลเดียวกัน
 //    (vercel.json rewrite ทุก path → index.html อยู่แล้ว จึงไม่ต้องตั้ง route เพิ่ม)
