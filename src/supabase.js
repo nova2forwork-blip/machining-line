@@ -1962,7 +1962,8 @@ async function _flushScanQueue() {
   const bumped = new Map();        // qid -> จำนวนครั้งที่ลองแล้วพลาด (error ที่ไม่ใช่เน็ต)
   let newRejects = 0;
   let authExpired = false;
-  const MAX_ATTEMPTS = 12;         // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
+  let syncedMw = 0;                // ★ 2026-10-14: จำนวนงานหน้าเครื่องที่ซิงค์สำเร็จรอบนี้ → แจ้งหน้าเครื่องให้โหลดตารางใหม่
+  const MAX_ATTEMPTS = 12;        // ~3 นาที (flush ทุก 15 วิ) ก่อนยอมแพ้ → ย้ายไป rejected (H3)
   const MAX_ATTEMPTS_SERVER = 40;  // ★ 2026-10-10 ตรวจรอบ 3: server สะดุดชั่วคราว (มี SQLSTATE เช่น statement timeout) → ให้เวลานานกว่า (~10 นาที)
   const commit = () => {           // เขียนคิวใหม่: ลบที่เสร็จ + อัปเดตจำนวนครั้งที่พลาด (อ่านคิวล่าสุดก่อนเสมอ)
     if (!done.size && !bumped.size) return;
@@ -2018,6 +2019,8 @@ async function _flushScanQueue() {
         if (data.reason === "unauthorized") { authExpired = true; break; }
         toRejected(item, data.reason);             // ลบ/แก้ฝั่งออฟฟิศ → rejected (ทั้ง machine/office)
       } else {
+        // ★ 2026-10-14: ใส่แถวที่ซิงค์แล้วเข้า snapshot ตารางก่อน แล้วค่อยเอาออกจากคิว → ตารางหน้าเครื่องไม่หายระหว่างรอ machine_day
+        if (item.machineWork) { await mergeSyncedIntoSnapshot([syncedRowFor(item, data)]); syncedMw++; }
         done.add(item.qid); _syncedQids.add(item.qid);   // ok / deduped = สำเร็จ
       }
       if (done.size >= 10) { try { commit(); } catch (e) { console.warn("flush commit failed", e); } }
@@ -2029,6 +2032,10 @@ async function _flushScanQueue() {
     if (newRejects) { try { reportDeadLetter(); } catch (_) { /* ignore */ } }
     if (authExpired && typeof window !== "undefined") {
       try { window.dispatchEvent(new Event("mls-session-expired")); } catch (_) { /* ignore */ }
+    }
+    // ★ 2026-10-14: ซิงค์งานหน้าเครื่องขึ้นแล้ว → หน้าเครื่องโหลดตารางจาก server ทันที (เดิมรอรอบ 45 วิ)
+    if (syncedMw > 0 && typeof window !== "undefined") {
+      try { window.dispatchEvent(new CustomEvent("mls-queue-synced", { detail: { machineWork: syncedMw } })); } catch (_) { /* ignore */ }
     }
     // ★ รอบ 13: งานซิงค์แล้ว → ส่งเหตุผลรอบช้า/แจ้งหยุดที่รออยู่ต่อทันที
     if (!authExpired && evRead().length) setTimeout(() => { flushStationEvents(); }, 300);
@@ -2538,7 +2545,10 @@ export async function getMachineDay() {
   const { data, error } = await supabase.rpc("machine_day", { p_token: authToken() });
   if (error) {
     console.warn("machine_day error", error);
-    return offlineMachineDay();                           // เน็ตสะดุด → ใช้ snapshot แทนจอเปล่า
+    // เน็ตสะดุด/server พลาด → ใช้ snapshot แทนจอเปล่า
+    // ★ 2026-10-14: ติดธง stale + ข้อความ error → หน้าเครื่องขึ้นแถบเตือน (เดิมเงียบ = ดูเหมือน "ตารางหาย" โดยไม่มีใครรู้สาเหตุ)
+    const off = await offlineMachineDay();
+    return { ...off, stale: true, error: error.message || error.details || error.code || String(error) };
   }
   if (data && data.ok !== false) setDaySnapshot({ ...data, _day: bkkDay() });    // เก็บ snapshot ล่าสุดไว้ใช้ออฟไลน์ (+ วันที่ไทยของ snapshot)
   return data || { ok: false };
@@ -2607,6 +2617,56 @@ async function offlineMachineDay() {
     });
   }
   return { ok: true, daily, records, offline: true };
+}
+
+// ★ 2026-10-14 (CT-001 สแกนออฟไลน์ → ต่อเน็ตแล้วตารางหน้าเครื่องหาย แต่หลังบ้านเห็นข้อมูล):
+//   เดิมงานที่ซิงค์ขึ้นแล้วถูกลบออกจากคิว แต่ snapshot ตาราง (IndexedDB) ยังเป็นของ "ก่อนออฟไลน์"
+//   → ถ้า machine_day โหลดไม่สำเร็จหลังซิงค์ ตารางถอยไปเป็น snapshot เก่า = แถวที่ทำตอนออฟไลน์หายจากจอ
+//   ตอนนี้: ซิงค์สำเร็จ → ใส่แถวนั้นเข้า snapshot ทันที (ใช้แถวจริงจาก server ถ้ามี) → จอไม่ถอยหลังอีก
+//   machine_day สำเร็จครั้งถัดไป = แทนทั้งก้อนด้วยข้อมูล server เหมือนเดิม
+function syncedRowFor(item, data) {
+  const mw = item && item.machineWork;
+  if (!mw) return null;
+  const sr = data && data.row;
+  if (sr && typeof sr === "object") {
+    if (!(Number(sr.qty ?? mw.p_quantity) > 0)) return null;      // ขั้นตอนร่วม (co-tick จำนวน 0) ไม่ขึ้นเป็นแถว
+    return { row: sr, at: mw.p_recorded_at };
+  }
+  if (!(Number(mw.p_quantity) > 0)) return null;
+  return {
+    at: mw.p_recorded_at,
+    row: {
+      id: "s-" + item.qid,
+      day: mw.p_recorded_at ? bkkDay(new Date(mw.p_recorded_at)).slice(5).replace("-", ".") : undefined,
+      qty: Number(mw.p_quantity) || 0, status: mw.p_status,
+      process_seconds: Number(mw.p_process_seconds) || 0,
+      weight: Number(item.weight) || 0,
+      materials_length: mw.p_material_length,
+    },
+  };
+}
+async function mergeSyncedIntoSnapshot(entries) {
+  const list = (entries || []).filter(Boolean);
+  if (!list.length) return;
+  try {
+    const today = bkkDay();
+    const snap = (await getDaySnapshot()) || { ok: true, daily: { quantity: 0, weight: 0, process_seconds: 0 }, records: [], _day: today };
+    const records = Array.isArray(snap.records) ? [...snap.records] : [];
+    const ids = new Set(records.map((r) => r && r.id).filter(Boolean));
+    const daily = { ...(snap.daily || { quantity: 0, weight: 0, process_seconds: 0 }) };
+    let changed = false;
+    for (const { row, at } of list) {
+      if (row.id && ids.has(row.id)) continue;                     // มีใน snapshot แล้ว (server ส่งมาแล้ว) → ไม่ซ้ำ
+      records.push(row); if (row.id) ids.add(row.id); changed = true;
+      const isToday = !at || bkkDay(new Date(at)) === today;
+      if (snap._day === today && isToday) {
+        daily.quantity = (Number(daily.quantity) || 0) + (Number(row.qty) || 0);
+        daily.process_seconds = (Number(daily.process_seconds) || 0) + (Number(row.process_seconds) || 0);
+        daily.weight = (Number(daily.weight) || 0) + (Number(row.weight) || 0);
+      }
+    }
+    if (changed) await setDaySnapshot({ ...snap, ok: true, daily, records });
+  } catch (e) { console.warn("mergeSyncedIntoSnapshot", e); }
 }
 
 // heartbeat: บอกเซิร์ฟเวอร์ว่าเครื่องนี้ยังใช้บัญชีอยู่ (กันเครื่องอื่นเข้าแทน) +
