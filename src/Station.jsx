@@ -2537,7 +2537,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr className="stn-empty-row"><td colSpan={15}>{t("ยังไม่มีบันทึกสัปดาห์นี้ — เริ่มงานแรกได้เลย", "No records this week — start your first job")}</td></tr>
+                <tr className="stn-empty-row"><td colSpan={15}>{t("ยังไม่มีบันทึกใน 7 วันล่าสุด — เริ่มงานแรกได้เลย", "No records in the last 7 days — start your first job")}</td></tr>
               )}
               {recRowsEl}
             </tbody>
