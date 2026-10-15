@@ -527,6 +527,7 @@ import {
 import Icon from "./icons.jsx";
 import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import { SimpleBarChart } from "./svgcharts.jsx";
+import PasswordField from "./pwfield.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
 const CHART = {
@@ -1124,7 +1125,7 @@ function Login({ onLogin }) {
           <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="รหัสพนักงาน" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} />
         </Field>
         <Field label="รหัสผ่าน">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+          <PasswordField className="input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </Field>
         {notice && !err && <div style={{ color: "var(--alert, #b45309)", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{notice}</div>}
         {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
@@ -1212,13 +1213,13 @@ function ChangePasswordModal({ onClose }) {
       ) : (
         <>
           <Field label="รหัสผ่านเดิม">
-            <Input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoFocus />
+            <PasswordField className="input" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoFocus />
           </Field>
           <Field label="รหัสผ่านใหม่ (อย่างน้อย 4 ตัว)">
-            <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+            <PasswordField className="input" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
           </Field>
           <Field label="ยืนยันรหัสผ่านใหม่">
-            <Input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+            <PasswordField className="input" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
           </Field>
           {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginTop: 4 }}>{err}</div>}
@@ -14046,7 +14047,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         </div>
       )}
       <Field label="ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)">
-        <Input type="password" value={form.password} autoComplete="new-password"
+        <PasswordField className="input" value={form.password} autoComplete="new-password"
           onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
       </Field>
       {form.machine_id && (

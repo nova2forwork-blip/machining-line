@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
 import "./styles.css";
 import "./station.css";
+import PasswordField from "./pwfield.jsx";
 import {
   stationLogin, getSession, setSession, clearSession,
 } from "./auth.js";
@@ -425,7 +426,7 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
         </div>
         <div className="stn-field">
           <label>รหัสผ่าน</label>
-          <input className="stn-input" type="password" value={password}
+          <PasswordField className="stn-input" value={password}
             onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </div>
         {err && <div className="stn-err">{err}</div>}
