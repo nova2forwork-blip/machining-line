@@ -26,7 +26,7 @@ const DICT = {
   // เมนู / หัวข้อหลัก
   "โปรเจค": "Projects", "เครื่องจักร": "Machine", "เครื่อง/สถานี": "Machine/Station", "หน้าเครื่อง": "Machine terminal", "มือถือ": "Mobile",
   "พิมพ์ QR": "Print QR", "พิมพ์ QR / ป้าย": "Print QR / Labels", "รายงาน": "Reports",
-  "Report (ข้อมูลสแกน)": "Report (scans)", "ระบบบันทึกการทำงานเครื่องจักร": "Machine production logging",
+  "Report (ข้อมูลสแกน)": "Report (scans)", "ระบบบันทึกการทำงานเครื่องจักร": "Machine production logging", "ระบบบันทึกการผลิต": "Production tracking",
   "ออกจากระบบ": "Log out", "เข้าสู่ระบบ": "Sign in", "รหัสผ่าน": "Password",
   "พนักงาน": "Employees", "พนักงานหน้าเครื่อง": "Machine operator", "หัวหน้างาน": "Supervisor",
 

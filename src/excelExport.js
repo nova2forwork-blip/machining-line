@@ -135,7 +135,7 @@ function styleWorksheet(ws, headers, rows, kinds) {
 export async function downloadSheets(filename, sheets) {
   const ExcelJS = pickExcelJS(await import("exceljs/dist/exceljs.min.js"));
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Machining Line System";
+  wb.creator = "Artclad Production";
   wb.created = new Date();
 
   const used = new Set();

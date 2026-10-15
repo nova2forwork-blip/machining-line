@@ -319,7 +319,7 @@ function opLabel(name, lang) {
 function LoginSplash({ text = "กำลังเข้าสู่ระบบ…" }) {
   return (
     <div className="mls-splash">
-      <div className="mls-splash-brand"><span className="m"><Icon name="bolt" size={18} /></span> MACHINING LINE</div>
+      <div className="mls-splash-brand"><img src="/brand/artclad-logo-white.png" alt="Artclad Production" /></div>
       <div className="mls-load3"><div className="mls-load3-dots"><i /><i /><i /></div><div className="mls-load3-bar" /></div>
       <div className="mls-splash-text">{text}</div>
     </div>
@@ -411,6 +411,7 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
     <div className="stn-login-wrap">
       <form className={`stn-login dept-${themeDept(dept)}`} onSubmit={submit} style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: 14, right: 14 }}><StnLangToggle /></div>
+        <div className="stn-login-brand"><img src="/brand/artclad-logo.png" alt="Artclad Production" /></div>
         <h1>{meta.th} — เข้าสู่ระบบ</h1>
         <p>{dept === "machine"
           ? "ล็อกอินด้วยบัญชีของเครื่อง/สถานีนี้ (บัญชีที่ผูกเครื่อง/สถานีไว้)"
