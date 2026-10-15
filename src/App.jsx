@@ -8880,6 +8880,7 @@ function groupCoTickScans(rows) {
     machine_code: l.machine?.code || l.machine?.name || "—",
     status: l.status, part_unit_id: l.part_unit_id,
     ops: opOf(l) ? [opOf(l)] : [], qty, weight: logWeight(l), secs: Number(l.process_seconds) || 0,
+    raw: l,   // ★ 2026-10-14: แถวดิบ — ไว้โชว์รายละเอียดเมื่อกดแถวในป็อปอัป
   });
   for (const l of asc) {
     const qv = Number(l.quantity) || 0;
@@ -8897,9 +8898,10 @@ function groupCoTickScans(rows) {
 // ── ป็อปอัป "ดูรายละเอียดการสแกน" — เปิดจากแถวในตารางรายงาน (เครื่อง หรือ พาร์ท) ──
 //   ใช้ logs ชุดเดียวกับที่นับในตาราง (filteredLogs กรองเฉพาะแถวนั้น) → ตัวเลขในป็อปอัปตรงกับแถวเป๊ะ
 //   mode="machine" → ซ่อนคอลัมน์เครื่อง (เครื่องเดียวทั้งตาราง) โชว์พาร์ท · mode="part" → ซ่อนพาร์ท โชว์เครื่องแทน
-function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onClose }) {
+function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onClose, onOpenMachine }) {
   const [lang] = useLang();
   const sort = useTableSort("time", "desc");
+  const [sel, setSel] = useState(null);   // ★ 2026-10-14: แถวที่กดดูรายละเอียด (null = รายการ)
   const grouped = useMemo(() => groupCoTickScans(logs), [logs]);
   const rankOps = (ops) => ops.slice().sort((a, b) => ((opOrder?.[a] ?? 999) - (opOrder?.[b] ?? 999)) || String(a).localeCompare(String(b)));
   const acc = {
@@ -8933,15 +8935,81 @@ function ScanDrillModal({ mode = "machine", title, subtitle, logs, opOrder, onCl
     <span key={oi} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, whiteSpace: "nowrap",
       color: "#2563eb", background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.40)" }}>{opLabel(o, lang)}</span>
   );
+  const L = (th, en) => (lang === "en" ? en : th);
+  // ── รายละเอียดสแกน 1 แถว (กดจากตาราง) ──
+  if (sel) {
+    const r = sel.raw || {};
+    const pu = r.part_unit || {};
+    const pm = pu.part_master || {};
+    const num = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+    const qty = Number(sel.qty) || 0;
+    const partLen = num(pu.length_mm ?? r.length_mm ?? r.length);
+    const matLen = num(r.material_length_mm);
+    const inv = pm.material || r.inv || r.inventory_code || null;
+    const emp = r.employee?.name || r.employee_name || null;
+    const mName = r.machine?.name && r.machine?.name !== sel.machine_code ? r.machine.name : "";
+    const startIso = sel.secs && sel.time ? new Date(new Date(sel.time).getTime() - sel.secs * 1000).toISOString() : null;
+    const shortMat = matLen != null && partLen != null && matLen < partLen;
+    const items = [
+      [L("วัน · เวลาบันทึก (กด OK)", "Saved at (OK)"), fmtDT(sel.time)],
+      startIso ? [L("เริ่มงาน (ประมาณ)", "Started (approx.)"), fmtDT(startIso)] : null,
+      [L("เครื่อง", "Machine"), <>{sel.machine_code}{mName ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {mName}</span> : null}</>],
+      [L("เบอร์พาร์ท", "Part No."), <>{sel.part_no}{sel.part_name && sel.part_name !== sel.part_no && sel.part_name !== "—" ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {sel.part_name}</span> : null}</>],
+      [L("Release", "Release"), sel.release_order || "—"],
+      [L("ขั้นตอน", "Step"), sel.ops.length ? <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5 }}>{rankOps(sel.ops).map(chip)}</span> : "—"],
+      [L("สถานะ", "Status"), pill(sel.status)],
+      [L("จำนวน", "Qty"), `${fmtNum(qty)} ${L("ชิ้น", "pcs")}`],
+      [L("น้ำหนัก", "Weight"), sel.weight ? `${fmtNum(sel.weight)} ${L("กก.", "kg")}${qty > 1 ? ` (${fmtNum(sel.weight / qty)} ${L("กก./ชิ้น", "kg/pc")})` : ""}` : "—"],
+      [L("เวลาเดินเครื่อง", "Run time"), sel.secs ? <>{fmtHrs(sel.secs)}{qty > 0 ? <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {fmtHrs(Math.round(sel.secs / qty))} / {L("ชิ้น", "pc")}</span> : null}</> : L("— (ไม่ได้จับเวลา)", "— (not timed)")],
+      partLen != null ? [L("ความยาวพาร์ท (มม.)", "Part length (mm)"), fmtNum(partLen)] : null,
+      [L("ความยาววัสดุ Mat. length (มม.)", "Material length (mm)"), matLen != null
+        ? <span style={shortMat ? { color: "var(--danger, #e11d1d)" } : undefined}>{fmtNum(matLen)}{shortMat ? ` — ${L("สั้นกว่าความยาวพาร์ท", "shorter than the part")}` : ""}</span> : "—"],
+      inv ? [L("INV Code", "INV Code"), inv] : null,
+      emp ? [L("พนักงาน", "Operator"), emp] : null,
+    ].filter(Boolean);
+    return (
+      <Modal title={title} sub={L("รายละเอียดการสแกน", "Scan details")} onClose={onClose} wide>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          <Btn variant="ghost" size="sm" onClick={() => setSel(null)}><Icon name="arrowLeft" size={14} /> {L("กลับรายการ", "Back to list")}</Btn>
+          {onOpenMachine && sel.machine_code && sel.machine_code !== "—" && (
+            <Btn variant="ghost" size="sm" onClick={() => onOpenMachine({ code: r.machine?.code || null, name: r.machine?.name || sel.machine_code, id: r.machine?.id || r.machine_id || null })}
+              style={{ color: "var(--accent-dk)" }} title={L("เปิดหน้ารายการสแกนทั้งหมดของเครื่องนี้ (ช่วงเวลาเดียวกัน · แอดมินแก้ไขได้)", "Open this machine's full scan list (same period · admins can edit)")}>
+              {L(`ดูทุกสแกนของ ${sel.machine_code}`, `All scans of ${sel.machine_code}`)} →
+            </Btn>
+          )}
+        </div>
+        <div style={{ border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+          {items.map(([k, v], i) => (
+            <div key={i} style={{ display: "flex", gap: 12, padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none", background: i % 2 ? "var(--surface-2)" : "transparent", flexWrap: "wrap" }}>
+              <div style={{ width: 210, maxWidth: "100%", color: "var(--muted)", fontSize: 13 }}>{k}</div>
+              <div style={{ flex: 1, minWidth: 160, fontWeight: 600, fontSize: 13.5, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title={title} sub={subtitle} onClose={onClose} wide>
+      {onOpenMachine && mode === "machine" && grouped.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -6, marginBottom: 10 }}>
+          <Btn variant="ghost" size="sm" style={{ color: "var(--accent-dk)" }}
+            onClick={() => { const m = grouped[0].raw?.machine || {}; onOpenMachine({ code: m.code || null, name: m.name || title, id: m.id || grouped[0].raw?.machine_id || null }); }}
+            title={L("เปิดหน้ารายการสแกนทั้งหมดของเครื่องนี้ (ช่วงเวลาเดียวกัน · Release / INV / Mat. length / เวลาเดินเครื่อง · แอดมินแก้ไขได้)", "Open this machine's full scan page (same period · release / INV / material length / run time · admins can edit)")}>
+            {L("เปิดหน้ารายละเอียดเครื่องนี้", "Open machine details")} →
+          </Btn>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={statCell}><div style={statLbl}>{lang === "en" ? "Scans" : "จำนวนสแกน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(grouped.length)} {lang === "en" ? "rows" : "แถว"}</div></div>
         <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total pcs" : "รวมจำนวน"}</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(totPcs)} {lang === "en" ? "pcs" : "ชิ้น"}</div></div>
         <div style={statCell}><div style={statLbl}>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</div><div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent-dk)" }}>{fmtNum(totWt)} {lang === "en" ? "kg" : "กก."}</div></div>
       </div>
+      {grouped.length > 0 && <div style={{ fontSize: 12, color: "var(--muted)", margin: "-4px 2px 8px" }}>{L("แตะแถวเพื่อดูรายละเอียดของการสแกนนั้น", "Tap a row to see that scan's details")}</div>}
       <DataTable id="scan-drill" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
         rows={sorted} rowKey={(g) => g.key} sort={sort}
+        rowProps={(g) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => setSel(g),
+          title: L("แตะเพื่อดูรายละเอียดการสแกนนี้", "Tap to see this scan's details") })}
         empty={lang === "en" ? "No scans" : "ไม่มีการสแกน"}
         columns={[
           { key: "time", header: lang === "en" ? "Date · time" : "วัน · เวลา", sortKey: "time", tdStyle: { whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (g) => fmtDT(g.time) },
@@ -9184,6 +9252,7 @@ function ReportPage({ goTo }) {
   const canSeeEmp = canManage(getSession());
   const [operations, setOperations] = useState([]);   // ไว้แม็ป operation → แผนก (op_type)
   const [drill, setDrill] = useState(null);   // ป็อปอัปดูรายละเอียดการสแกน (เปิดจากแถวตาราง) — {mode,title,subtitle,logs}
+  const [scanMachine, setScanMachine] = useState(null);   // ★ 2026-10-14: เปิดหน้ารายการสแกนของเครื่อง (จากป็อปอัป) — {machine, from, to}
 
   // ── เลือกตารางก่อน export + สถานะระหว่างสร้างไฟล์ ──
   const [exportOpen, setExportOpen] = useState(false);
@@ -9455,6 +9524,11 @@ function ReportPage({ goTo }) {
     }
   }
 
+  // ★ 2026-10-14: กดจากป็อปอัปสแกน → หน้ารายการสแกนของเครื่องนั้น (ช่วงเวลาเดียวกับรายงาน) · กลับมาแล้วรายงานคงตัวกรองเดิม
+  if (scanMachine) {
+    return <MachineScanDetail machine={scanMachine.machine} initialRange={{ from: scanMachine.from, to: scanMachine.to }}
+      backLabel={lang === "en" ? "Back to report" : "กลับหน้ารายงาน"} onBack={() => setScanMachine(null)} />;
+  }
   return (
     <div>
       <div className="page-head">
@@ -9704,7 +9778,8 @@ function ReportPage({ goTo }) {
 
       {drill && (
         <ScanDrillModal mode={drill.mode} title={drill.title} subtitle={drill.subtitle}
-          logs={drill.logs} opOrder={opOrder} onClose={() => setDrill(null)} />
+          logs={drill.logs} opOrder={opOrder} onClose={() => setDrill(null)}
+          onOpenMachine={(m) => { setDrill(null); setScanMachine({ machine: m, from: curRange.from, to: curRange.to }); }} />
       )}
 
       {/* ── Finished Part (รวมมาไว้ในหน้า Report) ──────────────────────────── */}
@@ -9729,13 +9804,16 @@ const SCAN_SLOW_REASONS = ["ปั้มลมมีปัญหา", "เคร
 
 // ── เจาะดู "สแกนทั้งหมดของเครื่องนี้" — ตารางบันทึกงานหน้าเครื่อง (วัน-เวลา · พาร์ท · ขั้นตอน · จำนวน) ──
 //    เปิดจากแถวเครื่องในหน้าสรุปเครื่องจักร · เลือกช่วงเวลาเองได้ (ด่วน/รายเดือน/กำหนดเอง) · ล่าสุดอยู่บนสุด
-function MachineScanDetail({ machine, onBack }) {
+function MachineScanDetail({ machine, onBack, initialRange, backLabel }) {
   const [lang] = useLang();
-  const [rangeMode, setRangeMode] = useState("preset");
+  // ★ 2026-10-14: เปิดจากป็อปอัปในหน้ารายงาน → เริ่มที่ช่วงเวลาเดียวกับรายงาน (initialRange = { from, to } ISO)
+  const initFrom = initialRange?.from ? localYmd(new Date(initialRange.from)) : null;
+  const initTo = initialRange?.to ? localYmd(new Date(initialRange.to)) : null;
+  const [rangeMode, setRangeMode] = useState(initFrom ? "custom" : "preset");
   const [preset, setPreset] = useState("month");          // ★ รอบ 11 (B6): เริ่มต้น 30 วัน (เดิม 12 เดือน ทุกเครื่อง = หน้าค้าง)
   const [monthValue, setMonthValue] = useState(todayStr().slice(0, 7));
-  const [customFrom, setCustomFrom] = useState(daysAgoStr(30));
-  const [customTo, setCustomTo] = useState(todayStr());
+  const [customFrom, setCustomFrom] = useState(initFrom || daysAgoStr(30));
+  const [customTo, setCustomTo] = useState(initTo || todayStr());
   const [logs, setLogs] = useState(null);                 // null = กำลังโหลด
   const [loadErr, setLoadErr] = useState(null);           // ★ รอบ 11 (B3): โหลดพลาด ≠ ไม่มีงาน
   const [machDone, setMachDone] = useState({});           // release_id → ทำแล้ว "ทั้งหมด" ของเครื่องนี้ (กติกาเดียวกับหน้า Release)
@@ -10166,7 +10244,7 @@ function MachineScanDetail({ machine, onBack }) {
       <div className="page-head">
         <div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" size="sm" onClick={onBack}><Icon name="arrowLeft" size={14} /> {lang === "en" ? "Back to machines" : "กลับหน้าสรุปเครื่องจักร"}</Btn>
+            <Btn variant="ghost" size="sm" onClick={onBack}><Icon name="arrowLeft" size={14} /> {backLabel || (lang === "en" ? "Back to machines" : "กลับหน้าสรุปเครื่องจักร")}</Btn>
           </div>
           <div className="page-title" style={{ fontFamily: "var(--font-mono)", letterSpacing: ".02em" }}>{machine.code || "—"}</div>
           <div className="page-sub">{machine.name}{machine.name ? " · " : ""}{lang === "en" ? "all scans of this machine · pick the dates you want" : "การสแกนทั้งหมดของเครื่องนี้ · เลือกช่วงวันที่ที่ต้องการดูได้"}</div>
