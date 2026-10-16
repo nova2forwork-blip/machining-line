@@ -10,7 +10,7 @@ import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, bomForSave,
-  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
+  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
 import "./release-wizard.css";
 
 const DRAFT_KEY = "mls.relwiz.draft.v1";
@@ -337,6 +337,7 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
   const [onlyBad, setOnlyBad] = useState(false);
   const [q, setQ] = useState("");
   const fileRef = useRef(null);
+  const pdfRef = useRef(null);
   const pasteRef = useRef(null);
   const apply = useCallback((text, mode = "replace") => {
     const { rows, skipped } = parseUnitsPaste(text);
@@ -367,6 +368,21 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
       setMsg((m) => m + ` · จากชีต "${name}"`);
     } catch (e) { setMsg("อ่านไฟล์ไม่ได้: " + (e?.message || e)); }
   }
+  // ★ นำเข้า PDF (เลือกได้หลายไฟล์) → "เพิ่มต่อท้าย" ของเดิมเสมอ ไม่ทับ
+  async function importPdf(files) {
+    try {
+      const lib = await loadPdfJs();
+      let all = [], skippedLines = 0, empty = [];
+      for (const f of files) {
+        const r = await readUnitsPdf(lib, await f.arrayBuffer());
+        if (!r.found) empty.push(f.name); else { all.push(r.text); }
+        skippedLines += r.skipped;
+      }
+      if (!all.length) { setMsg(`ไม่พบแถว Unit (UAxxxx) ใน PDF${empty.length ? ` (${empty.join(", ")})` : ""} — ถ้าเป็นไฟล์สแกนรูป ต้องใช้ไฟล์ที่ก๊อปข้อความได้ หรือก๊อปจาก Excel แทน`); return; }
+      apply(all.join("\n"), "append");
+      setMsg((m) => m + ` · จาก PDF ${files.length - empty.length} ไฟล์` + (empty.length ? ` · ไม่พบข้อมูล: ${empty.join(", ")}` : "") + " — ตรวจ Address ให้ถูกก่อนไปต่อ");
+    } catch (e) { setMsg("อ่าน PDF ไม่ได้: " + (e?.message || e)); }
+  }
   const setCell = (i, k, v) => setUnits((u) => u.map((r, j) => (j === i ? { ...r, [k]: v.toUpperCase() } : r)));
   const del = (i) => setUnits((u) => u.filter((_, j) => j !== i));
   const badIdx = Object.keys(ui.row).map(Number);
@@ -378,7 +394,7 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
     <div className="rw-two">
       <div className="card rw-card">
         <SecHead title="Address & Unit" sub="2 คอลัมน์: Unit (แบบแผง) + Address (ตำแหน่งติดตั้ง) · 1 แถว = แผง 1 ชิ้น = QR 1 ดวง"
-          right={<Help label="วิธีลง"><ul><li>ก๊อป 2 คอลัมน์จาก Excel แล้ววาง (Ctrl+V) ที่ไหนก็ได้ในหน้านี้ — มีหัวตารางหรือไม่มีก็ได้ สลับคอลัมน์ได้</li><li>หรือนำเข้าไฟล์ .xlsx (ชีตชื่อ Address&amp;Units ถ้ามี)</li><li>ที่อยู่ซ้ำ / ใช้ใน Release อื่นแล้ว / ข้อมูลไม่ครบ = บันทึกไม่ได้ · Unit รูปแบบแปลก = เตือน</li></ul></Help>} />
+          right={<Help label="วิธีลง"><ul><li>ก๊อป 2 คอลัมน์จาก Excel แล้ววาง (Ctrl+V) ที่ไหนก็ได้ในหน้านี้ — มีหัวตารางหรือไม่มีก็ได้ สลับคอลัมน์ได้</li><li>หรือนำเข้าไฟล์ .xlsx (ชีตชื่อ Address&amp;Units ถ้ามี) หรือ PDF (ต้องเป็น PDF ที่มีตัวอักษร ก๊อปข้อความได้ · เลือกหลายไฟล์ได้ · เพิ่มต่อท้ายของเดิม)</li><li>ที่อยู่ซ้ำ / ใช้ใน Release อื่นแล้ว / ข้อมูลไม่ครบ = บันทึกไม่ได้ · Unit รูปแบบแปลก = เตือน</li></ul></Help>} />
         <textarea ref={pasteRef} className="input rw-paste" rows={2} value={paste} placeholder="วางจาก Excel ที่นี่ (Ctrl+V) — Unit | Address"
           onChange={(e) => setPaste(e.target.value)} onPaste={(e) => { const t = e.clipboardData?.getData("text") || ""; if (t.includes("\t")) { e.preventDefault(); apply(t); } }} />
         {paste.trim() ? <div className="rw-row"><button type="button" className="btn btn-accent btn-sm" onClick={() => apply(paste)}>ใช้ข้อมูลนี้ (แทนที่)</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => apply(paste, "append")}>เพิ่มต่อท้าย</button></div> : null}
@@ -386,6 +402,8 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUnits((u) => [...u, { unit: "", addr: "" }])}><Icon name="plus" size={13} /> เพิ่มแถว</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => fileRef.current?.click()}><Icon name="folder" size={13} /> นำเข้าไฟล์ .xlsx</button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importXlsx(f); e.target.value = ""; }} />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => pdfRef.current?.click()}><Icon name="folder" size={13} /> นำเข้า PDF</button>
+          <input ref={pdfRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={(e) => { const fs = [...(e.target.files || [])]; if (fs.length) importPdf(fs); e.target.value = ""; }} />
           {units.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { if (await askConfirm({ message: `ล้างที่อยู่ทั้งหมด ${units.length} แถว?`, tone: "danger", confirmText: "ล้าง", cancelText: "ยกเลิก" })) setUnits([]); }}><Icon name="trash" size={13} /> ล้างทั้งหมด</button> : null}
           {badIdx.length ? <label className="rw-check"><input type="checkbox" checked={onlyBad} onChange={(e) => setOnlyBad(e.target.checked)} /> เฉพาะแถวที่ต้องดู ({badIdx.length})</label> : null}
           {demoTools?.units ? demoTools.units(setUnits, setMsg) : null}

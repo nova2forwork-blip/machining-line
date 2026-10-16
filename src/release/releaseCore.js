@@ -422,6 +422,40 @@ export function parseUnitsPaste(text) {
   }
   return { rows, skipped };
 }
+// ★ 2026-10-16: นำเข้า Unit | Address จากไฟล์ PDF (ตารางแบบ text ไม่ใช่สแกน) → ข้อความแท็บคั่น ส่งต่อ parseUnitsPaste
+//   จัดแถวตามตำแหน่งแนวตั้ง · แถวที่มี token รูปแบบ UAxxxx = Unit, token ที่เหลือตัวแรกที่หน้าตาเป็นที่อยู่ (มีเลข/ขีด) = Address
+export async function readUnitsPdf(pdfjsLib, data) {
+  const doc = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
+  const lines = [];
+  try {
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const vp = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
+      const ws = [];
+      for (const it of tc.items) {
+        if (!it.str || !it.str.trim()) continue;
+        const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+        ws.push({ t: it.str.trim(), x: tx[4], y: tx[5] });
+      }
+      ws.sort((a, b) => a.y - b.y || a.x - b.x);
+      let cur = null;
+      for (const w of ws) {
+        if (cur && Math.abs(w.y - cur.y) <= 3) cur.w.push(w); else { cur = { y: w.y, w: [w] }; lines.push(cur); }
+      }
+    }
+  } finally { try { doc.destroy(); } catch { /* ignore */ } }
+  const out = []; let skipped = 0;
+  for (const ln of lines) {
+    const toks = ln.w.sort((a, b) => a.x - b.x).flatMap((w) => w.t.split(/\s+/)).filter(Boolean);
+    const ui = toks.findIndex((t) => UNIT_RE.test(t));
+    if (ui < 0) { skipped++; continue; }
+    const rest = toks.filter((_, i) => i !== ui);
+    const addr = rest.find((t) => /\d/.test(t) && /[-_\/]/.test(t)) || rest.find((t) => /\d/.test(t)) || "";
+    out.push(`${toks[ui]}\t${addr}`);
+  }
+  return { text: out.join("\n"), found: out.length, skipped };
+}
 // ที่อยู่ที่ใช้ไปแล้ว (เก็บในหมายเหตุของ Release แผง แบบ "ที่อยู่: 25-E-301, 25-E-302")
 export const ADDR_TAG = "ที่อยู่:";
 export function addrNote(addrs) { return `${ADDR_TAG} ${addrs.join(", ")}`; }
