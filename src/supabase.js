@@ -2281,8 +2281,9 @@ export async function listReleaseIdsOfOrder(projectId, releaseOrder) {
 // ★ รอบ 12 (B33): เทียบแบบ "เลขเดียวกัน" — P-9 = P-09 = P-009 (ข้อมูลเก่าอาจสะกดต่างกัน) · ส่วนท้าย "(…)" ต้องตรงกัน
 export function releaseOrderKey(raw) {
   const s = String(raw || "").trim().toUpperCase();
-  const m = s.match(/^P\s*-?\s*0*(\d+)\s*(\(.*\))?$/);
-  return m ? `P-${Number(m[1])}${m[2] ? m[2].replace(/\s+/g, "") : ""}` : s.replace(/\s+/g, "");
+  // ★ 2026-10-13: ล็อต "P-142.1" (ปล่อยงานใหม่) — P-142.1 ≠ P-142 ≠ P-142.2
+  const m = s.match(/^P\s*-?\s*0*(\d+)(?:\.0*(\d+))?\s*(\(.*\))?$/);
+  return m ? `P-${Number(m[1])}${m[2] ? "." + Number(m[2]) : ""}${m[3] ? m[3].replace(/\s+/g, "") : ""}` : s.replace(/\s+/g, "");
 }
 export async function releaseOrderExists(projectId, releaseOrder) {
   const ro = String(releaseOrder || "").trim();

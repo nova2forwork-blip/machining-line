@@ -1,6 +1,7 @@
 # ห้ามขึ้น GitHub (repo นี้เป็น public)
 node_modules/
 dist/
+dist-demo/
 .env
 .env.local
 .env.*.local

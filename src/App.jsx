@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component, Fragment } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Component, Fragment, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -27,6 +27,12 @@ import { printLabels, LABEL_PRESETS } from "./labels.js";
 import { tsvToRows } from "./tsv.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
+import { realReleaseApi } from "./release/releaseApi.js";
+// ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
+const ReleaseWizard = lazy(() => import("./release/ReleaseWizard.jsx"));
+const ProjectLibLazy = lazy(() => import("./release/ProjectLib.jsx"));
+const ReleasePlanViewLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlanView })));
+const ReleasePlansCardLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlansCard })));
 
 // ── Ctrl+Z ย้อนการแก้ไขที่ยังไม่บันทึก (ทั้งแอปฝั่งสำนักงาน) ──────────────────────
 // ใช้ useUndoable แทน useState ในฟอร์ม/ตาราง → เก็บประวัติ state (สูงสุด 50 ขั้น)
@@ -1431,14 +1437,15 @@ function dateToIso(dateStr) {
 }
 // Release Order ต้องเป็นรูปแบบ P-<ตัวเลข> เช่น P-009 (ตามฟอร์มจริงของโรงงาน)
 // P-ตัวเลข + ต่อท้ายด้วยข้อความในวงเล็บได้ เช่น "P-184 (L13-L15)" (ไว้โน้ตว่าปล่อยอะไรไปบ้าง)
-const RELEASE_ORDER_RE = /^P-\d+(\s*\(.*\))?$/i;
+// ★ 2026-10-13: ล็อตของ Release แบบใหม่ = "P-142.1" (ปล่อยงานใหม่ → ปล่อยเป็นล็อต) — รับรูปแบบนี้ด้วย
+const RELEASE_ORDER_RE = /^P-\d+(\.\d+)?(\s*\(.*\))?$/i;
 function normalizeReleaseOrder(raw) {
   const s = String(raw || "").trim().toUpperCase();
   if (!s) return "";
   if (/^\d+$/.test(s)) return `P-${s.padStart(3, "0")}`; // พิมพ์เลขล้วน → เติม P- ให้
   // ★ รอบ 12 (B33): "P9" / "p 9" / "P-9" / "P-09" → "P-009" (เดิม "P-9" ≠ "P-009" = คนละใบ) · ส่วนท้าย "(…)" คงไว้
-  const m = s.match(/^P\s*-?\s*0*(\d+)(\s*\(.*\))?$/);
-  if (m) return `P-${m[1].padStart(3, "0")}${m[2] ? " " + m[2].trim() : ""}`;
+  const m = s.match(/^P\s*-?\s*0*(\d+)(?:\.0*(\d+))?(\s*\(.*\))?$/);
+  if (m) return `P-${m[1].padStart(3, "0")}${m[2] ? "." + Number(m[2]) : ""}${m[3] ? " " + m[3].trim() : ""}`;
   return s;
 }
 // ลำดับคอลัมน์ตามฟอร์ม Excel จริง (Image): [No.] Code, Qty, Length, Weight/M, Material, [Total Kg], Remark
@@ -6942,7 +6949,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 return (
                 <div className="pm-pncell">
                 <span className="pm-pnline1">
-                  <span style={r.mod_cancelled_at ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>{r.part_master?.part_no || "-"}</span>
+                  {/* เบอร์ที่ยกเลิก = เปลี่ยนสี (ไม่ขีดฆ่า) · ย้ายหมดแล้ว = สีจาง */}
+                  <span style={r.mod_cancelled_at ? (r.mod_cancel_keep === "moved" ? { color: "var(--muted)" } : { color: "var(--danger)", fontWeight: 700 }) : undefined}>{r.part_master?.part_no || "-"}</span>
                   {r.mod_version && (
                     <span onClick={(e) => { e.stopPropagation(); if (modByVersion(r.mod_version)) setModView(r.mod_version); }}
                       title={modNoteText(r.mod_note, lang) || (lang === "en" ? "See what changed" : "ดูว่าแก้อะไร")}
@@ -7128,12 +7136,74 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
 // ★ รอบ 17: ปุ่ม + ป็อปอัปสร้างงาน 4 แบบ — ใช้ร่วม หน้าปล่อยงาน (Release) และหน้าโปรเจค (เลือกโปรเจคไว้ให้)
 function releaseCreateItems(pick, disabled = false) {
+  // ★ 2026-10-13: "ปล่อยงานใหม่" (4 ขั้น: ที่อยู่ + PDF แบบ → BOM) แทน "เพิ่ม Release" + "เบอร์ประกอบ / แผง" เดิม
+  //   "เพิ่ม Release" เดิมยังอยู่ (ชื่อ "เพิ่มพาร์ทเสริม") — ใช้ปล่อยพาร์ทเสริม/ซ่อมที่ไม่อยู่ใน BOM
+  //   ฟอร์ม "เบอร์ประกอบ / แผง" เดิมยังอยู่ในโค้ด (open = "subasm") แต่เอาออกจากเมนูแล้ว
   return [
-    { key: "add", variant: "accent", icon: <Icon name="plus" size={15} />, label: "เพิ่ม Release", onClick: () => pick("add"), disabled },
-    { key: "import", variant: "accent", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => pick("import"), disabled },
-    { key: "subasm", variant: "accent", icon: <Icon name="box" size={15} />, label: "เบอร์ประกอบ / แผง", onClick: () => pick("subasm"), disabled },
-    { key: "bunk", variant: "accent", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
+    { key: "wizard", variant: "accent", primary: true, icon: <Icon name="plus" size={15} />, label: "ปล่อยงานใหม่", onClick: () => pick("wizard"), disabled },
+    { key: "add", variant: "ghost", icon: <Icon name="plus" size={15} />, label: "เพิ่มพาร์ทเสริม", title: "เพิ่ม Release แบบเดิม — พาร์ทเสริม/ซ่อมที่ไม่อยู่ใน BOM", onClick: () => pick("add"), disabled },
+    { key: "import", variant: "ghost", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => pick("import"), disabled },
+    { key: "bunk", variant: "ghost", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
   ];
+}
+// ── แผน Release (บันทึกจากหน้าปล่อยงานใหม่) → office เลือกปล่อยเป็นล็อต ──
+//   ต้องรัน migration-release-plans.sql · ยังไม่รัน = ไม่มีการ์ดนี้ (ปล่อยงานใหม่จะถามแล้วปล่อยทั้งใบแบบเดิม)
+function useReleasePlans(projectId = null) {
+  const [plans, setPlans] = useState([]);
+  const loadPlans = useCallback(async () => {
+    try { const r = await realReleaseApi.listPlans(projectId); setPlans(r.plans || []); } catch { setPlans([]); }
+  }, [projectId]);
+  useEffect(() => { loadPlans(); }, [loadPlans]);
+  return { plans, setPlans, loadPlans };
+}
+function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload }) {
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const onPlanChange = (p) => {
+    setView((v) => (v ? { ...v, plan: p } : v));
+    setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => { realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error")); }, 800);
+  };
+  return (
+    <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
+      <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder}
+        onBack={() => setView(null)} onPlanChange={onPlanChange}
+        onModified={async (np, mod) => {
+          setView((v) => (v ? { ...v, plan: np } : v));
+          setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
+          mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
+          await onReload();
+        }}
+        onReleased={async ({ lotNo, rows }) => {
+          const q = rows.reduce((a, r) => a + r.qty, 0);
+          mlsToast(`ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง`, "success");
+          await onReload();
+        }} />
+    </Suspense>
+  );
+}
+// หน้าปล่อยงานใหม่ (เต็มหน้า แทนรายการ) — ใช้ทั้งหน้า "ปล่อยงาน" และหน้าโปรเจค
+function ReleaseWizardView({ user, projects, releases, plans = [], initialProjectId = "", onClose, onNeedProject, onSaved }) {
+  return (
+    <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิดหน้าปล่อยงานใหม่…</div>}>
+      <ReleaseWizard user={user} projects={projects} releases={releases} plans={plans} initialProjectId={initialProjectId} api={realReleaseApi}
+        onCancel={onClose} onNeedProject={onNeedProject}
+        onSaved={async (r) => {
+          if (!r.legacy) {
+            mlsToast(r.lotNo ? `บันทึก Release ${r.releaseOrder} + ปล่อยทั้งหมดเป็น ${r.lotNo} แล้ว` : `บันทึก Release ${r.releaseOrder} แล้ว — เลือกปล่อยล็อตแรกได้เลย`, "success");
+            await onSaved(r);
+            return;
+          }
+          const { releaseOrder, make, plan } = r;
+          const nPanel = make.panels ? plan.panels.reduce((a, p) => a + p.qty, 0) : 0;
+          const nSub = make.subs ? plan.subs.reduce((a, s) => a + Math.round(s.qty), 0) : 0;
+          const nPart = make.parts ? plan.parts.reduce((a, p) => a + Math.round(p.qty), 0) : 0;
+          mlsToast(`บันทึก ${releaseOrder} สำเร็จ — สร้าง QR ${nc(nPanel + nSub + nPart)} ดวง (แผง ${nc(nPanel)} · ซับ ${nc(nSub)} · พาร์ท ${nc(nPart)}) · ตั้ง BOM แล้ว`, "success");
+          await onSaved(r);
+        }} />
+    </Suspense>
+  );
 }
 // onDone(dept) — หลังบันทึกสำเร็จ: dept = แผนกของงานที่สร้าง (machine / sub / panel / packing) ให้หน้าโปรเจคสลับแท็บไปให้เห็น
 function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProjectId = "", onNeedProject, onDone }) {
@@ -7259,6 +7329,8 @@ function ReleasePage({ user, goTo }) {
   const [createOpen, setCreateOpen] = useState(null);   // "add" | "import" | "subasm" | "bunk" (ป็อปอัปสร้างงาน)
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
+  const { plans, setPlans, loadPlans } = useReleasePlans(null);   // ★ 2026-10-13: Release แบบใหม่ที่ยังปล่อยล็อตไม่ครบ
+  const [planView, setPlanView] = useState(null);                  // { plan, openBuilder }
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
@@ -7332,13 +7404,34 @@ function ReleasePage({ user, goTo }) {
   if (viewGroup) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
   }
+  if (planView) {
+    return <ReleasePlanPage view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+  }
+  if (createOpen === "wizard") {
+    return (
+      <>
+        <ReleaseWizardView user={user} projects={projects} releases={recent} plans={plans} initialProjectId={projectFilter ? (projects.find((p) => p.code === projectFilter)?.id || "") : ""}
+          onClose={() => setCreateOpen(null)} onNeedProject={() => setShowNewProject(true)}
+          onSaved={async (r) => {
+            setCreateOpen(null);
+            if (r.legacy) { clearFilters(); setOrderSearch(r.releaseOrder); setDeptFilter("panel"); await load(); return; }
+            await Promise.all([load(), loadPlans()]);
+            setPlanView({ plan: r.plan, openBuilder: !r.lotNo });
+          }} />
+        {showNewProject && (
+          <QuickAddProjectModal onClose={() => setShowNewProject(false)}
+            onCreated={(project) => { setProjects((prev) => [...prev, project].sort((a, b) => a.code.localeCompare(b.code))); }} />
+        )}
+      </>
+    );
+  }
 
   return (
     <div>
       <div className="page-head page-head-release">
         <div>
           <div className="page-title">ปล่อยงาน (Release)</div>
-          <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "เพิ่ม Release" เพื่อปล่อยงานใหม่ (วางข้อมูลจาก Excel ได้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
+          <div className="page-sub">ค้นหา Release ที่เคยปล่อยงาน หรือกด "ปล่อยงานใหม่" (ลงที่อยู่ + อัพ PDF แบบ → ระบบสร้าง BOM และ QR ให้) · แตะแถวเพื่อดูความคืบหน้า แก้ไข หรือลบ</div>
         </div>
         <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen)} />
       </div>
@@ -7382,6 +7475,12 @@ function ReleasePage({ user, goTo }) {
         )}
       </Card>
 
+      {plans.length ? (
+        <Suspense fallback={null}>
+          <ReleasePlansCardLazy plans={plans.filter((p) => !projectFilter || p.projectCode === projectFilter)} releases={recent} onOpen={(p) => setPlanView({ plan: p, openBuilder: false })} />
+        </Suspense>
+      ) : null}
+
       <DeptTabs value={deptFilter} onChange={setDeptFilter} />
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
@@ -7411,7 +7510,7 @@ function ReleasePage({ user, goTo }) {
             return { gTotal, gFinished, gPct, statsReady: statsLoaded || g.releases.every((r) => r.id in allUnitStats) };
           }}
           rowProps={(g) => ({ className: "release-row", onClick: () => setViewGroup(g) })}
-          empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"เพิ่ม Release\" เพื่อเริ่ม")}
+          empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"ปล่อยงานใหม่\" เพื่อเริ่ม")}
           columns={[
             { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
@@ -11775,6 +11874,9 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   const [dept, setDept] = useState(null);        // null = ยังไม่เลือก → เลือกแผนกแรกที่มีงานให้เอง
   const [createOpen, setCreateOpen] = useState(null);
   const [lists, setLists] = useState(null);      // { projects, parts } สำหรับป็อปอัปสร้างงาน (โหลดเบื้องหลัง)
+  const { plans, setPlans, loadPlans } = useReleasePlans(project.id);
+  const [planView, setPlanView] = useState(null);
+  const [libOpen, setLibOpen] = useState(false);   // ★ ซับ / พาร์ท ของโปรเจค (คลัง — Release ลงแค่แผง)
   const [showNewProject, setShowNewProject] = useState(false);
   const loadLists = useCallback(async () => {
     try {
@@ -11822,6 +11924,36 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
       />
     );
   }
+  if (planView) {
+    return <ReleasePlanPage view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+  }
+  if (libOpen) {
+    return (
+      <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด…</div>}>
+        <ProjectLibLazy projectId={project.id} projectCode={project.code} api={realReleaseApi} user={user} onBack={() => setLibOpen(false)}
+          onSaved={async (r) => { mlsToast(r?.errors?.length ? "บันทึกซับ/พาร์ทแล้ว — มีบางรายการไม่สำเร็จ" : "บันทึกซับ / พาร์ท ของโปรเจคแล้ว", r?.errors?.length ? "warning" : "success"); await Promise.all([loadLists(), loadPlans()]); }} />
+      </Suspense>
+    );
+  }
+  if (createOpen === "wizard" && lists) {
+    return (
+      <>
+        <ReleaseWizardView user={user} releases={rels || []} plans={plans} initialProjectId={project.id}
+          projects={lists.projects.some((p) => p.id === project.id) ? lists.projects : [project, ...lists.projects]}
+          onClose={() => setCreateOpen(null)} onNeedProject={() => setShowNewProject(true)}
+          onSaved={async (r) => {
+            setCreateOpen(null);
+            if (r.legacy) { setDept("panel"); await Promise.all([load(), loadLists()]); return; }
+            await Promise.all([load(), loadLists(), loadPlans()]);
+            setPlanView({ plan: r.plan, openBuilder: !r.lotNo });
+          }} />
+        {showNewProject && (
+          <QuickAddProjectModal onClose={() => setShowNewProject(false)}
+            onCreated={(p) => setLists((l) => (l ? { ...l, projects: [...l.projects, p].sort((a, b) => a.code.localeCompare(b.code)) } : l))} />
+        )}
+      </>
+    );
+  }
 
   return (
     <div>
@@ -11834,11 +11966,16 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
           <div className="page-sub">{L("Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด · สร้างงานใหม่ในโปรเจคนี้ได้จากปุ่ม เพิ่ม / นำเข้า",
             "All releases in this project · tap a row to view parts and details · create new work in this project with the Add / Import buttons")}</div>
         </div>
-        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen, !lists)} />
+        <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={[...releaseCreateItems(setCreateOpen, !lists), { key: "lib", variant: "ghost", icon: <Icon name="grid" size={15} />, label: "ซับ / พาร์ท ของโปรเจค", title: "ลงแบบซับ/พาร์ท แยกหมวดไว้ที่โปรเจค — Release ลงแค่แผง แล้วดึงจากที่นี่", onClick: () => setLibOpen(true) }]} />
       </div>
       {project.status === "closed" ? (
         <div className="proj-closed-note">{L("⚠ โปรเจคนี้ปิดแล้ว (เสร็จ) — สร้างงานได้ แต่หน้าเครื่องบันทึกงานเพิ่มไม่ได้จนกว่าจะเปิดโปรเจคอีกครั้ง",
           "⚠ This project is closed (done) — you can still create work, but machine terminals can't record it until the project is reopened")}</div>
+      ) : null}
+      {plans.length && rels ? (
+        <Suspense fallback={null}>
+          <ReleasePlansCardLazy plans={plans} releases={rels} onOpen={(p) => setPlanView({ plan: p, openBuilder: false })} />
+        </Suspense>
       ) : null}
       <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} />
       <Card title={groups ? `Release ${curTab.label} (${groups.length})` : "Release ทั้งหมด"}>
@@ -11857,8 +11994,8 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             <div className="empty-state-sub">{curDept === "packing"
               ? L("กด “นำเข้าฟอร์มบั้ง (แพ็ก)” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Import bundle form (packing)” above to create it in this project")
               : curDept === "machine"
-                ? L("กด “เพิ่ม Release” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Add Release” above to create it in this project")
-                : L("กด “เบอร์ประกอบ / แผง” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “Assembly / panel no.” above to create it in this project")}</div>
+                ? L("กด “ปล่อยงานใหม่” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “New release” above to create it in this project")
+                : L("กด “ปล่อยงานใหม่” ด้านบนเพื่อสร้างในโปรเจคนี้", "Press “New release” above to create it in this project")}</div>
           </div>
         ) : (
           <DataTable id="project-releases" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
