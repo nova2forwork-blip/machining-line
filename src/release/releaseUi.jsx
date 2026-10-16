@@ -1,7 +1,7 @@
 // ชิ้นส่วนหน้าจอที่ใช้ร่วมกัน (หน้า Release · ตัวสร้างล็อต · Modify · Total)
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { askConfirm } from "../confirm.jsx";
-import { nf, PART_CATS, UNCAT, seedPartGroups, partGroupsOf } from "./releaseCore.js";
+import { NC, findKey, nlen, nf, PART_CATS, UNCAT, seedPartGroups, partGroupsOf } from "./releaseCore.js";
 
 export const SUB_SHORT = { "พับ": "พับ", "เชื่อม": "เชื่อม", "ยิง": "ยิง", "Site Item": "Site Item" };
 export function Pill({ tone = "muted", children, title }) { return <span className={`rw-pill ${tone}`} title={title}>{children}</span>; }
@@ -79,3 +79,38 @@ export function PartGroupBar({ mode, groups, catOv = {}, bom, counts, filter = "
     </div>
   );
 }
+
+// ★ เบอร์ลูกของซับ (จากคลังซับ/พาร์ทของโปรเจค) — ซับซ้อนซับกางต่อได้ทุกชั้น · กันวนซ้ำด้วย seen
+export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact = false }) {
+  const L = lib || { subs: {}, parts: {} };
+  const sk = findKey(L.subs, code);
+  const sub = sk ? L.subs[sk] : null;
+  const pad = { paddingLeft: 10 + depth * 22 };
+  if (!sub) return <tr className="rw-kid"><td /><td colSpan={compact ? 4 : 7} className="rw-muted small" style={pad}>↳ ยังไม่มีแบบซับ {code} ในโปรเจค — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วจะเห็นเบอร์ลูก</td></tr>;
+  const items = (sub.full || sub.items || []).filter((i) => (i[4] || "") !== "ยกเลิก");   // full = ทุกบรรทัดจาก PDF ซับ (รวมสกรู/ยาง) · ไม่มี = ใช้ BOM ในระบบ
+  if (!items.length) return <tr className="rw-kid"><td /><td colSpan={compact ? 4 : 7} className="rw-muted small" style={pad}>↳ ซับนี้ยังไม่มีเบอร์ลูก</td></tr>;
+  return items.map((it, n) => {
+    const [k, c, q] = it;
+    const isSub = k === "sub";
+    const rec = isSub ? L.subs[findKey(L.subs, c)] : L.parts[findKey(L.parts, c)];
+    const p2 = path + ">" + c + "#" + n;
+    const loop = isSub && seen.includes(NC(c));
+    return (
+      <Fragment key={p2}>
+        <tr className="rw-kid">
+          <td className="r rw-muted">↳</td>
+          <td className="rw-mono" style={pad}>
+            {isSub && !loop ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [p2]: !o[p2] }))} aria-expanded={!!open[p2]}>{open[p2] ? "▾" : "▸"}</button> : null}
+            <b>{c}</b> {isSub ? <Pill tone="sub">ซับ</Pill> : k === "hw" ? <Pill tone="muted">HW</Pill> : null}{loop ? <span className="rw-muted small"> (วนซ้ำ)</span> : null}
+          </td>
+          <td className="rw-desc">{rec?.d || ""}</td>
+          {compact ? <><td className="r">{nlen(rec?.l)}</td><td className="rw-muted">× {nlen(q)}</td></> : <>
+            <td className="r">{nlen(q)}</td><td />
+            <td className="r">{nlen(rec?.l)}</td><td className="r">{nlen(rec?.h)}</td><td>{rec?.f || ""}</td></>}
+        </tr>
+        {isSub && !loop && open[p2] ? <SubKids lib={lib} code={c} path={p2} depth={depth + 1} open={open} setOpen={setOpen} seen={[...seen, NC(c)]} compact={compact} /> : null}
+      </Fragment>
+    );
+  });
+}
+

@@ -3,11 +3,11 @@
 //   Release ลงแค่แผง → แผงไหนใช้ซับ/พาร์ทตัวไหน ระบบดึงจากที่นี่ไปใส่ใน Release ให้เอง
 //   เก็บ: part_master + BOM ของซับ (ในระบบเดิม) + หมวด/งานซับ/ใบงาน (แถว LIB ใน release_plans)
 // ══════════════════════════════════════════════════════════════════════════
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf } from "./releaseCore.js";
-import { Pill } from "./releaseUi.jsx";
+import { Pill, SubKids } from "./releaseUi.jsx";
 import "./release-wizard.css";
 
 const EMPTY = { panels: {}, subs: {}, parts: {} };
@@ -27,6 +27,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const [reading, setReading] = useState(null);
   const [drag, setDrag] = useState(false);
   const [saving, setSaving] = useState({ busy: false, msg: "", err: "", done: null });
+  const [open, setOpen] = useState({});   // ซับที่กางดูเบอร์ลูก
   const fileRef = useRef(null);
   const dirty = pdfs.length > 0 || saving.done === false;
 
@@ -127,14 +128,17 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
           {tab === "sub" ? (
             <table className="data-table rw-table">
               <thead><tr><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th>ที่มา</th></tr></thead>
-              <tbody>{subRows.slice(0, 600).map((s, i) => { return (
-                <tr key={s.code}>
+              <tbody>{subRows.slice(0, 600).map((s, i) => { const path = "L|" + s.code; return (
+                <Fragment key={s.code}>
+                <tr>
                   <td className="r rw-num">{i + 1}</td>
-                  <td className="rw-mono"><b>{s.code}</b>{isStar(s.code) ? <> <Pill tone="warn">*</Pill></> : null}</td>
+                  <td className="rw-mono"><button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title={open[path] ? "ย่อ" : "ขยายดูเบอร์ลูก"}>{open[path] ? "▾" : "▸"}</button><b>{s.code}</b>{isStar(s.code) ? <> <Pill tone="warn">*</Pill></> : null}</td>
                   <td className="rl-desc"><span>{s.d}</span></td>
                   <td className="r rw-num">{nlen(s.l)}</td>
-                                    <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}</td>
-                </tr>); })}</tbody>
+                  <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}</td>
+                </tr>
+                {open[path] ? <SubKids lib={bom} code={s.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(s.code)]} compact /> : null}
+                </Fragment>); })}</tbody>
             </table>
           ) : (
             <table className="data-table rw-table rt-allparts">

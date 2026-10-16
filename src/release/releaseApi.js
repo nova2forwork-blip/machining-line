@@ -58,7 +58,7 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
     if (errs.length) throw new Error(`อ่าน BOM ไม่ได้ ${errs.length} เบอร์ (${errs.slice(0, 3).map((x) => x.item.part_no).join(", ")})`);
   }
   // หมวด / งานซับ / ใบงาน ที่ office ตั้งไว้ที่ "ซับ / พาร์ท ของโปรเจค" (แถว LIB ใน release_plans)
-  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
+  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
   return lib;
 }
 
@@ -257,7 +257,10 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   onProgress("บันทึกหมวด / งานซับ / ใบงาน…");
   const hwKinds = {}; for (const c of partCodes) if (bom.parts[c].k === "hw") hwKinds[c] = "hw";
   let old = null; try { old = (await listPlans(projectId)).lib; } catch (e) { if (e && e.code === "not_installed") { st.errors.push("ยังไม่ได้รัน migration-release-plans.sql — หมวด/งานซับไม่ถูกเก็บ"); return st; } throw e; }
-  const body = { v: 1, kind: "lib", projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: hwKinds, pdfs: [...(old?.pdfs || []).filter((d) => !(pdfs || []).some((n) => n.file === d.file)), ...(pdfs || [])], by, updatedAt: new Date().toISOString() };
+  // ★ 2026-10-16: เก็บรายการลูก "ครบทุกบรรทัด" ของซับที่อัพรอบนี้ (รวมสกรู/ยาง/กระจก ที่ไม่มี QR จึงไม่อยู่ใน BOM ของระบบ) ไว้โชว์ตอนกางดูเบอร์ลูก
+  const subItems = { ...(old?.subItems || {}) };
+  for (const c of subCodes) { if (newCodes && !newCodes.has(NC(c))) continue; subItems[c] = (bom.subs[c].items || []).filter((it) => (it[4] || "") !== "ยกเลิก").map((it) => [it[0], it[1], it[2]]); }
+  const body = { v: 1, kind: "lib", subItems, projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: hwKinds, pdfs: [...(old?.pdfs || []).filter((d) => !(pdfs || []).some((n) => n.file === d.file)), ...(pdfs || [])], by, updatedAt: new Date().toISOString() };
   await planRpc(projectId, "LIB", body, old ? old.id : null);
   return st;
 }
