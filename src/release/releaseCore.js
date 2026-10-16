@@ -165,7 +165,7 @@ export async function readPdfFiles(files, onEach) {
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
       const d = await readShopPdf(pdfjsLib, buf, f.name);
-      out.push({ ...d, src: "upload", size: f.size });
+      out.push({ ...d, src: "upload", size: f.size, _file: f });
     } catch (e) {
       out.push({ file: f.name, kind: "unknown", code: f.name.replace(/\.pdf$/i, ""), title: {}, bom: [], warn_read: [`เปิดไฟล์ไม่ได้: ${e?.message || e}`], src: "upload" });
     }

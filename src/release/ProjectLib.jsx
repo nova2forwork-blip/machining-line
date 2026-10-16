@@ -40,6 +40,23 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
 
   // คลังรวม = ของเดิมในระบบ + PDF ที่เพิ่งอัพ (ทับค่าเดิมของเบอร์นั้น)
   const bom = useMemo(() => buildBom({ lib: lib || EMPTY, pdfs, ack: {}, useLib: true }), [lib, pdfs]);
+  // ไฟล์ PDF ที่เก็บไว้ในระบบ (path อยู่ในแถว LIB) → ปุ่ม "PDF" เปิดดูต้นฉบับ · ปุ่ม "อ่านซ้ำ" อ่านใหม่จากไฟล์เดิม
+  const pdfOf = useMemo(() => new Map(((lib && lib.pdfs) || []).filter((x) => x.path).map((x) => [NC(x.code), x])), [lib]);
+  async function openPdf(code) {
+    const e = pdfOf.get(NC(code)); if (!e || !api.getLibPdfUrl) return;
+    try { window.open(await api.getLibPdfUrl(e.path), "_blank", "noopener"); } catch (err) { setReading({ err: "เปิดไฟล์ PDF ไม่ได้: " + (err?.message || err) }); }
+  }
+  async function rereadStored() {
+    const list = [...pdfOf.values()]; if (!list.length || !api.downloadLibPdf) return;
+    setReading({ n: 0, of: list.length });
+    try {
+      const files = []; let n = 0;
+      for (const e of list) { files.push(await api.downloadLibPdf(e.path, e.file || (e.code + ".pdf"))); setReading({ n: ++n, of: list.length }); }
+      const got = (await readPdfFiles(files)).filter((d) => d.kind === "sub" || d.kind === "part");
+      setPdfs((old) => { const names = new Set(got.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...got]; });
+      setReading({ warn: `อ่านซ้ำจากไฟล์ที่เก็บไว้ ${got.length} ไฟล์แล้ว — ตรวจแล้วกด "บันทึก" เพื่ออัปเดตข้อมูล` });
+    } catch (err) { setReading({ err: "อ่านซ้ำไม่ได้: " + (err?.message || err) }); }
+  }
   const srcOf = (code) => (pdfs.some((d) => NC(d.code) === NC(code)) ? "pdf" : "lib");
   const catOf = useMemo(() => makeCatOf(bom, catOv, { partMode, partGroups }), [bom, catOv, partMode, partGroups]);
   const subs = useMemo(() => Object.entries(bom.subs).map(([code, s]) => ({ code, ...s, items: (s.items || []).filter((it) => (it[4] || "") !== "ยกเลิก") })).sort((a, b) => ncmp(a.code, b.code)), [bom]);
@@ -68,7 +85,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     if (!(await askConfirm({ title: "บันทึกซับ / พาร์ท ของโปรเจค?", message: [`ซับ ${nf(subs.length)} เบอร์ · พาร์ท ${nf(parts.length)} เบอร์`, nNew ? `PDF ใหม่ ${nNew} ไฟล์ → สร้าง/อัปเดตเบอร์ + BOM ซับในระบบ` : "ไม่มี PDF ใหม่ — บันทึกเฉพาะหมวด / งานซับ / ใบงาน", "Release ที่สร้างใหม่จะดึงจากคลังนี้ · Release เดิมที่ยังไม่มี BOM จะดึงให้เมื่อเปิด"].join("\n"), tone: "warn", confirmText: "บันทึก", cancelText: "กลับ" }))) return;
     setSaving({ busy: true, msg: "เริ่มบันทึก…", err: "", done: null });
     try {
-      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
+      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
       setSaving({ busy: false, msg: "", err: "", done: true, errors: r?.errors || [] });
       setPdfs([]);
       const l = await api.loadBomLibrary(projectId).catch(() => null); if (l) setLib(l);
@@ -115,6 +132,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
         <div className="rw-tools">
           <span className="rw-muted small">{state.s === "loading" ? "กำลังโหลด…" : <>ในโปรเจค: ซับ <b>{nf(subs.length)}</b> · พาร์ท <b>{nf(parts.length)}</b> เบอร์{pdfs.length ? <> · PDF ใหม่ {pdfs.length} ไฟล์ (ซับ {nPdfSub} · พาร์ท {nPdfPart}) <Pill tone="mod">ยังไม่บันทึก</Pill></> : null}</>}</span>
           {pdfs.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPdfs([])}>เอา PDF ใหม่ออก</button> : null}
+          {pdfOf.size && api.downloadLibPdf ? <button type="button" className="btn btn-ghost btn-sm" onClick={rereadStored} disabled={!!reading && !reading.err && !reading.warn} title="อ่านข้อมูลใหม่จากไฟล์ PDF ที่เก็บไว้ในระบบ (ไม่ต้องอัพซ้ำ)">↻ อ่านซ้ำจากไฟล์ที่เก็บไว้ ({pdfOf.size})</button> : null}
           {demoTools?.libPdfs ? demoTools.libPdfs(setPdfs) : null}
         </div>
         <div className="rl-tabs" role="tablist">
@@ -135,7 +153,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
                   <td className="rw-mono"><button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title={open[path] ? "ย่อ" : "ขยายดูเบอร์ลูก"}>{open[path] ? "▾" : "▸"}</button><b>{s.code}</b>{isStar(s.code) ? <> <Pill tone="warn">*</Pill></> : null}</td>
                   <td className="rl-desc"><span>{s.d}</span></td>
                   <td className="r rw-num">{nlen(s.l)}</td>
-                  <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}</td>
+                  <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{pdfOf.has(NC(s.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(s.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
                 </tr>
                 {open[path] ? <SubKids lib={bom} code={s.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(s.code)]} compact /> : null}
                 </Fragment>); })}</tbody>
@@ -154,7 +172,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
                     <td className="rl-desc"><span>{p.d}</span></td>
                     <td className="r rw-num">{nlen(p.l)}</td>
                     <td className="rw-mono rt-inv">{p.binv || p.m || <span className="rw-muted">—</span>}</td>
-                                        <td>{srcOf(p.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}</td>
+                                        <td>{srcOf(p.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{pdfOf.has(NC(p.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(p.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
                   </tr>);
                 return rows;
               })}</tbody>

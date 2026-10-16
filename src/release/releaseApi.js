@@ -62,6 +62,27 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
   return lib;
 }
 
+// ═ เก็บ / เปิด ตัวไฟล์ PDF ของซับ-พาร์ท (Storage bucket "release-pdfs" · ต้องรัน migration-release-pdfs.sql) ═
+//   path = <projectId>/<sub|part>/<เบอร์>.pdf · อัพซ้ำเบอร์เดิม = ทับไฟล์เดิม
+const PDF_BUCKET = "release-pdfs";
+const safeSeg = (x) => String(x || "").trim().replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "x";
+async function uploadLibPdf(projectId, d) {
+  const path = `${projectId}/${d.kind === "part" ? "part" : "sub"}/${safeSeg(d.code)}.pdf`;
+  const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, d._file, { contentType: "application/pdf", upsert: true });
+  if (error) throw error;
+  return path;
+}
+export async function getLibPdfUrl(path) {
+  const { data, error } = await supabase.storage.from(PDF_BUCKET).createSignedUrl(path, 600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+export async function downloadLibPdf(path, name = "file.pdf") {
+  const { data, error } = await supabase.storage.from(PDF_BUCKET).download(path);
+  if (error) throw error;
+  return new File([data], name, { type: "application/pdf" });
+}
+
 export async function orderExists(projectId, ro) { return releaseOrderExists(projectId, ro); }
 
 // ══ บันทึกทั้งใบ ══
@@ -258,9 +279,15 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   const hwKinds = {}; for (const c of partCodes) if (bom.parts[c].k === "hw") hwKinds[c] = "hw";
   let old = null; try { old = (await listPlans(projectId)).lib; } catch (e) { if (e && e.code === "not_installed") { st.errors.push("ยังไม่ได้รัน migration-release-plans.sql — หมวด/งานซับไม่ถูกเก็บ"); return st; } throw e; }
   // ★ 2026-10-16: เก็บรายการลูก "ครบทุกบรรทัด" ของซับที่อัพรอบนี้ (รวมสกรู/ยาง/กระจก ที่ไม่มี QR จึงไม่อยู่ใน BOM ของระบบ) ไว้โชว์ตอนกางดูเบอร์ลูก
+  // เก็บตัวไฟล์ PDF ที่อัพรอบนี้ (ไม่สำเร็จ = เตือน แต่ข้อมูลที่อ่านได้ยังบันทึกตามปกติ)
+  const pdfsOut = [];
+  const upErrs = [];
+  await pool((pdfs || []).filter((d) => d._file), 4, async (d) => { d.path = await uploadLibPdf(projectId, d); }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
+  for (const d of pdfs || []) pdfsOut.push({ file: d.file, kind: d.kind, code: d.code, ...(d.path ? { path: d.path } : {}) });
+  if (upErrs.length) { const m = String(upErrs[0].e?.message || upErrs[0].e || ""); st.errors.push(/bucket|not found|404/i.test(m) ? "ยังไม่ได้รัน migration-release-pdfs.sql — ไม่ได้เก็บตัวไฟล์ PDF (ข้อมูลที่อ่านได้บันทึกแล้ว)" : `เก็บไฟล์ PDF ไม่สำเร็จ ${upErrs.length} ไฟล์ (${m.slice(0, 80)})`); }
   const subItems = { ...(old?.subItems || {}) };
   for (const c of subCodes) { if (newCodes && !newCodes.has(NC(c))) continue; subItems[c] = (bom.subs[c].items || []).filter((it) => (it[4] || "") !== "ยกเลิก").map((it) => [it[0], it[1], it[2]]); }
-  const body = { v: 1, kind: "lib", subItems, projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: hwKinds, pdfs: [...(old?.pdfs || []).filter((d) => !(pdfs || []).some((n) => n.file === d.file)), ...(pdfs || [])], by, updatedAt: new Date().toISOString() };
+  const body = { v: 1, kind: "lib", subItems, projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: hwKinds, pdfs: [...(old?.pdfs || []).filter((d) => !pdfsOut.some((n) => NC(n.code) === NC(d.code) && n.kind === d.kind)), ...pdfsOut], by, updatedAt: new Date().toISOString() };
   await planRpc(projectId, "LIB", body, old ? old.id : null);
   return st;
 }
@@ -318,4 +345,4 @@ export async function modifyRelease({ plan, mod, lotOps, docDate }, onProgress =
   return np;
 }
 
-export const realReleaseApi = { projectContext, loadBomLibrary, saveLibrary, orderExists, saveRelease, savePlan, updatePlan, listPlans, releaseLot, lotLimits, modifyRelease };
+export const realReleaseApi = { projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, orderExists, saveRelease, savePlan, updatePlan, listPlans, releaseLot, lotLimits, modifyRelease };
