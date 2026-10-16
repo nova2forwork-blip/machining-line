@@ -351,7 +351,8 @@ export function countUnits(units, bom) {
   for (const u of units) { const k = String(u.unit || "").trim(); if (k) m.set(k, (m.get(k) || 0) + 1); }
   return [...m.entries()].sort((a, b) => ncmp(a[0], b[0])).map(([unit, qty]) => ({ unit, qty, has: !!(bom.panels[findKey(bom.panels, unit)] || null) }));
 }
-export function explode(units, bom) {
+// picks = โหมด "เฉพาะซับ/พาร์ท" (ไม่มีแผง): [{ code, kind:"sub"|"part", qty }] — ซับที่เลือกแตกลูกลงไปทุกชั้นเหมือนซับใต้แผง
+export function explode(units, bom, picks = null) {
   const subs = new Map(), parts = new Map();
   const walk = (items, mult, depth, parentKind, seen) => {
     for (const it of items) {
@@ -370,6 +371,17 @@ export function explode(units, bom) {
     }
   };
   for (const c of countUnits(units, bom)) if (c.has) walk(bom.panels[findKey(bom.panels, c.unit)].items, c.qty, 1, "panel", new Set());
+  for (const pk of picks || []) {
+    const q = Number(pk.qty) || 0; if (!(q > 0)) continue;
+    if (pk.kind === "sub") {
+      const sk = findKey(bom.subs, pk.code); const code = sk || pk.code;
+      const s = subs.get(code) || { code, qty: 0, depth: 1 }; s.qty += q; s.depth = 1; subs.set(code, s);
+      if (sk) walk(bom.subs[sk].items || [], q, 2, "sub", new Set([sk]));
+    } else {
+      const code = findKey(bom.parts, pk.code) || pk.code;
+      const p = parts.get(code) || { code, qty: 0, loose: 0, kind: "part" }; p.qty += q; p.loose += q; parts.set(code, p);
+    }
+  }
   return { subs, parts };
 }
 // เช็กลิสต์ PDF ของใบนี้: แผงจาก Unit → ซับจาก BOM แผง → พาร์ท (เฉพาะงานตัด/พับ/เหล็ก)
@@ -484,10 +496,10 @@ export function addrsFromNote(note) {
 // ══ สรุปสิ่งที่จะสร้างตอนบันทึก (ใช้ทั้งหน้าจอขั้น ④ และตอนบันทึกจริง) ══
 //   panels: แบบแผง × จำนวน (QR 1 ต่อที่อยู่) · subs: ซับทุกชั้น (QR ต่อชุด) · parts: งานตัด/พับ/เหล็ก (QR ต่อชิ้น)
 //   glass / hw / other = ไม่ทำ QR (ใบเบิก)
-export function planRelease(units, bom, catOf) {
+export function planRelease(units, bom, catOf, picks = null) {
   // หมวดที่ office ตั้งเอง (Setting) ไม่ใช่หมวดมาตรฐาน → ผลิต/ใบงานคิดจากหมวดอัตโนมัติ (base) · หมวดที่โชว์ = ที่ตั้งเอง
   const cnt = countUnits(units, bom);
-  const ex = explode(units, bom);
+  const ex = explode(units, bom, picks);
   const addrOf = new Map();
   for (const u of units) { const k = String(u.unit || "").trim(); if (!k) continue; (addrOf.get(k) || addrOf.set(k, []).get(k)).push(String(u.addr || "").trim().toUpperCase()); }
   const panels = cnt.map((c) => ({ code: c.unit, qty: c.qty, has: c.has, addrs: addrOf.get(c.unit) || [], d: (bom.panels[findKey(bom.panels, c.unit)] || {}).d || "" }));
@@ -745,7 +757,7 @@ export function needOf(plan) {
   const catOf = makeCatOf(plan.bom, plan.catOv || {}, plan);
   const cAddr = plan.cancelAddr || {};
   const units = (plan.units || []).filter((u) => !cAddr[addrKey(u.addr)]);
-  const p = planRelease(units, plan.bom, catOf);
+  const p = planRelease(units, plan.bom, catOf, plan.picks);
   for (const x of plan.extra || []) {
     if (x.kind === "sub") { if (!p.subs.some((s) => NC(s.code) === NC(x.code))) p.subs.push({ code: x.code, qty: x.qty, depth: 1, d: x.d || "", l: x.l ?? null, hasBom: false, added: x.mod }); }
     else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: x.mod });
@@ -753,11 +765,11 @@ export function needOf(plan) {
   const adj = plan.adj || {}, cancel = plan.cancel || {};
   // ยอดเดิมก่อน Modify (ก่อนยกเลิกที่อยู่ด้วย) — ใช้โชว์ขีดฆ่า
   const hasBE = !!(plan.bomEdits && plan.bomEdits.length);
-  const base = Object.keys(cAddr).length || hasBE ? planRelease(plan.units || [], hasBE ? bomBefore(plan.bom) : plan.bom, catOf) : null;
+  const base = Object.keys(cAddr).length || hasBE ? planRelease(plan.units || [], hasBE ? bomBefore(plan.bom) : plan.bom, catOf, plan.picks) : null;
   const baseQty = new Map(); if (base) for (const r of [...base.subs, ...base.parts, ...base.glass, ...base.hw, ...base.other]) baseQty.set(NC(r.code), r.qty);
   // แก้ BOM ลูก (ซับ/แผง) แล้วเบอร์นั้นไม่ถูกใช้อีก → คงแถวไว้ qty 0 + ป้ายยกเลิก (ล็อตที่ปล่อยไปแล้วยังอ้างถึงได้)
   if (hasBE) {
-    const base2 = planRelease(units, bomBefore(plan.bom), catOf);
+    const base2 = planRelease(units, bomBefore(plan.bom), catOf, plan.picks);
     const verOf = (code) => { const e = [...plan.bomEdits].reverse().find((x) => NC(x.code) === NC(code) || NC(x.newCode) === NC(code)); return e ? e.ver : ""; };
     for (const [key, list] of [["subs", base2.subs], ["parts", base2.parts]]) for (const r of list) if (!p[key].some((x) => NC(x.code) === NC(r.code))) p[key].push({ ...r, qty: 0, ghost: true, cancelled: verOf(r.code), modVer: verOf(r.code) });
   }

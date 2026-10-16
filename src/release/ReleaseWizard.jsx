@@ -18,6 +18,7 @@ const DRAFT_KEY = "mls.relwiz.draft.v1";
 const STEPS = ["สร้าง Release", "Address & Unit", "อัพ PDF แผง", "ตรวจ + บันทึก"];
 const SUB_SHORT = { "พับ": "พับ", "เชื่อม": "เชื่อม", "ยิง": "ยิง", "Site Item": "Site Item" };
 const EMPTY_LIB = { panels: {}, subs: {}, parts: {} };
+const NONE = [];   // อาร์เรย์ว่างตัวเดียว (ref คงที่ — ไม่ทำให้ useMemo คำนวณใหม่ทุกครั้ง)
 const todayYmd = () => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
 const dateToIso = (ymd) => { if (!ymd) return new Date().toISOString(); const now = new Date(); const d = new Date(`${ymd}T00:00:00`); d.setHours(now.getHours(), now.getMinutes(), now.getSeconds()); return d.toISOString(); };
 const fmtYmd = (ymd) => (ymd ? ymd.split("-").reverse().join("/") : "");
@@ -60,8 +61,14 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ── state ──
   const [step, setStep] = useState(0);
   const [hdr, setHdr] = useState(() => ({ projectId: initialProjectId || (projects.length === 1 ? projects[0].id : ""), ro: "", date: todayYmd(), note: "", mod: "" }));
-  const [units, setUnits] = useState([]);
-  const [pdfs, setPdfs] = useState([]);
+  // ── โหมดของใบนี้: "panel" = ลงที่อยู่แผง + อัพ PDF แผง (เดิม) · "items" = ปล่อยเฉพาะซับ/พาร์ท เลือกจากคลังของโปรเจค (ไม่มีแผง) ──
+  const [mode, setMode] = useState("panel");
+  const [picks, setPicks] = useState([]);                // โหมด items: [{ code, kind:"sub"|"part", qty }]
+  const itemsMode = mode === "items";
+  const [unitsRaw, setUnits] = useState([]);
+  const [pdfsRaw, setPdfs] = useState([]);
+  const units = itemsMode ? NONE : unitsRaw;           // โหมด items = ไม่มีแผง/PDF แผง (ข้อมูลที่กรอกไว้ในโหมดแผงยังอยู่ — สลับกลับมาได้)
+  const pdfs = itemsMode ? NONE : pdfsRaw;
   const [ack, setAck] = useState({});
   const [ackMeta, setAckMeta] = useState({});
   const [useLib, setUseLib] = useState(true);   // ซับ/พาร์ทมาจากคลังของโปรเจคเสมอ (Release ลงแค่แผง)
@@ -100,10 +107,11 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const ui = useMemo(() => unitIssues(units, ctx.usedAddr), [units, ctx.usedAddr]);
   const cv = useMemo(() => coverage(units, bom, pdfs, catOf), [units, bom, pdfs, catOf]);
   const roNorm0 = normalizeRO(hdr.ro);
-  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg }),
-    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg]);
+  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : {}) }),
+    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg, itemsMode, picks]);
   const plan = useMemo(() => { const p = needOf(draftPlan); p.subs.forEach((s) => { s.proc = s.procs.join(", "); }); return p; }, [draftPlan]);   // ยอดทั้งใบ + ใบงานต่อเบอร์
-  const bomSave = useMemo(() => bomForSave(bom, plan, catOf), [bom, plan, catOf]);
+  // โหมด items: ซับ/พาร์ทมาจากคลัง — BOM ของซับมีในระบบอยู่แล้ว ไม่ตั้งทับ
+  const bomSave = useMemo(() => (itemsMode ? { list: [], frac: [] } : bomForSave(bom, plan, catOf)), [bom, plan, catOf, itemsMode]);
   const openN = checks.reduce((a, r) => a + r.open, 0);
 
   const roNorm = normalizeRO(hdr.ro);
@@ -120,13 +128,13 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ★ 2026-10-16: รวมเบอร์ซับ/พาร์ทที่ "อยู่ใน BOM ของ PDF แผง" ด้วย — เดิมโหลดเฉพาะซับที่ไล่ได้จากแผงเดิมในระบบ แผงใหม่เลยไม่เห็นซับในคลัง
   const [libTick, setLibTick] = useState(0);   // กด "โหลดใหม่" หลังเพิ่มซับที่หน้า ซับ/พาร์ท ของโปรเจค
   const libCodes = [...new Set([...cnt.map((c) => c.unit), ...pdfs.filter((d) => d.kind === "sub" || d.kind === "panel").flatMap((d) => [d.code, ...(d.bom || []).map((b) => NC(b.code))])])].filter(Boolean).sort();
-  const libKey = hdr.projectId + "|" + libCodes.join(",") + "|" + libTick;
+  const libKey = hdr.projectId + "|" + (itemsMode ? "ALL" : libCodes.join(",")) + "|" + libTick;
   const libReq = useRef("");
   useEffect(() => {
-    if (step < 2 || !hdr.projectId || libReq.current === libKey) return;
+    if (step < (itemsMode ? 1 : 2) || !hdr.projectId || libReq.current === libKey) return;
     libReq.current = libKey;
     setLibState({ s: "loading", key: libKey });
-    const codes = libCodes;
+    const codes = itemsMode ? null : libCodes;   // โหมด items = โหลดทั้งคลัง (ไว้ให้เลือก)
     api.loadBomLibrary(hdr.projectId, codes)
       .then((l) => { if (libReq.current === libKey) {
         setLib(l); setLibState({ s: "ok", key: libKey });
@@ -134,27 +142,28 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         const ov = l && l.ov; if (ov) { setCatOv((c) => ({ ...(ov.catOv || {}), ...c })); setProcOv((c) => ({ ...(ov.procOv || {}), ...c })); setDestOv((c) => ({ ...(ov.destOv || {}), ...c })); setPartCfg({ partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] }); }
       } })
       .catch((e) => { if (libReq.current === libKey) { setLib(null); setLibState({ s: "err", key: libKey, err: String(e?.message || e) }); } });
-  }, [step, hdr.projectId, libKey, api]);
+  }, [step, hdr.projectId, libKey, api, itemsMode]);
 
   // ── ร่างอัตโนมัติ ──
   useEffect(() => {
     if (draftOffer || saving.done) return;
-    if (!hdr.ro && !units.length && !pdfs.length) return;
+    if (!hdr.ro && !unitsRaw.length && !pdfsRaw.length && !picks.length) return;
     const t = setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, at: Date.now(), step, hdr, units, pdfs, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, by: userName })); setDraftAt(new Date()); } catch { /* เต็ม/ปิดไว้ = ข้าม */ }
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, by: userName })); setDraftAt(new Date()); } catch { /* เต็ม/ปิดไว้ = ข้าม */ }
     }, 600);
     return () => clearTimeout(t);
-  }, [step, hdr, units, pdfs, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, draftOffer, saving.done, userName]);
+  }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, draftOffer, saving.done, userName]);
   function resumeDraft() {
     const d = draftOffer; if (!d) return;
     setHdr({ ...hdr, ...d.hdr }); setUnits(d.units || []); setPdfs(d.pdfs || []); setAck(d.ack || {}); setAckMeta(d.ackMeta || {});
+    setMode(d.mode === "items" ? "items" : "panel"); setPicks(d.picks || []);
     setUseLib(true); setCatOv(d.catOv || {}); setProcOv(d.procOv || {}); setDestOv(d.destOv || {}); setAfterSave(d.afterSave || "lots");
-    setStep(Math.min(3, d.step || 0)); setDraftOffer(null);
+    setStep(Math.min(3, d.step === 2 && d.mode === "items" ? 1 : d.step || 0)); setDraftOffer(null);
   }
   // ── ★ ย้อนกลับ / ทำซ้ำ (Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y) — เก็บภาพสถานะข้อมูลทั้งใบ (หัวใบ · Address · PDF · การตัดสิน · หมวด/งาน/ปลายทาง) ──
   //   รวมการพิมพ์ติด ๆ กันเป็นก้าวเดียว (หน่วง 350ms) · เก็บย้อนหลังสูงสุด 60 ก้าว · ไม่นับการเปลี่ยนขั้น
-  const HKEYS = ["hdr", "units", "pdfs", "ack", "ackMeta", "catOv", "procOv", "destOv", "afterSave"];
-  const snapNow = { hdr, units, pdfs, ack, ackMeta, catOv, procOv, destOv, afterSave };
+  const HKEYS = ["hdr", "units", "pdfs", "ack", "ackMeta", "catOv", "procOv", "destOv", "afterSave", "mode", "picks"];
+  const snapNow = { hdr, units: unitsRaw, pdfs: pdfsRaw, ack, ackMeta, catOv, procOv, destOv, afterSave, mode, picks };
   const latestSnap = useRef(snapNow); latestSnap.current = snapNow;
   const hist = useRef({ past: [], future: [], cur: null, t: 0 });
   const [hv, setHv] = useState({ u: 0, r: 0 });
@@ -170,10 +179,10 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     clearTimeout(h.t);
     h.t = setTimeout(() => { flushHist(); syncHv(); }, 350);
     return () => clearTimeout(h.t);
-  }, [hdr, units, pdfs, ack, ackMeta, catOv, procOv, destOv, afterSave]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hdr, unitsRaw, pdfsRaw, ack, ackMeta, catOv, procOv, destOv, afterSave, mode, picks]);   // eslint-disable-line react-hooks/exhaustive-deps
   function applySnap(t) {
     setHdr(t.hdr); setUnits(t.units); setPdfs(t.pdfs); setAck(t.ack); setAckMeta(t.ackMeta);
-    setCatOv(t.catOv); setProcOv(t.procOv); setDestOv(t.destOv); setAfterSave(t.afterSave);
+    setCatOv(t.catOv); setProcOv(t.procOv); setDestOv(t.destOv); setAfterSave(t.afterSave); setMode(t.mode || "panel"); setPicks(t.picks || []);
   }
   function undo() {
     if (saving.busy || saving.done) return;
@@ -205,7 +214,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const noBom = cnt.filter((r) => !r.has);
     const missSub = cv.subs.filter((x) => x.src === "none").length, missPart = cv.parts.filter((x) => x.src === "none").length;
     const noProc = plan.subs.filter((s) => !s.procs.length);
-    return [
+    const all = [
       { k: "hdr", label: "หัวใบ Release", v: hdrErr || `${roNorm}${hdr.note ? " · " + hdr.note : ""} · ${fmtYmd(hdr.date)} · ${project?.code || ""} · ผู้จัดทำ ${userName}`, s: hdrErr ? "block" : "ok", go: 0 },
       { k: "units", label: "Address & Unit", v: units.length ? `${nf(units.length)} แผง · ${cnt.length} แบบ${ui.block.length ? " · " + ui.block.join(" · ") : ""}${ui.warn.length ? " · " + ui.warn.join(" · ") : ""}` : "ยังไม่มีที่อยู่", s: !units.length || ui.block.length ? "block" : ui.warn.length ? "warn" : "ok", go: 1 },
       { k: "bom", label: "แบบแผงมี BOM", v: noBom.length ? `ยังไม่มี ${noBom.length} แบบ: ${noBom.slice(0, 6).map((r) => r.unit).join(", ")}${noBom.length > 6 ? " …" : ""} — ได้ QR แผงแต่ยังไม่แตกเป็นซับ/พาร์ท` : `ครบ ${cnt.length} แบบ`, s: noBom.length ? "warn" : "ok", go: 2 },
@@ -215,9 +224,23 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       { k: "proc", label: "งานของซับ", v: noProc.length ? `${noProc.length} เบอร์ยังไม่ได้เลือกงาน (พับ / เชื่อม / ยิง / Site Item): ${noProc.slice(0, 5).map((s) => s.code).join(", ")} — เลือกได้ในแท็บ "ใบงาน + Category"` : `ครบ ${plan.subs.length} เบอร์ (1 ซับไปได้หลายใบ)`, s: noProc.length ? "warn" : "ok", go: 3, tab: "items" },
       { k: "after", label: "หลังบันทึก", v: afterSave === "all" ? `ปล่อยทั้งหมดเป็น ${roNorm} ทันที (แผง ${nf(units.length)} · ซับ ${nf(plan.subs.length)} เบอร์ · พาร์ท ${nf(plan.parts.length)} เบอร์)` : `เปิดหน้า Release ${roNorm || ""} ให้ office เลือกปล่อยเป็นล็อต ${roNorm ? roNorm + ".1" : ""} …`, s: "ok", go: 3 },
     ];
-  }, [cnt, cv, plan, hdrErr, roNorm, hdr, project, userName, units, ui, openN, bomSave, afterSave]);
+    if (!itemsMode) return all;
+    // โหมด items: ไม่มีที่อยู่ / แผง / PDF — เหลือ หัวใบ + เลือกซับ·พาร์ท + งานของซับ + หลังบันทึก
+    const by = (k) => all.find((x) => x.k === k);
+    const nS = picks.filter((x) => x.kind === "sub").length, nP = picks.length - nS;
+    const lost = picks.filter((x) => !findKey(x.kind === "sub" ? bom.subs : bom.parts, x.code));
+    const bare = picks.filter((x) => { const k = x.kind === "sub" ? findKey(bom.subs, x.code) : null; return k && !(bom.subs[k].items || []).length; });
+    const after = { ...by("after"), v: afterSave === "all" ? `ปล่อยทั้งหมดเป็น ${roNorm} ทันที (ซับ ${nf(plan.subs.length)} เบอร์ · พาร์ท ${nf(plan.parts.length)} เบอร์)` : by("after").v };
+    return [
+      by("hdr"),
+      { k: "picks", label: "เลือกซับ / พาร์ท", v: !picks.length ? "ยังไม่ได้เลือกเบอร์" : lost.length ? `ไม่พบในคลังของโปรเจค ${lost.length} เบอร์: ${lost.slice(0, 5).map((x) => x.code).join(", ")}` : `เลือกซับ ${nf(nS)} · พาร์ท ${nf(nP)} เบอร์ → รวมลูกที่แตกให้แล้ว ซับ ${nf(plan.subs.length)} · พาร์ท ${nf(plan.parts.length)} เบอร์`, s: !picks.length || lost.length ? "block" : "ok", go: 1 },
+      ...(bare.length ? [{ k: "bare", label: "ซับที่ยังไม่มีเบอร์ลูก", v: `${bare.length} เบอร์: ${bare.slice(0, 5).map((x) => x.code).join(", ")} — ปล่อยได้แต่ไม่แตกลูก · ลงแบบซับที่หน้า "ซับ / พาร์ท ของโปรเจค" ก่อนจะได้เบอร์ลูก`, s: "warn", go: 1 }] : []),
+      by("proc"), after,
+    ];
+  }, [cnt, cv, plan, hdrErr, roNorm, hdr, project, userName, units, ui, openN, bomSave, afterSave, itemsMode, picks, bom]);
   const stepInfo = (k) => {
     if (k === 0) return hdrErr ? ["warn", hdrErr] : ["", `${roNorm} · ${fmtYmd(hdr.date)}`];
+    if (k === 1 && itemsMode) return !picks.length ? ["warn", "ยังไม่ได้เลือก"] : ["", `ซับ ${nf(picks.filter((x) => x.kind === "sub").length)} · พาร์ท ${nf(picks.filter((x) => x.kind !== "sub").length)} เบอร์`];
     if (k === 1) return !units.length ? ["warn", "ยังไม่มีที่อยู่"] : [ui.block.length ? "warn" : "", `${nf(units.length)} แผง · ${cnt.length} แบบ${ui.block.length ? " · ต้องแก้" : ""}`];
     if (k === 2) return [openN ? "warn" : "", pdfs.length ? `${pdfs.length} ไฟล์${openN ? ` · รอตัดสิน ${openN}` : " · ตรวจครบ"}` : "ยังไม่มีไฟล์"];
     const b = saveChecks.filter((x) => x.s === "block").length, w = saveChecks.filter((x) => x.s === "warn").length;
@@ -229,6 +252,9 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     setStep(n); setRoTouched(true);
     try { topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); } catch { /* ignore */ }
   };
+  const VIS = itemsMode ? [0, 1, 3] : [0, 1, 2, 3];   // ขั้นที่แสดง (โหมด items ข้ามขั้น ③ อัพ PDF แผง)
+  const stepLabel = (k) => (itemsMode && k === 1 ? "เลือกซับ / พาร์ท" : STEPS[k]);
+  const visIdx = Math.max(0, VIS.indexOf(step));
   const decide = (key, v) => { setAck((a) => ({ ...a, [key]: v })); setAckMeta((m) => ({ ...m, [key]: { by: userName, at: new Date().toISOString() } })); };
 
   // ── บันทึก ──
@@ -281,7 +307,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   }
 
   // ── UI ──
-  const nextLabel = ["สร้าง Release →", "ถัดไป: อัพ PDF →", "ถัดไป: ตรวจและบันทึก →"][step];
+  const nextLabel = itemsMode ? ["สร้าง Release →", "ถัดไป: ตรวจและบันทึก →"][visIdx] : ["สร้าง Release →", "ถัดไป: อัพ PDF →", "ถัดไป: ตรวจและบันทึก →"][step];
   const [, curSub] = stepInfo(step);
   return (
     <div className="rw" ref={topRef}>
@@ -289,7 +315,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         <div>
           <div className="rw-crumb"><button type="button" className="rw-link" onClick={onCancel}>ปล่อยงาน (Release)</button> <span>/</span> ปล่อยงานใหม่</div>
           <div className="page-title">ปล่อยงานใหม่</div>
-          <div className="page-sub">สร้าง Release → ลงที่อยู่ → อัพ PDF แบบ → ตรวจและบันทึก · ระบบนับแผง สร้าง BOM และ QR ให้</div>
+          <div className="page-sub">{itemsMode ? "สร้าง Release → เลือกซับ / พาร์ท จากคลังของโปรเจค → ตรวจและบันทึก · ระบบแตกลูกของซับและสร้าง QR ให้" : "สร้าง Release → ลงที่อยู่ → อัพ PDF แบบ → ตรวจและบันทึก · ระบบนับแผง สร้าง BOM และ QR ให้"}</div>
         </div>
         <div className="rw-head-right">
           {draftAt ? <span className="rw-saved" title="ปิดหน้าแล้วกลับมาทำต่อได้"><span className="dot" aria-hidden="true" />บันทึกร่างอัตโนมัติ {hhmm(draftAt)}</span> : null}
@@ -305,17 +331,25 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         </div>
       ) : null}
 
-      <div className="rw-steps" role="list">
-        {STEPS.map((l, k) => { const [st, sub] = stepInfo(k); return (
+      <div className="rw-steps" role="list" style={{ gridTemplateColumns: `repeat(${VIS.length}, minmax(0, 1fr))` }}>
+        {VIS.map((k, vi) => { const [st, sub] = stepInfo(k); return (
           <button key={k} type="button" role="listitem" className={`rw-step ${k === step ? "on" : k < step ? "done" : ""} ${st}`} aria-current={k === step ? "step" : undefined} onClick={() => go(k)}>
-            <span className="n">{k < step && !st ? "✓" : k + 1}</span>
-            <span className="st"><b>{l}</b><small>{sub}</small></span>
+            <span className="n">{k < step && !st ? "✓" : vi + 1}</span>
+            <span className="st"><b>{stepLabel(k)}</b><small>{sub}</small></span>
           </button>); })}
       </div>
 
       {step === 0 && (
         <div className="card rw-card">
           <SecHead title="ข้อมูล Release" sub={`หัวใบนี้ใช้กับทุกชีตและใบสั่งผลิต · ผู้จัดทำ = คนที่ล็อกอิน (${userName})`} />
+          <div className="rw-mode" role="radiogroup" aria-label="โหมดการปล่อยงาน">
+            <button type="button" role="radio" aria-checked={!itemsMode} className={`rw-mode-opt ${!itemsMode ? "on" : ""}`} onClick={() => setMode("panel")}>
+              <b>🏢 ปล่อยแผง (มีที่อยู่)</b><small>ลง Address &amp; Unit + อัพ PDF แบบแผง → ระบบแตกเป็นซับ / พาร์ท ให้เอง</small>
+            </button>
+            <button type="button" role="radio" aria-checked={itemsMode} className={`rw-mode-opt ${itemsMode ? "on" : ""}`} onClick={() => setMode("items")}>
+              <b>🔩 ปล่อยเฉพาะซับ / พาร์ท</b><small>ไม่มีแผง — เลือกเบอร์จากคลังของโปรเจค ใส่จำนวน (ซับแตกลูกให้ด้วย)</small>
+            </button>
+          </div>
           <div className="rw-hdr">
             <div className={`field ${roTouched && roErr ? "fld-err" : ""}`}>
               <div className="label-el">Release *</div>
@@ -348,31 +382,32 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         </div>
       )}
 
-      {step === 1 && <UnitsStep units={units} setUnits={setUnits} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
+      {step === 1 && !itemsMode && <UnitsStep units={units} setUnits={setUnits} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
+      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} />}
 
-      {step === 2 && (
+      {step === 2 && !itemsMode && (
         <PdfStep onReloadLib={() => setLibTick((t) => t + 1)} pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
           libState={libState} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} openN={openN} demoTools={demoTools} />
       )}
 
       {step === 3 && (
-        <SaveStep releases={releases} draftPlan={draftPlan} saveChecks={saveChecks} go={go} plan={plan} units={units} cnt={cnt} roNorm={roNorm}
+        <SaveStep itemsMode={itemsMode} releases={releases} draftPlan={draftPlan} saveChecks={saveChecks} go={go} plan={plan} units={units} cnt={cnt} roNorm={roNorm}
           project={project} catOf={catOf} catOv={catOv} setCatOv={setCatOv} procOf={procOf} setProcOv={setProcOv} destOv={destOv} setDestOv={setDestOv}
           afterSave={afterSave} setAfterSave={setAfterSave} bomSave={bomSave} saving={saving} hdr={hdr} />
       )}
 
       <div className="rw-grow" aria-hidden="true" />
       <div className="rw-actionbar">
-        <button type="button" className="btn btn-ghost" onClick={() => (step === 0 ? onCancel() : go(step - 1))} disabled={saving.busy}>
+        <button type="button" className="btn btn-ghost" onClick={() => (step === 0 ? onCancel() : go(VIS[Math.max(0, visIdx - 1)]))} disabled={saving.busy}>
           {step === 0 ? "ยกเลิก" : "← ย้อนกลับ"}
         </button>
         <div className="rw-undo">
           <button type="button" className="btn btn-ghost btn-sm" onClick={undo} disabled={!hv.u || saving.busy} title="ย้อนกลับ (Ctrl+Z)">↶ ย้อน{hv.u ? ` (${hv.u})` : ""}</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={redo} disabled={!hv.r || saving.busy} title="ทำซ้ำ (Ctrl+Shift+Z / Ctrl+Y)">↷ ทำซ้ำ</button>
         </div>
-        <div className="rw-navsum"><b>ขั้น {step + 1} จาก 4</b> · {STEPS[step]}{curSub ? <span className="rw-muted"> — {curSub}</span> : null}</div>
+        <div className="rw-navsum"><b>ขั้น {visIdx + 1} จาก {VIS.length}</b> · {stepLabel(step)}{curSub ? <span className="rw-muted"> — {curSub}</span> : null}</div>
         {step < 3
-          ? <button type="button" className="btn btn-accent" onClick={() => go(step + 1)}>{nextLabel}</button>
+          ? <button type="button" className="btn btn-accent" onClick={() => go(VIS[Math.min(VIS.length - 1, visIdx + 1)])}>{nextLabel}</button>
           : <button type="button" className="btn btn-accent" onClick={doSave} disabled={saving.busy}>{saving.busy ? "กำลังบันทึก…" : saving.resume ? "บันทึกขั้นที่เหลือ" : afterSave === "all" ? `บันทึก + ปล่อยทั้งหมดเป็น ${roNorm}` : "บันทึก Release → เลือกปล่อย"}</button>}
       </div>
 
@@ -687,7 +722,66 @@ function SumCard({ tone, title, big, children, wide }) {
   );
 }
 // ══ ④ ตรวจ + บันทึก ══
-function SaveStep({ releases, draftPlan, saveChecks, go, plan, units, cnt, roNorm, project, catOf, catOv, setCatOv, procOf, setProcOv, destOv, setDestOv, afterSave, setAfterSave, bomSave, saving, hdr }) {
+// ── ขั้น ② โหมด "เฉพาะซับ / พาร์ท": เลือกเบอร์จากคลังของโปรเจค + จำนวน (ไม่มีแผง · ไม่ต้องอัพ PDF) ──
+function PicksStep({ project, picks, setPicks, bom, libState, catOf, onReloadLib }) {
+  const [tab, setTab] = useState("sub");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState({});
+  const Q = q.trim().toUpperCase();
+  const key = (kind, code) => kind + "|" + NC(code);
+  const qtyOf = useMemo(() => new Map(picks.map((p) => [key(p.kind, p.code), p.qty])), [picks]);
+  const subs = useMemo(() => Object.entries(bom.subs).map(([code, x]) => ({ code, ...x, nKids: (x.items || []).filter((i) => (i[4] || "") !== "ยกเลิก").length })).sort((a, b) => ncmp(a.code, b.code)), [bom]);
+  const parts = useMemo(() => Object.entries(bom.parts).filter(([, x]) => x.k !== "hw").map(([code, x]) => { const cat = catOf(code, "part"); const base = PART_CATS.includes(cat) ? cat : ruleCat(code, "part"); return { code, ...x, cat, qr: QR_CATS.has(base) }; }).filter((x) => x.qr).sort((a, b) => ncmp(a.code, b.code)), [bom, catOf]);
+  const list = (tab === "sub" ? subs : parts).filter((r) => !Q || r.code.toUpperCase().includes(Q) || String(r.d || "").toUpperCase().includes(Q));
+  const setQty = (kind, code, v) => {
+    const n = Math.round(Number(v));
+    setPicks((old) => { const rest = old.filter((p) => key(p.kind, p.code) !== key(kind, code)); return n > 0 ? [...rest, { code, kind, qty: n }] : rest; });
+  };
+  const nSub = picks.filter((p) => p.kind === "sub").length, nPart = picks.length - nSub;
+  if (!project) return <div className="card rw-card"><div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่ได้เลือกโปรเจค</b><span>กลับไปขั้น ① แล้วเลือกโปรเจค — เบอร์ที่เลือกได้มาจากคลังของโปรเจค</span></div></div>;
+  return (
+    <div className="card rw-card">
+      <SecHead title="เลือกซับ / พาร์ท" sub={`จากคลังของโปรเจค ${project.code} — ใส่จำนวนที่ต้องการปล่อย · ซับจะแตกลูก (ซับย่อย + พาร์ท) ให้เองตาม BOM ในคลัง`}
+        right={<button type="button" className="btn btn-ghost btn-sm" onClick={onReloadLib} title="โหลดคลังใหม่ (หลังเพิ่มซับ/พาร์ทที่หน้า ซับ / พาร์ท ของโปรเจค)">↻ โหลดคลังใหม่</button>} />
+      {libState.s === "loading" ? <div className="rw-msg info">กำลังโหลดคลังของโปรเจค…</div> : null}
+      {libState.s === "err" ? <div className="rw-msg bad">✗ โหลดคลังไม่ได้: {libState.err}</div> : null}
+      <div className="rw-picked">
+        <span className="rw-muted small">เลือกแล้ว: ซับ <b>{nf(nSub)}</b> · พาร์ท <b>{nf(nPart)}</b> เบอร์</span>
+        {picks.slice(0, 40).map((p) => (
+          <span key={key(p.kind, p.code)} className={`rw-pick-chip ${p.kind}`}>{p.code} <b>×{nf(p.qty)}</b><button type="button" aria-label={`เอา ${p.code} ออก`} onClick={() => setQty(p.kind, p.code, 0)}>×</button></span>))}
+        {picks.length > 40 ? <span className="rw-muted small">… อีก {picks.length - 40} เบอร์</span> : null}
+        {picks.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicks([])}><Icon name="trash" size={13} /> ล้างที่เลือก</button> : null}
+      </div>
+      <div className="rw-tools">
+        <div className="rw-seg">{[["sub", `ซับ (${nf(subs.length)})`], ["part", `พาร์ท (${nf(parts.length)})`]].map(([k, l]) => <button key={k} type="button" className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
+        <input className="input rw-search" placeholder="ค้นหาเบอร์ / description" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="table-wrap rw-tw">
+        <table className="data-table rw-table">
+          <thead><tr><th style={{ width: 96 }}>จำนวน</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th>{tab === "sub" ? "ลูกใน BOM" : "หมวด"}</th></tr></thead>
+          <tbody>{list.slice(0, 300).map((r) => {
+            const kind = tab === "sub" ? "sub" : "part"; const v = qtyOf.get(key(kind, r.code)); const path = "P|" + r.code;
+            return (
+              <Fragment key={kind + r.code}>
+                <tr className={v ? "rw-picked-row" : ""}>
+                  <td><input className="input rw-pick-qty" type="number" min="0" step="1" inputMode="numeric" placeholder="0" value={v || ""} aria-label={`จำนวน ${r.code}`} onChange={(e) => setQty(kind, r.code, e.target.value)} /></td>
+                  <td className="rw-mono">{kind === "sub" ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title="ดูเบอร์ลูก">{open[path] ? "▾" : "▸"}</button> : null}<b>{r.code}</b>{isStar(r.code) ? <> <Pill tone="warn">Site *</Pill></> : null}</td>
+                  <td className="rw-desc">{r.d}</td>
+                  <td className="r">{nlen(r.l)}</td>
+                  <td>{kind === "sub" ? (r.nKids ? <Pill tone="muted">{r.nKids} รายการ</Pill> : <Pill tone="warn" title="ยังไม่เคยลงแบบ PDF ของซับนี้ที่หน้า ซับ / พาร์ท ของโปรเจค">ยังไม่มีเบอร์ลูก</Pill>) : <span className="rw-muted small">{r.cat}</span>}</td>
+                </tr>
+                {kind === "sub" && open[path] ? <SubKids lib={bom} code={r.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(r.code)]} compact /> : null}
+              </Fragment>); })}</tbody>
+        </table>
+        {list.length > 300 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 300 จาก {nf(list.length)} เบอร์ — พิมพ์ค้นหาเพื่อดูที่เหลือ</div> : null}
+        {!list.length ? <div className="rw-muted small" style={{ padding: 14 }}>{libState.s === "loading" ? "กำลังโหลด…" : Q ? "ไม่พบเบอร์ที่ค้นหา" : tab === "sub" ? "ยังไม่มีซับในคลังของโปรเจคนี้ — ลงแบบซับที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด ↻ โหลดคลังใหม่" : "ยังไม่มีพาร์ทที่มี QR ในคลัง — ลงแบบพาร์ทที่หน้า “ซับ / พาร์ท ของโปรเจค”"}</div> : null}
+      </div>
+      <div className="rw-muted small" style={{ marginTop: 8 }}>แสดงเฉพาะพาร์ทที่ผลิตเอง (มี QR) · สกรู / ยาง / กระจก ไม่ทำ QR · ซับที่ปล่อยจะไปเป็นใบงานพับ / เชื่อม / ยิง ตามกติกาเบอร์ (แก้ได้ในขั้นตรวจ + บันทึก)</div>
+    </div>
+  );
+}
+
+function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units, cnt, roNorm, project, catOf, catOv, setCatOv, procOf, setProcOv, destOv, setDestOv, afterSave, setAfterSave, bomSave, saving, hdr }) {
   const [tab, setTab] = useState("make");
   const [q, setQ] = useState("");
   const [type, setType] = useState("all");
@@ -737,7 +831,7 @@ function SaveStep({ releases, draftPlan, saveChecks, go, plan, units, cnt, roNor
 
       <div className="card rw-card">
         <div className="rw-tabs" role="tablist">
-          {[["make", "สรุปทั้งใบ"], ["items", `ใบงาน + Category (${nf(items.length)})`], ["labels", "ป้ายแผง"]].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+          {[["make", "สรุปทั้งใบ"], ["items", `ใบงาน + Category (${nf(items.length)})`], ...(itemsMode ? [] : [["labels", "ป้ายแผง"]])].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
         </div>
         {tab === "make" && (
           <>
@@ -753,10 +847,13 @@ function SaveStep({ releases, draftPlan, saveChecks, go, plan, units, cnt, roNor
                       : g.sheets.map((k) => { const s = SHEETS.find((x) => x.k === k) || { kind: "part", tab: k, label: k }; return <div key={k} className={`rw-sheetsum-i ${s.kind}`} title={s.label}><b>{s.tab}</b><span>{nf(sheetN(k))} เบอร์ · {nf(sheetQ(k))} {s.kind === "sub" ? "SET" : "ชิ้น"}</span></div>; })}
                   </div>
                 </div>))}
+              {itemsMode ? null : (
               <div className="rw-sumgrp panel">
                 <div className="rw-sumgrp-h"><b>ASSEMBLY (แผง)</b><small>1 QR ต่อที่อยู่</small></div>
                 <div className="rw-sheetsum"><div className="rw-sheetsum-i panel"><b>แผง</b><span>{nf(units.length)} แผง · {nf(cnt.length)} แบบ</span></div></div>
               </div>
+              )}
+
               {TOTALS.filter((g) => g.k === "mat").map((g) => (
                 <div key={g.k} className={`rw-sumgrp ${g.k}`}>
                   <div className="rw-sumgrp-h"><b>{g.label}</b><small>{g.th}</small></div>
@@ -775,14 +872,14 @@ function SaveStep({ releases, draftPlan, saveChecks, go, plan, units, cnt, roNor
               return used.length ? <div className="rw-msg ok">✓ เบอร์ที่ปล่อยไว้แล้วใน Release อื่นของโปรเจคนี้ <b>{nf(used.length)} เบอร์</b> — ใช้เป็นเบอร์ลูก ไม่ปล่อยซ้ำ: {used.slice(0, 8).map(([x, o]) => `${x.code} (ทำแล้วที่ ${o.ros.join(", ")})`).join(" · ")}{used.length > 8 ? " …" : ""}</div> : null;
             })()}
             <div className="rw-makes">
-              <SumCard tone="panel" title="แผง" big={`${nf(units.length)} QR`}>{cnt.length} แบบแผง · 1 QR ต่อ 1 ที่อยู่ · BOM แผง = ซับ + พาร์ทติดแผง</SumCard>
+              {itemsMode ? null : <SumCard tone="panel" title="แผง" big={`${nf(units.length)} QR`}>{cnt.length} แบบแผง · 1 QR ต่อ 1 ที่อยู่ · BOM แผง = ซับ + พาร์ทติดแผง</SumCard>}
               <SumCard tone="sub" title="ซับ" big={`${nf(sum(plan.subs))} QR`}>{plan.subs.length} เบอร์ · ตั้ง BOM ให้เอง · ใช้ที่สถานีประกอบ</SumCard>
               <SumCard tone="part" title="พาร์ท" big={`${nf(sum(plan.parts))} QR`}>{plan.parts.length} เบอร์ · {PART_DESTS.map((k) => `${destLabel(k)} ${nf(sum(plan.parts.filter((p) => p.dest === k)))}`).join(" · ")} ชิ้น</SumCard>
               <SumCard tone="muted" title="GLASS" big={`${nf(sum(plan.glass))} แผ่น`}>{plan.glass.length} เบอร์ · ใบเบิกกระจก — ไม่ทำ QR</SumCard>
               <SumCard tone="muted" title="Hardware" big={`${plan.hw.length} รายการ`}>สกรู / ยาง / เทป — ไม่ทำ QR</SumCard>
               {plan.other.length ? <SumCard tone="muted" title="อื่นๆ" big={`${plan.other.length} เบอร์`}>{[...new Set(plan.other.map((o) => o.cat))].join(" · ")} — ไม่ทำ QR</SumCard> : null}
               {cnt.some((c) => !c.has) ? <SumCard tone="warn" title="⚠ ยังไม่มี BOM" big={`${nf(cnt.filter((c) => !c.has).reduce((a, c) => a + c.qty, 0))} แผง`}>{cnt.filter((c) => !c.has).slice(0, 8).map((c) => c.unit).join(", ")}</SumCard> : null}
-              <SumCard tone="info" title="BOM ที่จะตั้งในระบบ" wide>แผง {bomSave.list.filter((b) => b.kind === "panel").length} · ซับ {bomSave.list.filter((b) => b.kind === "subassembly").length} เบอร์ · ลูกใน BOM = ซับ + พาร์ทที่มี QR (กระจก/สกรู/ยางไม่ใส่ เพราะไม่มี QR ให้สแกนตอนประกอบ){bomSave.frac.length ? ` · ⚠ ปัดจำนวนต่อชุด ${bomSave.frac.length} รายการ` : ""}</SumCard>
+              {itemsMode ? null : <SumCard tone="info" title="BOM ที่จะตั้งในระบบ" wide>แผง {bomSave.list.filter((b) => b.kind === "panel").length} · ซับ {bomSave.list.filter((b) => b.kind === "subassembly").length} เบอร์ · ลูกใน BOM = ซับ + พาร์ทที่มี QR (กระจก/สกรู/ยางไม่ใส่ เพราะไม่มี QR ให้สแกนตอนประกอบ){bomSave.frac.length ? ` · ⚠ ปัดจำนวนต่อชุด ${bomSave.frac.length} รายการ` : ""}</SumCard>}
             </div>
           </>
         )}

@@ -590,3 +590,17 @@ button.rt-grp-chip { font: inherit; }
 .fb-file img { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; background: #eef2f0; }
 .rl-nokids { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .rl-nokids > span { flex: 1 1 360px; }
+
+/* โหมดปล่อยงาน (แผง / เฉพาะซับ-พาร์ท) */
+.rw-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 4px 0 16px; }
+.rw-mode-opt { text-align: left; font: inherit; cursor: pointer; padding: 12px 14px; border-radius: 14px; border: 1.5px solid var(--border-soft); background: var(--surface); display: flex; flex-direction: column; gap: 3px; color: var(--text); }
+.rw-mode-opt b { font-size: 14px; }
+.rw-mode-opt small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.rw-mode-opt.on { border-color: var(--accent); background: var(--accent-tint); box-shadow: 0 0 0 3px rgba(16, 185, 129, .12); }
+@media (max-width: 640px) { .rw-mode { grid-template-columns: 1fr; } }
+.rw-picked { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0 10px; }
+.rw-pick-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 10px; border-radius: 999px; font-size: 12px; background: var(--surface-3); border: 1px solid var(--border-soft); font-family: ui-monospace, monospace; }
+.rw-pick-chip.sub { background: #f3ecff; border-color: #dccdf7; }
+.rw-pick-chip button { border: 0; background: rgba(0,0,0,.07); border-radius: 50%; width: 18px; height: 18px; line-height: 16px; cursor: pointer; font-size: 13px; color: inherit; padding: 0; }
+.rw-pick-qty { width: 78px; margin: 0; text-align: right; padding: 5px 8px; }
+.rw-picked-row td { background: var(--accent-tint); }

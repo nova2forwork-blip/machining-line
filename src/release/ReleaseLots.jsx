@@ -75,7 +75,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       {gaps.panels.length || gaps.subs.length ? <div className="rw-msg warn">⚠ ยังไม่มี BOM: {[gaps.panels.length && `แผง ${gaps.panels.length} แบบ`, gaps.subs.length && `ซับ ${gaps.subs.length} เบอร์`].filter(Boolean).join(" · ")} — ปล่อยได้ก่อน พอ Release อื่นมี BOM ของเบอร์เหล่านี้ ระบบดึงมาให้เอง{plans.length > 1 ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => { if (!pullNow()) setPulled([]); }}>ดึงตอนนี้</button></> : null}</div> : null}
 
       <div className="rl-kpis">
-        {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].map(([l, a, b, s]) => (
+        {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([l, , b]) => l !== "แผง" || b > 0).map(([l, a, b, s]) => (   // ใบที่ไม่มีแผง (โหมดเฉพาะซับ/พาร์ท) = ไม่โชว์ช่องแผง
+
           <div key={l} className="rl-kpi"><div className="rl-kpi-top"><span>{l}</span><b>{nf(a)}<small> / {nf(b)}</small></b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div><small>{s} · {pct(a, b)}%</small></div>
         ))}
         <div className="rl-kpi"><div className="rl-kpi-top"><span>ล็อต</span><b>{rel.lots.length}</b></div><small>{lastLot ? `ล่าสุด ${lastLot.no} · ${fmtD(lastLot.date)}` : "ยังไม่ได้ปล่อย"}</small></div>
@@ -308,7 +309,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
         <p className="rl-dr-sub">เลือกสิ่งที่จะปล่อยรอบนี้ แยกตามใบงานที่ส่งไปทำ · ซับ 1 เบอร์ไปได้หลายใบ (ติ๊กงานในแถว) · พาร์ทเลือกได้ว่าไป MACHINING PART / BENDING / STEEL · ระบบหักของที่ปล่อยแล้ว ไม่ให้เกิน</p>
         <div className="rl-tabs grouped" role="tablist">
           {/* แท็บจัดกลุ่มตามหัว Total ใน Excel: Total Part (MACHINING PART · BENDING · STEEL) · Total Sub-Assembly (SUB A'ssy …) · แผง */}
-          {[[TOTALS[0].label, "part"], [TOTALS[1].label, "sub"], ["แผง", "panel"]].map(([lab, kind]) => (
+          {[[TOTALS[0].label, "part"], [TOTALS[1].label, "sub"], ["แผง", "panel"]].filter(([, kind]) => kind !== "panel" || plan.units.length > 0).map(([lab, kind]) => (
             <div key={kind} className={`rl-tabgrp ${kind}`}>
               <span className="rl-tabgrp-lab">{lab}</span>
               <div className="rl-tabgrp-row">
