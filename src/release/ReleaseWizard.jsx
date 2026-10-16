@@ -116,13 +116,16 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   }, [ctx.orders]);
 
   // ── BOM เดิมในระบบ: โหลดเมื่อถึงขั้น ③ (ใช้เทียบค่า + เติมเบอร์ที่ไม่มี PDF) ──
-  const libKey = hdr.projectId + "|" + [...new Set([...cnt.map((c) => c.unit), ...pdfs.filter((d) => d.kind === "sub" || d.kind === "panel").map((d) => d.code)])].sort().join(",");
+  // ★ 2026-10-16: รวมเบอร์ซับ/พาร์ทที่ "อยู่ใน BOM ของ PDF แผง" ด้วย — เดิมโหลดเฉพาะซับที่ไล่ได้จากแผงเดิมในระบบ แผงใหม่เลยไม่เห็นซับในคลัง
+  const [libTick, setLibTick] = useState(0);   // กด "โหลดใหม่" หลังเพิ่มซับที่หน้า ซับ/พาร์ท ของโปรเจค
+  const libCodes = [...new Set([...cnt.map((c) => c.unit), ...pdfs.filter((d) => d.kind === "sub" || d.kind === "panel").flatMap((d) => [d.code, ...(d.bom || []).map((b) => NC(b.code))])])].filter(Boolean).sort();
+  const libKey = hdr.projectId + "|" + libCodes.join(",") + "|" + libTick;
   const libReq = useRef("");
   useEffect(() => {
     if (step < 2 || !hdr.projectId || libReq.current === libKey) return;
     libReq.current = libKey;
     setLibState({ s: "loading", key: libKey });
-    const codes = libKey.split("|")[1].split(",").filter(Boolean);
+    const codes = libCodes;
     api.loadBomLibrary(hdr.projectId, codes)
       .then((l) => { if (libReq.current === libKey) {
         setLib(l); setLibState({ s: "ok", key: libKey });
@@ -347,7 +350,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       {step === 1 && <UnitsStep units={units} setUnits={setUnits} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
 
       {step === 2 && (
-        <PdfStep pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
+        <PdfStep onReloadLib={() => setLibTick((t) => t + 1)} pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
           libState={libState} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} openN={openN} demoTools={demoTools} />
       )}
 
@@ -510,7 +513,7 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
 }
 
 // ══ ③ อัพ PDF ══
-function PdfStep({ pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState, lib, ack, ackMeta, decide, openN, demoTools }) {
+function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState, lib, ack, ackMeta, decide, openN, demoTools }) {
   const [sel, setSel] = useState(null);
   const [filt, setFilt] = useState("all");
   const [reading, setReading] = useState(null);
@@ -561,6 +564,7 @@ function PdfStep({ pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState
         {reading ? <div className={`rw-msg ${reading.err ? "bad" : reading.warn ? "warn" : "info"}`}>{reading.err || reading.warn || `กำลังอ่าน PDF ${reading.n}/${reading.of}…`}{reading.warn ? <button type="button" className="rw-x" style={{ marginLeft: 8 }} onClick={() => setReading(null)} aria-label="ปิด">×</button> : null}</div> : null}
         <div className="rw-tools">
           <span className="rw-muted small"><b>ซับ / พาร์ท ของโปรเจค:</b> {libState.s === "loading" ? "กำลังโหลด…" : libState.s === "err" ? `โหลดไม่ได้ (${libState.err})` : lib ? `ซับ ${Object.keys(lib.subs).length} · พาร์ท ${nf(Object.keys(lib.parts).length)} เบอร์ — ดึงมาใช้กับแผงที่อัพให้เอง` : "ยังไม่ได้โหลด"}</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onReloadLib} disabled={libState.s === "loading"} title="โหลดซับ/พาร์ทของโปรเจคใหม่ (หลังเพิ่มที่หน้า ซับ / พาร์ท ของโปรเจค)">↻ โหลดใหม่</button>
           {pdfs.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { if (await askConfirm({ message: `เอา PDF ออกทั้งหมด ${pdfs.length} ไฟล์?`, tone: "danger", confirmText: "เอาออก", cancelText: "ยกเลิก" })) { setPdfs([]); setSel(null); } }}><Icon name="trash" size={13} /> ล้างไฟล์ทั้งหมด</button> : null}
           {demoTools?.pdfs ? demoTools.pdfs(setPdfs, setSel) : null}
         </div>
