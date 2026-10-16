@@ -538,10 +538,14 @@ function PdfStep({ pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState
               <div className="rw-plist">
                 {list.map((r) => { const [kc, kl] = kindLabel[r.d.kind] || kindLabel.unknown; const lv = LV[r.lv];
                   return (
-                    <button key={r.d.file} type="button" className={`rw-pitem ${R && r.d.file === R.d.file ? "on" : ""}`} onClick={() => setSel(r.d.file)}>
-                      <span className="rw-pitem-l"><Pill tone={kc}>{kl}</Pill><span className="rw-mono">{r.d.code}</span></span>
-                      <Pill tone={lv[0]}>{r.open ? `${lv[1]} ${r.open} จุด` : lv[1]}</Pill>
-                    </button>); })}
+                    <div key={r.d.file} className="rw-pitem-row">
+                      <button type="button" className={`rw-pitem ${R && r.d.file === R.d.file ? "on" : ""}`} onClick={() => setSel(r.d.file)}>
+                        <span className="rw-pitem-l"><Pill tone={kc}>{kl}</Pill><span className="rw-mono">{r.d.code}</span></span>
+                        <Pill tone={lv[0]}>{r.open ? `${lv[1]} ${r.open} จุด` : lv[1]}</Pill>
+                      </button>
+                      <button type="button" className="rw-x" title="เอาไฟล์นี้ออก" aria-label={`เอา ${r.d.code} ออก`}
+                        onClick={() => { setPdfs((p) => p.filter((d) => d.file !== r.d.file)); if (R && R.d.file === r.d.file) setSel(null); }}>×</button>
+                    </div>); })}
                 {!list.length ? <div className="rw-muted small" style={{ padding: 10 }}>ไม่มีไฟล์ในกลุ่มนี้</div> : null}
               </div>
             </div>

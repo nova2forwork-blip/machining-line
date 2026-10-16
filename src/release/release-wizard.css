@@ -565,3 +565,7 @@ button.rt-grp-chip { font: inherit; }
 .rt-grp-chip.tab.uncat.on { background: #e59a1a; border-color: #e59a1a; color: #fff; }
 .rt-grp-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-basis: 100%; }
 .rt-grp-in.wide { width: 360px; }
+
+.rw-pitem-row { display: flex; align-items: center; gap: 4px; }
+.rw-pitem-row .rw-pitem { flex: 1; min-width: 0; }
+.rw-pitem-row .rw-x { flex: none; }
