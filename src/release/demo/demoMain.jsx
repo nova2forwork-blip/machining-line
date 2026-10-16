@@ -67,6 +67,13 @@ function App() {
 
   const api = useMemo(() => ({
     projectContext,
+    // โฟลเดอร์ตัวอย่าง (ดูไฟล์)
+    async listStorage(bucket, prefix) {
+      await sleep(150);
+      const T = { "release-pdfs": { "": ["A10035-US"], "A10035-US": ["sub", "part"], "A10035-US/sub": ["SAMT007-1000.pdf", "SAAN04-001.pdf"], "A10035-US/part": ["MT007-1000_A.pdf"] }, "packing-photos": { "": ["pack-2026-10-15-b1.jpg", "pack-2026-10-16-b2.jpg"] } };
+      return (T[bucket]?.[prefix] || []).map((n) => ({ name: n, file: /\.\w{3,4}$/.test(n), size: 184000, updated: new Date().toISOString() }));
+    },
+    async signedUrls(bucket, paths) { return Object.fromEntries(paths.map((p) => [p, "#"])); },
     async loadBomLibrary(projectId) { await sleep(350); return projectId === "p1" ? { ...DATA.lib, subs: { ...DATA.lib.subs, ...libExtra.subs }, parts: { ...DATA.lib.parts, ...libExtra.parts }, ov: libOv } : { panels: {}, subs: {}, parts: {}, ov: libOv }; },
     async saveLibrary({ bom, catOv, procOv, destOv, partMode, partGroups }, onProgress) {
       onProgress("สร้างเบอร์ใหม่…"); await sleep(300); onProgress("ตั้ง BOM ซับ…"); await sleep(300); onProgress("บันทึกหมวด / งานซับ / ใบงาน…"); await sleep(200);

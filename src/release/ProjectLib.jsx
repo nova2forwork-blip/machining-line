@@ -8,6 +8,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf } from "./releaseCore.js";
 import { Pill, SubKids } from "./releaseUi.jsx";
+import FileBrowser from "./FileBrowser.jsx";
 import "./release-wizard.css";
 
 const EMPTY = { panels: {}, subs: {}, parts: {} };
@@ -136,9 +137,15 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
           {demoTools?.libPdfs ? demoTools.libPdfs(setPdfs) : null}
         </div>
         <div className="rl-tabs" role="tablist">
-          {[["sub", "ซับ (Sub-Assembly)", subs.length, "รายการซับ + ลูกใน BOM (งานพับ/เชื่อม/ยิง เลือกตอนปล่อยใน Release)"], ["part", "พาร์ท", parts.filter((p) => !isGlass(p)).length, "แยกหมวดตามกติกาเบอร์ · เบอร์ที่มี * = SITE ITEM"], ["glass", "กระจก (Glass)", parts.filter(isGlass).length, "รายการกระจก · ใบเบิก ไม่มี QR"]].map(([k, l, n, th]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}><b>{l}</b><small>{nf(n)} เบอร์ · {th}</small></button>))}
+          {[["sub", "ซับ (Sub-Assembly)", subs.length, "รายการซับ + ลูกใน BOM (งานพับ/เชื่อม/ยิง เลือกตอนปล่อยใน Release)"], ["part", "พาร์ท", parts.filter((p) => !isGlass(p)).length, "แยกหมวดตามกติกาเบอร์ · เบอร์ที่มี * = SITE ITEM"], ["glass", "กระจก (Glass)", parts.filter(isGlass).length, "รายการกระจก · ใบเบิก ไม่มี QR"], ...(api.listStorage ? [["files", "📁 ไฟล์", null, "โฟลเดอร์ PDF แบบ + รูปถ่ายแพ็ก"]] : [])].map(([k, l, n, th]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}><b>{l}</b><small>{n == null ? th : `${nf(n)} เบอร์ · ${th}`}</small></button>))}
         </div>
+        {tab === "files" ? (
+          <FileBrowser api={api} roots={[
+            { key: "pdf", name: "PDF แบบซับ / พาร์ท", bucket: "release-pdfs", prefix: projectCode.replace(/[^A-Za-z0-9._-]+/g, "_"), note: `ไฟล์ต้นฉบับที่อัพไว้ของโปรเจค ${projectCode} · แยก sub / part` },
+            { key: "photo", name: "รูปถ่าย (แพ็ก)", bucket: "packing-photos", prefix: "", note: "รูปที่ถ่ายตอนแพ็ก" },
+          ]} />
+        ) : (<>
         <div className="rl-tools">
           <input className="input rw-search" style={{ marginTop: 0 }} placeholder="ค้นหาเบอร์ / description / INV" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
@@ -180,6 +187,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
           )}
           {(tab === "sub" ? subRows : partRows).length === 0 ? <div className="rw-muted small" style={{ padding: 14 }}>{state.s === "loading" ? "กำลังโหลด…" : q ? "ไม่พบ" : tab === "glass" ? "ยังไม่มีกระจก — กระจกมาจาก BOM ของซับ/แผง (เบอร์ GL…) หรือย้ายพาร์ทมาหมวด GLASS" : "ยังไม่มี — อัพ PDF แบบซับ/พาร์ทด้านบน"}</div> : null}
         </div>
+        </>)}
         {dirty ? <div className="rw-muted small" style={{ padding: "8px 12px" }}>มี PDF ใหม่ที่ยังไม่บันทึก — กด "บันทึก" มุมขวาบน</div> : null}
       </div>
     </div>
