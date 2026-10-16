@@ -4,7 +4,7 @@
 //   api = { projectContext, loadBomLibrary, orderExists, saveRelease } — ของจริง (releaseApi.js) หรือของตัวอย่าง (demo)
 //   ไฟล์นี้ไม่ import supabase.js โดยตรง → ใช้ทำหน้าตัวอย่างได้โดยไม่ต้องต่อฐานข้อมูล
 // ══════════════════════════════════════════════════════════════════════════
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
@@ -549,14 +549,16 @@ function PdfStep({ pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState
                 {!list.length ? <div className="rw-muted small" style={{ padding: 10 }}>ไม่มีไฟล์ในกลุ่มนี้</div> : null}
               </div>
             </div>
-            {R ? <PdfDetail R={R} ack={ack} ackMeta={ackMeta} decide={decide} onRemove={() => { setPdfs((p) => p.filter((d) => d.file !== R.d.file)); setSel(null); }} /> : null}
+            {R ? <PdfDetail R={R} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} onRemove={() => { setPdfs((p) => p.filter((d) => d.file !== R.d.file)); setSel(null); }} /> : null}
           </div>
         </div>
       ) : null}
     </>
   );
 }
-function PdfDetail({ R, ack, ackMeta, decide, onRemove }) {
+function PdfDetail({ R, lib, ack, ackMeta, decide, onRemove }) {
+  const [open, setOpen] = useState({});   // แถวซับที่กางอยู่ (key = เส้นทางจากแถวบน)
+  useEffect(() => { setOpen({}); }, [R.d.file]);
   const d = R.d; const [kc, kl] = kindLabel[d.kind] || kindLabel.unknown;
   const shown = R.issues.filter((i) => i.lvl !== "info");
   const infos = R.issues.filter((i) => i.lvl === "info");
@@ -594,21 +596,62 @@ function PdfDetail({ R, ack, ackMeta, decide, onRemove }) {
       ) : d.kind !== "unknown" ? (
         <div className="table-wrap rw-tw"><table className="data-table rw-table">
           <thead><tr><th className="r">ITEM</th><th>PART NUMBER</th><th>DESCRIPTION</th><th className="r">QTY</th><th className="r">เดิม</th><th className="r">LENGTH</th><th className="r">HEIGHT</th><th>FINISH</th></tr></thead>
-          <tbody>{R.rows.map((r) => (
-            <tr key={r.code + (r.item || "")} className={r.bad.miss ? "rw-rowwarn" : ""}>
-              <td className="r rw-muted">{r.item ?? "—"}</td>
-              <td className="rw-mono"><b>{r.code}</b> {r.k === "sub" ? <Pill tone="sub">ซับ</Pill> : r.k === "hw" ? <Pill tone="muted">HW</Pill> : null}</td>
-              <td className="rw-desc">{r.desc}</td>
-              <td className={`r ${r.bad.q === "bad" || r.bad.miss === "pdf" ? "rw-bad" : ""}`}>{r.qp == null ? "—" : nlen(r.qp)}{r.unit ? <span className="rw-muted small"> {r.unit}</span> : null}</td>
-              <td className="r rw-muted">{r.qs == null ? "" : nlen(r.qs)}</td>
-              <td className={`r ${r.bad.l ? "rw-bad" : ""}`}>{nlen(r.lp)}</td>
-              <td className={`r ${r.bad.h ? "rw-bad" : ""}`}>{nlen(r.hp)}</td>
-              <td className={r.bad.f ? "rw-bad" : ""}>{r.fp}</td>
-            </tr>))}</tbody>
+          <tbody>{R.rows.map((r) => {
+            const path = r.code + "|" + (r.item || "");
+            return (
+              <Fragment key={path}>
+                <tr className={r.bad.miss ? "rw-rowwarn" : ""}>
+                  <td className="r rw-muted">{r.item ?? "—"}</td>
+                  <td className="rw-mono">
+                    {r.k === "sub" ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title={open[path] ? "ย่อ" : "ขยายดูเบอร์ลูก"}>{open[path] ? "▾" : "▸"}</button> : null}
+                    <b>{r.code}</b> {r.k === "sub" ? <Pill tone="sub">ซับ</Pill> : r.k === "hw" ? <Pill tone="muted">HW</Pill> : null}
+                  </td>
+                  <td className="rw-desc">{r.desc}</td>
+                  <td className={`r ${r.bad.q === "bad" || r.bad.miss === "pdf" ? "rw-bad" : ""}`}>{r.qp == null ? "—" : nlen(r.qp)}{r.unit ? <span className="rw-muted small"> {r.unit}</span> : null}</td>
+                  <td className="r rw-muted">{r.qs == null ? "" : nlen(r.qs)}</td>
+                  <td className={`r ${r.bad.l ? "rw-bad" : ""}`}>{nlen(r.lp)}</td>
+                  <td className={`r ${r.bad.h ? "rw-bad" : ""}`}>{nlen(r.hp)}</td>
+                  <td className={r.bad.f ? "rw-bad" : ""}>{r.fp}</td>
+                </tr>
+                {r.k === "sub" && open[path] ? <SubKids lib={lib} code={r.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(r.code)]} /> : null}
+              </Fragment>); })}</tbody>
         </table></div>
       ) : null}
     </div>
   );
+}
+
+// ★ เบอร์ลูกของซับ (จากคลังซับ/พาร์ทของโปรเจค) — ซับซ้อนซับกางต่อได้ทุกชั้น · กันวนซ้ำด้วย seen
+function SubKids({ lib, code, path, depth, open, setOpen, seen }) {
+  const L = lib || { subs: {}, parts: {} };
+  const sk = findKey(L.subs, code);
+  const sub = sk ? L.subs[sk] : null;
+  const pad = { paddingLeft: 10 + depth * 22 };
+  if (!sub) return <tr className="rw-kid"><td /><td colSpan={7} className="rw-muted small" style={pad}>↳ ยังไม่มีแบบซับ {code} ในโปรเจค — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วจะเห็นเบอร์ลูก</td></tr>;
+  const items = (sub.items || []).filter((i) => (i[4] || "") !== "ยกเลิก");
+  if (!items.length) return <tr className="rw-kid"><td /><td colSpan={7} className="rw-muted small" style={pad}>↳ ซับนี้ยังไม่มีเบอร์ลูก</td></tr>;
+  return items.map((it, n) => {
+    const [k, c, q] = it;
+    const isSub = k === "sub";
+    const rec = isSub ? L.subs[findKey(L.subs, c)] : L.parts[findKey(L.parts, c)];
+    const p2 = path + ">" + c + "#" + n;
+    const loop = isSub && seen.includes(NC(c));
+    return (
+      <Fragment key={p2}>
+        <tr className="rw-kid">
+          <td className="r rw-muted">↳</td>
+          <td className="rw-mono" style={pad}>
+            {isSub && !loop ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [p2]: !o[p2] }))} aria-expanded={!!open[p2]}>{open[p2] ? "▾" : "▸"}</button> : null}
+            <b>{c}</b> {isSub ? <Pill tone="sub">ซับ</Pill> : k === "hw" ? <Pill tone="muted">HW</Pill> : null}{loop ? <span className="rw-muted small"> (วนซ้ำ)</span> : null}
+          </td>
+          <td className="rw-desc">{rec?.d || ""}</td>
+          <td className="r">{nlen(q)}</td><td />
+          <td className="r">{nlen(rec?.l)}</td><td className="r">{nlen(rec?.h)}</td><td>{rec?.f || ""}</td>
+        </tr>
+        {isSub && !loop && open[p2] ? <SubKids lib={lib} code={c} path={p2} depth={depth + 1} open={open} setOpen={setOpen} seen={[...seen, NC(c)]} /> : null}
+      </Fragment>
+    );
+  });
 }
 
 function SumCard({ tone, title, big, children, wide }) {
