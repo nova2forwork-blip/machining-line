@@ -92,6 +92,19 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const dv = words.find((w) => w.text === "DEVELOP");
     if (dv) out.title.DEVELOP = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
   }
+  // ★ 2026-10-16: ชื่อชิ้นงาน (DESCRIPTION ในกรอบหัวกระดาษมุมล่างขวา — ใต้ป้าย "DESCRIPTION") → title.DESC ใช้เป็นชื่อพาร์ท/ซับ
+  //   เอาเฉพาะป้ายที่อยู่ครึ่งล่างของหน้า (ป้าย DESCRIPTION ของตาราง BOM แผง/ซับอยู่ด้านบน — ไม่เอา)
+  {
+    const labs = words.filter((w) => w.text.toUpperCase() === "DESCRIPTION" && w.top > vp.height * 0.7 && w.x0 > vp.width * 0.7).sort((a, b) => a.top - b.top);
+    const lb = labs[0];
+    if (lb) {
+      const cx = (lb.x0 + lb.x1) / 2;
+      const near = words.filter((w) => w.top > lb.top + 3 && w.top < lb.top + 40 && Math.abs((w.x0 + w.x1) / 2 - cx) < 95 && !/:$/.test(w.text));
+      const rows = []; for (const w of near.sort((a, b) => a.top - b.top || a.x0 - b.x0)) { const r = rows[rows.length - 1]; if (r && Math.abs(r.top - w.top) < 3) r.w.push(w); else rows.push({ top: w.top, w: [w] }); }
+      const txt = rows.map((r) => r.w.sort((a, b) => a.x0 - b.x0).map((x) => x.text).join(" ")).join(" ").replace(/\s+/g, " ").trim();
+      if (txt) out.title.DESC = txt;
+    }
+  }
   const rightOf = (lab, stop) => {
     const w = words.find((x) => x.text === lab); if (!w) return null;
     const line = words.filter((x) => Math.abs(x.top - w.top) < 3 && x.x0 > w.x1 - 1).sort((a, b) => a.x0 - b.x0);
@@ -220,6 +233,7 @@ export function buildBom({ lib, pdfs, ack, useLib }) {
       const dm = /([\d.]+)\s*x\s*([\d.]+)/.exec(t.DEVELOP || "");
       if (dm) { set("DEVELOP W", () => (p.bw = +dm[1])); set("DEVELOP H", () => (p.bh = +dm[2])); set("INV.CODE", () => { if (inv && inv !== "-") { p.binv = inv; p.bm = p.bm || inv; } }); }
       else set("INV.CODE", () => { if (inv && inv !== "-") p.m = inv; });
+      if (t.DESC) p.d = t.DESC;
       p.md = fnum(t["M.D."]); p.pdf = d.file; p.mat = t.MATERIAL || ""; p.rev = t["REV."] && t["REV."] !== "-" ? t["REV."] : p.rev;
     }
   }
