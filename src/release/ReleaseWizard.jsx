@@ -147,6 +147,53 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     setUseLib(true); setCatOv(d.catOv || {}); setProcOv(d.procOv || {}); setDestOv(d.destOv || {}); setAfterSave(d.afterSave || "lots");
     setStep(Math.min(3, d.step || 0)); setDraftOffer(null);
   }
+  // ── ★ ย้อนกลับ / ทำซ้ำ (Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y) — เก็บภาพสถานะข้อมูลทั้งใบ (หัวใบ · Address · PDF · การตัดสิน · หมวด/งาน/ปลายทาง) ──
+  //   รวมการพิมพ์ติด ๆ กันเป็นก้าวเดียว (หน่วง 350ms) · เก็บย้อนหลังสูงสุด 60 ก้าว · ไม่นับการเปลี่ยนขั้น
+  const HKEYS = ["hdr", "units", "pdfs", "ack", "ackMeta", "catOv", "procOv", "destOv", "afterSave"];
+  const snapNow = { hdr, units, pdfs, ack, ackMeta, catOv, procOv, destOv, afterSave };
+  const latestSnap = useRef(snapNow); latestSnap.current = snapNow;
+  const hist = useRef({ past: [], future: [], cur: null, t: 0 });
+  const [hv, setHv] = useState({ u: 0, r: 0 });
+  const sameSnap = (a, b) => HKEYS.every((k) => a[k] === b[k]);
+  const syncHv = () => setHv({ u: hist.current.past.length, r: hist.current.future.length });
+  const flushHist = () => {
+    const h = hist.current; clearTimeout(h.t);
+    if (h.cur && !sameSnap(h.cur, latestSnap.current)) { h.past.push(h.cur); if (h.past.length > 60) h.past.shift(); h.future = []; h.cur = latestSnap.current; }
+  };
+  useEffect(() => {
+    const h = hist.current;
+    if (!h.cur) { h.cur = latestSnap.current; return; }
+    clearTimeout(h.t);
+    h.t = setTimeout(() => { flushHist(); syncHv(); }, 350);
+    return () => clearTimeout(h.t);
+  }, [hdr, units, pdfs, ack, ackMeta, catOv, procOv, destOv, afterSave]);   // eslint-disable-line react-hooks/exhaustive-deps
+  function applySnap(t) {
+    setHdr(t.hdr); setUnits(t.units); setPdfs(t.pdfs); setAck(t.ack); setAckMeta(t.ackMeta);
+    setCatOv(t.catOv); setProcOv(t.procOv); setDestOv(t.destOv); setAfterSave(t.afterSave);
+  }
+  function undo() {
+    if (saving.busy || saving.done) return;
+    const h = hist.current; flushHist();
+    if (!h.past.length) { syncHv(); return; }
+    const t = h.past.pop(); h.future.push(h.cur); h.cur = t; applySnap(t); syncHv();
+  }
+  function redo() {
+    if (saving.busy || saving.done) return;
+    const h = hist.current; flushHist();
+    if (!h.future.length) { syncHv(); return; }
+    const t = h.future.pop(); h.past.push(h.cur); h.cur = t; applySnap(t); syncHv();
+  }
+  const undoRef = useRef({}); undoRef.current = { undo, redo };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = String(e.key).toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); undoRef.current.undo(); }
+      else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); undoRef.current.redo(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   function dropDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } setDraftOffer(null); }
 
   // ── สถานะแต่ละขั้น (โชว์ในแถบขั้น) ──
@@ -315,6 +362,10 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         <button type="button" className="btn btn-ghost" onClick={() => (step === 0 ? onCancel() : go(step - 1))} disabled={saving.busy}>
           {step === 0 ? "ยกเลิก" : "← ย้อนกลับ"}
         </button>
+        <div className="rw-undo">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={undo} disabled={!hv.u || saving.busy} title="ย้อนกลับ (Ctrl+Z)">↶ ย้อน{hv.u ? ` (${hv.u})` : ""}</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={redo} disabled={!hv.r || saving.busy} title="ทำซ้ำ (Ctrl+Shift+Z / Ctrl+Y)">↷ ทำซ้ำ</button>
+        </div>
         <div className="rw-navsum"><b>ขั้น {step + 1} จาก 4</b> · {STEPS[step]}{curSub ? <span className="rw-muted"> — {curSub}</span> : null}</div>
         {step < 3
           ? <button type="button" className="btn btn-accent" onClick={() => go(step + 1)}>{nextLabel}</button>
