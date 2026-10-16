@@ -88,7 +88,7 @@ export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact =
   const pad = { paddingLeft: 10 + depth * 22 };
   if (!sub) return <tr className="rw-kid"><td /><td colSpan={compact ? 4 : 7} className="rw-muted small" style={pad}>↳ ยังไม่มีแบบซับ {code} ในโปรเจค — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วจะเห็นเบอร์ลูก</td></tr>;
   const items = (sub.full || sub.items || []).filter((i) => (i[4] || "") !== "ยกเลิก");   // full = ทุกบรรทัดจาก PDF ซับ (รวมสกรู/ยาง) · ไม่มี = ใช้ BOM ในระบบ
-  if (!items.length) return <tr className="rw-kid"><td /><td colSpan={compact ? 4 : 7} className="rw-muted small" style={pad}>↳ ซับนี้ยังไม่มีเบอร์ลูก</td></tr>;
+  if (!items.length) return <tr className="rw-kid"><td /><td colSpan={compact ? 4 : 7} className="rw-muted small" style={pad}>↳ ยังไม่ได้ลงแบบซับ {code} — ลาก PDF ของซับนี้ไปวางที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด “บันทึก” (เบอร์ลูกถึงจะขึ้น)</td></tr>;
   return items.map((it, n) => {
     const [k, c, q] = it;
     const isSub = k === "sub";

@@ -25,6 +25,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const [destOv, setDestOv] = useState({});
   const [tab, setTab] = useState("sub");
   const [q, setQ] = useState("");
+  const [onlyNoKids, setOnlyNoKids] = useState(false);   // กรอง: ซับที่ยังไม่มีแบบ (ไม่มีเบอร์ลูก)
   const [reading, setReading] = useState(null);
   const [drag, setDrag] = useState(false);
   const [saving, setSaving] = useState({ busy: false, msg: "", err: "", done: null });
@@ -80,6 +81,12 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   }
   const setCat = (codes, v) => setCatOv((o) => { const n = { ...o }; for (const c of codes) { if (!v || v === UNCAT) delete n[c]; else n[c] = v; } return n; });
 
+  async function goBack() {
+    if (saving.busy) return;
+    if (pdfs.length && !(await askConfirm({ title: "มี PDF ใหม่ที่ยังไม่บันทึก", message: `PDF ใหม่ ${pdfs.length} ไฟล์ยังไม่ได้กด "บันทึก" — ถ้ากลับตอนนี้ไฟล์จะหาย ต้องอัพใหม่`, tone: "warn", confirmText: "กลับ (ทิ้งไฟล์)", cancelText: "อยู่ต่อ" }))) return;
+    onBack();
+  }
+
   async function save() {
     if (saving.busy) return;
     const nNew = pdfs.length;
@@ -89,7 +96,9 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
       const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
       setSaving({ busy: false, msg: "", err: "", done: true, errors: r?.errors || [] });
       setPdfs([]);
-      const l = await api.loadBomLibrary(projectId).catch(() => null); if (l) setLib(l);
+      let reloadErr = "";
+      const l = await api.loadBomLibrary(projectId).catch((e) => { reloadErr = String(e?.message || e); return null; });
+      if (l) setLib(l); else setSaving({ busy: false, msg: "", err: "", done: true, errors: [...(r?.errors || []), `บันทึกแล้ว แต่โหลดคลังกลับมาไม่ได้ (${reloadErr || "ไม่ทราบสาเหตุ"}) — กด F5 เพื่อรีเฟรช`] });
       if (onSaved) onSaved(r);
     } catch (e) { setSaving({ busy: false, msg: "", err: e?.message || String(e), done: false }); }
   }
@@ -99,7 +108,9 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const catOpts = (partMode === "setting" ? [...partGroups.map((g) => g.name || g)] : PART_CATS).filter((k) => k !== "SUB-ASSEMBLY PART");
   const isGlass = (p) => p.cat === "GLASS";
   const partRows = parts.filter((p) => (tab === "glass" ? isGlass(p) : !isGlass(p))).filter((p) => has(p.code, p.d, p.m || p.binv, p.cat)).sort((a, b) => ((grpOrder.get(a.cat) ?? 99) - (grpOrder.get(b.cat) ?? 99)) || ncmp(a.code, b.code));
-  const subRows = subs.filter((s) => has(s.code, s.d) || s.items.some((it) => has(it[1])));
+  const noKids = (s) => !s.items.length && !(s.full || []).length;   // ยังไม่เคยลงแบบ PDF ของซับนี้ (มีแต่ชื่อเบอร์ที่แผง/ซับแม่อ้างถึง)
+  const noKidSubs = subs.filter(noKids);
+  const subRows = subs.filter((s) => (has(s.code, s.d) || s.items.some((it) => has(it[1]))) && (!onlyNoKids || noKids(s)));
   let lastCat = null;
   const nPdfSub = pdfs.filter((d) => d.kind === "sub").length, nPdfPart = pdfs.filter((d) => d.kind === "part").length;
 
@@ -107,12 +118,12 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     <div className="rw pl">
       <div className="page-head rw-head">
         <div>
-          <div className="rw-crumb"><button type="button" className="rw-link" onClick={onBack}>โปรเจค {projectCode}</button> <span>/</span> ซับ / พาร์ท ของโปรเจค</div>
+          <div className="rw-crumb"><button type="button" className="rw-link" onClick={goBack}>โปรเจค {projectCode}</button> <span>/</span> ซับ / พาร์ท ของโปรเจค</div>
           <div className="page-title">ซับ / พาร์ท ของโปรเจค {projectCode}</div>
           <div className="page-sub">ลงแบบซับ (SA…) และแบบพาร์ทไว้ที่โปรเจค แยกหมวด · Release ลงแค่แผง แล้วระบบดึงซับ/พาร์ทที่แผงใช้จากที่นี่ให้เอง</div>
         </div>
         <div className="rw-head-right">
-          <button type="button" className="btn btn-ghost" onClick={onBack} disabled={saving.busy}><Icon name="arrowLeft" size={14} /> กลับ</button>
+          <button type="button" className="btn btn-ghost" onClick={goBack} disabled={saving.busy}><Icon name="arrowLeft" size={14} /> กลับ</button>
           <button type="button" className="btn btn-accent" onClick={save} disabled={saving.busy || state.s !== "ok"}>{saving.busy ? saving.msg : "บันทึก"}</button>
         </div>
       </div>
@@ -149,6 +160,13 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
         <div className="rl-tools">
           <input className="input rw-search" style={{ marginTop: 0 }} placeholder="ค้นหาเบอร์ / description / INV" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        {tab === "sub" && noKidSubs.length ? (
+          <div className="rw-msg warn rl-nokids">
+            <span>⚠ ซับ <b>{nf(noKidSubs.length)}</b> เบอร์ ยังไม่มีเบอร์ลูก — ยังไม่ได้ลงแบบ PDF ของซับเหล่านี้ (ในระบบมีแค่ชื่อเบอร์ที่แผง/ซับแม่อ้างถึง) · ลาก PDF ของซับมาวางด้านบน แล้วกด "บันทึก"</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOnlyNoKids((v) => !v)}>{onlyNoKids ? "ดูซับทั้งหมด" : "ดูเฉพาะที่ยังไม่มีแบบ"}</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { try { navigator.clipboard.writeText(noKidSubs.map((x) => x.code).join("\n")); setReading({ warn: `คัดลอกรายชื่อซับที่ยังไม่มีแบบ ${noKidSubs.length} เบอร์แล้ว` }); } catch (_) { setReading({ err: "คัดลอกไม่ได้" }); } }}>คัดลอกรายชื่อ</button>
+          </div>
+        ) : null}
         <div className="table-wrap rw-tw rl-tw">
           {tab === "sub" ? (
             <table className="data-table rw-table">
@@ -160,7 +178,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
                   <td className="rw-mono"><button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title={open[path] ? "ย่อ" : "ขยายดูเบอร์ลูก"}>{open[path] ? "▾" : "▸"}</button><b>{s.code}</b>{isStar(s.code) ? <> <Pill tone="warn">*</Pill></> : null}</td>
                   <td className="rl-desc"><span>{s.d}</span></td>
                   <td className="r rw-num">{nlen(s.l)}</td>
-                  <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{pdfOf.has(NC(s.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(s.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
+                  <td>{srcOf(s.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{noKids(s) ? <> <Pill tone="warn">ยังไม่มีแบบ</Pill></> : null}{pdfOf.has(NC(s.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(s.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
                 </tr>
                 {open[path] ? <SubKids lib={bom} code={s.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(s.code)]} compact /> : null}
                 </Fragment>); })}</tbody>
