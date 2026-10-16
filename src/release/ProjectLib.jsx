@@ -110,7 +110,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const partRows = parts.filter((p) => (tab === "glass" ? isGlass(p) : !isGlass(p))).filter((p) => has(p.code, p.d, p.m || p.binv, p.cat)).sort((a, b) => ((grpOrder.get(a.cat) ?? 99) - (grpOrder.get(b.cat) ?? 99)) || ncmp(a.code, b.code));
   const noKids = (s) => !s.items.length && !(s.full || []).length;   // ยังไม่เคยลงแบบ PDF ของซับนี้ (มีแต่ชื่อเบอร์ที่แผง/ซับแม่อ้างถึง)
   const noKidSubs = subs.filter(noKids);
-  const subRows = subs.filter((s) => (has(s.code, s.d) || s.items.some((it) => has(it[1]))) && (!onlyNoKids || noKids(s)));
+  const subRows = subs.filter((s) => (has(s.code, s.d) || s.items.some((it) => has(it[1]))) && (!(onlyNoKids && noKidSubs.length) || noKids(s)));
   let lastCat = null;
   const nPdfSub = pdfs.filter((d) => d.kind === "sub").length, nPdfPart = pdfs.filter((d) => d.kind === "part").length;
 
