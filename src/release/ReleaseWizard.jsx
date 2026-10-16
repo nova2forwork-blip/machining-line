@@ -352,7 +352,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       )}
 
       {step === 3 && (
-        <SaveStep saveChecks={saveChecks} go={go} plan={plan} units={units} cnt={cnt} roNorm={roNorm}
+        <SaveStep releases={releases} draftPlan={draftPlan} saveChecks={saveChecks} go={go} plan={plan} units={units} cnt={cnt} roNorm={roNorm}
           project={project} catOf={catOf} catOv={catOv} setCatOv={setCatOv} procOf={procOf} setProcOv={setProcOv} destOv={destOv} setDestOv={setDestOv}
           afterSave={afterSave} setAfterSave={setAfterSave} bomSave={bomSave} saving={saving} hdr={hdr} />
       )}
@@ -715,7 +715,7 @@ function SumCard({ tone, title, big, children, wide }) {
   );
 }
 // ══ ④ ตรวจ + บันทึก ══
-function SaveStep({ saveChecks, go, plan, units, cnt, roNorm, project, catOf, catOv, setCatOv, procOf, setProcOv, destOv, setDestOv, afterSave, setAfterSave, bomSave, saving, hdr }) {
+function SaveStep({ releases, draftPlan, saveChecks, go, plan, units, cnt, roNorm, project, catOf, catOv, setCatOv, procOf, setProcOv, destOv, setDestOv, afterSave, setAfterSave, bomSave, saving, hdr }) {
   const [tab, setTab] = useState("make");
   const [q, setQ] = useState("");
   const [type, setType] = useState("all");
@@ -729,8 +729,10 @@ function SaveStep({ saveChecks, go, plan, units, cnt, roNorm, project, catOf, ca
   }, [plan]);
   const vis = items.filter((r) => (type === "all" || r.type === type) && (!q || r.code.toUpperCase().includes(q.toUpperCase()) || String(r.d).toUpperCase().includes(q.toUpperCase()))).sort((a, b) => ncmp(a.code, b.code));
   const mats = useMemo(() => cutMaterials(plan.parts), [plan]);
-  const sheetN = (k) => (k === "panel" ? units.length : isPartSheet(k) ? plan.parts.filter((p) => p.dest === k).length : plan.subs.filter((s) => s.procs.includes(k)).length);
-  const sheetQ = (k) => (k === "panel" ? units.length : isPartSheet(k) ? sum(plan.parts.filter((p) => p.dest === k)) : sum(plan.subs.filter((s) => s.procs.includes(k))));
+  // ★ 2026-10-16: Total Part แยกตาม "หมวด" (PART_CATS) ไม่ใช่ชีต CUTTING/BENDING/STEEL — เดิมค้นผิดชุดจนหน้าพัง (reading 'kind')
+  const partsIn = (k) => plan.parts.filter((p) => (PART_CATS.includes(k) ? catOf(p.code, "part") === k : p.dest === k));
+  const sheetN = (k) => (k === "panel" ? units.length : PART_CATS.includes(k) || isPartSheet(k) ? partsIn(k).length : plan.subs.filter((s) => s.procs.includes(k)).length);
+  const sheetQ = (k) => (k === "panel" ? units.length : PART_CATS.includes(k) || isPartSheet(k) ? sum(partsIn(k)) : sum(plan.subs.filter((s) => s.procs.includes(k))));
   return (
     <>
       <div className="card rw-card">
@@ -776,7 +778,7 @@ function SaveStep({ saveChecks, go, plan, units, cnt, roNorm, project, catOf, ca
                     {g.k === "mat"
                       ? [["วัตถุดิบงานตัด", `${nf(mats.length)} รายการ`, `${nf(mats.reduce((a, m) => a + m.bars, 0))} เส้น (ประมาณ)`], ["GLASS", `${nf(plan.glass.length)} เบอร์`, `${nf(sum(plan.glass))} แผ่น`], ["FIXING", `${nf(plan.hw.length)} รายการ`, "สกรู / ยาง / ซิลิโคน"], ...(plan.other.length ? [["อื่นๆ", `${nf(plan.other.length)} เบอร์`, [...new Set(plan.other.map((o) => o.cat))].join(" · ")]] : [])]
                         .map(([t, a, b]) => <div key={t} className="rw-sheetsum-i mat"><b>{t}</b><span>{a} · {b}</span></div>)
-                      : g.sheets.map((k) => { const s = SHEETS.find((x) => x.k === k); return <div key={k} className={`rw-sheetsum-i ${s.kind}`} title={s.label}><b>{s.tab}</b><span>{nf(sheetN(k))} เบอร์ · {nf(sheetQ(k))} {s.kind === "sub" ? "SET" : "ชิ้น"}</span></div>; })}
+                      : g.sheets.map((k) => { const s = SHEETS.find((x) => x.k === k) || { kind: "part", tab: k, label: k }; return <div key={k} className={`rw-sheetsum-i ${s.kind}`} title={s.label}><b>{s.tab}</b><span>{nf(sheetN(k))} เบอร์ · {nf(sheetQ(k))} {s.kind === "sub" ? "SET" : "ชิ้น"}</span></div>; })}
                   </div>
                 </div>))}
               <div className="rw-sumgrp panel">
@@ -790,7 +792,7 @@ function SaveStep({ saveChecks, go, plan, units, cnt, roNorm, project, catOf, ca
                     {g.k === "mat"
                       ? [["วัตถุดิบงานตัด", `${nf(mats.length)} รายการ`, `${nf(mats.reduce((a, m) => a + m.bars, 0))} เส้น (ประมาณ)`], ["GLASS", `${nf(plan.glass.length)} เบอร์`, `${nf(sum(plan.glass))} แผ่น`], ["FIXING", `${nf(plan.hw.length)} รายการ`, "สกรู / ยาง / ซิลิโคน"], ...(plan.other.length ? [["อื่นๆ", `${nf(plan.other.length)} เบอร์`, [...new Set(plan.other.map((o) => o.cat))].join(" · ")]] : [])]
                         .map(([t, a, b]) => <div key={t} className="rw-sheetsum-i mat"><b>{t}</b><span>{a} · {b}</span></div>)
-                      : g.sheets.map((k) => { const s = SHEETS.find((x) => x.k === k); return <div key={k} className={`rw-sheetsum-i ${s.kind}`} title={s.label}><b>{s.tab}</b><span>{nf(sheetN(k))} เบอร์ · {nf(sheetQ(k))} {s.kind === "sub" ? "SET" : "ชิ้น"}</span></div>; })}
+                      : g.sheets.map((k) => { const s = SHEETS.find((x) => x.k === k) || { kind: "part", tab: k, label: k }; return <div key={k} className={`rw-sheetsum-i ${s.kind}`} title={s.label}><b>{s.tab}</b><span>{nf(sheetN(k))} เบอร์ · {nf(sheetQ(k))} {s.kind === "sub" ? "SET" : "ชิ้น"}</span></div>; })}
                   </div>
                 </div>))}
             </div>
