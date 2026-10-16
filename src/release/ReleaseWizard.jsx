@@ -14,7 +14,7 @@ import {
 import "./release-wizard.css";
 
 const DRAFT_KEY = "mls.relwiz.draft.v1";
-const STEPS = ["สร้าง Release", "Address & Unit", "อัพ PDF แผง / ซับ / พาร์ท", "ตรวจ + บันทึก"];
+const STEPS = ["สร้าง Release", "Address & Unit", "อัพ PDF แผง", "ตรวจ + บันทึก"];
 const SUB_SHORT = { "พับ": "พับ", "เชื่อม": "เชื่อม", "ยิง": "ยิง", "Site Item": "Site Item" };
 const EMPTY_LIB = { panels: {}, subs: {}, parts: {} };
 const todayYmd = () => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
@@ -528,7 +528,7 @@ function PdfStep({ pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState
         <div className="card rw-card">
           <div className="rw-stats wide">
             <div className="rw-stat"><b>{pdfs.length}</b><span>ไฟล์ PDF</span></div>
-            <div className="rw-stat"><b>{nPanel} / {nSub} / {nPart}</b><span>แผง / ซับ / พาร์ท</span></div>
+            <div className="rw-stat"><b>{nPanel}</b><span>แบบแผง</span></div>
             <div className="rw-stat"><b className="ok">{checks.filter((r) => !r.open).length}</b><span>ไฟล์ไม่มีปัญหา</span></div>
             <div className="rw-stat"><b className={openN ? "bad" : "ok"}>{openN}</b><span>จุดที่ยังต้องตัดสิน</span></div>
           </div>
