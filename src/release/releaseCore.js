@@ -128,11 +128,13 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const numx = {}; for (const k of ["QTY.", "LENGTH", "HEIGHT", "FINISH"]) if (hx[k]) numx[k] = hx[k];
     if (!numx["QTY."]) continue;
     const qx0 = numx["QTY."][0] - 22;
-    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 0.3);
+    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 0.5);   // QTY บางแบบพิมพ์ใหญ่กว่าคอลัมน์อื่นนิดหน่อย (7.01 vs 6.68) — เดิม 0.3 ทำให้จำนวนหาย
     const colof = (w) => { const cx = (w.x0 + w.x1) / 2; let best = null; for (const k in numx) { const [a, b] = numx[k]; const d = a - 3 <= cx && cx <= b + 3 ? 0 : Math.min(Math.abs(cx - a), Math.abs(cx - b)); if (!best || d < best[0]) best = [d, k]; } return best[1]; };
     let last = null;
     for (const { ws } of rowsByY(cells)) {
-      if (!/^\d+$/.test(ws[0].text)) {
+      // ต้องเป็นเลข ITEM จริง = อยู่ใต้หัวคอลัมน์ ITEM (กันเลขวงกลม/มิติในรูปที่อยู่ขวาตาราง แล้วถูกอ่านเป็นแถว)
+      const inItemCol = Math.abs((ws[0].x0 + ws[0].x1) / 2 - (it.x0 + it.x1) / 2) < 10;
+      if (!/^\d+$/.test(ws[0].text) || !inItemCol) {
         const ex = ws.map((w) => w.text);
         if (last && ex.length === 1 && /^(M|PCS|MM)\.?$/i.test(ex[0])) last.qty_unit = ex[0].replace(".", "").toLowerCase();
         continue;
@@ -140,6 +142,7 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
       const r = {}; const txt = [];
       for (const w of ws.slice(1)) { if (w.x0 >= qx0) (r[colof(w)] = r[colof(w)] || []).push(w.text); else txt.push(w.text); }
       if (!txt.length && !Object.keys(r).length) continue;
+      if (txt.length && !/[A-Za-z]/.test(txt[0])) continue;   // เบอร์จริงมีตัวอักษรเสมอ — ข้อความมิติในรูป (เช่น 13/32") ที่อยู่แนวเดียวกับเลข ITEM ไม่ใช่แถว BOM
       let code = txt[0] || ""; let rest = txt.slice(1);
       if (rest.length && /^[A-Z]{1,2}\*?$/.test(rest[0])) { code += " " + rest[0]; rest = rest.slice(1); }
       const q = r["QTY."] || [], L = r["LENGTH"] || [], H = r["HEIGHT"] || [], F = r["FINISH"] || [];
