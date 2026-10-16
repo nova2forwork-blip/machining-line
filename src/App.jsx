@@ -4045,6 +4045,8 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
   const fileRef = useRef(null);
   const pasteRef = useRef(null);
   const lastPasteRef = useRef(0);
+  const bunksRef = useRef([]);   // ค่าล่าสุดของ bunks (listener วางผูกครั้งเดียว จึงอ่าน state ตรง ๆ ไม่ได้)
+  bunksRef.current = bunks;
 
   function matchProject(projectName) {
     if (!projectName) return;
@@ -4059,11 +4061,23 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
   function applyBunks(parsed, src) {
     const list = (parsed?.bunks || []).filter((b) => b && b.units && b.units.length);
     if (!list.length) { setErr("ไม่พบข้อมูลบั้งในไฟล์/ข้อความ — ตรวจว่ามีหัว 'BUNK NO.' + ตาราง Unit No/Weight"); return; }
-    setBunks(list);
+    // ★ 2026-10-16: วางเพิ่ม = "ต่อท้าย" ของเดิม (เดิมแทนที่ทั้งหมดจนบั้งเก่าหาย) · เลข BUNK NO. ซ้ำ = อัปเดตบั้งเดิมแทนการซ้อน
+    const keyOf = (b) => String(b.meta?.bunk_no || "").trim().toUpperCase();
+    const prev = bunksRef.current;
+    const merged = [...prev];
+    let replaced = 0;
+    for (const b of list) {
+      const k = keyOf(b);
+      const at = k ? merged.findIndex((x) => keyOf(x) === k) : -1;
+      if (at >= 0) { merged[at] = b; replaced++; } else merged.push(b);
+    }
+    setBunks(merged);
     setOpenIdx(-1);
-    matchProject(list[0]?.meta?.project);
+    bunksRef.current = merged;
+    if (!prev.length) matchProject(list[0]?.meta?.project);
     setErr("");
-    mlsToast(`${src} ${list.length} บั้ง · ${list.reduce((s, b) => s + b.units.length, 0)} ยูนิต — ตรวจแล้วกดบันทึก`, "success");
+    const nUnits = merged.reduce((s, b) => s + b.units.length, 0);
+    mlsToast(`${src} ${list.length} บั้ง${replaced ? ` (ซ้ำ ${replaced} บั้ง — แทนที่ของเดิม)` : ""} · รวมทั้งหมด ${merged.length} บั้ง ${nUnits} ยูนิต — ตรวจแล้วกดบันทึก`, "success");
   }
   async function onPickFile(e) {
     const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
