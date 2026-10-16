@@ -1,0 +1,9 @@
+.demo-note { font-size: 12.5px; color: #5b4a12; background: #fff8e1; border: 1px dashed #e9c46a; border-radius: 12px; padding: 8px 12px; margin-bottom: 16px; }
+.demo-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.demo-tag { font-size: 11px; font-weight: 700; color: #8a6d00; background: #fff3c4; border-radius: 6px; padding: 2px 7px; }
+.demo-chip { font: inherit; font-size: 12px; font-weight: 600; color: #6b5300; background: #fffbea; border: 1px dashed #e0b84a; border-radius: 99px; padding: 5px 11px; cursor: pointer; }
+.demo-chip:hover { background: #fff3c4; }
+.demo-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 90; background: #142420; color: #fff; padding: 12px 18px; border-radius: 12px; box-shadow: 0 20px 50px -12px rgba(20,50,40,.4); font-size: 13.5px; max-width: min(720px, 92vw); }
+.demo-new td { background: #e5f9f1; }
+.demo-badge { margin-left: 8px; font-size: 11px; font-weight: 700; color: #fff; background: #10b981; border-radius: 99px; padding: 1px 8px; }
+@media (max-width: 900px) { .demo-toast { bottom: 140px; } }
