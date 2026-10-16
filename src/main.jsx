@@ -86,7 +86,11 @@ if (typeof window !== "undefined") {
 }
 
 // ─── Service worker: แคช app shell ให้เปิดแอปได้แม้ไม่มีเน็ต + แจ้งเวอร์ชันใหม่ ──
-if ("serviceWorker" in navigator) {
+// ★ 2026-10-16: ตอนรันทดสอบในเครื่อง (npm run dev) ไม่ใช้ service worker — กันหน้าเว็บค้างโค้ดเก่าในแคช
+if (import.meta.env.DEV && "serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+  if (window.caches) caches.keys().then((ks) => ks.forEach((k) => caches.delete(k))).catch(() => {});
+} else if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js")
       .then((reg) => import("./updatePrompt.js").then(({ setupUpdateWatcher }) => setupUpdateWatcher(reg)))
