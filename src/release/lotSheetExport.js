@@ -106,9 +106,8 @@ function matRows(sheet, need) {
   return { out, total: null };
 }
 
-export function buildLotWorkbook(ExcelJS, { plan, need, lot, userName, logo, printDate }) {
-  const wb = new ExcelJS.Workbook(); wb.creator = "Artclad Production"; wb.created = new Date();
-  const logoId = logo ? wb.addImage({ buffer: logo, extension: "png" }) : null;
+// ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
+export function buildLotModel({ plan, need, lot, userName, printDate }) {
   const by = new Map();
   for (const r of lot.rows) for (const k of lotRowSheets(r, need)) (by.get(k) || by.set(k, []).get(k)).push(r);
   const known = SHEETS.filter((s) => by.has(s.k));
@@ -120,31 +119,40 @@ export function buildLotWorkbook(ExcelJS, { plan, need, lot, userName, logo, pri
   // ใบเบิกวัสดุ (ทั้ง Release) — ใส่ท้ายถ้ามีรายการ
   if ((need.glass || []).length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
   if ((need.hw || []).length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
-  const releaser = lot.by || plan.by || userName || "";
-  const today = fmtDate(printDate || new Date());
+  const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(printDate || new Date()) };
   const used = new Set();
-
-  for (const { sheet, rows, mat } of list) {
+  const sheets = list.map(({ sheet, rows, mat }) => {
     let name = String(sheet.tab).replace(/[\\/?*[\]:']/g, " ").slice(0, 31); if (used.has(name)) name = name.slice(0, 27) + " (2)"; used.add(name);
-    const { cols, groups } = columnsFor(sheet); const W = cols.length;
-    const two = cols.some((c) => c.th);           // หัวตาราง 2 บรรทัด (อังกฤษ/ไทย)
+    const { cols, groups } = columnsFor(sheet);
+    const [t1, t2] = TITLES[sheet.k] || [`${sheet.label || sheet.k}`, sheet.th || ""];
+    const { out, total, totalAt } = mat ? matRows(sheet, need) : rowsFor(sheet, rows, { plan, need });
+    return { key: sheet.k, kind: sheet.kind, name, cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ยอดรวมทั้ง Release ${plan.ro || ""} (ใบเบิกวัสดุ ไม่แยกตามล็อต)` : "" };
+  });
+  return { meta, sheets, file: `ใบปล่อย ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
+}
+
+export function buildLotWorkbook(ExcelJS, args) {
+  const { logo } = args;
+  const model = buildLotModel(args); const { meta } = model; const lot = { no: meta.ro }; const plan = { projectCode: meta.project };
+  const wb = new ExcelJS.Workbook(); wb.creator = "Artclad Production"; wb.created = new Date();
+  const logoId = logo ? wb.addImage({ buffer: logo, extension: "png" }) : null;
+  const releaser = meta.by; const today = meta.date;
+
+  for (const sh of model.sheets) {
+    const { name, cols, groups, two, t1, t2, rows: out, total, totalAt } = sh; const sheet = { kind: sh.kind }; const mat = sh.kind === "mat"; const W = cols.length;
     const ws = wb.addWorksheet(name, { pageSetup: { paperSize: 9, orientation: W > 6 ? "landscape" : "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } }, views: [{ showGridLines: false }] });
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.w; });
-    const tot = cols.reduce((s, c) => s + c.w, 0);
-    const colAt = (frac) => { let acc = 0; for (let i = 0; i < W; i++) { acc += cols[i].w; if (acc >= tot * frac) return i + 1; } return W; };
+    const tot = cols.reduce((s, c) => s + c.w, 0); void tot;
     const mergeTo = (r, a, b) => { if (b > a) ws.mergeCells(r, a, r, b); return ws.getCell(r, a); };
     const put = (r, a, b, value, font, align) => { const x = mergeTo(r, a, b); x.value = value; x.font = { name: FONT, size: 11, ...font }; x.alignment = { vertical: "middle", ...align }; return x; };
 
     // ── หัวใบ ──
-    const issue = sheet.kind === "mat";
     ws.getRow(1).height = 22; ws.getRow(2).height = 22; ws.getRow(3).height = 16; ws.getRow(4).height = 16;
     put(1, 3, W, "PRODUCTION ORDER", { bold: true, size: 15 }, { horizontal: "center" });
-    put(2, 3, W, issue ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", { bold: true, size: 13 }, { horizontal: "center" });
-    if (sheet.kind === "mat") put(1, 1, 2, "", {}, {});
+    put(2, 3, W, sh.line2, { bold: true, size: 13 }, { horizontal: "center" });
     put(3, Math.max(1, W - 1), W, "RPT:", { size: 11 }, { horizontal: "right" });
     put(4, Math.max(1, W - 1), W, "REV:", { size: 11 }, { horizontal: "right" });
     if (logoId != null) ws.addImage(logoId, { tl: { col: 0.1, row: 0.1 }, ext: { width: 178, height: 50 } });
-    const [t1, t2] = TITLES[sheet.k] || [`${sheet.label || sheet.k}`, sheet.th || ""];
     // แบ่งแถวหัว 3 ช่วง: ซ้าย (Release Order/Project) · กลาง (ชื่อใบ) · ขวา (Print date/Prepared by) ตามความกว้างคอลัมน์
     const needL = Math.max(27, (String(lot.no).length + 16) * 1.2);
     let aEnd = 1; { let acc = 0; for (let i = 0; i < W; i++) { acc += cols[i].w; aEnd = i + 1; if (acc >= needL) break; } }
@@ -155,13 +163,13 @@ export function buildLotWorkbook(ExcelJS, { plan, need, lot, userName, logo, pri
     put(5, 1, aEnd, roText, { bold: true, size: 12 }, { horizontal: "left" });
     put(5, aEnd + 1, bStart - 1, t1, { bold: true, size: 12 }, { horizontal: "center" });
     put(5, bStart, W, `Print date : ${today}`, { bold: true, size: 12 }, { horizontal: "right" });
-    put(6, 1, aEnd, `Project : ${plan.projectCode || ""}`, { bold: true, size: 12 }, { horizontal: "left" });
+    put(6, 1, aEnd, `Project : ${plan.projectCode}`, { bold: true, size: 12 }, { horizontal: "left" });
     put(6, aEnd + 1, bStart - 1, t2, { bold: true, size: 12 }, { horizontal: "center" });
     put(6, bStart, W, `Prepared by : ${releaser}`, { bold: true, size: 12 }, { horizontal: "right" });
     for (let i = 1; i <= W; i++) { ws.getCell(5, i).border = { top: { style: "medium", color: BLACK } }; ws.getCell(6, i).border = { bottom: { style: "medium", color: BLACK } }; }
-    if (mat) put(7, 1, W, `ยอดรวมทั้ง Release ${plan.ro || ""} (ใบเบิกวัสดุ ไม่แยกตามล็อต)`, { italic: true, size: 10, color: GREY }, { horizontal: "left" });
+    if (mat) put(7, 1, W, sh.note, { italic: true, size: 10, color: GREY }, { horizontal: "left" });
     // ── หัวตาราง ──
-    const hr = 9; const hr2 = two ? hr + 1 : hr;
+    void sheet; const hr = 9; const hr2 = two ? hr + 1 : hr;
     ws.getRow(hr).height = two ? 20 : 34; if (two) ws.getRow(hr2).height = 20;
     cols.forEach((c, i) => {
       const a = ws.getCell(hr, i + 1); a.value = c.en || null;
@@ -170,7 +178,6 @@ export function buildLotWorkbook(ExcelJS, { plan, need, lot, userName, logo, pri
     });
     for (const [a, b, label] of groups || []) { ws.mergeCells(hr, a, hr, b); const x = ws.getCell(hr, a); x.value = label; x.alignment = { horizontal: "center", vertical: "middle" }; x.font = { name: FONT, size: 11, bold: true }; }
     // ── ข้อมูล ──
-    const { out, total, totalAt } = mat ? matRows(sheet, need) : rowsFor(sheet, rows, { plan, need });
     out.forEach((row, ri) => {
       const rr = hr2 + 1 + ri;
       row.vals.forEach((v, i) => {
@@ -196,8 +203,48 @@ export function buildLotWorkbook(ExcelJS, { plan, need, lot, userName, logo, pri
     ws.views = [{ state: "frozen", ySplit: hr2, showGridLines: false }];
     ws.pageSetup.printTitlesRow = `1:${hr2}`;   // ใบยาวหลายหน้า → หัวใบ + หัวตารางซ้ำทุกหน้า
   }
-  if (!list.length) { const ws = wb.addWorksheet("ใบปล่อย"); ws.getCell("A1").value = "(ล็อตนี้ไม่มีรายการ)"; }
+  if (!model.sheets.length) { const ws = wb.addWorksheet("ใบปล่อย"); ws.getCell("A1").value = "(ล็อตนี้ไม่มีรายการ)"; }
   return wb;
+}
+
+// ── หน้าตัวอย่าง (HTML → พิมพ์ / บันทึกเป็น PDF จากเบราว์เซอร์) — หน้าตาเดียวกับ Excel ──
+const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtN = (v) => (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : esc(v));
+export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
+  const { meta } = model;
+  const pages = model.sheets.map((sh) => {
+    const W = sh.cols.length; const tot = sh.cols.reduce((n, c) => n + c.w, 0);
+    const land = W > 6; const mat = sh.kind === "mat";
+    const colgroup = sh.cols.map((c) => `<col style="width:${(c.w / tot * 100).toFixed(2)}%">`).join("");
+    const head1 = (() => { const cells = []; for (let i = 0; i < W; i++) { const g = (sh.groups || []).find(([a]) => a === i + 1); if (g) { cells.push(`<th colspan="${g[1] - g[0] + 1}">${esc(g[2])}</th>`); i = g[1] - 1; } else cells.push(`<th${sh.cols[i].grey ? ' class="grey"' : ""}${sh.two ? "" : ' rowspan="1"'}>${esc(sh.cols[i].en)}</th>`); } return cells.join(""); })();
+    const head2 = sh.two ? `<tr>${sh.cols.map((c) => `<th>${esc(c.th)}</th>`).join("")}</tr>` : "";
+    const body = sh.rows.map((r) => `<tr class="${r.bold ? "b" : ""}${r.kid ? " k" : ""}${r.cancelled ? " x" : ""}">${r.vals.map((v, i) => {
+      const h = sh.cols[i].en; const cls = [typeof v === "number" ? "n" : "", ["NO.", "ITEM", "UOM", "UNIT", "REV."].includes(h) ? "c" : "", sh.cols[i].grey || (r.kid && (h === "SUB QTY." || h === "QTY OF PART/SUB")) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", h === "Remark" || h === "REMARK" ? "rm" : ""].filter(Boolean).join(" ");
+      return `<td class="${cls}">${v === "" || v == null ? "" : fmtN(v)}</td>`;
+    }).join("")}${"<td></td>".repeat(Math.max(0, W - r.vals.length))}</tr>`).join("");
+    const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? sh.total : i + 2 === sh.totalAt ? "รวม" : ""}</td>`).join("")}</tr>` : "";
+    return `<section class="pg ${land ? "land" : "port"}">
+<div class="top"><div class="logo">${logoUrl ? `<img src="${esc(logoUrl)}" alt="">` : ""}</div><div class="ttl"><b>PRODUCTION ORDER</b><br><b class="s">${esc(sh.line2)}</b></div><div class="rr">RPT:<br>REV:</div></div>
+<div class="info"><div class="l"><b>Release Order : ${esc(meta.ro)}</b><b>Project : ${esc(meta.project)}</b></div><div class="m"><b>${esc(sh.t1)}</b><b>${esc(sh.t2)}</b></div><div class="r"><b>Print date : ${esc(meta.date)}</b><b>Prepared by : ${esc(meta.by)}</b></div></div>
+${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
+<table><colgroup>${colgroup}</colgroup><thead><tr>${head1}</tr>${head2}</thead><tbody>${body || `<tr><td colspan="${W}" class="grey">(ไม่มีรายการ)</td></tr>`}${totRow}</tbody></table>
+</section>`;
+  }).join("\n");
+  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${esc(model.file)}</title><style>
+@page land{size:A4 landscape;margin:8mm}@page port{size:A4 portrait;margin:8mm}
+*{box-sizing:border-box}html,body{margin:0;background:#e5e7eb;font-family:Tahoma,"Noto Sans Thai","Leelawadee UI",sans-serif;color:#000}
+.pg{background:#fff;margin:14px auto;padding:8mm;box-shadow:0 1px 8px rgba(0,0,0,.25);font-size:10.5px;break-after:page}
+.pg.land{page:land;width:297mm;min-height:210mm}.pg.port{page:port;width:210mm;min-height:297mm}
+.top{display:flex;align-items:flex-start;min-height:17mm}.logo{width:52mm}.logo img{height:15mm}.ttl{flex:1;text-align:center;font-size:15px;line-height:1.5}.ttl .s{font-size:13px}.rr{width:52mm;text-align:right;font-size:11px;line-height:1.5}
+.info{display:flex;justify-content:space-between;align-items:stretch;border-top:2px solid #000;border-bottom:2px solid #000;padding:3px 0;font-size:12px;margin-bottom:6mm}
+.info>div{display:flex;flex-direction:column;gap:3px;line-height:1.35}.info .m{text-align:center;flex:1}.info .r{text-align:right}.info .l{min-width:60mm}
+.note{font-size:10px;font-style:italic;color:#777;margin:-4mm 0 3mm}
+table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #000;padding:2px 4px;vertical-align:middle;word-wrap:break-word;overflow-wrap:anywhere}
+th{font-weight:700;text-align:center;font-size:10.5px}td.n{text-align:right}td.c{text-align:center}.grey{color:#8c8c8c}.red{color:#c00000}td.ind{padding-left:14px}
+tr.b td{font-weight:700}tr.b td.rm{font-weight:400}tr.k td{font-weight:400}tr.x td{text-decoration:line-through;color:#c00000}tr.t td{font-weight:700}td.lab{text-align:right}
+thead{display:table-header-group}tr{break-inside:avoid}
+@media print{html,body{background:#fff}.pg{margin:0;box-shadow:none;width:auto!important;min-height:0!important;padding:0}}
+</style></head><body>${pages || "<p style='padding:20px'>(ล็อตนี้ไม่มีรายการ)</p>"}</body></html>`;
 }
 
 export async function downloadLotSheets(args) {
@@ -209,6 +256,6 @@ export async function downloadLotSheets(args) {
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
-  a.href = url; a.download = `ใบปล่อย ${args.plan.projectCode ? args.plan.projectCode + " " : ""}${args.lot.no}.xlsx`.replace(/[\\/:*?"<>|]/g, "-");
+  a.href = url; a.download = `${buildLotModel(args).file}.xlsx`;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
 }

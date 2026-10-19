@@ -29,6 +29,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 import { realReleaseApi } from "./release/releaseApi.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
+const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
 const ReleaseWizard = lazy(() => import("./release/ReleaseWizard.jsx"));
 const ProjectLibLazy = lazy(() => import("./release/ProjectLib.jsx"));
 const ReleasePlanViewLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlanView })));
@@ -6774,18 +6775,19 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   // ★ 2026-10-19: ใบปล่อยของล็อตนี้ (Excel) — หา Release แผนของล็อต (P-007.1 → P-007) แล้วสร้างจากแผน + ที่ปล่อยจริง
   const [sheetBusy, setSheetBusy] = useState(false);
+  const [sheetPrev, setSheetPrev] = useState(null);   // ตัวอย่างใบปล่อย (PDF / Excel)
   async function exportReleaseSheet() {
     if (sheetBusy || !hdr.ro) return;
     setSheetBusy(true);
     try {
-      const [core, ex] = await Promise.all([import("./release/releaseCore.js"), import("./release/lotSheetExport.js")]);
+      const core = await import("./release/releaseCore.js");
       const { plans } = await realReleaseApi.listPlans(projectId);
       const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
       if (!plan) { mlsToast("ล็อตนี้ไม่มี Release แบบใหม่ (ปล่อยด้วยวิธีเก่า) — ไม่มีข้อมูลใบงานให้สร้างใบปล่อย", "error"); return; }
       const rel = core.releasedOf(releases, plan);
       const lot = rel.lots.find((l) => core.roKey(l.no) === core.roKey(hdr.ro));
       if (!lot) { mlsToast("ไม่พบรายการของล็อตนี้", "error"); return; }
-      await ex.downloadLotSheets({ plan, need: core.needOf(plan), lot, userName: user?.name || "" });
+      setSheetPrev({ plan, need: core.needOf(plan), lot, userName: user?.name || "" });
     } catch (e) {
       console.warn("export release sheet error", e);
       mlsToast("สร้างใบปล่อยไม่สำเร็จ: " + (e?.message || e), "error");
@@ -6796,6 +6798,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   return (
     <div>
+      {sheetPrev ? <Suspense fallback={null}><LotSheetPreviewLazy args={sheetPrev} onClose={() => setSheetPrev(null)} /></Suspense> : null}
       <div className="page-head">
         <div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
@@ -6840,8 +6843,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           {/* ★ 2026-10-19: ใบปล่อย (PRODUCTION ORDER) ของล็อตนี้ — Excel 1 ชีตต่อใบงาน + ช่องเซ็น (ต้องมี Release แบบใหม่ของล็อต) */}
           {hdr.ro ? (
             <Btn variant="accent" onClick={exportReleaseSheet} disabled={sheetBusy}
-              title="ดาวน์โหลดใบปล่อย (PRODUCTION ORDER) ของล็อตนี้เป็น Excel — แยกชีตตามใบงาน มีช่องเซ็นอนุมัติ">
-              <Icon name="grid" size={15} /> {sheetBusy ? "กำลังสร้าง…" : "ใบปล่อย (Excel)"}
+              title="ดูตัวอย่างใบปล่อย (PRODUCTION ORDER) ของล็อตนี้ แล้วโหลดเป็น PDF หรือ Excel — แยกชีตตามใบงาน มีช่องเซ็นอนุมัติ">
+              <Icon name="printer" size={15} /> {sheetBusy ? "กำลังเปิด…" : "ใบปล่อย (PDF / Excel)"}
             </Btn>
           ) : null}
         {canEdit && (
