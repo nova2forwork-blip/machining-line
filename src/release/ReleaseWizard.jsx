@@ -11,7 +11,7 @@ import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
-import { SubKids } from "./releaseUi.jsx";
+import { SubKids, trailTo } from "./releaseUi.jsx";
 import "./release-wizard.css";
 
 const DRAFT_KEY = "mls.relwiz.draft.v1";
@@ -559,6 +559,14 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
 // ══ ③ อัพ PDF ══
 function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState, lib, ack, ackMeta, decide, openN, demoTools }) {
   const [sel, setSel] = useState(null);
+  const [focus, setFocus] = useState("");     // เบอร์ที่ขาด ที่กดจากเช็กลิสต์ → เปิดแผงที่ใช้ + กางซับ + ไฮไลต์แถว
+  const [focusMsg, setFocusMsg] = useState("");
+  const miss = useMemo(() => new Set([...cv.subs, ...cv.parts].filter((x) => x.src === "none").map((x) => NC(x.code))), [cv]);
+  const locate = (code) => {
+    const hit = checks.find((r) => r.d.kind === "panel" && (r.rows.some((x) => NC(x.code) === NC(code)) || r.rows.some((x) => x.k === "sub" && trailTo(lib, x.code, code, x.code + "|" + (x.item || ""), [NC(x.code)], {}))));
+    if (!hit) { setFocusMsg(`หา ${code} ในแบบแผงที่อัพไว้ไม่เจอ (อาจอยู่ในซับที่ยังไม่มีแบบ)`); return; }
+    setFocusMsg(""); setFilt("all"); setSel(hit.d.file); setFocus(code);
+  };
   const [filt, setFilt] = useState("all");
   const [reading, setReading] = useState(null);
   const [drag, setDrag] = useState(false);
@@ -588,7 +596,7 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
         <div className="rw-cov-lab"><b>{lab}</b><span>{arr.length} เบอร์</span></div>
         <div className="rw-cov-bar" role="img" aria-label={`${lab}: PDF ${pdf}, BOM เดิม ${lb}, ขาด ${none.length}`}><i className="pdf" style={{ width: `${(pdf / tot) * 100}%` }} /><i className="lib" style={{ width: `${(lb / tot) * 100}%` }} /><i className="none" style={{ width: `${(none.length / tot) * 100}%` }} /></div>
         <div className="rw-cov-num"><Pill tone="ok">PDF {pdf}</Pill>{lb ? <Pill tone="info">เดิม {lb}</Pill> : null}<Pill tone={none.length ? "warn" : "ok"}>ขาด {none.length}</Pill></div>
-        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> {none.slice(0, 12).map((x) => <span key={x.code} className="rw-miss-i"><Pill tone="warn">{x.code}</Pill>{x.from ? <span className="rw-muted small"> ← ใช้ใน <b className="rw-mono">{x.from}</b></span> : null}</span>)}{none.length > 12 ? <span className="rw-muted small"> … อีก {none.length - 12} เบอร์ (เปิด “ดูทั้งหมด” ด้านล่าง)</span> : null}</div> : null}
+        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> {none.slice(0, 12).map((x) => <span key={x.code} className="rw-miss-i"><button type="button" className="rw-misslink" onClick={() => locate(x.code)} title="กดเพื่อเปิดแผงที่ใช้เบอร์นี้ และไฮไลต์แถว"><Pill tone="warn">{x.code}</Pill> 🔍</button>{x.from ? <span className="rw-muted small"> ← ใช้ใน <b className="rw-mono">{x.from}</b></span> : null}</span>)}{none.length > 12 ? <span className="rw-muted small"> … อีก {none.length - 12} เบอร์ (เปิด “ดูทั้งหมด” ด้านล่าง)</span> : null}</div> : null}
         {arr.length ? <details className="rw-cov-all"><summary>ดูทั้งหมด {arr.length} เบอร์ — แต่ละเบอร์มาจากไหน / ใช้ในอะไร</summary>
           <table className="data-table rw-table"><thead><tr><th>เบอร์</th><th>แหล่งข้อมูล</th><th>{lab === "แบบแผง" ? "ในใบนี้" : "ใช้ใน"}</th></tr></thead>
             <tbody>{arr.map((x) => <tr key={x.code}><td className="rw-mono"><b>{x.code}</b></td><td><Pill tone={x.src === "pdf" ? "ok" : x.src === "lib" ? "info" : "warn"}>{x.src === "pdf" ? "PDF ที่อัพ" : x.src === "lib" ? "BOM เดิม" : "ยังไม่มี"}</Pill></td><td className="rw-mono">{lab === "แบบแผง" ? `${units.filter((u) => NC(u.unit) === NC(x.code)).length} แผง${units.some((u) => NC(u.unit) === NC(x.code) && u.mock) ? " · Mockup" : ""}` : (x.from || "")}</td></tr>)}</tbody></table>
@@ -623,6 +631,7 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
           {covRow("ซับที่แผงใช้", cv.subs, "— ยังไม่มีในโปรเจค ลงที่หน้า ซับ/พาร์ท ของโปรเจค")}
           {covRow("พาร์ทที่แผงใช้", cv.parts, "— ยังไม่มีในโปรเจค ลงที่หน้า ซับ/พาร์ท ของโปรเจค")}
           <div className="rw-muted small">ซับ/พาร์ทโผล่หลังอัพแบบแผงที่ใช้มัน · “เดิม” = มีในคลังของโปรเจคแล้ว · ที่ขาด = ปล่อยได้ก่อน พอลงในโปรเจค (หรือ Release อื่นมี) ระบบดึงมาให้เอง</div>
+          {focusMsg ? <div className="rw-msg warn">{focusMsg}</div> : null}
           {cv.orphan.length ? <div className="rw-msg warn">⚠ PDF {cv.orphan.length} ไฟล์ไม่ได้ใช้ในแผงของใบนี้: {cv.orphan.map((d) => d.code).join(", ")} — อัพผิดไฟล์ หรือยังไม่ได้อัพแบบแผง/ซับที่ใช้เบอร์นี้</div> : null}
         </div>
       </div>
@@ -652,16 +661,25 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
                 {!list.length ? <div className="rw-muted small" style={{ padding: 10 }}>ไม่มีไฟล์ในกลุ่มนี้</div> : null}
               </div>
             </div>
-            {R ? <PdfDetail R={R} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} onRemove={() => { setPdfs((p) => p.filter((d) => d.file !== R.d.file)); setSel(null); }} /> : null}
+            {R ? <PdfDetail R={R} lib={lib} miss={miss} focus={focus} ack={ack} ackMeta={ackMeta} decide={decide} onRemove={() => { setPdfs((p) => p.filter((d) => d.file !== R.d.file)); setSel(null); }} /> : null}
           </div>
         </div>
       ) : null}
     </>
   );
 }
-function PdfDetail({ R, lib, ack, ackMeta, decide, onRemove }) {
+function PdfDetail({ R, lib, miss, focus, ack, ackMeta, decide, onRemove }) {
   const [open, setOpen] = useState({});   // แถวซับที่กางอยู่ (key = เส้นทางจากแถวบน)
   useEffect(() => { setOpen({}); }, [R.d.file]);
+  // กดเบอร์ที่ขาดจากเช็กลิสต์ → กางซับทุกชั้นที่พาไปถึงเบอร์นั้น แล้วเลื่อนไปที่แถว
+  useEffect(() => {
+    if (!focus) return;
+    const out = {};
+    for (const x of R.rows) if (x.k === "sub") trailTo(lib, x.code, focus, x.code + "|" + (x.item || ""), [NC(x.code)], out);
+    setOpen((o) => ({ ...o, ...out }));
+    const t = setTimeout(() => document.querySelector("tr.rw-miss-row.focus")?.scrollIntoView({ block: "center", behavior: "smooth" }), 200);
+    return () => clearTimeout(t);
+  }, [focus, R.d.file]);   // eslint-disable-line react-hooks/exhaustive-deps
   const d = R.d; const [kc, kl] = kindLabel[d.kind] || kindLabel.unknown;
   const shown = R.issues.filter((i) => i.lvl !== "info");
   const infos = R.issues.filter((i) => i.lvl === "info");
@@ -703,11 +721,11 @@ function PdfDetail({ R, lib, ack, ackMeta, decide, onRemove }) {
             const path = r.code + "|" + (r.item || "");
             return (
               <Fragment key={path}>
-                <tr className={r.bad.miss ? "rw-rowwarn" : ""}>
+                <tr className={`${r.bad.miss ? "rw-rowwarn" : ""}${miss && miss.has(NC(r.code)) ? " rw-miss-row" : ""}${focus && NC(r.code) === NC(focus) ? " focus" : ""}`}>
                   <td className="r rw-muted">{r.item ?? "—"}</td>
                   <td className="rw-mono">
                     {r.k === "sub" ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [path]: !o[path] }))} aria-expanded={!!open[path]} title={open[path] ? "ย่อ" : "ขยายดูเบอร์ลูก"}>{open[path] ? "▾" : "▸"}</button> : null}
-                    <b>{r.code}</b> {r.k === "sub" ? <Pill tone="sub">ซับ</Pill> : r.k === "hw" ? <Pill tone="muted">HW</Pill> : null}
+                    <b>{r.code}</b> {r.k === "sub" ? <Pill tone="sub">ซับ</Pill> : r.k === "hw" ? <Pill tone="muted">HW</Pill> : null}{miss && miss.has(NC(r.code)) ? <Pill tone="warn">ไม่มีในโปรเจค</Pill> : null}
                   </td>
                   <td className="rw-desc">{r.desc}</td>
                   <td className={`r ${r.bad.q === "bad" || r.bad.miss === "pdf" ? "rw-bad" : ""}`}>{r.qp == null ? "—" : nlen(r.qp)}{r.unit ? <span className="rw-muted small"> {r.unit}</span> : null}</td>
@@ -716,7 +734,7 @@ function PdfDetail({ R, lib, ack, ackMeta, decide, onRemove }) {
                   <td className={`r ${r.bad.h ? "rw-bad" : ""}`}>{nlen(r.hp)}</td>
                   <td className={r.bad.f ? "rw-bad" : ""}>{r.fp}</td>
                 </tr>
-                {r.k === "sub" && open[path] ? <SubKids lib={lib} code={r.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(r.code)]} /> : null}
+                {r.k === "sub" && open[path] ? <SubKids lib={lib} code={r.code} path={path} depth={1} open={open} setOpen={setOpen} seen={[NC(r.code)]} miss={miss} focus={focus} /> : null}
               </Fragment>); })}</tbody>
         </table></div>
       ) : null}

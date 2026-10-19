@@ -81,7 +81,19 @@ export function PartGroupBar({ mode, groups, catOv = {}, bom, counts, filter = "
 }
 
 // ★ เบอร์ลูกของซับ (จากคลังซับ/พาร์ทของโปรเจค) — ซับซ้อนซับกางต่อได้ทุกชั้น · กันวนซ้ำด้วย seen
-export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact = false }) {
+// ★ หาเบอร์ target ใต้ซับ code (ไล่ทุกชั้น) → out[path] = true ทุกแถวซับที่ต้องกางเพื่อเห็นเบอร์นั้น (path รูปแบบเดียวกับที่ SubKids ใช้)
+export function trailTo(lib, code, target, path, seen, out) {
+  const L = lib || { subs: {}, parts: {} }; const sk = findKey(L.subs, code); const sub = sk ? L.subs[sk] : null; if (!sub) return false;
+  let found = false;
+  (sub.full || sub.items || []).filter((i) => (i[4] || "") !== "ยกเลิก").forEach((it, n) => {
+    const [k, c] = it; const p2 = path + ">" + c + "#" + n;
+    if (NC(c) === NC(target)) found = true;
+    else if (k === "sub" && !seen.includes(NC(c)) && trailTo(lib, c, target, p2, [...seen, NC(c)], out)) found = true;
+  });
+  if (found) out[path] = true;
+  return found;
+}
+export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact = false, miss = null, focus = "" }) {
   const L = lib || { subs: {}, parts: {} };
   const sk = findKey(L.subs, code);
   const sub = sk ? L.subs[sk] : null;
@@ -97,18 +109,18 @@ export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact =
     const loop = isSub && seen.includes(NC(c));
     return (
       <Fragment key={p2}>
-        <tr className="rw-kid">
+        <tr className={`rw-kid${miss && miss.has(NC(c)) ? " rw-miss-row" : ""}${focus && NC(c) === NC(focus) ? " focus" : ""}`}>
           <td className="r rw-muted">↳</td>
           <td className="rw-mono" style={pad}>
             {isSub && !loop ? <button type="button" className="rw-tg" onClick={() => setOpen((o) => ({ ...o, [p2]: !o[p2] }))} aria-expanded={!!open[p2]}>{open[p2] ? "▾" : "▸"}</button> : null}
-            <b>{c}</b> {isSub ? <Pill tone="sub">ซับ</Pill> : k === "hw" ? <Pill tone="muted">HW</Pill> : null}{loop ? <span className="rw-muted small"> (วนซ้ำ)</span> : null}
+            <b>{c}</b> {isSub ? <Pill tone="sub">ซับ</Pill> : k === "hw" ? <Pill tone="muted">HW</Pill> : null}{miss && miss.has(NC(c)) ? <Pill tone="warn">ไม่มีในโปรเจค</Pill> : null}{loop ? <span className="rw-muted small"> (วนซ้ำ)</span> : null}
           </td>
           <td className="rw-desc">{rec?.d || ""}</td>
           {compact ? <><td className="r">{nlen(rec?.l)}</td><td className="rw-muted">× {nlen(q)}</td></> : <>
             <td className="r">{nlen(q)}</td><td />
             <td className="r">{nlen(rec?.l)}</td><td className="r">{nlen(rec?.h)}</td><td>{rec?.f || ""}</td></>}
         </tr>
-        {isSub && !loop && open[p2] ? <SubKids lib={lib} code={c} path={p2} depth={depth + 1} open={open} setOpen={setOpen} seen={[...seen, NC(c)]} compact={compact} /> : null}
+        {isSub && !loop && open[p2] ? <SubKids lib={lib} code={c} path={p2} depth={depth + 1} open={open} setOpen={setOpen} seen={[...seen, NC(c)]} compact={compact} miss={miss} focus={focus} /> : null}
       </Fragment>
     );
   });

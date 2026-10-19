@@ -615,3 +615,9 @@ button.rt-grp-chip { font: inherit; }
 .rw-cov-all summary{cursor:pointer;color:var(--accent,#0a7d57)}
 .rw-cov-all .rw-table{margin-top:6px}
 .rw-cov-all{grid-column:1/-1}.rw-cov-all .rw-table{width:100%}
+
+.rw-misslink{background:none;border:0;padding:0;cursor:pointer;font:inherit;color:inherit}
+.rw-misslink:hover .pill,.rw-misslink:focus-visible .pill{outline:2px solid var(--accent,#0f9d6e);outline-offset:1px}
+tr.rw-miss-row>td{background:#fff4d6 !important}
+tr.rw-miss-row.focus>td{background:#ffe08a !important;box-shadow:inset 0 1px 0 #e0a100,inset 0 -1px 0 #e0a100}
+tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px 0 #e0a100,inset 0 -1px 0 #e0a100}
