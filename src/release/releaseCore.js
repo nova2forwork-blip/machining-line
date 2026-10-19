@@ -33,6 +33,7 @@ export function ruleCatBase(code, kind) {
   if (c.startsWith("GL")) return "GLASS";
   if (c.startsWith("UA-")) return "VENT";
   if (c.startsWith("HP")) return "FASTENER & GASKET";
+  if (c.startsWith("R&D")) return "FASTENER & GASKET";   // R&D-xxx = ของจัดซื้อ/ซิลิโคน/ปะเก็น/อะแดปเตอร์กระจก (เช่น R&D-ACS800, R&D-AA-17) ไม่ผลิตเอง ไม่ต้องมี QR / PDF
   if (/^(SF|AP|SP|FA)/.test(c)) return "BENDING PART";
   if (c.startsWith("FS")) return "STEEL PART";
   return "MACHINING PART";
