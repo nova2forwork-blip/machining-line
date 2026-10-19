@@ -10,7 +10,7 @@ import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
-  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
+  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
 import "./release-wizard.css";
 
@@ -932,12 +932,14 @@ function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units,
                       <td className="rw-desc">{r.d}</td>
                       <td className="r">{nlen(r.qty)} <span className="rw-muted small">{r.uom}</span></td>
                       <td>{r.type === "sub" ? <Pill tone="sub">SUB-ASSEMBLY</Pill> : (
-                        <select className="select rw-cellsel" value={cat} onChange={(e) => setCatOv((o) => ({ ...o, [r.code]: e.target.value }))} aria-label={`Category ${r.code}`}>
+                        <select className="select rw-cellsel" value={cat} onChange={(e) => { setCatOv((o) => ({ ...o, [r.code]: e.target.value })); setDestOv((o) => { const n = { ...o }; delete n[r.code]; return n; }); }} aria-label={`Category ${r.code}`}>
                           {PART_CATS.filter((c) => c !== "SUB-ASSEMBLY PART").map((c) => <option key={c} value={c}>{c}{QR_CATS.has(c) ? " · QR" : ""}</option>)}
                         </select>)}</td>
                       <td>{r.type === "sub" ? (
                         <span className="rw-procs">{PROCS.map((p) => { const on = procList(procOf(r.code)).includes(p); return (
                           <label key={p} className={`rw-proc ${on ? "on" : ""}`}><input type="checkbox" checked={on} onChange={(e) => setProcOv((o) => { const cur = procList(o[r.code] ?? procOf(r.code)); const nx = e.target.checked ? [...cur, p] : cur.filter((x) => x !== p); return { ...o, [r.code]: PROCS.filter((x) => nx.includes(x)).join(", ") }; })} />{SUB_SHORT[p]}</label>); })}</span>
+                      ) : qr && CAT_DEST[cat] && (!destOv[r.code] || destOv[r.code] === CAT_DEST[cat]) ? (
+                        <span className="rw-muted small">= ตามหมวด (ใบเดียวกัน)</span>
                       ) : qr ? (
                         <select className="select rw-cellsel" style={{ minWidth: 130 }} value={destOv[r.code] || ruleDest(cat, r.code)} onChange={(e) => setDestOv((o) => ({ ...o, [r.code]: e.target.value }))} aria-label={`ใบงาน ${r.code}`}>
                           {PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}

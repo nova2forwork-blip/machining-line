@@ -622,6 +622,8 @@ export const SHEETS = [
 ];
 export const PART_DESTS = ["CUTTING", "BENDING", "STEEL"];
 // ชื่อที่แสดง: ใบ CUTTING = MACHINING PART (ค่าเก็บในระบบยังเป็น CUTTING)
+// หมวดผลิตเอง 3 หมวดนี้ = ใบงานเดียวกันเลย (เลือกหมวดก็คือเลือกใบ) · SITE ITEM / หมวดที่ตั้งเอง ต้องเลือกใบแยก
+export const CAT_DEST = { "MACHINING PART": "CUTTING", "BENDING PART": "BENDING", "STEEL PART": "STEEL" };
 export const destLabel = (d) => (d === "CUTTING" ? "MACHINING PART" : d);
 export const isPartSheet = (k) => PART_DESTS.includes(k);
 export const ruleDest = (cat, code = "") => { const c = !PART_CATS.includes(cat) || cat === "SITE ITEM" ? ruleCatBase(code, "part") : cat; return c === "MACHINING PART" ? "CUTTING" : c === "STEEL PART" ? "STEEL" : "BENDING"; };

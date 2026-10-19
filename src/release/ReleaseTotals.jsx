@@ -6,7 +6,7 @@
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useMemo, useState } from "react";
-import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, addrKey, KERF, destLabel } from "./releaseCore.js";
+import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, addrKey, KERF, destLabel, CAT_DEST } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar } from "./releaseUi.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { BomView } from "./ReleaseBom.jsx";
@@ -158,10 +158,10 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     let lastCat = null;
     table = (
       <table className="data-table rw-table rt-table rt-allparts">
-        <thead><tr><th style={{ width: 34 }}><Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" /></th><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th className="r">TOTAL QTY</th><th>MATERIAL</th><th>หมวด</th><th>ส่งไปใบ</th><th>ปล่อยแล้ว / ทำแล้วที่</th><th className="r">เหลือ</th><th>REMARK</th></tr></thead>
+        <thead><tr><th style={{ width: 34 }}><Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" /></th><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th className="r">TOTAL QTY</th><th>MATERIAL</th><th title="เลือกหมวด = ส่งไปใบงานของหมวดนั้นเลย (MACHINING→CUTTING · BENDING · STEEL)">หมวด / ส่งไปใบ</th><th>ปล่อยแล้ว / ทำแล้วที่</th><th className="r">เหลือ</th><th>REMARK</th></tr></thead>
         <tbody>{vis.flatMap((r, i) => {
           const rows = [];
-          if (r.cat !== lastCat) { lastCat = r.cat; rows.push(<tr key={"g" + r.cat} className="rt-grp"><td colSpan={12}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr>); }
+          if (r.cat !== lastCat) { lastCat = r.cat; rows.push(<tr key={"g" + r.cat} className="rt-grp"><td colSpan={11}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr>); }
           const left = r.qr ? leftOf(r.code, r.qty) : 0; const done = doneOf(r.code); const o = otherOf(rel, r.code);
           rows.push(
             <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""}>
@@ -172,15 +172,17 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="r rw-num">{nlen(r.l)}</td>
               <td className="r">{r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
               <td className="rw-mono rt-inv">{r.inv || <span className="rw-muted">—</span>}</td>
-              <td>{onPlanChange && !r.cancelled && !done ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}</td>
-              <td>{r.qr ? (onPlanChange && !r.cancelled && !done ? <select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select> : <Pill tone="part">{destLabel(r.dest)}</Pill>) : <span className="rw-muted small">ใบเบิก · ไม่มี QR</span>}</td>
+              <td>{onPlanChange && !r.cancelled && !done ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
+                {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
+                  : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
+                  : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
               <td className="rl-donecell">{done ? <b>{nf(done)}</b> : null} {lotsOf(r.code)}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}</td>
               <td className="r"><b>{!r.qr || r.cancelled ? "" : left > 0 ? nf(left) : "✓"}</b></td>
               <td className="rt-rem">{[r.f, r.rev ? `Rev ${r.rev}` : ""].filter(Boolean).join(" · ")}</td>
             </tr>);
           return rows;
         })}</tbody>
-        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + p.qty, 0))}</b></td><td colSpan={3} /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
+        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + p.qty, 0))}</b></td><td colSpan={2} /><td /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
       </table>);
   } else if (grp === "sub") {
     const rows = subs.filter(inSheet("sub", cur)).filter((s) => has(Q, s.code, s.d) || (kids && kidRows(s.code, 1).some((k) => has(Q, k.c, k.d))));

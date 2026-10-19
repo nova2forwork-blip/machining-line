@@ -621,3 +621,4 @@ button.rt-grp-chip { font: inherit; }
 tr.rw-miss-row>td{background:#fff4d6 !important}
 tr.rw-miss-row.focus>td{background:#ffe08a !important;box-shadow:inset 0 1px 0 #e0a100,inset 0 -1px 0 #e0a100}
 tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px 0 #e0a100,inset 0 -1px 0 #e0a100}
+.rt-destrow{display:flex;gap:6px;align-items:center;margin-top:4px}
