@@ -9,7 +9,7 @@ import { Fragment, useMemo, useState } from "react";
 import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, addrKey, KERF, destLabel, CAT_DEST } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar } from "./releaseUi.jsx";
 import { askConfirm } from "../confirm.jsx";
-import { BomView } from "./ReleaseBom.jsx";
+import { BomView, rowsOfType } from "./ReleaseBom.jsx";
 
 const PAGE = 300;
 const sheetOf = (k) => SHEETS.find((s) => s.k === k) || MAT_SHEETS.find((s) => s.k === k) || { k, tab: k, label: k, th: PART_CATS.includes(k) ? (QR_CATS.has(k) ? "ผลิตเอง · มี QR · ส่งไปใบ MACHINING PART / BENDING / STEEL ได้" : k === "SUB-ASSEMBLY PART" ? "ซับทั้งหมด (รายละเอียดดูที่ Total Sub-Assembly)" : k === "SITE ITEM" ? "รายการเบอร์ * ที่ส่งไปประกอบที่ไซต์" : "ใบเบิก · ไม่มี QR") : "" };
@@ -72,6 +72,27 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     return [...parts.map((x) => mk(x, true)), ...glass.map((x) => mk({ ...x, cat: x.cat || "GLASS" }, false)), ...hw.map((x) => mk({ ...x, cat: x.cat || "FASTENER & GASKET" }, false)), ...other.map((x) => mk(x, false))];
   }, [parts, glass, hw, other]);
   const catCount = useMemo(() => { const m = new Map(); for (const r of allParts) if (!r.cancelled) m.set(r.cat, (m.get(r.cat) || 0) + 1); return m; }, [allParts]);
+  // ★ พาร์ทนี้ใช้ในแผงไหน: เบอร์ → { แบบแผง → { ชิ้น, เส้นทางซับ } } (นับตามจำนวนแผงของแบบนั้น · ไม่รวมแถวที่ Modify ยกเลิก)
+  const usedIn = useMemo(() => {
+    const cnt = new Map();
+    for (const u of units) { if (need.cancelledAddr[addrKey(u.addr)]) continue; const k = String(u.unit || "").trim(); if (k) cnt.set(k, (cnt.get(k) || 0) + 1); }
+    const m = new Map();
+    for (const [unit, n] of cnt) {
+      for (const r of rowsOfType(plan, unit)) {
+        if (r.cx || r.kind === "sub" || !(r.per > 0)) continue;
+        const k = NC(r.code); const e = m.get(k) || m.set(k, new Map()).get(k);
+        const g = e.get(unit) || e.set(unit, { n, pcs: 0, paths: new Set() }).get(unit);
+        g.pcs += r.per * n; g.paths.add(r.path.length ? r.path.join(" › ") : "(ติดแผงโดยตรง)");
+      }
+    }
+    return m;
+  }, [units, need, plan.bom]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const usedCell = (code) => {
+    const e = usedIn.get(NC(code)); if (!e || !e.size) return <span className="rw-muted">—</span>;
+    const list = [...e.entries()].sort((a, b) => ncmp(a[0], b[0]));
+    const tip = list.map(([u, g]) => `${u} (${g.n} แผง) · ${nlen(Math.round(g.pcs * 100) / 100)} ชิ้น · อยู่ใน ${[...g.paths].join(" | ")}`).join("\n");
+    return <span className="rt-usedin" title={tip}>{list.slice(0, 3).map(([u, g]) => <span key={u} className="rt-usedchip rw-mono">{u}<small> ×{nlen(Math.round(g.pcs * 100) / 100)}</small></span>)}{list.length > 3 ? <small className="rw-muted"> +{list.length - 3}</small> : null}</span>;
+  };
   // Auto / Setting ของ Total Part
   const setting = plan.partMode === "setting";
   const [partGrp, setPartGrp] = useState("ALL");   // หมวดที่เลือกดูใน Total Part (ALL = ทุกหมวด)
@@ -158,10 +179,10 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     let lastCat = null;
     table = (
       <table className="data-table rw-table rt-table rt-allparts">
-        <thead><tr><th style={{ width: 34 }}><Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" /></th><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th className="r">TOTAL QTY</th><th>MATERIAL</th><th title="เลือกหมวด = ส่งไปใบงานของหมวดนั้นเลย (MACHINING→CUTTING · BENDING · STEEL)">หมวด / ส่งไปใบ</th><th>ปล่อยแล้ว / ทำแล้วที่</th><th className="r">เหลือ</th><th>REMARK</th></tr></thead>
+        <thead><tr><th style={{ width: 34 }}><Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" /></th><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th className="r">TOTAL QTY</th><th>MATERIAL</th><th title="พาร์ทนี้อยู่ในแผงแบบไหน (ชิ้นรวมทุกแผงของแบบนั้น) — เอาเมาส์ชี้ดูซับที่อยู่">ใช้ในแผง</th><th title="เลือกหมวด = ส่งไปใบงานของหมวดนั้นเลย (MACHINING→CUTTING · BENDING · STEEL)">หมวด / ส่งไปใบ</th><th>ปล่อยแล้ว / ทำแล้วที่</th><th className="r">เหลือ</th><th>REMARK</th></tr></thead>
         <tbody>{vis.flatMap((r, i) => {
           const rows = [];
-          if (r.cat !== lastCat) { lastCat = r.cat; rows.push(<tr key={"g" + r.cat} className="rt-grp"><td colSpan={11}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr>); }
+          if (r.cat !== lastCat) { lastCat = r.cat; rows.push(<tr key={"g" + r.cat} className="rt-grp"><td colSpan={12}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr>); }
           const left = r.qr ? leftOf(r.code, r.qty) : 0; const done = doneOf(r.code); const o = otherOf(rel, r.code);
           rows.push(
             <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""}>
@@ -172,6 +193,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="r rw-num">{nlen(r.l)}</td>
               <td className="r">{r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
               <td className="rw-mono rt-inv">{r.inv || <span className="rw-muted">—</span>}</td>
+              <td className="rt-usedcell">{usedCell(r.code)}</td>
               <td>{onPlanChange && !r.cancelled && !done ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
@@ -182,7 +204,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             </tr>);
           return rows;
         })}</tbody>
-        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + p.qty, 0))}</b></td><td colSpan={2} /><td /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
+        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + p.qty, 0))}</b></td><td colSpan={3} /><td /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
       </table>);
   } else if (grp === "sub") {
     const rows = subs.filter(inSheet("sub", cur)).filter((s) => has(Q, s.code, s.d) || (kids && kidRows(s.code, 1).some((k) => has(Q, k.c, k.d))));

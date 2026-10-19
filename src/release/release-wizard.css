@@ -625,3 +625,8 @@ tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px
 
 .bm-flow{min-width:220px;max-width:340px;font-size:12px;line-height:1.4}
 .bm-flow>div{margin:1px 0}
+
+.rt-usedin{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center}
+.rt-usedchip{background:var(--chip,#eef3f1);border-radius:4px;padding:1px 6px;font-size:11px;white-space:nowrap}
+.rt-usedchip small{color:var(--muted,#6b7a75)}
+.rt-usedcell{min-width:150px;max-width:260px}

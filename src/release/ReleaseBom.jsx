@@ -14,7 +14,7 @@ const MIN_OFFCUT = 500;
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 
 // แตก BOM ของแบบแผงเป็นแถว (ลำดับตามไฟล์) พร้อมจำนวนต่อแผง
-function rowsOfType(plan, unit) {
+export function rowsOfType(plan, unit) {
   const pk = findKey(plan.bom.panels, unit); if (!pk) return [];
   const out = [];
   const walk = (items, path, mult, seen) => {
