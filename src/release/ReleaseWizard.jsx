@@ -481,6 +481,8 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
   const badIdx = Object.keys(ui.row).map(Number);
   const view = (onlyBad ? badIdx : units.map((_, i) => i)).slice(0, 400);
   const pdfPanel = new Set(pdfs.filter((d) => d.kind === "panel").map((d) => NC(d.code)));
+  const inUnits = new Set(units.map((r) => NC(r.unit)));
+  const missPanels = [...new Map(pdfs.filter((d) => d.kind === "panel" && !inUnits.has(NC(d.code))).map((d) => [NC(d.code), d.code])).values()];
   const cntV = cnt.filter((c) => !q || c.unit.toUpperCase().includes(q.toUpperCase()));
   const withBom = cnt.filter((c) => c.has).length;
   return (
@@ -497,6 +499,7 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
           <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importXlsx(f); e.target.value = ""; }} />
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => pdfRef.current?.click()}><Icon name="folder" size={13} /> นำเข้า PDF</button>
           <input ref={pdfRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={(e) => { const fs = [...(e.target.files || [])]; if (fs.length) importPdf(fs); e.target.value = ""; }} />
+          {missPanels.length ? <button type="button" className="btn btn-accent btn-sm" onClick={() => { setUnits((u) => [...u, ...missPanels.map((c) => ({ unit: String(c).toUpperCase(), addr: "" }))]); setMsg(`✓ เพิ่ม ${missPanels.length} แบบแผงจาก PDF ที่อัพไว้ (แผงละ 1 ชิ้น) — PMU/VMU/EMU ติ๊ก Mockup ให้แล้ว · แบบอื่นต้องใส่ Address · ต้องการหลายชิ้น กด "เพิ่มแถว" แล้วพิมพ์ชื่อซ้ำ`); }}><Icon name="plus" size={13} /> เพิ่มแผงจาก PDF ที่อัพไว้ ({missPanels.length} แบบ)</button> : null}
           {units.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { if (await askConfirm({ message: `ล้างที่อยู่ทั้งหมด ${units.length} แถว?`, tone: "danger", confirmText: "ล้าง", cancelText: "ยกเลิก" })) setUnits([]); }}><Icon name="trash" size={13} /> ล้างทั้งหมด</button> : null}
           {badIdx.length ? <label className="rw-check"><input type="checkbox" checked={onlyBad} onChange={(e) => setOnlyBad(e.target.checked)} /> เฉพาะแถวที่ต้องดู ({badIdx.length})</label> : null}
           {demoTools?.units ? demoTools.units(setUnits, setMsg) : null}
