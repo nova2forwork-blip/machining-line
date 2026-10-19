@@ -723,6 +723,7 @@ export function releasedOf(releases, plan) {
     const L = lots.get(no) || { no, date: r.release_date, rows: [], panels: 0, subs: 0, parts: 0, qty: 0 };
     const kind = r.part_master?.kind || "part"; const code = String(r.part_master?.part_no || "").trim();
     L.rows.push({ id: r.id, code, kind, qty: Number(r.qty) || 0, note: r.note || "", mod_version: r.mod_version || null, mod_cancelled_at: r.mod_cancelled_at || null });
+    if (!L.by && r.employee?.name) L.by = r.employee.name;   // ผู้ปล่อยล็อต (ใส่ในใบปล่อย)
     if (kind === "panel") { L.panels += Number(r.qty) || 0; for (const a of addrsFromNote(r.note)) addrLot.set(a, no); }
     else {
       if (kind === "subassembly") L.subs++; else L.parts++;

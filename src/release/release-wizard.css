@@ -630,3 +630,5 @@ tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px
 .rt-usedchip{background:var(--chip,#eef3f1);border-radius:4px;padding:1px 6px;font-size:11px;white-space:nowrap}
 .rt-usedchip small{color:var(--muted,#6b7a75)}
 .rt-usedcell{min-width:150px;max-width:260px}
+
+.rl-lot-tools{display:flex;gap:10px;align-items:center;margin:2px 0 10px}

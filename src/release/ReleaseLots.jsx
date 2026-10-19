@@ -12,6 +12,7 @@ import {
   otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
+import { downloadLotSheets } from "./lotSheetExport.js";
 import "./release-wizard.css";
 
 const todayYmd = () => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
@@ -54,6 +55,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const descMap = useMemo(() => new Map([...need.parts, ...need.subs].map((x) => [NC(x.code), x.d])), [need]);
   const descOf = (code) => descMap.get(NC(code)) || "";
+  const [sheetBusy, setSheetBusy] = useState("");
   const lastLot = rel.lots[rel.lots.length - 1];
   const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map((l) => (SHEETS.find((s) => s.label === l || s.k === l) || {}).k || l); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
   return (
@@ -103,6 +105,10 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                   </button>
                   {open === L.no ? (
                     <div className="rl-lot-body">
+                      <div className="rl-lot-tools">
+                        <button type="button" className="btn btn-accent btn-sm" disabled={sheetBusy === L.no} onClick={async () => { setSheetBusy(L.no); try { await downloadLotSheets({ plan, need, lot: L, userName: user?.name || "" }); } catch (e) { await askConfirm({ message: "สร้างใบปล่อยไม่สำเร็จ: " + (e?.message || e), confirmText: "ตกลง", cancelText: "" }); } finally { setSheetBusy(""); } }}><Icon name="grid" size={13} /> {sheetBusy === L.no ? "กำลังสร้าง…" : "ใบปล่อย (Excel)"}</button>
+                        <span className="rw-muted small">ไฟล์เดียว 1 ชีตต่อใบงาน · หัวใบ ผู้ปล่อย วันที่ + ช่องเซ็นอนุมัติ</span>
+                      </div>
                       {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => (
                         <div key={s.k} className="rl-lot-sheet">
                           <div className="rl-lot-sheet-h"><b>{s.label}</b> <span className="rw-muted small">{s.th} · {bySheet.get(s.k).length} รายการ</span></div>
