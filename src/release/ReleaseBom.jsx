@@ -42,6 +42,12 @@ function rowsOfType(plan, unit) {
 }
 
 // ความยาวเศษที่ใช้ แบบ Excel: ความยาวเดียว → "2,300" · หลายความยาว → "2300(1), 2100(1)"
+// ★ เส้นเต็ม ↔ เศษ: แถวที่ตัดจากเศษ → บอกว่าเศษมาจากเส้นเต็มของแถวไหน · แถวที่เปิดเส้นเต็ม → บอกว่าเศษที่เหลือไปใช้ที่แถวไหน
+const cutFlow = (c) => {
+  if (!c) return { from: [], to: [] };
+  const fmt = (m) => [...m.entries()].map(([k, n]) => `${k === c.label ? "เส้นเต็มของแถวนี้เอง" : k} (${nf(n)})`);
+  return { from: c.reuse ? fmt(c.srcs) : [], to: fmt(c.outs) };
+};
 const wasteLens = (c) => { const e = [...c.lens.entries()].sort((a, b) => b[0] - a[0]); return e.length === 1 ? nf(e[0][0]) : e.map(([l, n]) => `${l}(${n})`).join(", "); };
 export function BomView({ plan, need }) {
   const [sel, setSel] = useState("");          // "" = แบบแรก · "__ALL__" = ทุกแบบ
@@ -69,13 +75,13 @@ export function BomView({ plan, need }) {
         if (r.kind !== "part" || !r.m || !(r.l > 0)) continue;
         const stock = stockLen(r.m, r.ml).len; const need1 = r.l + KERF;
         const n = Math.round(r.per); if (!(n > 0)) continue;
-        r.cut = r.cut || { reuse: 0, fresh: 0, src: "", lens: new Map(), stock, over: stock + 1e-6 < r.l };
+        r.cut = r.cut || { reuse: 0, fresh: 0, src: "", lens: new Map(), stock, over: stock + 1e-6 < r.l, srcs: new Map(), outs: new Map(), label: `${T.unit} · ${r.code}` };
         const bars = pool.get(r.m) || pool.set(r.m, []).get(r.m);
         for (let k = 0; k < n; k++) {
           let bi = -1;
           for (let b = 0; b < bars.length; b++) if (bars[b].rem + 1e-6 >= need1 && (bi < 0 || bars[b].rem < bars[bi].rem)) bi = b;
-          if (bi >= 0) { const was = Math.round(bars[bi].rem); r.cut.lens.set(was, (r.cut.lens.get(was) || 0) + 1); bars[bi].rem -= need1; r.cut.reuse++; if (!r.cut.src) r.cut.src = `${bars[bi].from} (เหลือก่อนตัด ${nf(bars[bi].rem + need1)} มม.)`; T.off++; if (bars[bi].rem < MIN_OFFCUT) bars.splice(bi, 1); }
-          else { r.cut.fresh++; T.fresh++; const rem = stock - need1; if (rem >= MIN_OFFCUT) bars.push({ rem, from: `${T.unit} · ${r.code}` }); }
+          if (bi >= 0) { const was = Math.round(bars[bi].rem); { const sb = bars[bi]; r.cut.srcs.set(sb.from, (r.cut.srcs.get(sb.from) || 0) + 1); if (sb.row && sb.row !== r) sb.row.cut.outs.set(r.cut.label, (sb.row.cut.outs.get(r.cut.label) || 0) + 1); } r.cut.lens.set(was, (r.cut.lens.get(was) || 0) + 1); bars[bi].rem -= need1; r.cut.reuse++; if (!r.cut.src) r.cut.src = `${bars[bi].from} (เหลือก่อนตัด ${nf(bars[bi].rem + need1)} มม.)`; T.off++; if (bars[bi].rem < MIN_OFFCUT) bars.splice(bi, 1); }
+          else { r.cut.fresh++; T.fresh++; const rem = stock - need1; if (rem >= MIN_OFFCUT) bars.push({ rem, from: `${T.unit} · ${r.code}`, row: r }); }
         }
       }
     }
@@ -177,7 +183,7 @@ export function BomView({ plan, need }) {
     count = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     body = (
       <div className="table-wrap rw-tw rt-tw"><table className="data-table rw-table rt-table rt-bom">
-        <thead><tr><Th k="unit">PANEL</Th><th className="r">แผง</th><th>SUB-01</th><th>SUB-02</th><Th k="code">PART NO.</Th><Th k="d">DESCRIPTION</Th><Th k="l" r>LENGTH</Th><Th k="f">FINISH</Th><Th k="m">MATERIAL</Th><Th k="off">WAST</Th><Th k="ml" r>MATERIAL LENGTH</Th><Th k="q" r>QUANTITY</Th><Th k="sum" r>SUM QUANTITY</Th></tr></thead>
+        <thead><tr><Th k="unit">PANEL</Th><th className="r">แผง</th><th>SUB-01</th><th>SUB-02</th><Th k="code">PART NO.</Th><Th k="d">DESCRIPTION</Th><Th k="l" r>LENGTH</Th><Th k="f">FINISH</Th><Th k="m">MATERIAL</Th><Th k="off">WAST</Th><Th k="ml" r>MATERIAL LENGTH</Th><Th k="q" r>QUANTITY</Th><Th k="sum" r>SUM QUANTITY</Th><th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจากไหน / ไปใช้ที่ไหน">เส้นเต็ม ↔ เศษ</th></tr></thead>
         <tbody>{vis.map((r, i) => (
           <tr key={r.unit + r.i + "-" + i} className={r.kind === "sub" ? (r.depth ? "rt-b2" : "rt-b1") : ""}>
             <td className="rw-mono">{r.unit}</td><td className="r rw-num">{nf(r.n)}</td>
@@ -188,8 +194,13 @@ export function BomView({ plan, need }) {
             <td className="rt-waste">{r.cut?.reuse ? "wast" : ""}</td>
             <td className={`r rw-num ${r.cut?.reuse ? "rt-waste" : ""}`} title={r.cut?.reuse ? r.cut.src : ""}>{r.cut?.reuse ? wasteLens(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r rw-num">{r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} /> : nlen(r.q)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td>
+            <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
+              {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
+              {f.from.length ? <div className="small rt-waste" title="เศษที่ใช้ตัดแถวนี้ มาจากเส้นเต็มของแถวนี้">← เศษจาก {f.from.join(", ")}</div> : null}
+              {f.to.length ? <div className="small rw-muted" title="เศษที่เหลือจากเส้นเต็มของแถวนี้ ถูกนำไปตัดที่แถวเหล่านี้">→ เศษไปใช้ที่ {f.to.join(", ")}</div> : null}
+            </>); })()}</td>
           </tr>))}</tbody>
-        <tfoot><tr><td colSpan={13}>{nf(rows.length)} บรรทัด · ตัวแดง/WASTE = ตัดจากเศษที่ MATERIAL ตรงกัน · กดหัวคอลัมน์เพื่อเรียง</td></tr></tfoot>
+        <tfoot><tr><td colSpan={14}>{nf(rows.length)} บรรทัด · ตัวแดง/WASTE = ตัดจากเศษที่ MATERIAL ตรงกัน · กดหัวคอลัมน์เพื่อเรียง</td></tr></tfoot>
       </table></div>);
   }
 
