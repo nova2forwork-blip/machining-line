@@ -609,3 +609,9 @@ button.rt-grp-chip { font: inherit; }
 .rw-mock-addr b{background:var(--accent-soft,#fde9c8);color:var(--accent,#b45309);border-radius:4px;padding:1px 6px;font-size:11px}
 .rw-mock-addr i{font-style:normal;color:var(--muted,#888)}
 .rw-mock-addr{white-space:nowrap}.rw-mock-addr i{white-space:nowrap}
+
+.rw-miss-i{display:inline-flex;align-items:center;gap:2px;margin-right:10px}
+.rw-cov-all{margin-top:6px;font-size:12.5px}
+.rw-cov-all summary{cursor:pointer;color:var(--accent,#0a7d57)}
+.rw-cov-all .rw-table{margin-top:6px}
+.rw-cov-all{grid-column:1/-1}.rw-cov-all .rw-table{width:100%}

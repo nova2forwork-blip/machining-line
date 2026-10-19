@@ -588,7 +588,11 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
         <div className="rw-cov-lab"><b>{lab}</b><span>{arr.length} เบอร์</span></div>
         <div className="rw-cov-bar" role="img" aria-label={`${lab}: PDF ${pdf}, BOM เดิม ${lb}, ขาด ${none.length}`}><i className="pdf" style={{ width: `${(pdf / tot) * 100}%` }} /><i className="lib" style={{ width: `${(lb / tot) * 100}%` }} /><i className="none" style={{ width: `${(none.length / tot) * 100}%` }} /></div>
         <div className="rw-cov-num"><Pill tone="ok">PDF {pdf}</Pill>{lb ? <Pill tone="info">เดิม {lb}</Pill> : null}<Pill tone={none.length ? "warn" : "ok"}>ขาด {none.length}</Pill></div>
-        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> <Chips list={none} /></div> : null}
+        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> {none.slice(0, 12).map((x) => <span key={x.code} className="rw-miss-i"><Pill tone="warn">{x.code}</Pill>{x.from ? <span className="rw-muted small"> ← ใช้ใน <b className="rw-mono">{x.from}</b></span> : null}</span>)}{none.length > 12 ? <span className="rw-muted small"> … อีก {none.length - 12} เบอร์ (เปิด “ดูทั้งหมด” ด้านล่าง)</span> : null}</div> : null}
+        {arr.length ? <details className="rw-cov-all"><summary>ดูทั้งหมด {arr.length} เบอร์ — แต่ละเบอร์มาจากไหน / ใช้ในอะไร</summary>
+          <table className="data-table rw-table"><thead><tr><th>เบอร์</th><th>แหล่งข้อมูล</th><th>{lab === "แบบแผง" ? "ในใบนี้" : "ใช้ใน"}</th></tr></thead>
+            <tbody>{arr.map((x) => <tr key={x.code}><td className="rw-mono"><b>{x.code}</b></td><td><Pill tone={x.src === "pdf" ? "ok" : x.src === "lib" ? "info" : "warn"}>{x.src === "pdf" ? "PDF ที่อัพ" : x.src === "lib" ? "BOM เดิม" : "ยังไม่มี"}</Pill></td><td className="rw-mono">{lab === "แบบแผง" ? `${units.filter((u) => NC(u.unit) === NC(x.code)).length} แผง${units.some((u) => NC(u.unit) === NC(x.code) && u.mock) ? " · Mockup" : ""}` : (x.from || "")}</td></tr>)}</tbody></table>
+        </details> : null}
       </div>
     );
   };
