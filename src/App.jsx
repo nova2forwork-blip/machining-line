@@ -6772,6 +6772,28 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     }
   }
 
+  // ★ 2026-10-19: ใบปล่อยของล็อตนี้ (Excel) — หา Release แผนของล็อต (P-007.1 → P-007) แล้วสร้างจากแผน + ที่ปล่อยจริง
+  const [sheetBusy, setSheetBusy] = useState(false);
+  async function exportReleaseSheet() {
+    if (sheetBusy || !hdr.ro) return;
+    setSheetBusy(true);
+    try {
+      const [core, ex] = await Promise.all([import("./release/releaseCore.js"), import("./release/lotSheetExport.js")]);
+      const { plans } = await realReleaseApi.listPlans(projectId);
+      const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
+      if (!plan) { mlsToast("ล็อตนี้ไม่มี Release แบบใหม่ (ปล่อยด้วยวิธีเก่า) — ไม่มีข้อมูลใบงานให้สร้างใบปล่อย", "error"); return; }
+      const rel = core.releasedOf(releases, plan);
+      const lot = rel.lots.find((l) => core.roKey(l.no) === core.roKey(hdr.ro));
+      if (!lot) { mlsToast("ไม่พบรายการของล็อตนี้", "error"); return; }
+      await ex.downloadLotSheets({ plan, need: core.needOf(plan), lot, userName: user?.name || "" });
+    } catch (e) {
+      console.warn("export release sheet error", e);
+      mlsToast("สร้างใบปล่อยไม่สำเร็จ: " + (e?.message || e), "error");
+    } finally {
+      setSheetBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -6814,8 +6836,16 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           </div>
           <div className="page-sub">{group.projectCode} — {group.projectName} · {fmtD(hdr.date)}</div>
         </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {/* ★ 2026-10-19: ใบปล่อย (PRODUCTION ORDER) ของล็อตนี้ — Excel 1 ชีตต่อใบงาน + ช่องเซ็น (ต้องมี Release แบบใหม่ของล็อต) */}
+          {hdr.ro ? (
+            <Btn variant="accent" onClick={exportReleaseSheet} disabled={sheetBusy}
+              title="ดาวน์โหลดใบปล่อย (PRODUCTION ORDER) ของล็อตนี้เป็น Excel — แยกชีตตามใบงาน มีช่องเซ็นอนุมัติ">
+              <Icon name="grid" size={15} /> {sheetBusy ? "กำลังสร้าง…" : "ใบปล่อย (Excel)"}
+            </Btn>
+          ) : null}
         {canEdit && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <>
             <Btn onClick={openModify} disabled={!hdr.ro}
               title={hdr.ro ? (lang === "en" ? "Change release items: add/reduce qty · INV · cancel part · transfer — saved as a new M, previous values kept as evidence" : "แก้รายการใน Release: เพิ่ม/ลดจำนวน · แก้ INV · ยกเลิก Part · Transfer — บันทึกเป็น M ใหม่ เก็บของเดิมเป็นหลักฐาน") : (lang === "en" ? "Set a Release Order number first" : "ต้องมีเลขที่ Release Order ก่อน")}
               style={{ background: "rgba(109,74,255,.10)", border: `1.5px solid ${MOD_PURPLE}`, color: MOD_PURPLE, fontWeight: 700 }}>
@@ -6825,8 +6855,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               title="แก้เลขที่ Release Order / วันที่ / Modify ของทั้งใบ">
               <Icon name="settings" size={15} /> แก้ไขหัวเอกสาร
             </Btn>
-          </div>
+          </>
         )}
+        </div>
       </div>
 
       <div className="grid-3" style={{ marginBottom: 16 }}>
