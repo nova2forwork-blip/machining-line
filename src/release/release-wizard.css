@@ -604,3 +604,8 @@ button.rt-grp-chip { font: inherit; }
 .rw-pick-chip button { border: 0; background: rgba(0,0,0,.07); border-radius: 50%; width: 18px; height: 18px; line-height: 16px; cursor: pointer; font-size: 13px; color: inherit; padding: 0; }
 .rw-pick-qty { width: 78px; margin: 0; text-align: right; padding: 5px 8px; }
 .rw-picked-row td { background: var(--accent-tint); }
+
+.rw-mock-addr{display:inline-flex;gap:6px;align-items:center;font-size:12px}
+.rw-mock-addr b{background:var(--accent-soft,#fde9c8);color:var(--accent,#b45309);border-radius:4px;padding:1px 6px;font-size:11px}
+.rw-mock-addr i{font-style:normal;color:var(--muted,#888)}
+.rw-mock-addr{white-space:nowrap}.rw-mock-addr i{white-space:nowrap}

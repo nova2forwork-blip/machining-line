@@ -407,16 +407,42 @@ export function coverage(units, bom, pdfs, catOf) {
 
 // ══ ตรวจ Address & Unit ══
 export const UNIT_RE = /^UA\d{4}[A-Z]?$/i;
+// ★ Mockup (PMU / VMU / EMU): แผงไม่มีที่อยู่ติดตั้ง → ติดแท็ก mock ได้ ไม่ต้องกรอก Address
+//   ระบบออกที่อยู่สมมติ MOCK-EMU-1, MOCK-EMU-2… ให้ (ใช้เป็นกุญแจ QR/ล็อต/ยกเลิก เหมือนที่อยู่จริง · ไม่ซ้ำกับ Release อื่น)
+export const MOCK_RE = /^(PMU|VMU|EMU)(?![A-Z0-9])/i;
+export const MOCK_ADDR_RE = /^(MOCK[\s-]?UP|MOCK|MU|PMU|VMU|EMU)$/i;
+export const mockType = (unit) => (String(unit || "").trim().toUpperCase().match(MOCK_RE) || [])[1] || "";
+export const isMockAddr = (a) => /^MOCK-[A-Z]+-\d+$/.test(String(a || "").trim().toUpperCase());
+export function normMockUnits(units, usedAddr) {
+  const taken = new Set(); units.forEach((u) => { const a = String(u.addr || "").trim().toUpperCase(); if (a && !(u.mock && isMockAddr(a))) taken.add(a); });
+  const nextN = new Map();
+  return units.map((u0) => {
+    let u = u0; const un = String(u.unit || "").trim().toUpperCase(); let a = String(u.addr || "").trim().toUpperCase();
+    let mock = u.mock;
+    if (mock === undefined && ((!a && mockType(un)) || MOCK_ADDR_RE.test(a))) mock = true;       // auto: ไม่มี Address + ชื่อขึ้นต้น PMU/VMU/EMU, หรือพิมพ์ Mockup ในช่อง Address
+    if (mock && MOCK_ADDR_RE.test(a)) a = "";
+    if (mock) {
+      if (!isMockAddr(a) || taken.has(a) || (usedAddr && usedAddr.has(a))) {
+        const t = mockType(un) || "MU"; let n = nextN.get(t) || 1; let k = `MOCK-${t}-${n}`;
+        while (taken.has(k) || (usedAddr && usedAddr.has(k))) { n++; k = `MOCK-${t}-${n}`; }
+        nextN.set(t, n + 1); a = k;
+      }
+      taken.add(a);
+    } else if (isMockAddr(a) && u.mock === false) a = "";                                   // เอาแท็ก Mockup ออก → ล้างที่อยู่สมมติ ให้กรอกจริง
+    return a === u.addr && mock === u.mock ? u : { ...u, addr: a, ...(mock !== undefined ? { mock } : {}) };
+  });
+}
 export function unitIssues(units, usedAddr) {
   const row = {}, block = [], warn = []; const seen = new Map();
   units.forEach((u, i) => { const a = String(u.addr || "").trim().toUpperCase(); if (a) { if (!seen.has(a)) seen.set(a, []); seen.get(a).push(i); } });
   let nInc = 0, nDup = 0, nUsed = 0, nOdd = 0;
   units.forEach((u, i) => {
     const is = []; const a = String(u.addr || "").trim().toUpperCase(); const un = String(u.unit || "").trim();
-    if (!un || !a) { is.push(["bad", "ข้อมูลไม่ครบ"]); nInc++; }
+    const mk = !!u.mock;
+    if (!un || (!a && !mk)) { is.push(["bad", "ข้อมูลไม่ครบ"]); nInc++; }
     if (a && seen.get(a).length > 1) { is.push(["bad", `ซ้ำ (แถว ${seen.get(a).map((x) => x + 1).join(", ")})`]); nDup++; }
     if (a && usedAddr && usedAddr.has(a)) { is.push(["bad", `อยู่ใน ${usedAddr.get(a)} แล้ว`]); nUsed++; }
-    if (un && !UNIT_RE.test(un)) { is.push(["warn", /O/i.test(un.slice(2)) ? "รูปแบบแปลก (ตัว O หรือ 0?)" : "รูปแบบแปลก"]); nOdd++; }
+    if (un && !UNIT_RE.test(un) && !mk && !mockType(un)) { is.push(["warn", /O/i.test(un.slice(2)) ? "รูปแบบแปลก (ตัว O หรือ 0?)" : "รูปแบบแปลก"]); nOdd++; }
     if (is.length) row[i] = is;
   });
   if (nInc) block.push(`ข้อมูลไม่ครบ ${nInc} แถว`);
@@ -437,11 +463,12 @@ export function parseUnitsPaste(text) {
   else {
     // ไม่มีหัว: คอลัมน์ไหนหน้าตาเป็น UAxxxx = Unit
     const sample = cells.slice(0, 20);
-    const score = (i) => sample.filter((r) => UNIT_RE.test(r[i] || "")).length;
+    const unitLike = (x) => UNIT_RE.test(x || "") || MOCK_RE.test(x || "");
+    const score = (i) => sample.filter((r) => unitLike(r[i])).length;
     const w = Math.max(...cells.map((r) => r.length));
     let best = 0; for (let i = 1; i < w; i++) if (score(i) > score(best)) best = i;
     ui = best; ai = ui === 0 ? 1 : 0;
-    if (sample.length && !UNIT_RE.test(cells[0][ui] || "") && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
+    if (sample.length && !unitLike(cells[0][ui]) && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
   }
   const rows = []; let skipped = 0;
   for (const r of cells.slice(start)) {

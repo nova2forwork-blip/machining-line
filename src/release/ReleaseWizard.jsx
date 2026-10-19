@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
-  readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, bomForSave,
+  readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
 import { SubKids } from "./releaseUi.jsx";
 import "./release-wizard.css";
@@ -216,7 +216,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const noProc = plan.subs.filter((s) => !s.procs.length);
     const all = [
       { k: "hdr", label: "หัวใบ Release", v: hdrErr || `${roNorm}${hdr.note ? " · " + hdr.note : ""} · ${fmtYmd(hdr.date)} · ${project?.code || ""} · ผู้จัดทำ ${userName}`, s: hdrErr ? "block" : "ok", go: 0 },
-      { k: "units", label: "Address & Unit", v: units.length ? `${nf(units.length)} แผง · ${cnt.length} แบบ${ui.block.length ? " · " + ui.block.join(" · ") : ""}${ui.warn.length ? " · " + ui.warn.join(" · ") : ""}` : "ยังไม่มีที่อยู่", s: !units.length || ui.block.length ? "block" : ui.warn.length ? "warn" : "ok", go: 1 },
+      { k: "units", label: "Address & Unit", v: units.length ? `${nf(units.length)} แผง${units.some((r) => r.mock) ? ` (Mockup ${units.filter((r) => r.mock).length})` : ""} · ${cnt.length} แบบ${ui.block.length ? " · " + ui.block.join(" · ") : ""}${ui.warn.length ? " · " + ui.warn.join(" · ") : ""}` : "ยังไม่มีที่อยู่", s: !units.length || ui.block.length ? "block" : ui.warn.length ? "warn" : "ok", go: 1 },
       { k: "bom", label: "แบบแผงมี BOM", v: noBom.length ? `ยังไม่มี ${noBom.length} แบบ: ${noBom.slice(0, 6).map((r) => r.unit).join(", ")}${noBom.length > 6 ? " …" : ""} — ได้ QR แผงแต่ยังไม่แตกเป็นซับ/พาร์ท` : `ครบ ${cnt.length} แบบ`, s: noBom.length ? "warn" : "ok", go: 2 },
       { k: "pdf", label: "PDF ซับ / พาร์ท", v: missSub || missPart ? `ยังขาด PDF ซับ ${missSub} · พาร์ท ${missPart} (ไม่รู้ลูกของซับ / INV วัตถุดิบ)` : "ครบ", s: missSub || missPart ? "warn" : "ok", go: 2 },
       { k: "ack", label: "ค่าที่ไม่ตรงใน PDF", v: openN ? `ยังไม่ได้ตัดสิน ${openN} จุด (บันทึกเลย = ใช้ตาม PDF)` : "ไม่มี / ตัดสินครบแล้ว", s: openN ? "warn" : "ok", go: 2 },
@@ -382,7 +382,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         </div>
       )}
 
-      {step === 1 && !itemsMode && <UnitsStep units={units} setUnits={setUnits} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
+      {step === 1 && !itemsMode && <UnitsStep units={units} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
       {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} />}
 
       {step === 2 && !itemsMode && (
@@ -421,7 +421,9 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
 }
 
 // ══ ② Address & Unit ══
-function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
+function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go }) {
+  // ทุกการแก้ผ่านตัวนี้ → แถว Mockup (PMU/VMU/EMU) ได้ที่อยู่สมมติ MOCK-xxx-n ให้อัตโนมัติ
+  const setUnits = useCallback((fn) => setUnitsRaw((u) => normMockUnits(typeof fn === "function" ? fn(u) : fn, usedAddr)), [setUnitsRaw, usedAddr]);
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState("");
   const [onlyBad, setOnlyBad] = useState(false);
@@ -474,6 +476,7 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
     } catch (e) { setMsg("อ่าน PDF ไม่ได้: " + (e?.message || e)); }
   }
   const setCell = (i, k, v) => setUnits((u) => u.map((r, j) => (j === i ? { ...r, [k]: v.toUpperCase() } : r)));
+  const toggleMock = (i) => setUnits((u) => u.map((r, j) => (j === i ? (r.mock ? { ...r, mock: false } : { ...r, mock: true, addr: "" }) : r)));
   const del = (i) => setUnits((u) => u.filter((_, j) => j !== i));
   const badIdx = Object.keys(ui.row).map(Number);
   const view = (onlyBad ? badIdx : units.map((_, i) => i)).slice(0, 400);
@@ -483,7 +486,7 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
   return (
     <div className="rw-two">
       <div className="card rw-card">
-        <SecHead title="Address & Unit" sub="2 คอลัมน์: Unit (แบบแผง) + Address (ตำแหน่งติดตั้ง) · 1 แถว = แผง 1 ชิ้น = QR 1 ดวง"
+        <SecHead title="Address & Unit" sub="2 คอลัมน์: Unit (แบบแผง) + Address (ตำแหน่งติดตั้ง) · 1 แถว = แผง 1 ชิ้น = QR 1 ดวง · แผง Mockup (PMU/VMU/EMU) ติ๊กช่อง Mockup ได้ ไม่ต้องมีที่อยู่"
           right={<Help label="วิธีลง"><ul><li>ก๊อป 2 คอลัมน์จาก Excel แล้ววาง (Ctrl+V) ที่ไหนก็ได้ในหน้านี้ — มีหัวตารางหรือไม่มีก็ได้ สลับคอลัมน์ได้</li><li>หรือนำเข้าไฟล์ .xlsx (ชีตชื่อ Address&amp;Units ถ้ามี) หรือ PDF (ต้องเป็น PDF ที่มีตัวอักษร ก๊อปข้อความได้ · เลือกหลายไฟล์ได้ · เพิ่มต่อท้ายของเดิม)</li><li>ที่อยู่ซ้ำ / ใช้ใน Release อื่นแล้ว / ข้อมูลไม่ครบ = บันทึกไม่ได้ · Unit รูปแบบแปลก = เตือน</li></ul></Help>} />
         <textarea ref={pasteRef} className="input rw-paste" rows={2} value={paste} placeholder="วางจาก Excel ที่นี่ (Ctrl+V) — Unit | Address"
           onChange={(e) => setPaste(e.target.value)} onPaste={(e) => { const t = e.clipboardData?.getData("text") || ""; if (t.includes("\t")) { e.preventDefault(); apply(t); } }} />
@@ -502,14 +505,16 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
         {units.length ? (
           <div className="table-wrap rw-tw">
             <table className="data-table rw-table">
-              <thead><tr><th style={{ width: 44 }}>#</th><th>Unit</th><th>Address</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Unit</th><th>Address</th><th title="แผง Mockup (PMU / VMU / EMU) ไม่ต้องมีที่อยู่">Mockup</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
               <tbody>
                 {view.map((i) => { const r = units[i]; const is = ui.row[i] || []; const bad = is.some((x) => x[0] === "bad");
                   return (
                     <tr key={i} className={bad ? "rw-rowbad" : is.length ? "rw-rowwarn" : ""}>
                       <td className="rw-num">{i + 1}</td>
                       <td><input className="input rw-cell rw-mono" value={r.unit} onChange={(e) => setCell(i, "unit", e.target.value)} aria-label={`Unit แถว ${i + 1}`} /></td>
-                      <td><input className="input rw-cell rw-mono" value={r.addr} onChange={(e) => setCell(i, "addr", e.target.value)} aria-label={`Address แถว ${i + 1}`} /></td>
+                      <td>{r.mock ? <span className="rw-mock-addr" title="ที่อยู่สมมติ — ระบบออกให้ ใช้แทนที่อยู่จริงของแผง Mockup"><b>MOCKUP</b> {mockType(r.unit)} <i className="rw-mono">{r.addr}</i></span>
+                        : <input className="input rw-cell rw-mono" value={r.addr} onChange={(e) => setCell(i, "addr", e.target.value)} aria-label={`Address แถว ${i + 1}`} />}</td>
+                      <td style={{ textAlign: "center" }}><input type="checkbox" checked={!!r.mock} onChange={() => toggleMock(i)} aria-label={`Mockup แถว ${i + 1}`} /></td>
                       <td>{is.length ? is.map(([t, m], k) => <Pill key={k} tone={t === "bad" ? "bad" : "warn"}>{m}</Pill>) : (cnt.find((c) => c.unit === r.unit)?.has ? <Pill tone="ok">✓ มี BOM</Pill> : <Pill tone="muted">รอ PDF</Pill>)}</td>
                       <td><button type="button" className="rw-x" onClick={() => del(i)} title="ลบแถว" aria-label={`ลบแถว ${i + 1}`}>×</button></td>
                     </tr>); })}
@@ -518,14 +523,14 @@ function UnitsStep({ units, setUnits, ui, cnt, pdfs, demoTools, go }) {
             {(onlyBad ? badIdx.length : units.length) > 400 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 400 แถวแรก จาก {nf(onlyBad ? badIdx.length : units.length)}</div> : null}
           </div>
         ) : (
-          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Unit | Address จาก Excel แล้วกด Ctrl+V</span></div>
+          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Unit | Address จาก Excel แล้วกด Ctrl+V · แผง Mockup พิมพ์ชื่อ Unit (เช่น EMU-E-3036) ไม่ต้องใส่ Address</span></div>
         )}
       </div>
 
       <div className="card rw-card rw-sticky">
         <SecHead title="สรุปแผง" sub="นับให้เองต่อแบบ (แทนชีต Units)" />
         <div className="rw-stats">
-          <div className="rw-stat"><b>{nf(units.length)}</b><span>แผงทั้งหมด</span></div>
+          <div className="rw-stat"><b>{nf(units.length)}</b><span>แผงทั้งหมด{units.some((r) => r.mock) ? ` (Mockup ${units.filter((r) => r.mock).length})` : ""}</span></div>
           <div className="rw-stat"><b>{cnt.length}</b><span>แบบแผง</span></div>
           <div className="rw-stat"><b className={withBom < cnt.length ? "warn" : "ok"}>{withBom}</b><span>มี BOM แล้ว</span></div>
         </div>
@@ -925,7 +930,7 @@ function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units,
             {units.slice(0, 6).map((u, i) => (
               <div key={i} className="rw-label">
                 <div className="rw-qr" aria-hidden="true">{Array.from({ length: 49 }, (_, k) => <i key={k} className={(k * 7 + i * 3 + u.addr.length) % 3 ? "" : "b"} />)}</div>
-                <div><div className="l1">{u.unit}</div><div className="l2">{u.addr}</div><div className="l3">{roNorm} · {project?.code || ""}</div></div>
+                <div><div className="l1">{u.unit}</div><div className="l2">{u.mock ? `MOCKUP ${mockType(u.unit)}`.trim() : u.addr}</div><div className="l3">{roNorm} · {project?.code || ""}</div></div>
               </div>))}
             <div className="rw-muted small" style={{ gridColumn: "1 / -1" }}>ตัวอย่างหน้าตาป้ายแผง (QR จริงสร้างตอนปล่อยล็อต — พิมพ์ได้ที่เมนู "พิมพ์ QR / ป้าย") · {fmtYmd(hdr.date)}</div>
           </div>
