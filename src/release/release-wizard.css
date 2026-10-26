@@ -690,3 +690,11 @@ tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px
 .rl-sc-off small { display: block; font-size: 11px; color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
 .rl-sc-foot { padding: 7px 14px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--border-soft); background: var(--sc-bg); }
 .rl-sc.wide { grid-column: 1 / -1; }
+/* ปุ่มพิมพ์ QR ของล็อต (แยกพาร์ท / ซับ / แผง) */
+.rl-lot-bar-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.rl-qrbtn { border: 1px solid var(--border); background: var(--surface); }
+.rl-qrbtn small { font-weight: 600; opacity: .7; margin-left: 2px; }
+.rl-qrbtn.part { color: #334155; } .rl-qrbtn.sub { color: var(--rw-sub); } .rl-qrbtn.panel { color: var(--rw-panel); }
+.rl-qrbtn:hover { background: var(--surface-2); }
+@media (max-width: 640px) { .rl-lot-bar-btns { width: 100%; } .rl-lot-bar-btns .btn { flex: 1 1 auto; justify-content: center; } }
+.rl-lot-bar-txt { flex: 1 1 280px; }

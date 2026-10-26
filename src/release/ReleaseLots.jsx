@@ -31,7 +31,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -107,8 +107,12 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                   {open === L.no ? (
                     <div className="rl-lot-body">
                       <div className="rl-lot-bar">
-                        <div className="rl-lot-bar-txt"><b>ใบปล่อยของล็อต {L.no}</b><span>ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel · 1 ใบงาน = 1 หน้า/ชีต</span></div>
-                        <button type="button" className="btn btn-accent btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}><Icon name="printer" size={14} /> ใบปล่อย · PDF / Excel</button>
+                        <div className="rl-lot-bar-txt"><b>ใบปล่อย / QR ของล็อต {L.no}</b><span>ใบปล่อย: ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel{onPrintQr ? " · QR: เปิดหน้าพิมพ์ป้ายพร้อมเลือกเบอร์ของล็อตนี้ให้" : ""}</span></div>
+                        <div className="rl-lot-bar-btns">
+                          {onPrintQr ? QR_GROUPS.map((g) => { const ids = L.rows.filter((r) => g.kinds.includes(r.kind) && !r.mod_cancelled_at && r.id).map((r) => r.id); return ids.length ? (
+                            <button key={g.k} type="button" className={`btn btn-ghost btn-sm rl-qrbtn ${g.k}`} onClick={() => onPrintQr(ids)} title={g.k === "panel" ? `เปิดหน้าพิมพ์ QR ของแผงในล็อต ${L.no} (${nf(L.panels)} แผง · 1 QR ต่อที่อยู่)` : `เปิดหน้าพิมพ์ QR ของ${g.th}ในล็อต ${L.no} (${ids.length} เบอร์)`}><Icon name="qr" size={14} /> QR {g.label} <small>{nf(g.k === "panel" ? L.panels || ids.length : ids.length)}</small></button>) : null; }) : null}
+                          <button type="button" className="btn btn-accent btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}><Icon name="printer" size={14} /> ใบปล่อย · PDF / Excel</button>
+                        </div>
                       </div>
                       <div className="rl-sc-grid">
                       {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => { const rows = bySheet.get(s.k);
@@ -725,6 +729,12 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
   );
 }
 
+// ปุ่มพิมพ์ QR ของล็อต — แยกตามแผนกของหน้าพิมพ์ QR (พาร์ท = Machine · ซับ = Sub-Assembly · แผง = Assembly)
+const QR_GROUPS = [
+  { k: "part", label: "พาร์ท", th: "พาร์ท", kinds: ["part"] },
+  { k: "sub", label: "ซับ", th: "ซับ", kinds: ["subassembly"] },
+  { k: "panel", label: "แผง", th: "แผง", kinds: ["panel"] },
+];
 // ★ วัสดุของล็อต (ใบเบิก · ไม่มี QR) — วัตถุดิบงานตัด · GLASS · ACCESSORIES · อื่นๆ (เฉพาะของที่ปล่อยในล็อตนี้)
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
 // เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"

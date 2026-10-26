@@ -1276,6 +1276,7 @@ function Shell({ user, onLogout }) {
     setTab(key);
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
+    if (opts?.releaseIds?.length) setLabelsPreselect(opts.releaseIds.join(","));   // ★ 2026-10-26: หลายแถว (เช่น พาร์ททั้งล็อตจากหน้า Release แผน)
     if (opts?.qr) setVerifyPreselect(opts.qr);
     if (key === "verify") setVerifyNonce((n) => n + 1);   // เข้าหน้าตรวจทุกครั้ง → หน้าใหม่ (กดเมนูซ้ำ = เคลียร์ผลเดิม)
   }
@@ -7204,7 +7205,7 @@ function useReleasePlans(projectId = null) {
   useEffect(() => { loadPlans(); }, [loadPlans]);
   return { plans, setPlans, loadPlans };
 }
-function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload }) {
+function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo }) {
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   const onPlanChange = (p) => {
@@ -7216,6 +7217,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder}
+        onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange}
         onModified={async (np, mod) => {
           setView((v) => (v ? { ...v, plan: np } : v));
@@ -7453,7 +7455,7 @@ function ReleasePage({ user, goTo }) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
   }
   if (planView) {
-    return <ReleasePlanPage view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
   }
   if (createOpen === "wizard") {
     return (
@@ -7827,9 +7829,10 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   const initDeptRef = useRef(null);   // ★ 2026-10-10 ตรวจรอบ 2: ล็อตของแผนกอื่น (ซับ/แผง/แพ็ก) → สลับแท็บแผนกให้ตรง (เดิมค้างแท็บ Machine = "ตัวกรองเปลี่ยนแล้ว" + กดค้นหาไม่ได้)
   useEffect(() => {
     if (initialReleaseId) {
-      setReleaseIds([initialReleaseId]);
-      setCommittedKey(initialReleaseId);   // จากปุ่มพิมพ์ QR = โชว์เลย ไม่ต้องกดค้นหา
-      initDeptRef.current = initialReleaseId;
+      const ids = String(initialReleaseId).split(",").filter(Boolean);   // 1 แถว หรือหลายแถวคั่นด้วย , (แผนกเดียวกัน)
+      setReleaseIds(ids);
+      setCommittedKey(ids.join(","));   // จากปุ่มพิมพ์ QR = โชว์เลย ไม่ต้องกดค้นหา
+      initDeptRef.current = ids[0];
       onConsumeInitial && onConsumeInitial();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -11973,7 +11976,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     );
   }
   if (planView) {
-    return <ReleasePlanPage view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
   }
   if (libOpen) {
     return (
