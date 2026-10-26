@@ -6,7 +6,7 @@ import { SHEETS } from "./releaseCore.js";
 
 const DICT = {
  "BOM ของ Release นี้ตรงกับคลังแล้ว — ไม่มีอะไรต้องเติม": "This Release's BOM already matches the library — nothing to fill in",
- "\\n\\nไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "\\n\\nReleased qty / Modify history / QR stay unchanged · Release sheet and issue sheet will use the new data",
+ "\n\nไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "\n\nReleased qty / Modify history / QR stay unchanged · Release sheet and issue sheet will use the new data",
  "อัปเดต": "Update",
  "อัปเดตจากคลังไม่สำเร็จ:": "Update from library failed:",
  "ดึงข้อมูลล่าสุดจาก “ซับ / พาร์ท ของโปรเจค” มาเติม: รายการครบจาก PDF ของซับ (สกรู/ยาง/กระจก) และรายละเอียด/หน่วยที่ขาด — ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว": "Pull latest data from “Project subs / parts”: full item list from sub PDFs (screws/gaskets/glass) and missing description/unit — released qty unchanged",
@@ -349,7 +349,7 @@ const DICT = {
  "บันทึกไม่ได้ —": "Can't save —",
  "บันทึก Release": "Save Release",
  "ฐานข้อมูลยังไม่รองรับการปล่อยเป็นล็อต": "Database does not support lot release yet",
- "ยังไม่ได้รัน migration-release-plans.sql ใน Supabase\\n\\nปล่อยทั้งใบเลยแบบเดิม (สร้าง QR ทุกอย่างในเลข": "migration-release-plans.sql has not been run in Supabase\\n\\nRelease the whole sheet the old way (creates QR for everything under no.",
+ "ยังไม่ได้รัน migration-release-plans.sql ใน Supabase\n\nปล่อยทั้งใบเลยแบบเดิม (สร้าง QR ทุกอย่างในเลข": "migration-release-plans.sql has not been run in Supabase\n\nRelease the whole sheet the old way (creates QR for everything under no.",
  ") หรือกลับไปก่อน แล้วให้แอดมินรัน SQL": ") or go back first and have an admin run the SQL",
  "ปล่อยทั้งใบเลย": "Release whole sheet",
  "กลับไปก่อน": "Go back",
@@ -908,8 +908,8 @@ const TPLS = [
 "• Edit in lots: {1} — cancelled QRs kept as record"
 ],
 [
-"\\nเหตุผล: {1}",
-"\\nReason: {1}"
+"\nเหตุผล: {1}",
+"\nReason: {1}"
 ],
 [
 "บันทึก {1}",

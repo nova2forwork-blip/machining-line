@@ -677,6 +677,7 @@ const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function registerI18n({ dict = {}, tpls = [] } = {}) {
   for (const [k, v] of Object.entries(dict)) { const kk = k.replace(/\s+/g, " ").trim(); if (kk && DICT[kk] == null && EXTRA[kk] == null) EXTRA[kk] = v; }
   for (const [th, en] of tpls) {
+    const ml = /\n/.test(th.trim());   // แม่แบบหลายบรรทัด (กล่องยืนยัน) — ใช้กับข้อความหลายบรรทัดเท่านั้น
     const parts = th.replace(/\s+/g, " ").trim().split(/\{(\d+)\}/);   // [ตัวอักษร, เลข, ตัวอักษร, …]
     let src = "^"; const order = [];
     for (let i = 0; i < parts.length; i++) { if (i % 2) { src += "([\\s\\S]+?)"; order.push(Number(parts[i])); } else src += escRe(parts[i]).replace(/ /g, "\\s*"); }
@@ -685,7 +686,7 @@ export function registerI18n({ dict = {}, tpls = [] } = {}) {
     const lits = parts.filter((_, i) => !(i % 2)).map((x) => x.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
     // แม่แบบที่ตัวอักษรคงที่น้อย (เช่น "{1} แผง") = ค่าที่ใส่ต้องไม่มีภาษาไทย (ตัวเลข/เบอร์) — กันจับทั้งประโยคแล้วแปลเพี้ยน
     const strict = lits.join("").replace(/[^\u0E00-\u0E7FA-Za-z]/g, "").length < 10;
-    try { XRULES.push([new RegExp(src + "$"), en, order, lits[0] || "", strict]); } catch { /* แม่แบบเพี้ยน — ข้าม */ }
+    try { XRULES.push([new RegExp(src + "$"), en, order, lits[0] || "", strict, ml]); } catch { /* แม่แบบเพี้ยน — ข้าม */ }
   }
   // แม่แบบยาว (ตัวอักษรเยอะ) ลองก่อน = ตรงกว่า
   XRULES.sort((a, b) => b[0].source.replace(/\(\[[^)]*\)/g, "").length - a[0].source.replace(/\(\[[^)]*\)/g, "").length);
@@ -703,18 +704,9 @@ function toEN(trimmed, depth = 0) {
   }
   return toEN1(trimmed, depth);
 }
-function toEN1(trimmed, depth) {
-  if (DICT[trimmed] != null) return DICT[trimmed];
-  // หลายบรรทัด (tooltip/กล่องยืนยัน) → แปลทีละบรรทัดก่อน (กันแม่แบบจับข้ามบรรทัด)
-  if (/\n/.test(trimmed)) {
-    let ok = true;
-    const out = trimmed.split(/(\n+)/).map((b, i) => { if (i % 2 || !THAI.test(b)) return b; const e = toEN(b.trim(), depth + 1); if (e == null) ok = false; return e ?? b; }).join("");
-    return ok ? out : null;
-  }
-  const flat = trimmed.replace(/\s+/g, " ");
-  if (EXTRA[flat] != null) return EXTRA[flat];
-  if (DICT[flat] != null) return DICT[flat];
-  if (depth < 4) for (const [re, en, order, lit, strict] of XRULES) {
+function xrule(flat, depth, wantMl) {
+  for (const [re, en, order, lit, strict, ml] of XRULES) {
+    if (!!ml !== wantMl) continue;
     if (lit && !flat.includes(lit)) continue;
     const m = flat.match(re); if (!m) continue;
     const vals = m.slice(1).map((g) => (depth < 3 ? subD(g, depth + 1) : g));
@@ -722,6 +714,23 @@ function toEN1(trimmed, depth) {
     let out = en; order.forEach((num, i) => { out = out.split("{" + num + "}").join(vals[i]); });
     return out;
   }
+  return null;
+}
+function toEN1(trimmed, depth) {
+  if (DICT[trimmed] != null) return DICT[trimmed];
+  // หลายบรรทัด (tooltip/กล่องยืนยัน): แม่แบบหลายบรรทัดทั้งก้อนก่อน → ไม่ได้ก็แปลทีละบรรทัด
+  if (/\n/.test(trimmed)) {
+    const flatM = trimmed.replace(/\s+/g, " ");
+    if (EXTRA[flatM] != null) return EXTRA[flatM];
+    if (depth < 4) { const r = xrule(flatM, depth, true); if (r != null) return r; }
+    let ok = true;
+    const out = trimmed.split(/(\n+)/).map((b, i) => { if (i % 2 || !THAI.test(b)) return b; const e = toEN(b.trim(), depth + 1); if (e == null) ok = false; return e ?? b; }).join("");
+    return ok ? out : null;
+  }
+  const flat = trimmed.replace(/\s+/g, " ");
+  if (EXTRA[flat] != null) return EXTRA[flat];
+  if (DICT[flat] != null) return DICT[flat];
+  if (depth < 4) { const r = xrule(flat, depth, false); if (r != null) return r; }
   for (const [re, fn] of RULES) { const m = trimmed.match(re); if (m) return fn(m); }
   // ★ ข้อความหลายท่อน "ก · ข — ค" → แปลทีละท่อน (ได้ครบทุกท่อนที่มีไทยเท่านั้น)
   if (depth < 3 && /\s[·—|]\s/.test(flat)) {
