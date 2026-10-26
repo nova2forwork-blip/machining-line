@@ -727,15 +727,17 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
 
 // ★ วัสดุของล็อต (ใบเบิก · ไม่มี QR) — วัตถุดิบงานตัด · GLASS · ACCESSORIES · อื่นๆ (เฉพาะของที่ปล่อยในล็อตนี้)
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
+// เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"
+const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.set(x, (m.get(x) || 0) + 1); return [...m].map(([l, n]) => `${nf(l)}${n > 1 ? ` ×${n}` : ""}`).join(" · "); };
 function LotMats({ plan, need, lot, sheetsOf }) {
   const m = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
   const cards = [];
   if (m.mat.length) cards.push(
-    <section key="mat" className="rl-sc mat">
+    <section key="mat" className="rl-sc mat wide">
       <header className="rl-sc-h"><div className="rl-sc-t"><b>วัตถุดิบงานตัด</b><span>MATERIAL LIST FOR CUTTING · จากพาร์ท MACHINING ในล็อต</span></div>
-        <div className="rl-sc-n"><b>{nf(m.mat.reduce((a, x) => a + x.bars, 0))}</b> เส้น<small> · {nf(m.mat.length)} รายการ</small></div></header>
+        <div className="rl-sc-n"><b>{nf(m.mat.reduce((a, x) => a + x.bars, 0))}</b> เส้น<small> · {nf(m.mat.length)} รายการ · เศษ {nf(m.mat.reduce((a, x) => a + x.off, 0))} ชิ้น</small></div></header>
       <div className="rl-sc-tw"><table className="rl-sc-table">
-        <thead><tr><th>วัตถุดิบ (INV)</th><th>รายละเอียด</th><th className="r">ยาวเส้น</th><th className="r">ใช้กับ</th><th className="r">เส้น</th></tr></thead>
+        <thead><tr><th>วัตถุดิบ (INV)</th><th>รายละเอียด</th><th className="r">ยาวเส้น</th><th className="r">ใช้กับ</th><th className="r">เส้น</th><th className="r" title="เศษที่เหลือยาว ≥ 500 มม. หลังตัดล็อตนี้ (เก็บใช้ต่อได้) · คิดแบบเส้นใหม่ทุกล็อต">เศษ ≥ 500 มม.</th></tr></thead>
         <tbody>{m.mat.map((x) => (
           <tr key={x.inv || "—"}>
             <td className="rl-sc-code">{x.inv || <span className="rl-cxq">ไม่มี INV</span>}</td>
@@ -743,8 +745,10 @@ function LotMats({ plan, need, lot, sheetsOf }) {
             <td className="r rl-sc-q rl-sc-thin">{nf(x.stock)}{x.src === "default" ? <> <Pill tone="warn" title="ไม่รู้ความยาวเส้น — ใช้ค่าเริ่ม">?</Pill></> : null}</td>
             <td className="r rl-sc-q rl-sc-thin" title={x.parts.map((p) => `${p.code} × ${p.qty}`).join("\n")}>{nf(x.parts.length)} เบอร์ · {nf(x.pcs)} ชิ้น{x.noLen ? <> <Pill tone="warn" title="พาร์ทไม่มีความยาวใน BOM — ไม่ได้นับในเส้น">ไม่มียาว {nf(x.noLen)}</Pill></> : null}{x.over ? <> <Pill tone="bad">ยาวกว่าเส้น {nf(x.over)}</Pill></> : null}</td>
             <td className="r rl-sc-q">{nf(x.bars)}</td>
+            <td className="r rl-sc-off" title={x.off ? `เศษ ${x.off} ชิ้น (มม.): ${offTxt(x.offLens)}` : "ไม่มีเศษยาว ≥ 500 มม."}>{x.off ? <><b>{nf(x.off)}</b><small>{offTxt(x.offLens)}</small></> : <span className="rw-muted">—</span>}</td>
           </tr>))}</tbody>
       </table></div>
+      <div className="rl-sc-foot">คิดแบบเส้นใหม่ทุกล็อต (ไม่นับเศษจากล็อตก่อน) · เศษ = ความยาวที่เหลือหลังตัด ≥ 500 มม. (หักรอยตัดแล้ว) เก็บไว้ใช้ต่อได้</div>
     </section>);
   if (m.glass.length) cards.push(
     <section key="glass" className="rl-sc mat">

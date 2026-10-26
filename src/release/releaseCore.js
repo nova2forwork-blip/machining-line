@@ -657,6 +657,7 @@ export function stockLen(inv, ml) {
   return { len: STOCK_DEFAULT, src: "default" };
 }
 // จัดชิ้นลงเส้น (First-Fit Decreasing) · ชิ้นละ len + KERF · เส้นสุดท้ายไม่ต้องเผื่อรอยตัด
+export const OFFCUT_MIN = 500;   // เศษที่ยาวเท่านี้ขึ้นไปถือว่าเก็บใช้ต่อได้
 export function packBars(pieces, stock, kerf = KERF) {
   const list = pieces.filter((p) => p.len > 0 && p.qty > 0).sort((a, b) => b.len - a.len);
   const rem = []; let over = 0, used = 0;
@@ -670,8 +671,8 @@ export function packBars(pieces, stock, kerf = KERF) {
       used += p.len;
     }
   }
-  const off = rem.filter((r) => r - kerf >= 500).length;   // เศษ ≥ 500 มม. (เก็บใช้ต่อได้)
-  return { bars: rem.length, over, used, waste: rem.length * stock - used, off };
+  const offLens = rem.map((r) => Math.round(r - kerf)).filter((x) => x >= OFFCUT_MIN).sort((a, b) => b - a);   // เศษ ≥ 500 มม. (เก็บใช้ต่อได้) · ยาวจริง
+  return { bars: rem.length, over, used, waste: rem.length * stock - used, off: offLens.length, offLens };
 }
 // รายการวัตถุดิบงานตัด (Total Mat. › วัตถุดิบงานตัด) — รวมพาร์ท MACHINING PART ตาม INV
 export function cutMaterials(parts) {
@@ -692,7 +693,7 @@ export function cutMaterials(parts) {
     const pk = packBars(g.parts.map((x) => ({ len: Number(x.l) || 0, qty: x.qty })), g.stock);
     const req = g.stock ? g.parts.reduce((a, x) => a + (x.l > 0 ? (x.l + KERF) * x.qty : 0), 0) / g.stock : 0;
     const d = [...g.desc.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
-    out.push({ inv: g.inv, d, stock: g.stock, src: g.src, parts: g.parts.sort((a, b) => ncmp(a.code, b.code)), pcs: g.pcs, len: g.len, noLen: g.noLen, req: Math.round(req * 100) / 100, bars: pk.bars, over: pk.over, waste: pk.waste, off: pk.off });
+    out.push({ inv: g.inv, d, stock: g.stock, src: g.src, parts: g.parts.sort((a, b) => ncmp(a.code, b.code)), pcs: g.pcs, len: g.len, noLen: g.noLen, req: Math.round(req * 100) / 100, bars: pk.bars, over: pk.over, waste: pk.waste, off: pk.off, offLens: pk.offLens });
   }
   return out.sort((a, b) => (a.inv ? 0 : 1) - (b.inv ? 0 : 1) || ncmp(a.inv, b.inv));
 }
