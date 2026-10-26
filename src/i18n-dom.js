@@ -871,3 +871,9 @@ export function useLang() {
 }
 // ทดสอบใน node (ไม่มี DOM): แปลข้อความเดียว
 export const __i18nTest = (t) => toEN(String(t).trim());
+// ★ 2026-10-26 แปลข้อความเดี่ยวตามภาษาปัจจุบัน (ใช้กับไฟล์ Excel/สิ่งที่ไม่ได้อยู่บนจอ) — ไม่มีคำแปล = คืนของเดิม
+export function translateText(t) {
+  if (LANG !== "en" || t == null) return t;
+  const s = String(t); if (!THAI.test(s)) return t;
+  const e = toEN(s.trim()); return e == null ? t : s.match(/^\s*/)[0] + e + s.match(/\s*$/)[0];
+}

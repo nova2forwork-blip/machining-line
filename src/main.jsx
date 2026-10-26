@@ -153,7 +153,8 @@ function onChunkError(e) {
     try { sessionStorage.setItem("mls-load-retry", String(tries + 1)); } catch { /* ignore */ }
     setTimeout(go, 2500);
   } else {
-    if (s) s.innerHTML = '<div style="color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6">โหลดแอปไม่สำเร็จ<br>กำลังลองใหม่อัตโนมัติ…</div>';
+    let en = false; try { en = localStorage.getItem("mls-lang") === "en"; } catch { /* ignore */ }
+    if (s) s.innerHTML = '<div style="color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6">' + (en ? "The app didn't load<br>Retrying automatically…" : "โหลดแอปไม่สำเร็จ<br>กำลังลองใหม่อัตโนมัติ…") + '</div>';
     // จอเปิดทิ้ง 24 ชม. (เช่น Dashboard/หน้าเครื่อง) — อย่าหยุดถาวร ลองใหม่เป็นระยะจนกว่าจะสำเร็จ
     try { sessionStorage.removeItem("mls-load-retry"); } catch { /* ignore */ }
     setTimeout(go, 30000);

@@ -29,7 +29,7 @@
           document.getElementById("mls-favicon").href = "/icons/artclad-dark-favicon-64.png";
           var t = document.querySelector('meta[name="theme-color"]'); if (t) t.content = "#111418";
           var a = document.querySelector('meta[name="apple-mobile-web-app-title"]'); if (a) a.content = "Artclad หน้าเครื่อง";
-          document.title = p.indexOf("/dashboard") === 0 ? "Artclad Production — TV" : "Artclad Production — หน้าเครื่อง";
+          var en = false; try { en = localStorage.getItem("mls-lang") === "en"; } catch (e) {} document.title = p.indexOf("/dashboard") === 0 ? "Artclad Production — TV" : (en ? "Artclad Production — Station" : "Artclad Production — หน้าเครื่อง");
         } catch (e) { /* ignore */ }
       })();
     </script>

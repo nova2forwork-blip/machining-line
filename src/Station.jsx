@@ -23,6 +23,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
+import "./i18n-app.js";   // ★ 2026-10-26 คำแปลอังกฤษ (หน้าเครื่องโหลดแยกจากแอปสำนักงาน)
 import { newClientId, setCachedAsmState } from "./offline.js";   // UUID ปลอดภัย + แคชสถานะประกอบ/แพ็ก (offline)
 
 // ปุ่มสลับภาษา บนหน้าเครื่อง — โชว์ "ภาษาปัจจุบัน" (ไทย→ไทย · อังกฤษ→EN) · กดเพื่อสลับ (ซิงค์ผ่าน localStorage)

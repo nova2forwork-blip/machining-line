@@ -1,3 +1,4 @@
+import { getLang, translateText } from "./i18n-dom.js";
 // ─── ดาวน์โหลดรายงานเป็นไฟล์ Excel (.xlsx) แบบมีสไตล์ ด้วย ExcelJS ───────────
 // โหลด exceljs เฉพาะตอนกดปุ่ม (dynamic import) จาก build เบราว์เซอร์สำเร็จรูป
 // (exceljs/dist/exceljs.min.js) เพื่อเลี่ยงปัญหา Node stream ตอน bundle และไม่ให้
@@ -132,7 +133,19 @@ function styleWorksheet(ws, headers, rows, kinds) {
   }
 }
 
-export async function downloadSheets(filename, sheets) {
+// ★ 2026-10-26 โหมด EN: ชื่อชีต / หัวคอลัมน์ / ข้อความไทยในเซลล์ → อังกฤษตามพจนานุกรมของแอป (ไม่มีคำแปล = คงเดิม · ตัวเลข/วันที่ไม่แตะ)
+function toLangSheets(sheets) {
+  if (getLang() !== "en") return sheets;
+  return (sheets || []).map((s) => {
+    if (!s) return s;
+    const rows = Array.isArray(s.rows) ? s.rows.map((r) => {
+      const o = {}; for (const [k, v] of Object.entries(r || {})) o[translateText(k)] = typeof v === "string" ? translateText(v) : v; return o;
+    }) : s.rows;
+    return { ...s, name: translateText(s.name), rows };
+  });
+}
+export async function downloadSheets(filename, sheets0) {
+  const sheets = toLangSheets(sheets0);
   const ExcelJS = pickExcelJS(await import("exceljs/dist/exceljs.min.js"));
   const wb = new ExcelJS.Workbook();
   wb.creator = "Artclad Production";
@@ -144,7 +157,7 @@ export async function downloadSheets(filename, sheets) {
     const rows = s && Array.isArray(s.rows) ? s.rows : [];
     const ws = wb.addWorksheet(safeSheetName(s && s.name, used));
     if (!rows.length) {
-      ws.getCell("A1").value = "(ไม่มีข้อมูลในช่วงนี้)";
+      ws.getCell("A1").value = getLang() === "en" ? "(no data in this period)" : "(ไม่มีข้อมูลในช่วงนี้)";
       ws.getCell("A1").font = { italic: true, color: { argb: "FF64748B" } };
       ws.getColumn(1).width = 30;
       continue;
