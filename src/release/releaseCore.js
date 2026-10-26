@@ -619,21 +619,28 @@ export function roKey(raw) {
 // ══════════════════════════════════════════════════════════════════════════
 // ใบงาน (ปลายทาง) ที่ office ส่งของไปทำ — ตามชีตในไฟล์จริง (Book1: MACHINING PART · BENDING · STEEL · SUB A'ssy (พับ/เชื่อม/Site Item/ยิง))
 //   label = หัวใบสั่งผลิต (เก็บในหมายเหตุ release "ใบ: …" — อย่าเปลี่ยน) · tab = ชื่อชีตใน Excel
+// ★ 2026-10-26 ชื่อเดียวกันทุกที่ (การ์ด/แท็บในแอป · ชื่อชีต Excel · หัวใบที่พิมพ์ · ชิปเลือกใบ): label = tab = ชื่อหมวดพาร์ท
+//   aka = ชื่อเดิมที่เคยเขียนลงหมายเหตุ "ใบ: …" ของล็อตที่ปล่อยไปแล้ว → ยังอ่านได้ (sheetKeyOf)
 export const SHEETS = [
-  { k: "CUTTING", kind: "part", label: "MACHINING PART", tab: "MACHINING PART", th: "งานตัด / เจาะ / บาก (MACHINING)" },
-  { k: "BENDING", kind: "part", label: "BENDING", tab: "BENDING", th: "งานพับ (BENDING PART)" },
-  { k: "STEEL", kind: "part", label: "STEEL", tab: "STEEL", th: "งานเหล็ก (STEEL PART)" },
-  { k: "พับ", kind: "sub", label: "SUB-ASSEMBLY (งานพับ)", tab: "SUB A'ssy (พับ)", th: "ซับงานพับ" },
-  { k: "เชื่อม", kind: "sub", label: "SUB-ASSEMBLY (งานเชื่อม)", tab: "SUB A'ssy (เชื่อม)", th: "ซับงานเชื่อม" },
-  { k: "ยิง", kind: "sub", label: "SUB A'ssy (ยิง)", tab: "SUB A'ssy (ยิง)", th: "ซับงานยิงประกอบ" },
-  { k: "Site Item", kind: "sub", label: "SUB-ASSEMBLY (Loose Parts)", tab: "SUB A'ssy (Site Item)", th: "ซับส่งไซต์ (เบอร์ *)" },
+  { k: "CUTTING", kind: "part", label: "MACHINING PART", tab: "MACHINING PART", th: "งานตัด / เจาะ / บาก" },
+  { k: "BENDING", kind: "part", label: "BENDING PART", tab: "BENDING PART", th: "งานพับ", aka: ["BENDING"] },
+  { k: "STEEL", kind: "part", label: "STEEL PART", tab: "STEEL PART", th: "งานเหล็ก", aka: ["STEEL"] },
+  { k: "พับ", kind: "sub", label: "SUB-ASSEMBLY (พับ)", tab: "SUB-ASSEMBLY (พับ)", th: "ซับงานพับ", aka: ["SUB-ASSEMBLY (งานพับ)", "SUB A'ssy (พับ)"] },
+  { k: "เชื่อม", kind: "sub", label: "SUB-ASSEMBLY (เชื่อม)", tab: "SUB-ASSEMBLY (เชื่อม)", th: "ซับงานเชื่อม", aka: ["SUB-ASSEMBLY (งานเชื่อม)", "SUB A'ssy (เชื่อม)"] },
+  { k: "ยิง", kind: "sub", label: "SUB-ASSEMBLY (ยิง)", tab: "SUB-ASSEMBLY (ยิง)", th: "ซับงานยิงประกอบ", aka: ["SUB A'ssy (ยิง)", "SUB-ASSEMBLY (งานยิงประกอบ)"] },
+  { k: "Site Item", kind: "sub", label: "SUB-ASSEMBLY (Site Item)", tab: "SUB-ASSEMBLY (Site Item)", th: "ซับส่งไซต์ · Loose Parts (เบอร์ *)", aka: ["SUB-ASSEMBLY (Loose Parts)", "SUB A'ssy (Site Item)"] },
   { k: "panel", kind: "panel", label: "ASSEMBLY (แผง)", tab: "ASSEMBLY (แผง)", th: "ประกอบแผง · 1 QR ต่อที่อยู่" },
 ];
+// ชื่อใบ (จากหมายเหตุ "ใบ: …" ของแถวที่ปล่อย) → key ของใบ · รับทั้ง key / ชื่อปัจจุบัน / ชื่อเดิม (aka) · ไม่รู้จัก = คืนชื่อเดิม
+export function sheetKeyOf(name) {
+  const n = NC(name); const s = SHEETS.find((x) => NC(x.k) === n || NC(x.label) === n || NC(x.tab) === n || (x.aka || []).some((a) => NC(a) === n));
+  return s ? s.k : name;
+}
 export const PART_DESTS = ["CUTTING", "BENDING", "STEEL"];
 // ชื่อที่แสดง: ใบ CUTTING = MACHINING PART (ค่าเก็บในระบบยังเป็น CUTTING)
 // หมวดผลิตเอง 3 หมวดนี้ = ใบงานเดียวกันเลย (เลือกหมวดก็คือเลือกใบ) · SITE ITEM / หมวดที่ตั้งเอง ต้องเลือกใบแยก
 export const CAT_DEST = { "MACHINING PART": "CUTTING", "BENDING PART": "BENDING", "STEEL PART": "STEEL" };
-export const destLabel = (d) => (d === "CUTTING" ? "MACHINING PART" : d);
+export const destLabel = (d) => (SHEETS.find((s) => s.k === d) || {}).label || d;
 export const isPartSheet = (k) => PART_DESTS.includes(k);
 export const ruleDest = (cat, code = "") => { const c = !PART_CATS.includes(cat) || cat === "SITE ITEM" ? ruleCatBase(code, "part") : cat; return c === "MACHINING PART" ? "CUTTING" : c === "STEEL PART" ? "STEEL" : "BENDING"; };
 

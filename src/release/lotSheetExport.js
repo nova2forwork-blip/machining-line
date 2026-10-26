@@ -2,18 +2,12 @@
 //   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
 //   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
-import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom } from "./releaseCore.js";
+import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
+// หัวใบที่พิมพ์ = ชื่อใบเดียวกับในแอป (SHEETS: label + ชื่อไทย) · ใบเบิกวัสดุใช้ชื่อตามใบเดิม
 const TITLES = {
-  CUTTING: ["CUTTING MACHINING & WELDING", "งานตัดและเชื่อม"],
-  BENDING: ["BENDING MACHINING & WELDING", "งานพับและเชื่อม"],
-  STEEL: ["STEEL PART", "งานเหล็ก"],
-  พับ: ["SUB-ASSEMBLY (งานพับ)", ""],
-  เชื่อม: ["SUB-ASSEMBLY (งานเชื่อม)", ""],
-  ยิง: ["SUB-ASSEMBLY (งานยิงประกอบ)", ""],
-  "Site Item": ["SUB-ASSEMBLY (Loose Parts)", ""],
-  panel: ["ASSEMBLY (แผง)", "ประกอบแผง · 1 QR ต่อที่อยู่"],
+  ...Object.fromEntries(SHEETS.map((x) => [x.k, [x.label, x.th]])),
   MAT: ["MATERIAL LIST FOR CUTTING", "วัตถุดิบงานตัด"],
   GLASS: ["GLASS", "รายการวัสดุกระจก"],
   FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
@@ -39,7 +33,7 @@ const num = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? "" : 
 export function lotRowSheets(r, need) {
   const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || "");
   if (r.kind === "panel") return ["panel"];
-  if (m) return m[1].split(/\s*,\s*/).map((l) => (SHEETS.find((s) => s.label === l || s.k === l) || {}).k || l);
+  if (m) return m[1].split(/\s*,\s*/).map(sheetKeyOf);
   return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"];
 }
 

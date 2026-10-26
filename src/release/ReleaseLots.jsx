@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -36,9 +36,21 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
   const [modify, setModify] = useState(false);
-  const [open, setOpenRaw] = useState(null);
+  // ★ 2026-10-26 ล็อตที่เปิด: เข้ามาครั้งแรก = ล็อตล่าสุดเปิดค้างไว้ · จำที่ผู้ใช้เปิด/ปิดไว้ต่อ Release (localStorage) · ปล่อยล็อตใหม่ = เปิดล็อตใหม่ให้
+  const openKey = `mls-lot-open:${plan.id || plan.ro}`;
+  const newestNo = rel.lots.length ? rel.lots[rel.lots.length - 1].no : null;
+  const [open, setOpenRaw] = useState(() => { try { const v = localStorage.getItem(openKey); if (v !== null) return v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo; } catch { /* ignore */ } return newestNo; });
   const [lotQ, setLotQ] = useState("");   // ★ ค้นหาในล็อตที่เปิด (เบอร์ / รายละเอียด / ที่อยู่ / INV)
-  const setOpen = (v) => { setOpenRaw(v); setLotQ(""); };
+  const setOpen = (v) => { setOpenRaw(v); setLotQ(""); try { localStorage.setItem(openKey, v || ""); } catch { /* ignore */ } };
+  const nLotsRef = useRef(rel.lots.length);
+  useEffect(() => {
+    const prev = nLotsRef.current; nLotsRef.current = rel.lots.length;
+    if (!newestNo || rel.lots.length <= prev) return;
+    if (prev === 0) {   // ล็อตเพิ่งโหลดมา (เปิดหน้ามาก่อนข้อมูลมา) → ใช้ที่จำไว้ ถ้าไม่มี = ล่าสุด
+      let v = null; try { v = localStorage.getItem(openKey); } catch { /* ignore */ }
+      setOpenRaw(v === null ? newestNo : v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo);
+    } else setOpen(newestNo);   // ปล่อยล็อตใหม่ → เปิดล็อตใหม่
+  }, [rel.lots.length]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { document.body.style.overflow = builder || modify ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [builder, modify]);
   // BOM ที่ยังไม่มีในแผนนี้ → ดึงจาก Release อื่นของโปรเจคเดียวกันให้เอง (เฉพาะที่ว่าง)
   const gaps = useMemo(() => bomGaps(plan), [plan]);
@@ -102,7 +114,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     return { g, d, t, pct: t ? Math.round((d / t) * 100) : 0 };
   };
   const lastLot = rel.lots[rel.lots.length - 1];
-  const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map((l) => (SHEETS.find((s) => s.label === l || s.k === l) || {}).k || l); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
+  const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map(sheetKeyOf); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
   return (
     <div className="rw rl">
       {sheetPrev ? <LotSheetPreview args={sheetPrev} onClose={() => setSheetPrev(null)} /> : null}
@@ -135,10 +147,10 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} />
 
       <div className="card rw-card">
-        <div className="rw-sec-head"><div><h2>ล็อตที่ปล่อยแล้ว</h2><p>แต่ละล็อตมี QR ของตัวเอง · ใบสั่งผลิตใช้เลขล็อต</p></div></div>
+        <div className="rw-sec-head"><div><h2>ล็อตที่ปล่อยแล้ว</h2><p>ล่าสุดอยู่บน · แต่ละล็อตมี QR ของตัวเอง · ใบสั่งผลิตใช้เลขล็อต</p></div></div>
         {rel.lots.length ? (
           <div className="rl-lots">
-            {rel.lots.map((L) => { const bySheet = new Map(); L.rows.forEach((r) => rowSheets(r).forEach((k) => (bySheet.get(k) || bySheet.set(k, []).get(k)).push(r)));
+            {[...rel.lots].reverse().map((L) => { const bySheet = new Map(); L.rows.forEach((r) => rowSheets(r).forEach((k) => (bySheet.get(k) || bySheet.set(k, []).get(k)).push(r)));
               const mm = lotModMap(plan, L.no);
               const lotVers = [...new Set([...[...mm.values()].map((x) => x.ver), ...L.rows.map((r) => r.mod_version).filter(Boolean)])].sort();
               return (
