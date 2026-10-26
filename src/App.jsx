@@ -13111,39 +13111,41 @@ function ClearScansCard() {
   );
 }
 
+const DEPT_FIELDS = [{ key: "name", label: "ชื่อแผนก" }];   // นอก component — กัน load วนซ้ำ (fields เป็น dependency)
 function SetupPage() {
   const [tab, setTab] = useState(() => {
     if (BOOT_GO.go === "setup-employees" && !BOOT_GO.used) { BOOT_GO.used = true; return "employees"; }   // มาจากหน้าเครื่อง → เปิดแท็บพนักงาน
     return "machines";
   });
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  // ★ 2026-10-26: 9 แท็บ → 4 (ผู้ใช้: "ไม่ซับซ้อน ใช้งานง่าย") · ขั้นตอน → ระบบ · แผนก → พนักงาน
   const TABS = [
-    { key: "machines", label: "เครื่อง/สถานี" },
-    { key: "operations", label: "ขั้นตอน" },
+    { key: "machines", label: L("สถานีงาน", "Stations") },
+    { key: "employees", label: L("พนักงาน", "Employees") },
     { key: "parts", label: "Part Master" },
-    { key: "employees", label: "พนักงาน" },
-    { key: "departments", label: "แผนก" },
-    { key: "sessions", label: "ผู้ใช้ออนไลน์ / หน้าเครื่อง" },
-    { key: "audit", label: "ประวัติการแก้ไข" },
-    { key: "backup", label: "สำรองข้อมูล" },
-    { key: "display", label: "คอลัมน์ตาราง" },
+    { key: "system", label: L("ระบบ", "System"), hint: L("ออนไลน์ · ประวัติ · สำรอง · ขั้นตอน", "online · history · backup · steps") },
   ];
   return (
     <div>
-      <div className="page-head"><div className="page-title">ตั้งค่า</div></div>
-      <div className="chip-row" style={{ marginBottom: 18 }}>
+      <div className="page-head"><div className="page-title">{L("ตั้งค่า", "Setup")}</div></div>
+      <div className="stp-tabs">
         {TABS.map((t) => (
-          <span key={t.key} className={`chip ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</span>
+          <button type="button" key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
+            {t.label}{t.hint ? <small>{t.hint}</small> : null}
+          </button>
         ))}
       </div>
-      {tab === "machines" && <MachineCrud />}
-      {tab === "operations" && <OperationsCrud />}
-      {tab === "departments" && <SimpleCrud table="departments" fields={[{ key: "name", label: "ชื่อแผนก" }]} />}
-      {tab === "employees" && <EmployeeCrud />}
-      {tab === "sessions" && <><StationHealthCard /><ActiveSessionsCard /><DeadLetterCard /></>}
-      {tab === "audit" && <AuditLogCard />}
+      {tab === "machines" && <StationsPage />}
+      {tab === "employees" && <>
+        <EmployeeCrud />
+        <details className="stp-details">
+          <summary>{L("แผนก", "Departments")} <small>{L("รายชื่อแผนกที่ใช้เลือกในข้อมูลพนักงาน", "department list used on employee records")}</small></summary>
+          <SimpleCrud table="departments" fields={DEPT_FIELDS} />
+        </details>
+      </>}
       {tab === "parts" && <PartMasterCrud />}
-      {tab === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
-      {tab === "display" && <ColumnLayoutCard />}
+      {tab === "system" && <SystemSetup />}
     </div>
   );
 }
@@ -13642,112 +13644,6 @@ function OpMultiPick({ operations, selected, onToggle, machineChosen }) {
 }
 
 
-function MachineCrud() {
-  const [rows, setRows] = useState([]);
-  const [operations, setOperations] = useState([]);
-  const [caps, setCaps] = useState(null);   // ★ 2026-10-10 ตรวจรอบ 3: null = ยังโหลดไม่เสร็จ/โหลดไม่ได้ → ปุ่มแก้ไขปิดไว้
-  const [form, setForm] = useUndoable({});
-  const [editing, setEditing] = useState(null);     // เครื่องที่กำลังแก้ไข (ชื่อ/ประเภท/ความสามารถ/ลบ)
-  const [err, setErr] = useState("");
-  const [lang] = useLang();
-  const L = (th, en) => (lang === "en" ? en : th);
-  const sort = useTableSort("code");
-
-  // ★ 2026-10-10 ตรวจรอบ 3: เดิมโหลดความสามารถเครื่องแบบไม่ strict (พลาด = []) แล้วกดแก้ไขชื่อ → บันทึกขั้นตอนเป็นว่าง
-  //   = เครื่องกลายเป็น "ไม่จำกัด" เงียบๆ · ตอนนี้โหลดไม่ได้ = แจ้ง + ห้ามเปิดแก้ไข
-  const load = useCallback(async () => {
-    setRows(await listRows("machines", { order: "code" }));
-    setOperations(await listRows("operations", { order: "seq" }));
-    try { setCaps(await listRows("machine_operations", { strict: true })); }
-    catch (e) { setCaps(null); setErr("โหลดขั้นตอนที่เครื่องทำได้ไม่สำเร็จ — กดรีเฟรชหน้า: " + (e?.message || e)); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  async function add() {
-    if (!form.code || !form.name) { setErr("กรอกรหัสและชื่อเครื่องให้ครบ"); return; }
-    setErr("");
-    try {
-      const code = form.code;
-      await insertRow("machines", { code, name: form.name, type: form.type || null });
-      setForm({});
-      // ★ 2026-10-09: เพิ่มแล้วเปิดหน้าตั้งรายละเอียดต่อเลย (รูปแบบการสแกน / ขั้นตอนที่ทำได้) — กด "ข้าม" ได้
-      const fresh = await listRows("machines", { order: "code" });
-      setRows(fresh);
-      const made = fresh.find((m) => String(m.code).trim().toLowerCase() === String(code).trim().toLowerCase());
-      if (made) setEditing({ ...made, __fresh: true });
-    } catch (e) {
-      setErr(isDuplicateError(e) ? `รหัสเครื่อง "${form.code}" มีอยู่แล้ว` : "เกิดข้อผิดพลาด: " + e.message);
-    }
-  }
-  function capNames(machineId) {
-    const ids = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
-    const names = operations.filter((o) => ids.has(o.id)).map((o) => opLabel(o.name, lang));
-    return names;
-  }
-  // หน้าปลายทาง (แผนก/URL) ที่สเตชันนี้จะเข้า — คิดจาก "ประเภทงาน" ของขั้นตอนที่ตั้งไว้ (ไม่ใช่ชื่อสเตชัน)
-  function capDests(machineId) {
-    const ids = new Set((caps || []).filter((c) => c.machine_id === machineId).map((c) => c.operation_id));
-    const sel = operations.filter((o) => ids.has(o.id));
-    return destsOfSelected(sel, new Set(sel.map((o) => o.id)));
-  }
-
-  return (
-    <Card title="เพิ่มเครื่อง/สถานีใหม่ + ตั้งความสามารถ">
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-        <div style={{ minWidth: 140 }}><Field label="รหัสเครื่อง"><Input value={form.code || ""} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field></div>
-        <div style={{ minWidth: 180 }}><Field label="ชื่อเครื่อง/สถานี"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field></div>
-        <div style={{ minWidth: 140 }}><Field label="ประเภทงาน"><Input value={form.type || ""} onChange={(e) => setForm({ ...form, type: e.target.value })} /></Field></div>
-        <Btn variant="accent" onClick={add} style={{ height: 42, alignSelf: "flex-start", marginTop: 20 }}>เพิ่ม</Btn>
-      </div>
-      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
-      <HowTo id="setup-machines" style={{ marginBottom: 10 }} short={L("กด \"แก้ไข\" เพื่อตั้งชื่อ/ประเภท/ขั้นตอนที่ทำได้", "Press \"Edit\" to set the name, type and operations")}>
-        เครื่อง/สถานีหนึ่งทำได้หลายขั้นตอน · งานประกอบ/แพ็กสร้างเป็น "สถานี" ที่นี่ (เช่น ประกอบ-01, แพ็ก-01) — กด "แก้ไข" เพื่อตั้งชื่อ/ประเภท เลือกขั้นตอนที่ทำได้ หรือลบเครื่อง · <b>ปุ่มลัด:</b> กด "แก้ไข" ที่สเตชันแล้วติ๊กปุ่ม <b>แพ็กแผง</b> / <b>แพ็กไซต์ไอเทม</b> / <b>MILLING</b> (ถ้ายังไม่มีขั้นตอน ระบบสร้างให้ตอนบันทึก)
-      </HowTo>
-      <SortControl sort={sort} options={[
-        { k: "code", label: "รหัสเครื่อง" }, { k: "name", label: "ชื่อเครื่อง/สถานี" },
-        { k: "type", label: "ประเภท" }, { k: "caps", label: "ขั้นตอนที่ทำได้" },
-      ]} />
-      <DataTable id="machine-crud" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
-        rows={rows} rowKey={(r) => r.id} sort={sort}
-        sortAccessors={{
-          code: (r) => r.code, name: (r) => r.name, type: (r) => r.type || "",
-          caps: (r) => capNames(r.id).join(", "),
-        }}
-        columns={[
-          { key: "code", header: "รหัสเครื่อง", sortKey: "code", cell: (r) => r.code },
-          { key: "name", header: "ชื่อเครื่อง/สถานี", sortKey: "name", cell: (r) => (
-            <>
-              {r.name}
-              {r.scan_mode === "count" ? <div style={{ fontSize: 11.5, color: "var(--accent)", fontWeight: 600, marginTop: 3 }}>⚡ สแกนครั้งเดียว · ไม่จับเวลา</div> : null}
-            </>
-          ) },
-          { key: "type", header: "ประเภท", sortKey: "type", cell: (r) => r.type || "-" },
-          { key: "caps", header: "ขั้นตอนที่ทำได้", sortKey: "caps",
-            cell: (r) => { const names = capNames(r.id); return (
-              <>
-                {names.length > 0 ? names.join(" · ") : <span style={{ color: "var(--muted)" }}>ไม่จำกัด (ยังไม่ตั้ง)</span>}
-                {(() => { const ds = capDests(r.id); return ds.length > 0 ? (
-                  <div style={{ fontSize: 11.5, color: ds.length > 1 ? "var(--warning)" : "var(--muted)", marginTop: 3 }}>
-                    {ds.length > 1 ? "⚠️ " : "→ "}{ds.map((d) => `${d.th} (${d.path})`).join(" · ")}
-                  </div>
-                ) : null; })()}
-              </>
-            ); } },
-          { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap" },
-            cell: (r) => <button type="button" className="row-act" disabled={caps === null} title={caps === null ? "กำลังโหลด…" : undefined} onClick={() => setEditing(r)}>แก้ไข</button> },
-        ]} />
-      {editing && (
-        <MachineEditModal
-          machine={editing} operations={operations} caps={caps || []}
-          onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); await load(); }}
-          onReload={() => load()}
-        />
-      )}
-    </Card>
-  );
-}
-
 // แก้ไขเครื่องจักร — ชื่อ / ประเภท / ขั้นตอนที่ทำได้ (ความสามารถ) + ลบ · ในที่เดียว
 // (ต้องกด "แก้ไข" ก่อนถึงจะลบหรือแก้ความสามารถได้ · รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
 // ปุ่มลัด "เพิ่มขั้นตอนที่ยังไม่มี" — ติ๊กแล้วสร้างขั้นตอนให้อัตโนมัติตอนบันทึก
@@ -13760,164 +13656,336 @@ const QUICK_ADD_CHIPS = [
   { key: "milling",    name: "กัด",           op_type: "machining",  match: (o) => { const n = String(o.name || "").trim(); return n === "กัด" || n.toUpperCase() === "MILLING"; } },
   { key: "glazing",    name: "ติดกระจก",      op_type: "glazing",    match: (o) => o.op_type === "glazing" },   // ★ รอบ 22
 ];
-function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, onReload }) {
-  const fresh = !!machine.__fresh;   // ★ เพิ่งสร้าง → หัวข้อ "ตั้งรายละเอียด" + ปุ่ม "ข้าม" (ไม่บังคับ)
-  const [form, setForm] = useUndoable({ name: machine.name || "", type: machine.type || "" });
-  // ★ 2026-10-09: รูปแบบการสแกนหน้าเครื่อง — undefined = ยังไม่ได้รัน migration-scan-mode.sql (คอลัมน์ไม่มี)
-  const hasScanMode = Object.prototype.hasOwnProperty.call(machine, "scan_mode");
+// ═══ ★ 2026-10-26: ตั้งค่า › สถานีงาน (แบบใหม่ — ผู้ใช้: "ไม่ซับซ้อน ใช้งานง่าย") ═══════════════
+//   จัดกลุ่มตาม "หน้าที่แท็บเล็ตจะเปิด" · แตะการ์ด = แก้ไข · เพิ่ม/แก้ใช้หน้าต่างเดียวกัน
+//   เลือก "สถานีนี้ทำงานอะไร" 1 อย่าง (แทนการติ๊กขั้นตอนเอง ซึ่งเคยทำให้ตั้งผิดหน้า เช่น Glazing ไปขึ้นหน้าซับ)
+//   งานเครื่อง → ติ๊ก ตัด/บาก/กัด/เจาะ… + รูปแบบการสแกน · งานอื่น → ระบบหา/สร้างขั้นตอนประเภทนั้นให้เอง
+const STATION_TYPES = [
+  { key: "machine",    th: "งานเครื่อง",      en: "Machining",      subTh: "ตัด · บาก · กัด · เจาะ", subEn: "cut · notch · mill · drill", path: "/station", color: "#0f9d6e" },
+  { key: "assembly",   th: "ประกอบซับ",       en: "Sub-assembly",   path: "/assembly",      op_type: "assembly",   def: "ประกอบ",        color: "#7c5cff" },
+  { key: "panel",      th: "แผง",             en: "Panel",          path: "/panel",         op_type: "panel",      def: "แผง",           color: "#e08a00" },
+  { key: "glazing",    th: "ติดกระจก",        en: "Glazing",        path: "/glazing",       op_type: "glazing",    def: "ติดกระจก",      color: "#0aa3c2" },
+  { key: "pack_panel", th: "แพ็กแผง",         en: "Pack panel",     path: "/packing-panel", op_type: "pack_panel", def: "แพ็กแผง",       color: "#2f6fe0" },
+  { key: "pack_site",  th: "แพ็กไซต์ไอเทม",   en: "Pack site item", path: "/packing-site",  op_type: "pack_site",  def: "แพ็กไซต์ไอเทม", color: "#2f6fe0" },
+  { key: "packing",    th: "แพ็ก (รวมทุกบั้ง)", en: "Packing (all)", path: "/packing",       op_type: "packing",    def: "แพ็ก",          color: "#2f6fe0", legacy: true },
+  { key: "none",       th: "ยังไม่ตั้ง",        en: "Not set",        subTh: "สแกนได้ทุกขั้นตอน", subEn: "can scan any step", color: "#aab4b0" },
+];
+const STYPE = Object.fromEntries(STATION_TYPES.map((t) => [t.key, t]));
+const isMachiningOp = (o) => !o.op_type || o.op_type === "machining";
+const stypeOfOp = (o) => (isMachiningOp(o) ? "machine" : (STYPE[o.op_type] ? o.op_type : "machine"));
+// กลุ่มในหน้ารายการ (แพ็ก 3 แบบรวมกลุ่มเดียว)
+const STATION_GROUPS = [
+  { key: "machine",  types: ["machine"] },
+  { key: "assembly", types: ["assembly"] },
+  { key: "panel",    types: ["panel"] },
+  { key: "glazing",  types: ["glazing"] },
+  { key: "pack",     types: ["pack_panel", "pack_site", "packing"], th: "แพ็ก", en: "Packing", color: "#2f6fe0" },
+  { key: "mixed",    types: ["mixed"], th: "ตั้งข้ามหลายหน้า — ควรแก้", en: "Set across several pages — please fix", color: "#d97706" },
+  { key: "none",     types: ["none"] },
+];
+
+function stationInfo(machine, operations, caps) {
+  const ids = new Set((caps || []).filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
+  const ops = (operations || []).filter((o) => ids.has(o.id));
+  const kinds = [...new Set(ops.map(stypeOfOp))];
+  const stype = ops.length === 0 ? "none" : kinds.length > 1 ? "mixed" : kinds[0];
+  return { ops, ids, kinds, stype };
+}
+
+function StationsPage() {
+  const [rows, setRows] = useState([]);
+  const [operations, setOperations] = useState([]);
+  const [caps, setCaps] = useState(null);   // null = ยังโหลดไม่เสร็จ/โหลดไม่ได้ → ห้ามเปิดแก้ (กันทับขั้นตอนเป็นว่าง)
+  const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [editing, setEditing] = useState(null);
+  const [openNone, setOpenNone] = useState(false);
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+
+  const load = useCallback(async () => {
+    setRows(await listRows("machines", { order: "code" }));
+    setOperations(await listRows("operations", { order: "seq" }));
+    try { setCaps(await listRows("machine_operations", { strict: true })); setErr(""); }
+    catch (e) { setCaps(null); setErr(L("โหลดขั้นตอนของสถานีไม่สำเร็จ — กดรีเฟรชหน้า: ", "Couldn't load station steps — refresh the page: ") + (e?.message || e)); }
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+
+  const s = q.trim().toLowerCase();
+  const items = rows
+    .filter((m) => !s || `${m.code} ${m.name} ${m.type || ""}`.toLowerCase().includes(s))
+    .map((m) => ({ m, info: stationInfo(m, operations, caps) }));
+
+  return (
+    <div className="stp">
+      <div className="stp-bar">
+        <div className="stp-search">
+          <Icon name="search" size={16} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={L("ค้นหารหัส / ชื่อสถานี", "Search code / station name")} />
+        </div>
+        <Btn variant="accent" onClick={() => setEditing({ __new: true })} disabled={caps === null}>+ {L("เพิ่มสถานี", "Add station")}</Btn>
+      </div>
+      {err && <div className="stp-err">{err}</div>}
+      {STATION_GROUPS.map((g) => {
+        const list = items.filter((x) => g.types.includes(x.info.stype));
+        if (!list.length && (g.key === "mixed" || g.key === "none" || s)) return null;
+        const t = STYPE[g.types[0]] || {};
+        const title = g.th ? L(g.th, g.en) : L(g.key === "machine" ? "หน้าเครื่อง" : t.th, t.en);
+        const sub = g.key === "machine" ? L("ตัด · บาก · กัด · เจาะ · /station", "cut · notch · mill · drill · /station")
+          : g.key === "pack" ? "/packing-panel · /packing-site"
+          : g.key === "none" ? L("ยังไม่ได้เลือกงาน — ตอนนี้สแกนได้ทุกขั้นตอน (เช่น ปั๊มลม เครื่องเป่าแห้ง)", "no job chosen — can scan any step for now (e.g. air pumps)")
+          : g.key === "mixed" ? L("เลือกงานหลายแบบปนกัน แท็บเล็ตจะเข้าได้หน้าเดียว — แตะเพื่อเลือกใหม่", "mixed jobs — a tablet can open only one page; tap to choose")
+          : t.path;
+        const folded = g.key === "none" && !openNone && !s;
+        return (
+          <div key={g.key} className={`stp-grp${g.key === "mixed" ? " warn" : ""}`}>
+            <div className={`stp-gh${g.key === "none" ? " click" : ""}`} onClick={g.key === "none" ? () => setOpenNone((v) => !v) : undefined}>
+              <span className="stp-dot" style={{ background: g.color || t.color }} />
+              <b>{title}</b>
+              <span className="stp-url">{sub}</span>
+              <span className="stp-n">{list.length}{g.key === "none" ? (folded ? " ▸" : " ▾") : ""}</span>
+            </div>
+            {folded ? (
+              <div className="stp-fold" onClick={() => setOpenNone(true)}>{list.map((x) => x.m.code).join(" · ")}</div>
+            ) : list.length === 0 ? (
+              <div className="stp-empty">{L("ยังไม่มี — กด \"+ เพิ่มสถานี\"", "None yet — press \"+ Add station\"")}</div>
+            ) : (
+              <div className="stp-cards">
+                {list.map(({ m, info }) => (
+                  <button type="button" key={m.id} className="stp-card" disabled={caps === null} onClick={() => setEditing(m)}>
+                    <span className="c">{m.code}</span>
+                    <span className="nm" title={m.name}>{m.name}{m.type ? <span className="ty"> · {m.type}</span> : null}</span>
+                    {(info.stype === "machine" || info.stype === "mixed") && info.ops.length > 0 && (
+                      <span className="ops">{info.ops.map((o) => opLabel(o.name, lang)).join(" · ")}</span>
+                    )}
+                    {g.key === "pack" && <span className="ops">{L(STYPE[info.stype].th, STYPE[info.stype].en)}</span>}
+                    {info.stype === "machine" && m.scan_mode === "count" && <span className="tag">{L("สแกนครั้งเดียว", "Single scan")}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {editing && (
+        <StationModal machine={editing} operations={operations} caps={caps || []}
+          onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await load(); }} />
+      )}
+    </div>
+  );
+}
+
+function StationModal({ machine, operations, caps, onClose, onSaved }) {
+  const isNew = !!machine.__new;
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const info = isNew ? { ops: [], ids: new Set(), kinds: [], stype: "machine" } : stationInfo(machine, operations, caps);
+  const startType = info.stype === "mixed" ? (info.kinds.includes("machine") ? "machine" : info.kinds[0]) : info.stype;
+  const [form, setForm] = useUndoable({ code: isNew ? "" : machine.code, name: machine.name || "", type: machine.type || "" });
+  const [stype, setStype] = useState(startType);
+  const machiningOps = (operations || []).filter(isMachiningOp);
+  const millSpec = QUICK_ADD_CHIPS.find((c) => c.key === "milling");
+  const needMill = !machiningOps.some(millSpec.match);
+  const mOps = needMill ? [...machiningOps, { id: "new:milling", name: millSpec.name }] : machiningOps;
+  const [mSel, setMSel] = useState(() => new Set(info.ops.filter(isMachiningOp).map((o) => o.id)));
+  const hasScanMode = isNew || Object.prototype.hasOwnProperty.call(machine, "scan_mode");
   const [scanMode, setScanMode] = useState(machine.scan_mode === "count" ? "count" : "timed");
-  const [opSel, setOpSel] = useUndoable(() => new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id)));
-  // ★ 2026-10-10 ตรวจรอบ 3: ขั้นตอนตั้งต้น — ไม่ได้แตะชิป = ไม่ส่ง setMachineOps (กันทับด้วยชุดที่โหลดมาไม่ครบ)
-  const initOps = useRef(null);
-  if (initOps.current === null) initOps.current = new Set(caps.filter((c) => c.machine_id === machine.id).map((c) => c.operation_id));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const T = STYPE[stype];
+  const shownTypes = STATION_TYPES.filter((t) => !t.legacy || startType === t.key || info.kinds.includes(t.key));
 
-  // โชว์ปุ่มลัด (แพ็กแผง/แพ็กไซต์ไอเทม/MILLING) เป็นชิปแยกกันเสมอ — ถ้ายังไม่มีขั้นตอนจริง เติมชิป "ชั่วคราว" (id ขึ้นต้น new:)
-  const synthChips = QUICK_ADD_CHIPS.filter((c) => !(operations || []).some(c.match))
-    .map((c) => ({ id: `new:${c.key}`, name: c.name, op_type: c.op_type, __synthetic: true }));
-  const augOps = [...(operations || []), ...synthChips];
-  const hasSynthSelected = [...opSel].some((id) => typeof id === "string" && id.startsWith("new:"));
-  // ★ 2026-10-26: สเตชันประกอบ/แผง/ติดกระจก/แพ็ก (ไม่มีขั้นตอนงานเครื่อง) = สแกนเบอร์แม่ → เบอร์ลูก · ไม่จับเวลา → ซ่อนรูปแบบการสแกน
-  const selOps = augOps.filter((o) => opSel.has(o.id));
-  const asmOnly = selOps.length > 0 && selOps.every((o) => o.op_type && o.op_type !== "machining");
+  function toggleM(id) { setMSel((s0) => { const n = new Set(s0); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
 
-  function toggleOp(id) { setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+  async function opIdFor(t) {
+    // ขั้นตอนประเภทนี้ที่สถานีมีอยู่แล้ว → ใช้ตัวเดิม · ไม่มี → ตัวแรกในระบบ · ไม่มีเลย → สร้างให้
+    const mine = info.ops.filter((o) => o.op_type === t.op_type).map((o) => o.id);
+    if (mine.length) return mine;
+    let ops = await listRows("operations", { order: "seq" });
+    let hit = ops.find((o) => o.op_type === t.op_type);
+    if (!hit) {
+      const nextSeq = ops.reduce((mx, o) => Math.max(mx, Number(o.seq) || 0), 0) + 1;
+      let name = t.def;
+      if (ops.some((o) => String(o.name).trim() === name)) name = `${t.def} (${t.en})`;   // ชื่อซ้ำกับขั้นตอนอื่น (name unique)
+      const res = await createOperation({ name, seq: nextSeq, opType: t.op_type });
+      if (res && res.ok === false) throw new Error(opReasonTh(res.reason));
+      ops = await listRows("operations", { order: "seq" });
+      hit = ops.find((o) => o.op_type === t.op_type);
+    }
+    if (!hit) throw new Error(L("สร้างขั้นตอนไม่สำเร็จ", "Couldn't create the step"));
+    return [hit.id];
+  }
 
   async function save() {
-    if (!form.name.trim()) { setErr("กรอกชื่อเครื่องให้ครบ"); return; }
+    const code = String(form.code || "").trim();
+    if (!code || !form.name.trim()) { setErr(L("กรอกรหัสและชื่อให้ครบ", "Enter both code and name")); return; }
+    if (stype === "machine" && mSel.size === 0) { setErr(L("ติ๊กอย่างน้อย 1 ขั้นตอน (ตัด/บาก/กัด/เจาะ…) หรือเลือก \"ยังไม่ตั้ง\"", "Tick at least one step, or choose \"Not set\"")); return; }
     setBusy(true); setErr("");
+    let row = machine;
     try {
-      await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
-      // แปลงชิปชั่วคราว (new:<key>) → สร้างขั้นตอนจริงถ้ายังไม่มี แล้วใช้ id จริง (idempotent · เช็ก/หาเจอด้วย match)
-      const finalIds = [];
-      for (const id of opSel) {
-        if (typeof id === "string" && id.startsWith("new:")) {
-          const spec = QUICK_ADD_CHIPS.find((c) => c.key === id.slice(4));
-          if (!spec) continue;
-          let ops = await listRows("operations", { order: "seq" });
-          let hit = ops.find(spec.match);
-          if (!hit) {
-            const nextSeq = ops.reduce((m, o) => Math.max(m, Number(o.seq) || 0), 0) + 1;   // ★ seq เป็น NOT NULL — ต่อท้ายลำดับล่าสุด
-            const res = await createOperation({ name: spec.name, seq: nextSeq, opType: spec.op_type });
-            if (res && res.ok === false) throw new Error(res.reason ? opReasonTh(res.reason) : "สร้างขั้นตอนไม่สำเร็จ");
-            ops = await listRows("operations", { order: "seq" });
-            hit = ops.find(spec.match);
-          }
-          if (hit) finalIds.push(hit.id);
-        } else {
-          finalIds.push(id);
-        }
+      if (isNew) {
+        try { await insertRow("machines", { code, name: form.name.trim(), type: form.type.trim() || null }); }
+        catch (e) { setErr(isDuplicateError(e) ? L(`รหัส "${code}" มีอยู่แล้ว`, `Code "${code}" already exists`) : String(e?.message || e)); setBusy(false); return; }
+        const fresh = await listRows("machines", { order: "code" });
+        row = fresh.find((m) => String(m.code).trim().toLowerCase() === code.toLowerCase());
+        if (!row) throw new Error(L("เพิ่มแล้วแต่หาไม่เจอ — รีเฟรชหน้า", "Added but not found — refresh"));
+      } else if (form.name.trim() !== (machine.name || "") || (form.type.trim() || null) !== (machine.type || null)) {
+        await updateRow("machines", machine.id, { name: form.name.trim(), type: form.type.trim() || null });
       }
-      const nextOps = new Set(finalIds);
-      const opsChanged = nextOps.size !== initOps.current.size || [...nextOps].some((id) => !initOps.current.has(id));
-      if (opsChanged) await setMachineOps(machine.id, [...nextOps]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
-      // ★ 2026-10-10: ตั้งรูปแบบการสแกน "หลังสุด" — ถ้าพลาด (เช่นยังไม่รัน SQL) ชื่อ/ขั้นตอนยังบันทึกครบ
-      if (!asmOnly && scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
+      // ขั้นตอนของสถานี
+      let next = [];
+      if (stype === "machine") {
+        for (const id of mSel) {
+          if (id === "new:milling") {
+            let ops = await listRows("operations", { order: "seq" });
+            let hit = ops.find(millSpec.match);
+            if (!hit) {
+              const nextSeq = ops.reduce((mx, o) => Math.max(mx, Number(o.seq) || 0), 0) + 1;
+              const res = await createOperation({ name: millSpec.name, seq: nextSeq, opType: "machining" });
+              if (res && res.ok === false) throw new Error(opReasonTh(res.reason));
+              ops = await listRows("operations", { order: "seq" }); hit = ops.find(millSpec.match);
+            }
+            if (hit) next.push(hit.id);
+          } else next.push(id);
+        }
+      } else if (stype !== "none") {
+        next = await opIdFor(T);
+      }
+      const nextSet = new Set(next);
+      const changed = nextSet.size !== info.ids.size || [...nextSet].some((id) => !info.ids.has(id));
+      if (changed) await setMachineOps(row.id, next);
+      // รูปแบบการสแกน (งานเครื่องเท่านั้น) — ทำหลังสุด พลาด = บอกว่าที่เหลือบันทึกแล้ว
+      const curMode = row.scan_mode === "count" ? "count" : "timed";
+      if (stype === "machine" && hasScanMode && scanMode !== curMode) {
         let r, why = "";
-        try { r = await setMachineScanMode(machine.id, scanMode); }
+        try { r = await setMachineScanMode(row.id, scanMode); }
         catch (e) {
           const m = String(e?.message || e);
           why = /authz_set_machine_scan_mode|schema cache|PGRST202|does not exist/i.test(m) && !/permission denied/i.test(m)
-            ? "ยังไม่ได้รัน migration-scan-mode.sql ใน Supabase — รันก่อนแล้วตั้งรูปแบบการสแกนใหม่"
-            : m;
+            ? L("ยังไม่ได้รัน migration-scan-mode.sql", "migration-scan-mode.sql not run yet") : m;
         }
-        if (!why && r && r.ok === false) why = r.reason === "forbidden" ? "เฉพาะแอดมินตั้งรูปแบบการสแกนได้" : (r.reason || "ตั้งรูปแบบการสแกนไม่สำเร็จ");
-        // ★ 2026-10-10 ตรวจรอบ 2: ชื่อ/ขั้นตอนบันทึกแล้ว — บอกให้ชัดว่าพลาดแค่รูปแบบการสแกน + โหลดตารางใหม่ (เดิมขึ้น "บันทึกไม่สำเร็จ" ทั้งที่ส่วนอื่นบันทึกแล้ว)
-        if (why) { setErr(`บันทึกชื่อ/ขั้นตอนแล้ว · แต่ตั้งรูปแบบการสแกนไม่สำเร็จ: ${why}`); setBusy(false); try { onReload && onReload(); } catch { /* ignore */ } return; }
+        if (!why && r && r.ok === false) why = r.reason === "forbidden" ? L("เฉพาะแอดมิน", "admin only") : (r.reason || "error");
+        if (why) { setErr(L(`บันทึกแล้ว · แต่ตั้งรูปแบบการสแกนไม่สำเร็จ: ${why}`, `Saved, but scan mode failed: ${why}`)); setBusy(false); return; }
       }
+      auditRecord(isNew ? "create_station" : "edit_station", "machine", row.id, { code: row.code, type: stype, ops: next });
       onSaved();
     } catch (e) {
-      setErr("บันทึกไม่สำเร็จ: " + (e?.message || e));
+      setErr(L("บันทึกไม่สำเร็จ: ", "Save failed: ") + (e?.message || e));
+      if (isNew && row && row.id) onSaved();   // สร้างเครื่องแล้ว — ปิดแล้วโหลดใหม่ ให้แก้ต่อจากการ์ด
     }
     setBusy(false);
   }
 
   async function del() {
-    if (!(await askConfirm({ message: `ลบเครื่อง "${machine.code} — ${machine.name}" ?`, tone: "danger", confirmText: "ลบเครื่อง", cancelText: "ยกเลิก" }))) return;
+    if (!(await askConfirm({ message: L(`ลบสถานี "${machine.code} — ${machine.name}" ?`, `Delete station "${machine.code} — ${machine.name}"?`), tone: "danger", confirmText: L("ลบ", "Delete"), cancelText: L("ยกเลิก", "Cancel") }))) return;
     setBusy(true); setErr("");
     try {
       let res = await deleteMachine(machine.id, false);
       if (res && res.ok === false && res.reason === "has_records") {
         setBusy(false);
         const ok = await askConfirm({
-          message:
-            `เครื่องนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n` +
-            `⚠️ ถ้าลบ ตัวเลขการผลิตของเครื่องนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\n` +
-            `ถ้าเครื่องแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ จะดีกว่า\n\nยืนยันลบเครื่องพร้อมประวัติทั้งหมด?`,
-          tone: "danger", confirmText: "ลบพร้อมประวัติ", cancelText: "ยกเลิก",
+          message: L(
+            `สถานีนี้มีประวัติงานผลิต ${Number(res.count || 0).toLocaleString()} รายการ\n\n⚠️ ถ้าลบ ตัวเลขการผลิตของสถานีนี้จะหายจากรายงานถาวร (กู้คืนไม่ได้)\nถ้าแค่เลิกใช้ แนะนำให้เก็บไว้เฉยๆ\n\nยืนยันลบพร้อมประวัติทั้งหมด?`,
+            `This station has ${Number(res.count || 0).toLocaleString()} production records.\n\n⚠️ Deleting removes its numbers from all reports permanently.\nIf it's just retired, better keep it.\n\nDelete with all history?`),
+          tone: "danger", confirmText: L("ลบพร้อมประวัติ", "Delete with history"), cancelText: L("ยกเลิก", "Cancel"),
         });
         if (!ok) return;
         setBusy(true);
         res = await deleteMachine(machine.id, true);
       }
-      if (res && res.ok === false) { setErr(res.reason === "bad_request" ? "ลบไม่สำเร็จ" : "ลบไม่สำเร็จ: " + res.reason); setBusy(false); return; }
-      if (res && res.ok && res.unbound > 0) {
-        mlsToast(`ลบเครื่องแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากเครื่องนี้ — อย่าลืมไปตั้งเครื่องใหม่ให้เขาที่ Setup › พนักงาน`, "info");
-      }
+      if (res && res.ok === false) { setErr(L("ลบไม่สำเร็จ: ", "Delete failed: ") + res.reason); setBusy(false); return; }
+      if (res && res.ok && res.unbound > 0) mlsToast(L(`ลบแล้ว · ปลดพนักงาน ${res.unbound} คนออกจากสถานีนี้ — ไปตั้งสถานีใหม่ให้ที่แท็บ พนักงาน`, `Deleted · ${res.unbound} employee(s) unassigned — set a new station in Employees`), "info");
       if (res && res.ok) auditRecord("delete_machine", "machine", machine.id, { code: machine.code, name: machine.name, records: res.deleted_records || 0 });
       onSaved();
-    } catch (e) {
-      setErr("ลบไม่สำเร็จ: " + (e?.message || e));
-    }
+    } catch (e) { setErr(L("ลบไม่สำเร็จ: ", "Delete failed: ") + (e?.message || e)); }
     setBusy(false);
   }
 
   return (
-    <Modal title={fresh ? `ตั้งรายละเอียดเครื่องใหม่ — ${machine.code}` : `แก้ไขเครื่อง/สถานี — ${machine.code}`}
-      sub={fresh ? "เพิ่มเครื่องแล้ว ✓ — ตั้งรูปแบบการสแกน + ขั้นตอนที่ทำได้ต่อเลย หรือกด \"ข้าม\" ไว้ตั้งทีหลังด้วยปุ่ม แก้ไข" : "แก้ชื่อ/ประเภท · เลือกขั้นตอนที่ทำได้ · หรือลบเครื่อง — รหัสเครื่องแก้ไม่ได้"} onClose={onClose}>
-      <div className="grid-2">
-        <Field label="รหัสเครื่อง"><Input value={machine.code} disabled /></Field>
-        <Field label="ชื่อเครื่อง/สถานี"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+    <Modal title={isNew ? L("เพิ่มสถานี", "Add station") : L(`สถานี ${machine.code}`, `Station ${machine.code}`)}
+      sub={isNew ? L("ตั้งรหัส ชื่อ และเลือกว่าสถานีนี้ทำงานอะไร", "Set code, name and what this station does") : L("รหัสแก้ไม่ได้ · ที่เหลือแก้ได้หมด", "Code can't change · everything else can")}
+      onClose={onClose} closeOnBackdrop={false}>
+      <div className="stp-form3">
+        <Field label={L("รหัส", "Code")}><Input value={form.code} disabled={!isNew} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder={isNew ? L("เช่น CT-060", "e.g. CT-060") : undefined} autoFocus={isNew} /></Field>
+        <Field label={L("ชื่อ", "Name")}><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <Field label={L("หมวด (ไม่บังคับ)", "Category (optional)")}><Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="CUTTING" /></Field>
       </div>
-      <Field label="ประเภทงาน (คำอธิบาย · ไม่บังคับ)">
-        <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
-      </Field>
-      {asmOnly ? (
-      <Field label="รูปแบบการสแกน">
-        <div style={{ fontSize: 12.5, lineHeight: 1.6, padding: "8px 12px", borderRadius: 10, background: "var(--accent-soft, rgba(16,185,129,.08))", border: "1px solid var(--line, rgba(0,0,0,.08))" }}>
-          <b>สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก</b> · ไม่จับเวลา ไม่ต้องกรอกความยาว
-          <div style={{ color: "var(--muted)", fontSize: 12 }}>สเตชันประกอบ / แผง / ติดกระจก / แพ็ก ใช้แบบนี้เสมอ — "สแกน 2 ครั้ง · จับเวลา" ใช้กับงานเครื่องเท่านั้น</div>
-        </div>
-      </Field>
-      ) : (
-      <Field label="รูปแบบการสแกนหน้าเครื่อง">
-        <div className="chip-row">
-          <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("timed")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>สแกน 2 ครั้ง · จับเวลา (ปกติ)</span>
-          <span className={`chip ${scanMode === "count" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("count")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา</span>
-        </div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, lineHeight: 1.55 }}>
-          {scanMode === "count"
-            ? "ทำเสร็จแล้วสแกน QR ครั้งเดียว → ใส่จำนวน + สถานะ → OK · ไม่ต้องกรอกความยาว ไม่จับเวลา — หน้าเครื่องโชว์ยอดชิ้นวันนี้ (ดูยอดรายวันที่ Report)"
-            : "กรอกความยาว → เริ่ม → สแกนตอนเริ่ม (จับเวลา) → ทำเสร็จสแกนอีกครั้ง → ใส่จำนวน + สถานะ → OK"}
-        </div>
-        {!hasScanMode && (
-          <div style={{ fontSize: 12, color: "var(--warning)", marginTop: 4 }}>⚠️ ต้องรัน migration-scan-mode.sql ใน Supabase ก่อน ถึงจะเปลี่ยนรูปแบบการสแกนได้</div>
-        )}
-      </Field>
+      <div className="stp-lbl">{L("สถานีนี้ทำงานอะไร (เลือก 1)", "What does this station do? (pick one)")}</div>
+      {info.stype === "mixed" && (
+        <div className="stp-warn">{L("เดิมตั้งไว้หลายแบบปนกัน (", "Was set to several jobs (")}{info.kinds.map((k) => L(STYPE[k].th, STYPE[k].en)).join(" + ")}{L(") — บันทึกแล้วจะเหลือแบบที่เลือก", ") — saving keeps only the one you pick")}</div>
       )}
-      <Field label="ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)">
-        <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
-      </Field>
-      {hasSynthSelected && (
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-          ขั้นตอนที่ติ๊กใหม่ (แพ็กแผง / แพ็กไซต์ไอเทม / MILLING) ถ้ายังไม่มีในระบบ กด "บันทึก" แล้วจะสร้างให้อัตโนมัติ
-        </div>
+      <div className="stp-types">
+        {shownTypes.map((t) => (
+          <button type="button" key={t.key} className={`stp-ty${stype === t.key ? " on" : ""}`} onClick={() => setStype(t.key)}>
+            <b>{L(t.th, t.en)}</b>
+            <span>{t.subTh ? L(t.subTh, t.subEn) : t.path}</span>
+          </button>
+        ))}
+      </div>
+      {stype === "machine" && (
+        <>
+          <div className="stp-lbl">{L("ขั้นตอนที่ทำได้ (ติ๊กได้หลายอย่าง)", "Steps it can do (tick any)")}</div>
+          <div className="chip-row">
+            {mOps.map((o) => (
+              <span key={o.id} className={`chip ${mSel.has(o.id) ? "active" : ""}`} onClick={() => toggleM(o.id)}>{opLabel(o.name, lang)}</span>
+            ))}
+          </div>
+          <div className="stp-lbl">{L("การสแกน", "Scanning")}</div>
+          <div className="chip-row">
+            <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("timed")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>{L("สแกน 2 ครั้ง · จับเวลา", "Scan twice · timed")}</span>
+            <span className={`chip ${scanMode === "count" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("count")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>{L("สแกนครั้งเดียวตอนเสร็จ · ไม่จับเวลา", "Scan once when done · no timer")}</span>
+          </div>
+          <div className="stp-hint">{scanMode === "count"
+            ? L("ทำเสร็จแล้วสแกน QR ครั้งเดียว → ใส่จำนวน → OK", "Scan the QR once when done → quantity → OK")
+            : L("สแกนตอนเริ่ม (จับเวลา) → ทำเสร็จสแกนอีกครั้ง → ใส่จำนวน → OK", "Scan to start (timer) → scan again when done → quantity → OK")}</div>
+        </>
       )}
-      {opSel.size === 0 && (
-        <div style={{ fontSize: 12, color: "var(--warning)", marginBottom: 8 }}>
-          ไม่เลือกเลย = ไม่จำกัด (เครื่องนี้สแกนขั้นตอนใดก็ได้) — เลือกอย่างน้อย 1 อย่างเพื่อเปิดการตรวจสอบ
-        </div>
-      )}
-      {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+      <div className={`stp-note${stype === "none" ? " muted" : ""}`}>
+        {stype === "none"
+          ? L("ยังไม่เลือกงาน — แท็บเล็ตจะเปิดหน้าเครื่องและสแกนได้ทุกขั้นตอน (ใช้กับเครื่องที่ไม่ได้สแกนงาน เช่น ปั๊มลม)", "No job — tablets open the machine page and can scan any step (for machines that don't scan work, e.g. air pumps)")
+          : stype === "machine"
+          ? <>✓ {L("แท็บเล็ตของสถานีนี้จะเปิด", "Tablets of this station open")} <b>{L("หน้าเครื่อง", "the machine page")}</b> (/station)</>
+          : <>✓ {L("แท็บเล็ตของสถานีนี้จะเปิด", "Tablets of this station open")} <b>{L(`หน้า${T.th}`, T.en)}</b> ({T.path}) · {L("สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก · ไม่จับเวลา", "scan parent → scan children → save · no timer")}</>}
+      </div>
+      {err && <div className="stp-err">{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
-        <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>ลบเครื่องนี้</Btn>
+        {isNew ? <span /> : <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>{L("ลบสถานี", "Delete")}</Btn>}
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{fresh ? "ข้าม — ตั้งทีหลัง" : "ยกเลิก"}</Btn>
-          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</Btn>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>{L("ยกเลิก", "Cancel")}</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy}>{busy ? L("กำลังบันทึก…", "Saving…") : L("บันทึก", "Save")}</Btn>
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ระบบ: ออนไลน์ · ประวัติการแก้ไข · สำรองข้อมูล · ขั้นตอน · คอลัมน์ตาราง (ของที่ใช้นาน ๆ ครั้ง รวมไว้ที่เดียว)
+function SystemSetup() {
+  const [lang] = useLang();
+  const L = (th, en) => (lang === "en" ? en : th);
+  const [sub, setSub] = useState("sessions");
+  const SUBS = [
+    ["sessions", L("ผู้ใช้ออนไลน์ / หน้าเครื่อง", "Online users / stations")],
+    ["audit", L("ประวัติการแก้ไข", "Change history")],
+    ["backup", L("สำรองข้อมูล", "Backup")],
+    ["operations", L("ขั้นตอนงาน", "Operations")],
+    ["display", L("คอลัมน์ตาราง", "Table columns")],
+  ];
+  return (
+    <div>
+      <div className="stp-subtabs">
+        {SUBS.map(([k, label]) => <button type="button" key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>{label}</button>)}
+      </div>
+      {sub === "sessions" && <><StationHealthCard /><ActiveSessionsCard /><DeadLetterCard /></>}
+      {sub === "audit" && <AuditLogCard />}
+      {sub === "backup" && <><RestorePointsCard /><BackupCard /><ClearScansCard /></>}
+      {sub === "operations" && <>
+        <div className="stp-hint" style={{ marginBottom: 10 }}>{L("ปกติไม่ต้องเข้ามาที่นี่ — ตอนเพิ่ม/แก้สถานี ระบบสร้างขั้นตอนให้เอง · ใช้ตอนจะเปลี่ยนชื่อ หรือเรียงลำดับคอลัมน์ในรายงาน", "Usually not needed — stations create their steps automatically. Use this to rename steps or reorder report columns.")}</div>
+        <OperationsCrud />
+      </>}
+      {sub === "display" && <ColumnLayoutCard />}
+    </div>
   );
 }
 
@@ -14286,6 +14354,8 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
 
 function EmployeeCrud() {
   const [rows, setRows] = useState([]);
+  const [empQ, setEmpQ] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [machines, setMachines] = useState([]);
   const [operations, setOperations] = useState([]);
@@ -14403,8 +14473,20 @@ function EmployeeCrud() {
     catch (e) { mlsToast("เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "error"); }
   }
 
+  // ★ 2026-10-26: ตั้งค่าแบบใหม่ — ค้นหา + ปุ่ม "+ เพิ่มพนักงาน" (ฟอร์มพับไว้ ไม่กินที่บนสุด)
+  const eq = empQ.trim().toLowerCase();
+  const empRows = eq ? rows.filter((r) => `${r.code} ${r.name}`.toLowerCase().includes(eq)) : rows;
   return (
-    <Card title="เพิ่มพนักงานใหม่">
+    <Card>
+      <div className="stp-bar">
+        <div className="stp-search">
+          <Icon name="search" size={16} />
+          <input value={empQ} onChange={(e) => setEmpQ(e.target.value)} placeholder={L("ค้นหารหัส / ชื่อพนักงาน", "Search code / name")} />
+        </div>
+        <Btn variant={showAdd ? "ghost" : "accent"} onClick={() => setShowAdd((v) => !v)}>{showAdd ? L("ปิดฟอร์ม", "Close form") : "+ " + L("เพิ่มพนักงาน", "Add employee")}</Btn>
+      </div>
+      {showAdd && (<div className="stp-addbox">
+      <div className="stp-lbl" style={{ marginTop: 0 }}>{L("เพิ่มพนักงานใหม่", "New employee")}</div>
       <div className="grid-3" style={{ marginBottom: 6 }}>
         <Field label="รหัสพนักงาน"><Input value={form.code || ""} onChange={(e) => onCode(e.target.value)} /></Field>
         <Field label="ชื่อ"><Input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -14437,6 +14519,7 @@ function EmployeeCrud() {
           </span>
         )}
       </div>
+      </div>)}
       {unboundMatches.length > 0 && (
         <div className="emp-bind-bar" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", margin: "14px 0 4px", padding: "10px 12px", borderRadius: 12, background: "var(--warn-tint, #fff6e0)", border: "1px solid #f3d27a", fontSize: 13 }}>
           {(() => { const codes = unboundMatches.slice(0, 6).map((x) => x.r.code).join(", ") + (unboundMatches.length > 6 ? " …" : "");
@@ -14444,7 +14527,7 @@ function EmployeeCrud() {
           <Btn variant="accent" size="sm" onClick={bindByCode} disabled={binding}>{binding ? L("กำลังผูก…", "Assigning…") : L(`ผูกเครื่องตามรหัส (${unboundMatches.length})`, `Assign by code (${unboundMatches.length})`)}</Btn>
         </div>
       )}
-      <DataTable id="employee-crud" wrapClass="table-wrap" tableClass="data-table" rows={rows} rowKey={(r) => r.id}
+      <DataTable id="employee-crud" wrapClass="table-wrap" tableClass="data-table" rows={empRows} rowKey={(r) => r.id}
         columns={[
           { key: "code", header: "รหัส", cell: (r) => r.code },
           { key: "name", header: "ชื่อ", cell: (r) => (

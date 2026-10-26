@@ -343,8 +343,8 @@ function StnMovedNote({ dept }) {
       <Icon name="warn" size={18} className="stn-ico" />
       <div className="stn-moved-tx">
         <b>{t(`เปิด${a.th}ไม่ได้ — พามาที่${b.th}แทน`, `Can't open ${a.en} — showing ${b.en} instead`)}</b>
-        <span>{t(`เครื่อง/สถานีของบัญชีนี้ยังไม่มีขั้นตอนประเภท "${a.word}" · ให้ออฟฟิศไปที่ ตั้งค่า → เครื่อง/สถานี → แก้ไข สถานีนี้ → ติ๊กขั้นตอน "${a.word}" แล้วล็อกอินใหม่`,
-          `This account's station has no "${a.wordEn}" operation. Office: Setup → Machines/Stations → Edit this station → tick "${a.wordEn}", then log in again.`)}</span>
+        <span>{t(`เครื่อง/สถานีของบัญชีนี้ยังไม่มีขั้นตอนประเภท "${a.word}" · ให้ออฟฟิศไปที่ ตั้งค่า → สถานีงาน → แตะสถานีนี้ → เลือก "${a.word}" → บันทึก แล้วล็อกอินใหม่`,
+          `This account's station has no "${a.wordEn}" operation. Office: Setup → Stations → tap this station → choose "${a.wordEn}" → Save, then log in again.`)}</span>
       </div>
       <button type="button" className="stn-moved-x" onClick={close} aria-label={t("ปิด", "Close")}>×</button>
     </div>
