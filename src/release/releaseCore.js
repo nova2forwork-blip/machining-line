@@ -353,6 +353,15 @@ export function countUnits(units, bom) {
   return [...m.entries()].sort((a, b) => ncmp(a[0], b[0])).map(([unit, qty]) => ({ unit, qty, has: !!(bom.panels[findKey(bom.panels, unit)] || null) }));
 }
 // picks = โหมด "เฉพาะซับ/พาร์ท" (ไม่มีแผง): [{ code, kind:"sub"|"part", qty }] — ซับที่เลือกแตกลูกลงไปทุกชั้นเหมือนซับใต้แผง
+// ★ 2026-10-26 บรรทัดของซับที่ explode ใช้: BOM ระบบ (items) + บรรทัดจาก PDF ที่มีแต่ใน full และเป็นของไม่มี QR
+//   (สกรู/ยาง = hw · กระจก GL…) → Total Mat. (FIXING / GLASS) ครบ · พาร์ท QR / ซับ ที่มีแต่ใน full ไม่เอา (ยอดผลิตยึด BOM ระบบ)
+function explodeLines(sub) {
+  const its = sub.items || [];
+  if (!sub.full || !sub.full.length) return its;
+  const have = new Set(its.map((i) => NC(i[1])));
+  const extra = sub.full.filter((f) => (f[4] || "") !== "ยกเลิก" && !have.has(NC(f[1])) && (f[0] === "hw" || (f[0] !== "sub" && /^GL/i.test(String(f[1])))));
+  return extra.length ? [...its, ...extra] : its;
+}
 export function explode(units, bom, picks = null) {
   const subs = new Map(), parts = new Map();
   const walk = (items, mult, depth, parentKind, seen) => {
@@ -364,7 +373,7 @@ export function explode(units, bom, picks = null) {
         const s = subs.get(code) || { code, qty: 0, depth };
         s.qty += n; s.depth = Math.min(s.depth, depth); subs.set(code, s);
         const sk = findKey(bom.subs, code);
-        if (sk && !seen.has(sk)) walk(bom.subs[sk].items || [], n, depth + 1, "sub", new Set([...seen, sk]));
+        if (sk && !seen.has(sk)) walk(explodeLines(bom.subs[sk]), n, depth + 1, "sub", new Set([...seen, sk]));
       } else {
         const p = parts.get(code) || { code, qty: 0, loose: 0, kind: t };
         p.qty += n; if (parentKind === "panel") p.loose += n; parts.set(code, p);
@@ -377,7 +386,7 @@ export function explode(units, bom, picks = null) {
     if (pk.kind === "sub") {
       const sk = findKey(bom.subs, pk.code); const code = sk || pk.code;
       const s = subs.get(code) || { code, qty: 0, depth: 1 }; s.qty += q; s.depth = 1; subs.set(code, s);
-      if (sk) walk(bom.subs[sk].items || [], q, 2, "sub", new Set([sk]));
+      if (sk) walk(explodeLines(bom.subs[sk]), q, 2, "sub", new Set([sk]));
     } else {
       const code = findKey(bom.parts, pk.code) || pk.code;
       const p = parts.get(code) || { code, qty: 0, loose: 0, kind: "part" }; p.qty += q; p.loose += q; parts.set(code, p);
@@ -536,7 +545,7 @@ export function planRelease(units, bom, catOf, picks = null) {
   for (const p of ex.parts.values()) {
     if (!(p.qty > 0)) continue;
     const d = bom.parts[findKey(bom.parts, p.code)] || {};
-    const k = d.k || p.kind || "part";
+    const k = d.k === "hw" || p.kind === "hw" ? "hw" : d.k || p.kind || "part";   // บรรทัดจาก PDF ที่อ่านเป็นสกรู/ยาง (hw) → ใบเบิก ไม่ใช่พาร์ท QR
     const cat = catOf(p.code, k);
     const base = PART_CATS.includes(cat) ? cat : ruleCat(p.code, k);
     const row = { code: p.code, qty: p.qty, cat, base, k, d: d.d || "", l: d.l ?? null, h: d.h ?? null, f: d.f || "", inv: d.binv || d.m || "", ml: d.ml ?? null, u: d.u || "", mm: !!d.mm, rev: d.rev || "" };
@@ -1049,6 +1058,49 @@ export function lineUom(t, d, q) {
   if (d && d.mm) return "mm.";
   if ((d && d.k === "hw") || t === "hw") return (d && d.u) || (Number.isInteger(Number(q)) ? "pcs." : "mm.");
   return "pcs.";
+}
+// ★ 2026-10-26 อัปเดต BOM ของ Release จากคลังโปรเจค (ปุ่ม "อัปเดต BOM จากคลัง") — เติมอย่างเดียว ไม่แตะจำนวน/Modify:
+//   • ซับ: ตั้ง full (ทุกบรรทัดจาก PDF) ตามคลัง · ซับที่ยังไม่มีลูก (items ว่าง) → ใช้ลูกจากคลัง · ซับลูกที่ยังไม่มีในแผน → เพิ่มจากคลัง
+//   • พาร์ท: เบอร์ที่ถูกอ้างแต่ยังไม่มี record → เพิ่มจากคลัง · record ที่ไม่มีรายละเอียด/หน่วย → เติม
+//   คืน { plan, changes:{ full:[ซับ], filled:[ซับ], addedSubs:[ซับ], parts:[พาร์ท] }, n }
+export function refreshBomFromLib(plan, lib) {
+  const bom = plan.bom || { panels: {}, subs: {}, parts: {} };
+  const L = lib || { subs: {}, parts: {} };
+  const subs = { ...bom.subs }, parts = { ...bom.parts };
+  const ch = { full: [], filled: [], addedSubs: [], parts: [] };
+  const same = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+  // ซับที่ถูกอ้างจากแผง/ซับในแผน (ไล่ลงทุกชั้น) — เพิ่มที่ขาดจากคลัง
+  const queue = [...Object.values(bom.panels || {}).flatMap((p) => (p.items || []).filter((i) => i[0] === "sub").map((i) => i[1])), ...Object.keys(subs)];
+  const seen = new Set();
+  while (queue.length) {
+    const c = queue.shift(); const k0 = NC(c); if (seen.has(k0)) continue; seen.add(k0);
+    let sk = findKey(subs, c); const lk = findKey(L.subs || {}, c); const ls = lk ? L.subs[lk] : null;
+    if (!sk) { if (!ls) continue; subs[lk] = { ...ls, items: (ls.items || []).map((i) => [...i]), full: ls.full ? ls.full.map((i) => [...i]) : undefined }; sk = lk; ch.addedSubs.push(lk); }
+    else if (ls) {
+      const cur = subs[sk]; let nx = cur;
+      if (ls.full && ls.full.length && !same(cur.full, ls.full)) { nx = { ...nx, full: ls.full.map((i) => [...i]) }; ch.full.push(sk); }
+      if (!(cur.items || []).length && (ls.items || []).length) { nx = { ...nx, items: ls.items.map((i) => [...i]) }; ch.filled.push(sk); }
+      if (!nx.d && ls.d) nx = { ...nx, d: ls.d };
+      if (nx !== cur) subs[sk] = nx;
+    }
+    for (const i of [...(subs[sk].items || []), ...(subs[sk].full || [])]) if (i[0] === "sub") queue.push(i[1]);
+  }
+  // พาร์ทที่ถูกอ้าง
+  const refs = new Set();
+  for (const p of Object.values(bom.panels || {})) for (const i of p.items || []) if (i[0] !== "sub") refs.add(i[1]);
+  for (const x of Object.values(subs)) for (const i of [...(x.items || []), ...(x.full || [])]) if (i[0] !== "sub") refs.add(i[1]);
+  for (const c of refs) {
+    const pk = findKey(parts, c); const lk = findKey(L.parts || {}, c); if (!lk) continue; const lp = L.parts[lk];
+    if (!pk) { parts[lk] = { ...lp }; ch.parts.push(lk); continue; }
+    const cur = parts[pk]; const nx = { ...cur }; let mod = false;
+    if (!cur.d && lp.d) { nx.d = lp.d; mod = true; }
+    if (lp.k === "hw" && cur.k !== "hw") { nx.k = "hw"; mod = true; }
+    if (lp.u && !cur.u) { nx.u = lp.u; mod = true; }
+    if (lp.mm && !cur.mm) { nx.mm = lp.mm; mod = true; }
+    if (mod) { parts[pk] = nx; ch.parts.push(pk); }
+  }
+  const n = ch.full.length + ch.filled.length + ch.addedSubs.length + ch.parts.length;
+  return { plan: n ? { ...plan, bom: { ...bom, subs, parts }, bomRefreshedAt: new Date().toISOString() } : plan, changes: ch, n };
 }
 // แถวที่จะส่งให้ create_release_batch ของ 1 ล็อต
 //   sel = { addrs:Set, subs:Map(code→qty), parts:Map(code→qty) } · หมายเหตุ "ใบ: …" = ใบงานที่ส่งไป (ดูย้อนหลังได้)

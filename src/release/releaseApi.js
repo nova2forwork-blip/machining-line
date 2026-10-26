@@ -58,7 +58,7 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
     if (errs.length) throw new Error(`อ่าน BOM ไม่ได้ ${errs.length} เบอร์ (${errs.slice(0, 3).map((x) => x.item.part_no).join(", ")})`);
   }
   // หมวด / งานซับ / ใบงาน ที่ office ตั้งไว้ที่ "ซับ / พาร์ท ของโปรเจค" (แถว LIB ใน release_plans)
-  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
+  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } for (const [c, un] of Object.entries(r.lib.units || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && un) { if (un.u) lib.parts[pk].u = un.u; if (un.mm) lib.parts[pk].mm = 1; } } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
   return lib;
 }
 
@@ -293,6 +293,8 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   // แถว LIB
   onProgress("บันทึกหมวด / งานซับ / ใบงาน…");
   const hwKinds = {}; for (const c of partCodes) if (bom.parts[c].k === "hw") hwKinds[c] = "hw";
+  // ★ 2026-10-26 หน่วยของสกรู/ยาง (pcs. / m. + วัดเป็นมม.) — part_master ไม่มีช่องนี้ → เก็บใน LIB row
+  const hwUnits = {}; for (const c of partCodes) { const p = bom.parts[c]; if (p.k === "hw" && (p.u || p.mm)) hwUnits[c] = { u: p.u || "", mm: p.mm ? 1 : 0 }; }
   let old = null; try { old = (await listPlans(projectId)).lib; } catch (e) { if (e && e.code === "not_installed") { st.errors.push("ยังไม่ได้รัน migration-release-plans.sql — หมวด/งานซับไม่ถูกเก็บ"); return st; } throw e; }
   // ★ 2026-10-16: เก็บรายการลูก "ครบทุกบรรทัด" ของซับที่อัพรอบนี้ (รวมสกรู/ยาง/กระจก ที่ไม่มี QR จึงไม่อยู่ใน BOM ของระบบ) ไว้โชว์ตอนกางดูเบอร์ลูก
   // เก็บตัวไฟล์ PDF ที่อัพรอบนี้ (ไม่สำเร็จ = เตือน แต่ข้อมูลที่อ่านได้ยังบันทึกตามปกติ)
@@ -303,7 +305,7 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   if (upErrs.length) { const m = String(upErrs[0].e?.message || upErrs[0].e || ""); st.errors.push(/bucket|not found|404/i.test(m) ? "ยังไม่ได้รัน migration-release-pdfs.sql — ไม่ได้เก็บตัวไฟล์ PDF (ข้อมูลที่อ่านได้บันทึกแล้ว)" : `เก็บไฟล์ PDF ไม่สำเร็จ ${upErrs.length} ไฟล์ (${m.slice(0, 80)})`); }
   const subItems = { ...(old?.subItems || {}) };
   for (const c of subCodes) { if (newCodes && !newCodes.has(NC(c))) continue; subItems[c] = (bom.subs[c].items || []).filter((it) => (it[4] || "") !== "ยกเลิก").map((it) => [it[0], it[1], it[2]]); }
-  const body = { v: 1, kind: "lib", subItems, projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: hwKinds, pdfs: [...(old?.pdfs || []).filter((d) => !pdfsOut.some((n) => NC(n.code) === NC(d.code) && n.kind === d.kind)), ...pdfsOut], by, updatedAt: new Date().toISOString() };
+  const body = { v: 1, kind: "lib", subItems, projectCode, catOv, procOv, destOv, partMode: partMode || "auto", partGroups: partGroups || [], kinds: { ...(old?.kinds || {}), ...hwKinds }, units: { ...(old?.units || {}), ...hwUnits }, pdfs: [...(old?.pdfs || []).filter((d) => !pdfsOut.some((n) => NC(n.code) === NC(d.code) && n.kind === d.kind)), ...pdfsOut], by, updatedAt: new Date().toISOString() };
   await planRpc(projectId, "LIB", body, old ? old.id : null);
   return st;
 }

@@ -727,3 +727,8 @@ mark.rl-hl { background: #fde68a; color: inherit; padding: 0 1px; border-radius:
 .lp-chip.all.on{background:#ffa74d;border-color:#ffa74d;color:#1a1204}
 .lp-chip:hover{background:#18233d}.lp-chip.all.on:hover{background:#ffb565}
 @media (max-width: 640px) { .rl-lot-bar-btns .rl-qrbtn { flex: 1 1 0; min-width: 0; padding-left: 6px; padding-right: 6px; } .rl-lot-bar-btns .btn-accent { flex-basis: 100%; } }
+/* เบิกจริงต่อล็อต */
+.rl-sc-iss { width: 1%; white-space: nowrap; padding-top: 4px !important; padding-bottom: 4px !important; }
+.rl-iss { width: 74px; text-align: right; padding: 4px 8px; }
+.rl-iss.diff { border-color: #f0a020; background: #fff8e8; font-weight: 600; }
+.rl-iss-r { width: 170px; padding: 4px 8px; }

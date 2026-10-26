@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -43,6 +43,30 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   // BOM ที่ยังไม่มีในแผนนี้ → ดึงจาก Release อื่นของโปรเจคเดียวกันให้เอง (เฉพาะที่ว่าง)
   const gaps = useMemo(() => bomGaps(plan), [plan]);
   const [pulled, setPulled] = useState([]);
+  // ★ อัปเดต BOM จากคลังโปรเจค (เติมบรรทัดจาก PDF / รายละเอียดสกรู-ยาง · ไม่แตะจำนวน/Modify)
+  const [libSync, setLibSync] = useState(null);   // null | { busy } | { ok, text } | { err }
+  const syncFromLib = async () => {
+    if (!api?.loadBomLibrary || !onPlanChange) return;
+    setLibSync({ busy: true });
+    try {
+      const panelCodes = [...new Set((plan.units || []).map((u) => u.unit).filter(Boolean))];
+      const lib = await api.loadBomLibrary(plan.projectId, panelCodes.length ? panelCodes : null);
+      const r = refreshBomFromLib(plan, lib);
+      if (!r.n) { setLibSync({ ok: true, text: "BOM ของ Release นี้ตรงกับคลังแล้ว — ไม่มีอะไรต้องเติม" }); return; }
+      const c = r.changes; const ls = (a) => a.slice(0, 5).join(", ") + (a.length > 5 ? ` …(+${a.length - 5})` : "");
+      const lines = [
+        c.full.length && `• ซับ ${c.full.length} เบอร์: ใช้รายการครบจาก PDF (สกรู/ยาง/กระจก) — ${ls(c.full)}`,
+        c.filled.length && `• ซับ ${c.filled.length} เบอร์ที่ยังไม่มีลูก: ใส่ลูกจากคลัง — ${ls(c.filled)}`,
+        c.addedSubs.length && `• ซับลูกที่ยังไม่มีในแผน ${c.addedSubs.length} เบอร์ — ${ls(c.addedSubs)}`,
+        c.parts.length && `• พาร์ท/สกรู/ยาง ${c.parts.length} เบอร์: เติมรายละเอียด/หน่วย — ${ls(c.parts)}`,
+      ].filter(Boolean);
+      setLibSync(null);
+      const ok = await askConfirm({ title: `อัปเดต BOM ของ ${plan.ro} จากคลัง?`, message: lines.join("\n") + "\n\nไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่", confirmText: "อัปเดต" });
+      if (!ok) { setLibSync(null); return; }
+      onPlanChange(r.plan);
+      setLibSync({ ok: true, text: `อัปเดต BOM จากคลังแล้ว (${r.n} รายการ)` });
+    } catch (e) { setLibSync({ err: "อัปเดตจากคลังไม่สำเร็จ: " + (e?.message || e) }); }
+  };
   const pullNow = (auto) => {
     const r = pullBomFromPlans(plan, plans);
     if (r.filled.length && onPlanChange) { onPlanChange(r.plan); setPulled((x) => [...x, ...r.filled]); }
@@ -90,11 +114,13 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         </div>
         <div className="rw-head-right">
           <button type="button" className="btn btn-ghost" onClick={onBack}><Icon name="arrowLeft" size={14} /> กลับ</button>
+          {api?.loadBomLibrary && onPlanChange ? <button type="button" className="btn btn-ghost" onClick={syncFromLib} disabled={!!libSync?.busy} title="ดึงข้อมูลล่าสุดจาก “ซับ / พาร์ท ของโปรเจค” มาเติม: รายการครบจาก PDF ของซับ (สกรู/ยาง/กระจก) และรายละเอียด/หน่วยที่ขาด — ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว"><Icon name="refresh" size={14} /> {libSync?.busy ? "กำลังอ่านคลัง…" : "อัปเดต BOM จากคลัง"}</button> : null}
           <button type="button" className="btn btn-ghost rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ — จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง">✎ Modify</button>
           <button type="button" className="btn btn-accent" onClick={() => { setPreset(null); setBuilder(true); }}><Icon name="plus" size={15} /> ปล่อยล็อตใหม่</button>
         </div>
       </div>
 
+      {libSync && !libSync.busy ? <div className={`rw-msg ${libSync.err ? "bad" : "ok"}`} role="status">{libSync.err ? "✗ " + libSync.err : "✓ " + libSync.text} <button type="button" className="rw-link" onClick={() => setLibSync(null)}>ปิด</button></div> : null}
       {pulled.length ? <div className="rw-msg ok">✓ ดึง BOM จาก Release อื่นให้อัตโนมัติ {pulled.length} เบอร์: {pulled.slice(0, 6).map((f) => `${f.code} (จาก ${f.from})`).join(", ")}{pulled.length > 6 ? " …" : ""}</div> : null}
       {gaps.panels.length || gaps.subs.length ? <div className="rw-msg warn">⚠ ยังไม่มี BOM: {[gaps.panels.length && `แผง ${gaps.panels.length} แบบ`, gaps.subs.length && `ซับ ${gaps.subs.length} เบอร์`].filter(Boolean).join(" · ")} — ปล่อยได้ก่อน พอ Release อื่นมี BOM ของเบอร์เหล่านี้ ระบบดึงมาให้เอง{plans.length > 1 ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => { if (!pullNow()) setPulled([]); }}>ดึงตอนนี้</button></> : null}</div> : null}
 
@@ -181,7 +207,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                           </table></div>
                         </section>); })}
                       </div>
-                      <LotMats plan={plan} need={need} lot={L} sheetsOf={rowSheets} q={lotQ.trim().toUpperCase()} />
+                      <LotMats plan={plan} need={need} lot={L} sheetsOf={rowSheets} q={lotQ.trim().toUpperCase()} onPlanChange={onPlanChange} />
                     </div>) : null}
                 </div>); })}
           </div>
@@ -782,7 +808,11 @@ const QR_GROUPS = [
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
 // เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"
 const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.set(x, (m.get(x) || 0) + 1); return [...m].map(([l, n]) => `${nf(l)}${n > 1 ? ` ×${n}` : ""}`).join(" · "); };
-function LotMats({ plan, need, lot, sheetsOf, q = "" }) {
+function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null }) {
+  // ★ ยอดเบิกจริงต่อล็อต (ACTUAL ISSUE) — เก็บใน plan.lotIssue[เลขล็อต][INV] = { n, r } · ว่าง = ใช้ยอดคำนวณ · ใส่ลงใบเบิกด้วย
+  const iss = (plan.lotIssue || {})[lot.no] || {};
+  const setIss = (key, patch) => onPlanChange && onPlanChange({ ...plan, lotIssue: { ...(plan.lotIssue || {}), [lot.no]: { ...iss, [key]: { ...(iss[key] || {}), ...patch } } } });
+  const issued = (x) => { const v = iss[x.inv || "—"]?.n; return v === "" || v == null ? null : Number(v); };
   const m0 = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
   // ค้นหา: รหัส / INV / รายละเอียด / เบอร์พาร์ทที่ใช้วัตถุดิบนั้น
   const has = (...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
@@ -791,9 +821,10 @@ function LotMats({ plan, need, lot, sheetsOf, q = "" }) {
   if (m.mat.length) cards.push(
     <section key="mat" className="rl-sc mat wide">
       <header className="rl-sc-h"><div className="rl-sc-t"><b>วัตถุดิบงานตัด</b><span>MATERIAL LIST FOR CUTTING · จากพาร์ท MACHINING ในล็อต</span></div>
-        <div className="rl-sc-n"><b>{nf(m.mat.reduce((a, x) => a + x.bars, 0))}</b> เส้น<small> · {nf(m.mat.length)} รายการ · เศษ {nf(m.mat.reduce((a, x) => a + x.off, 0))} ชิ้น</small></div></header>
+        <div className="rl-sc-n"><b>{nf(m.mat.reduce((a, x) => a + x.bars, 0))}</b> เส้น<small> · {nf(m.mat.length)} รายการ · เศษ {nf(m.mat.reduce((a, x) => a + x.off, 0))} ชิ้น{m.mat.some((x) => issued(x) != null) ? ` · เบิกจริง ${nf(m.mat.reduce((a, x) => a + (issued(x) ?? x.bars), 0))} เส้น` : ""}</small></div></header>
       <div className="rl-sc-tw"><table className="rl-sc-table">
-        <thead><tr><th>วัตถุดิบ (INV)</th><th>รายละเอียด</th><th className="r">ยาวเส้น</th><th className="r">ใช้กับ</th><th className="r">เส้น</th><th className="r" title="เศษที่เหลือยาว ≥ 500 มม. หลังตัดล็อตนี้ (เก็บใช้ต่อได้) · คิดแบบเส้นใหม่ทุกล็อต">เศษ ≥ 500 มม.</th></tr></thead>
+        <thead><tr><th>วัตถุดิบ (INV)</th><th>รายละเอียด</th><th className="r">ยาวเส้น</th><th className="r">ใช้กับ</th><th className="r">เส้น</th><th className="r" title="เศษที่เหลือยาว ≥ 500 มม. หลังตัดล็อตนี้ (เก็บใช้ต่อได้) · คิดแบบเส้นใหม่ทุกล็อต">เศษ ≥ 500 มม.</th>
+          <th className="r" title="ยอดเบิกจริงของล็อตนี้ (เส้น) · ว่าง = ใช้ยอดคำนวณ · ใส่ลงช่อง ACTUAL ISSUE ในใบเบิก">เบิกจริง</th><th>หมายเหตุเบิก</th></tr></thead>
         <tbody>{m.mat.map((x) => (
           <tr key={x.inv || "—"}>
             <td className="rl-sc-code">{x.inv || <span className="rl-cxq">ไม่มี INV</span>}</td>
@@ -802,9 +833,13 @@ function LotMats({ plan, need, lot, sheetsOf, q = "" }) {
             <td className="r rl-sc-q rl-sc-thin" title={x.parts.map((p) => `${p.code} × ${p.qty}`).join("\n")}>{nf(x.parts.length)} เบอร์ · {nf(x.pcs)} ชิ้น{x.noLen ? <> <Pill tone="warn" title="พาร์ทไม่มีความยาวใน BOM — ไม่ได้นับในเส้น">ไม่มียาว {nf(x.noLen)}</Pill></> : null}{x.over ? <> <Pill tone="bad">ยาวกว่าเส้น {nf(x.over)}</Pill></> : null}</td>
             <td className="r rl-sc-q">{nf(x.bars)}</td>
             <td className="r rl-sc-off" title={x.off ? `เศษ ${x.off} ชิ้น (มม.): ${offTxt(x.offLens)}` : "ไม่มีเศษยาว ≥ 500 มม."}>{x.off ? <><b>{nf(x.off)}</b><small>{offTxt(x.offLens)}</small></> : <span className="rw-muted">—</span>}</td>
+            {(() => { const key = x.inv || "—"; const mi = iss[key] || {}; const v = issued(x); return onPlanChange ? <>
+              <td className="r rl-sc-iss"><input className={`input rw-cell rl-iss ${v != null && v !== x.bars ? "diff" : ""}`} type="number" min="0" step="1" inputMode="numeric" value={mi.n ?? ""} placeholder={String(x.bars)} onChange={(e) => setIss(key, { n: e.target.value })} aria-label={`เบิกจริง ${key} ล็อต ${lot.no}`} /></td>
+              <td className="rl-sc-iss"><input className="input rw-cell rl-iss-r" value={mi.r || ""} placeholder="—" title="เช่น ใช้เศษ 2 เส้น / ใช้เส้น 6.3 ม." onChange={(e) => setIss(key, { r: e.target.value })} aria-label={`หมายเหตุเบิก ${key}`} /></td>
+            </> : <><td className="r rl-sc-q">{v != null ? nf(v) : <span className="rw-muted">—</span>}</td><td className="rw-muted small">{mi.r || ""}</td></>; })()}
           </tr>))}</tbody>
       </table></div>
-      <div className="rl-sc-foot">คิดแบบเส้นใหม่ทุกล็อต (ไม่นับเศษจากล็อตก่อน) · เศษ = ความยาวที่เหลือหลังตัด ≥ 500 มม. (หักรอยตัดแล้ว) เก็บไว้ใช้ต่อได้</div>
+      <div className="rl-sc-foot">คิดแบบเส้นใหม่ทุกล็อต (ไม่นับเศษจากล็อตก่อน) · เศษ = ความยาวที่เหลือหลังตัด ≥ 500 มม. (หักรอยตัดแล้ว) เก็บไว้ใช้ต่อได้{onPlanChange ? " · เบิกจริง: กรอกเมื่อเบิกไม่ตรงยอดคำนวณ (ว่าง = ตามคำนวณ) — บันทึกอัตโนมัติ และใส่ลงใบเบิก" : ""}</div>
     </section>);
   if (m.glass.length) cards.push(
     <section key="glass" className="rl-sc mat">
