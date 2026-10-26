@@ -677,3 +677,11 @@ tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px
 .rl-sc-addr span.mock { background: var(--rw-panel-bg); color: var(--rw-panel); }
 .rl-sc-addr span.mock i { font-style: normal; font-family: inherit; font-weight: 600; margin-right: 5px; padding-right: 5px; border-right: 1px solid currentColor; opacity: .85; }
 @media (max-width: 640px) { .rl-lot-body { padding: 10px; } .rl-lot-bar .btn { width: 100%; justify-content: center; } }
+/* วัสดุของล็อต (ใบเบิก) — สีส้มเหมือน Total Mat. */
+.rl-sc.mat { --sc: #b45309; --sc-bg: #fff4e0; }
+.rl-sc-thin { font-weight: 400 !important; color: var(--muted); }
+.rl-lot-mats { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.rl-lot-mats-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 2px 10px; }
+.rl-lot-mats-h b { font-size: 14px; }
+.rl-lot-mats-h span { font-size: 12px; color: var(--muted); }
+.rl-lot-mats-empty { padding: 10px 14px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface); }

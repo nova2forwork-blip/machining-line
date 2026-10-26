@@ -1,8 +1,8 @@
 // ใบปล่อย (PRODUCTION ORDER) ของ 1 ล็อต → Excel · 1 ชีต ต่อ 1 ใบงาน — หน้าตาตามใบ Excel เดิมของออฟฟิศ
 //   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
-//   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · GLASS · ACCESSORIES
+//   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
-import { NC, SHEETS, isStar, addrsFromNote, findKey } from "./releaseCore.js";
+import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
 const TITLES = {
@@ -14,6 +14,7 @@ const TITLES = {
   ยิง: ["SUB-ASSEMBLY (งานยิงประกอบ)", ""],
   "Site Item": ["SUB-ASSEMBLY (Loose Parts)", ""],
   panel: ["ASSEMBLY (แผง)", "ประกอบแผง · 1 QR ต่อที่อยู่"],
+  MAT: ["MATERIAL LIST FOR CUTTING", "วัตถุดิบงานตัด"],
   GLASS: ["GLASS", "รายการวัสดุกระจก"],
   FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
 };
@@ -52,6 +53,7 @@ function subKids(plan, code) {
 function columnsFor(sheet) {
   if (sheet.k === "panel") return { cols: [{ en: "NO.", th: "ลำดับ", w: 7 }, { en: "UNIT", th: "แผง", w: 22 }, { en: "ADDRESS", th: "ที่อยู่", w: 26 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "REMARK", th: "หมายเหตุ", w: 46 }] };
   if (sheet.kind === "sub") return { cols: [{ en: "ITEM", th: "", w: 7 }, { en: "CODE", th: "", w: 18 }, { en: "DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "SUB QTY.", th: "", w: 9 }, { en: "QTY OF PART/SUB", th: "", w: 12, grey: true }, { en: "PART QTY.", th: "", w: 10 }, { en: "UOM", th: "", w: 8 }, { en: "Remark", th: "", w: 26 }] };
+  if (sheet.k === "MAT") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 40 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "PARTS / PCS", th: "", w: 14 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "ACTUAL ISSUE", th: "", w: 12 }, { en: "REMARK", th: "", w: 22 }] };
   if (sheet.k === "GLASS") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "HEIGHT (mm.)", th: "", w: 12 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "REMARK", th: "", w: 22 }] };
   if (sheet.k === "FIXING") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 52 }, { en: "REQUIRED QTY", th: "", w: 13 }, { en: "UNIT", th: "", w: 9 }, { en: "REMARK", th: "", w: 22 }] };
   // MACHINING / BENDING / STEEL
@@ -98,11 +100,13 @@ function rowsFor(sheet, lotRows, { plan, need }) {
   return { out, total, totalAt: 3 };
 }
 
-// GLASS / ACCESSORIES = ใบเบิกวัสดุของทั้ง Release (ไม่มี QR ไม่แยกตามล็อต)
-function matRows(sheet, need) {
+// วัตถุดิบงานตัด / GLASS / ACCESSORIES = ใบเบิกวัสดุของล็อตนี้ (ไม่มี QR) — คิดจาก lotMaterials (2026-10-26: เดิมเป็นยอดทั้ง Release)
+//   ACTUAL ISSUE เว้นว่างให้กรอกตอนเบิกจริง
+function matRows(sheet, lm) {
   const out = []; let n = 0;
-  if (sheet.k === "GLASS") for (const p of need.glass || []) out.push({ vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
-  else for (const p of need.hw || []) out.push({ vals: [++n, p.code, p.d || "", num(p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
+  if (sheet.k === "MAT") { for (const m of lm.mat) out.push({ vals: [++n, m.inv || "(ไม่มี INV)", m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), "", [m.noLen ? `ไม่มีความยาว ${m.noLen} ชิ้น` : "", m.over ? `ยาวกว่าเส้น ${m.over} ชิ้น` : ""].filter(Boolean).join(" · ")] }); return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
+  if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
+  else for (const p of lm.hw) out.push({ vals: [++n, p.code, p.d || "", num(p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
   return { out, total: null };
 }
 
@@ -117,16 +121,18 @@ export function buildLotModel({ plan, need, lot, userName, printDate }) {
     ...(unknown.length ? [{ sheet: { k: "OTHER", kind: "part", label: "OTHER", tab: "อื่นๆ", th: "ใบงานอื่น" }, rows: unknown.flatMap((k) => by.get(k)) }] : []),
   ];
   // ใบเบิกวัสดุ (ทั้ง Release) — ใส่ท้ายถ้ามีรายการ
-  if ((need.glass || []).length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
-  if ((need.hw || []).length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
+  const lm = lotMaterials(plan, need, lot.rows, (r) => lotRowSheets(r, need));
+  if (lm.mat.length) list.push({ sheet: { k: "MAT", kind: "mat", tab: "วัตถุดิบงานตัด" }, mat: true });
+  if (lm.glass.length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
+  if (lm.hw.length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
   const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(printDate || new Date()) };
   const used = new Set();
   const sheets = list.map(({ sheet, rows, mat }) => {
     let name = String(sheet.tab).replace(/[\\/?*[\]:']/g, " ").slice(0, 31); if (used.has(name)) name = name.slice(0, 27) + " (2)"; used.add(name);
     const { cols, groups } = columnsFor(sheet);
     const [t1, t2] = TITLES[sheet.k] || [`${sheet.label || sheet.k}`, sheet.th || ""];
-    const { out, total, totalAt } = mat ? matRows(sheet, need) : rowsFor(sheet, rows, { plan, need });
-    return { key: sheet.k, kind: sheet.kind, name, cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ยอดรวมทั้ง Release ${plan.ro || ""} (ใบเบิกวัสดุ ไม่แยกตามล็อต)` : "" };
+    const { out, total, totalAt } = mat ? matRows(sheet, lm) : rowsFor(sheet, rows, { plan, need });
+    return { key: sheet.k, kind: sheet.kind, name, cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น)" : ""}` : "" };
   });
   return { meta, sheets, file: `ใบปล่อย ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
 }

@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -142,6 +142,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                           </table></div>
                         </section>); })}
                       </div>
+                      <LotMats plan={plan} need={need} lot={L} sheetsOf={rowSheets} />
                     </div>) : null}
                 </div>); })}
           </div>
@@ -722,4 +723,62 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
       </div>
     </div>
   );
+}
+
+// ★ วัสดุของล็อต (ใบเบิก · ไม่มี QR) — วัตถุดิบงานตัด · GLASS · ACCESSORIES · อื่นๆ (เฉพาะของที่ปล่อยในล็อตนี้)
+const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
+function LotMats({ plan, need, lot, sheetsOf }) {
+  const m = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const cards = [];
+  if (m.mat.length) cards.push(
+    <section key="mat" className="rl-sc mat">
+      <header className="rl-sc-h"><div className="rl-sc-t"><b>วัตถุดิบงานตัด</b><span>MATERIAL LIST FOR CUTTING · จากพาร์ท MACHINING ในล็อต</span></div>
+        <div className="rl-sc-n"><b>{nf(m.mat.reduce((a, x) => a + x.bars, 0))}</b> เส้น<small> · {nf(m.mat.length)} รายการ</small></div></header>
+      <div className="rl-sc-tw"><table className="rl-sc-table">
+        <thead><tr><th>วัตถุดิบ (INV)</th><th>รายละเอียด</th><th className="r">ยาวเส้น</th><th className="r">ใช้กับ</th><th className="r">เส้น</th></tr></thead>
+        <tbody>{m.mat.map((x) => (
+          <tr key={x.inv || "—"}>
+            <td className="rl-sc-code">{x.inv || <span className="rl-cxq">ไม่มี INV</span>}</td>
+            <td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
+            <td className="r rl-sc-q rl-sc-thin">{nf(x.stock)}{x.src === "default" ? <> <Pill tone="warn" title="ไม่รู้ความยาวเส้น — ใช้ค่าเริ่ม">?</Pill></> : null}</td>
+            <td className="r rl-sc-q rl-sc-thin" title={x.parts.map((p) => `${p.code} × ${p.qty}`).join("\n")}>{nf(x.parts.length)} เบอร์ · {nf(x.pcs)} ชิ้น{x.noLen ? <> <Pill tone="warn" title="พาร์ทไม่มีความยาวใน BOM — ไม่ได้นับในเส้น">ไม่มียาว {nf(x.noLen)}</Pill></> : null}{x.over ? <> <Pill tone="bad">ยาวกว่าเส้น {nf(x.over)}</Pill></> : null}</td>
+            <td className="r rl-sc-q">{nf(x.bars)}</td>
+          </tr>))}</tbody>
+      </table></div>
+    </section>);
+  if (m.glass.length) cards.push(
+    <section key="glass" className="rl-sc mat">
+      <header className="rl-sc-h"><div className="rl-sc-t"><b>GLASS</b><span>กระจก · จาก BOM แผง/ซับในล็อต</span></div>
+        <div className="rl-sc-n"><b>{nf(m.glass.reduce((a, x) => a + x.qty, 0))}</b> แผ่น<small> · {nf(m.glass.length)} เบอร์</small></div></header>
+      <div className="rl-sc-tw"><table className="rl-sc-table">
+        <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">ขนาด (มม.)</th><th className="r">จำนวน</th></tr></thead>
+        <tbody>{m.glass.map((x) => (
+          <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
+            <td className="r rl-sc-q rl-sc-thin">{x.l || x.h ? `${nlen(x.l) || "?"} × ${nlen(x.h) || "?"}` : "—"}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>))}</tbody>
+      </table></div>
+    </section>);
+  if (m.hw.length) cards.push(
+    <section key="hw" className="rl-sc mat">
+      <header className="rl-sc-h"><div className="rl-sc-t"><b>ACCESSORIES</b><span>FASTENER, GASKET &amp; SILICONE · จาก BOM แผง/ซับในล็อต</span></div>
+        <div className="rl-sc-n"><b>{nf(m.hw.length)}</b> รายการ</div></header>
+      <div className="rl-sc-tw"><table className="rl-sc-table">
+        <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>
+        <tbody>{m.hw.map((x) => (
+          <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
+            <td className="r rl-sc-q">{x.u === "m." ? nlen(Math.round(hwQ(x) * 100) / 100) : nf(hwQ(x))} <small className="rw-muted">{x.u || (x.mm ? "mm." : "pcs.")}</small></td></tr>))}</tbody>
+      </table></div>
+    </section>);
+  if (m.other.length) cards.push(
+    <section key="other" className="rl-sc mat">
+      <header className="rl-sc-h"><div className="rl-sc-t"><b>อื่นๆ</b><span>VENT / ENCLOS / ที่ไม่มี QR</span></div><div className="rl-sc-n"><b>{nf(m.other.length)}</b> รายการ</div></header>
+      <div className="rl-sc-tw"><table className="rl-sc-table">
+        <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>
+        <tbody>{m.other.map((x) => <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>)}</tbody>
+      </table></div>
+    </section>);
+  return (
+    <div className="rl-lot-mats">
+      <div className="rl-lot-mats-h"><b>วัสดุของล็อตนี้</b><span>ใบเบิก · ไม่มี QR · คิดเฉพาะของที่ปล่อยในล็อต {lot.no}</span></div>
+      {cards.length ? <div className="rl-sc-grid">{cards}</div> : <div className="rw-muted small rl-lot-mats-empty">ล็อตนี้ไม่มีวัสดุเบิก (ไม่มีพาร์ท MACHINING และ BOM ของแผง/ซับในล็อตไม่มีกระจก / อุปกรณ์)</div>}
+    </div>);
 }

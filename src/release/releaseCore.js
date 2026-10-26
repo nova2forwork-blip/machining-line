@@ -696,6 +696,40 @@ export function cutMaterials(parts) {
   }
   return out.sort((a, b) => (a.inv ? 0 : 1) - (b.inv ? 0 : 1) || ncmp(a.inv, b.inv));
 }
+// ★ วัสดุของ 1 ล็อต (ใบเบิก · ไม่มี QR) — คิดจากของที่ปล่อยในล็อตนี้เท่านั้น
+//   วัตถุดิบงานตัด = พาร์ทใบ CUTTING ในล็อต (จัดลงเส้นเหมือน Total Mat.)
+//   GLASS / FIXING / OTHER = ลูกตรงใน BOM ของ "แผง" และ "ซับ" ที่ปล่อยในล็อต × จำนวนที่ปล่อย
+//     (ลูกตรงเท่านั้น — ซับลูก/ซับหลานถูกปล่อยเป็นแถวของมันเอง จึงไม่นับซ้ำ)
+//   sheetsOf(row) = ใบงานของแถว (เหมือนหน้าล็อต) · แถวที่ยกเลิก (mod_cancelled_at) ไม่นับ
+export function lotMaterials(plan, need, rows, sheetsOf) {
+  const bom = plan.bom || {};
+  const live = (rows || []).filter((r) => !r.mod_cancelled_at && Number(r.qty) > 0);
+  const pOf = new Map(need.parts.map((p) => [NC(p.code), p]));
+  const cut = [];
+  for (const r of live) {
+    if (r.kind !== "part" || !sheetsOf(r).includes("CUTTING")) continue;
+    const p = pOf.get(NC(r.code)) || { code: r.code };
+    cut.push({ ...p, code: r.code, qty: Number(r.qty), dest: "CUTTING", cancelled: false });
+  }
+  const pick = { GLASS: new Map((need.glass || []).map((x) => [NC(x.code), x])), FIXING: new Map((need.hw || []).map((x) => [NC(x.code), x])), OTHER: new Map((need.other || []).map((x) => [NC(x.code), x])) };
+  const acc = { GLASS: new Map(), FIXING: new Map(), OTHER: new Map() };
+  const add = (items, mult) => {
+    for (const it of items || []) {
+      if ((it[4] || "") === "ยกเลิก" || it[0] === "sub") continue;
+      const n = mult * (Number(it[2]) || 0); if (!(n > 0)) continue;
+      for (const k of ["GLASS", "FIXING", "OTHER"]) {
+        const base = pick[k].get(NC(it[1])); if (!base) continue;
+        const cur = acc[k].get(base.code) || { ...base, qty: 0 }; cur.qty += n; acc[k].set(base.code, cur); break;
+      }
+    }
+  };
+  for (const r of live) {
+    if (r.kind === "panel") { const pk = findKey(bom.panels, r.code); if (pk) add(bom.panels[pk].items, Number(r.qty)); }
+    else if (r.kind === "subassembly") { const sk = findKey(bom.subs, r.code); if (sk) add(bom.subs[sk].items, Number(r.qty)); }
+  }
+  const list = (m) => [...m.values()].sort((a, b) => ncmp(a.code, b.code));
+  return { mat: cutMaterials(cut), glass: list(acc.GLASS), hw: list(acc.FIXING), other: list(acc.OTHER) };
+}
 const roNum = (ro) => { const m = /^P\s*-?\s*0*(\d+)/i.exec(String(ro || "").trim()); return m ? Number(m[1]) : null; };
 export const lotOf = (ro) => { const m = /^P\s*-?\s*0*\d+\.0*(\d+)/i.exec(String(ro || "").trim()); return m ? Number(m[1]) : 0; };
 export const inPlan = (lotRo, planRo) => roNum(lotRo) != null && roNum(lotRo) === roNum(planRo);
