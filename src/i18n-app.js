@@ -2536,6 +2536,11 @@ const TPLS2 = [
 
 // รอบ 3: ข้อความที่ยังเป็นไทยล้วน (flash/toast บนแท็บเล็ต · หัวคอลัมน์ · เดือนย่อ)
 const DICT3 = {
+ "ฐานข้อมูลยังไม่รู้จักประเภทงานนี้ (เช่น ติดกระจก) — รัน migration-glazing-optype.sql ใน Supabase › SQL Editor ก่อน แล้วกดบันทึกใหม่": "The database doesn't know this operation type yet (e.g. Glazing) — run migration-glazing-optype.sql in Supabase › SQL Editor, then save again",
+ "รูปแบบการสแกน": "Scan mode",
+ "สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก": "Scan parent → scan children → Save",
+ "· ไม่จับเวลา ไม่ต้องกรอกความยาว": "· no timer, no length entry",
+ "สเตชันประกอบ / แผง / ติดกระจก / แพ็ก ใช้แบบนี้เสมอ — \"สแกน 2 ครั้ง · จับเวลา\" ใช้กับงานเครื่องเท่านั้น": "Assembly / panel / glazing / packing stations always work this way — \"Scan twice · timed\" is for machining only",
  "ทำงานต่อ": "Resume",
  "เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน": "Pick a step (cut/drill/notch) first",
  "ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง": "QR / part code not found — scan again or type it correctly",

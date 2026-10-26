@@ -13752,6 +13752,8 @@ function MachineCrud() {
 // (ต้องกด "แก้ไข" ก่อนถึงจะลบหรือแก้ความสามารถได้ · รหัสเครื่องแก้ไม่ได้ — เป็นตัวระบุตัวตน)
 // ปุ่มลัด "เพิ่มขั้นตอนที่ยังไม่มี" — ติ๊กแล้วสร้างขั้นตอนให้อัตโนมัติตอนบันทึก
 // match = วิธีเช็กว่ามีขั้นตอนนี้อยู่แล้วไหม · แพ็กแยกด้วย op_type (คนละหน้า) · MILLING เป็นงานเครื่อง (เหมือน ตัด/เจาะ) จึงเช็กด้วยชื่อ
+// ★ 2026-10-26: เหตุผลจาก create_operation/set_operation_type → ข้อความที่แอดมินแก้เองได้
+const opReasonTh = (r) => (r === "bad_type" ? "ฐานข้อมูลยังไม่รู้จักประเภทงานนี้ (เช่น ติดกระจก) — รัน migration-glazing-optype.sql ใน Supabase › SQL Editor ก่อน แล้วกดบันทึกใหม่" : (r || "unknown"));
 const QUICK_ADD_CHIPS = [
   { key: "pack_panel", name: "แพ็กแผง",       op_type: "pack_panel", match: (o) => o.op_type === "pack_panel" },
   { key: "pack_site",  name: "แพ็กไซต์ไอเทม", op_type: "pack_site",  match: (o) => o.op_type === "pack_site" },
@@ -13776,6 +13778,9 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
     .map((c) => ({ id: `new:${c.key}`, name: c.name, op_type: c.op_type, __synthetic: true }));
   const augOps = [...(operations || []), ...synthChips];
   const hasSynthSelected = [...opSel].some((id) => typeof id === "string" && id.startsWith("new:"));
+  // ★ 2026-10-26: สเตชันประกอบ/แผง/ติดกระจก/แพ็ก (ไม่มีขั้นตอนงานเครื่อง) = สแกนเบอร์แม่ → เบอร์ลูก · ไม่จับเวลา → ซ่อนรูปแบบการสแกน
+  const selOps = augOps.filter((o) => opSel.has(o.id));
+  const asmOnly = selOps.length > 0 && selOps.every((o) => o.op_type && o.op_type !== "machining");
 
   function toggleOp(id) { setOpSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
 
@@ -13795,7 +13800,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
           if (!hit) {
             const nextSeq = ops.reduce((m, o) => Math.max(m, Number(o.seq) || 0), 0) + 1;   // ★ seq เป็น NOT NULL — ต่อท้ายลำดับล่าสุด
             const res = await createOperation({ name: spec.name, seq: nextSeq, opType: spec.op_type });
-            if (res && res.ok === false) throw new Error(res.reason || "สร้างขั้นตอนไม่สำเร็จ");
+            if (res && res.ok === false) throw new Error(res.reason ? opReasonTh(res.reason) : "สร้างขั้นตอนไม่สำเร็จ");
             ops = await listRows("operations", { order: "seq" });
             hit = ops.find(spec.match);
           }
@@ -13808,7 +13813,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
       const opsChanged = nextOps.size !== initOps.current.size || [...nextOps].some((id) => !initOps.current.has(id));
       if (opsChanged) await setMachineOps(machine.id, [...nextOps]);   // แทนที่ทั้งชุดผ่าน RPC เฉพาะ (admin)
       // ★ 2026-10-10: ตั้งรูปแบบการสแกน "หลังสุด" — ถ้าพลาด (เช่นยังไม่รัน SQL) ชื่อ/ขั้นตอนยังบันทึกครบ
-      if (scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
+      if (!asmOnly && scanMode !== (machine.scan_mode === "count" ? "count" : "timed")) {
         let r, why = "";
         try { r = await setMachineScanMode(machine.id, scanMode); }
         catch (e) {
@@ -13868,6 +13873,14 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
       <Field label="ประเภทงาน (คำอธิบาย · ไม่บังคับ)">
         <Input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="เช่น CUTTING / NOTCHING" />
       </Field>
+      {asmOnly ? (
+      <Field label="รูปแบบการสแกน">
+        <div style={{ fontSize: 12.5, lineHeight: 1.6, padding: "8px 12px", borderRadius: 10, background: "var(--accent-soft, rgba(16,185,129,.08))", border: "1px solid var(--line, rgba(0,0,0,.08))" }}>
+          <b>สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก</b> · ไม่จับเวลา ไม่ต้องกรอกความยาว
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>สเตชันประกอบ / แผง / ติดกระจก / แพ็ก ใช้แบบนี้เสมอ — "สแกน 2 ครั้ง · จับเวลา" ใช้กับงานเครื่องเท่านั้น</div>
+        </div>
+      </Field>
+      ) : (
       <Field label="รูปแบบการสแกนหน้าเครื่อง">
         <div className="chip-row">
           <span className={`chip ${scanMode === "timed" ? "active" : ""}`} onClick={() => hasScanMode && setScanMode("timed")} style={hasScanMode ? undefined : { opacity: 0.5, cursor: "not-allowed" }}>สแกน 2 ครั้ง · จับเวลา (ปกติ)</span>
@@ -13882,6 +13895,7 @@ function MachineEditModal({ machine, operations, caps = [], onClose, onSaved, on
           <div style={{ fontSize: 12, color: "var(--warning)", marginTop: 4 }}>⚠️ ต้องรัน migration-scan-mode.sql ใน Supabase ก่อน ถึงจะเปลี่ยนรูปแบบการสแกนได้</div>
         )}
       </Field>
+      )}
       <Field label="ขั้นตอนที่เครื่องนี้ทำได้ (เลือกได้หลายอย่าง)">
         <OpMultiPick operations={augOps} selected={opSel} onToggle={toggleOp} machineChosen={true} />
       </Field>
@@ -13932,7 +13946,7 @@ function OperationsCrud() {
         seq: form.seq === "" || form.seq == null ? null : Number(form.seq),
         opType: form.op_type || "machining",
       });
-      if (!res?.ok) { mlsToast("เพิ่มขั้นตอนไม่สำเร็จ: " + (res?.reason || "unknown"), "error"); return; }
+      if (!res?.ok) { mlsToast("เพิ่มขั้นตอนไม่สำเร็จ: " + opReasonTh(res?.reason), "error"); return; }
       setForm({ op_type: "machining" }); load();
     } catch (e) { mlsToast("เพิ่มขั้นตอนไม่สำเร็จ: " + (e?.message || e), "error"); }
   }
@@ -13951,7 +13965,7 @@ function OperationsCrud() {
     if (!ok) { setRows((prev) => [...prev]); return; }   // รีเซ็ตช่องเลือกกลับค่าเดิม
     try {
       const res = await setOperationType(id, op_type);
-      if (!res?.ok) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (res?.reason || "unknown"), "error"); return; }
+      if (!res?.ok) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + opReasonTh(res?.reason), "error"); return; }
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, op_type } : r)));
       auditRecord("set_op_type", "operation", id, { name: row.name, before: from, after: op_type });
     } catch (e) { mlsToast("เปลี่ยนประเภทไม่สำเร็จ: " + (e?.message || e), "error"); }
