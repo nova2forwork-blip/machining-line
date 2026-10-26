@@ -2015,5 +2015,668 @@ const FIX_TPLS = [
   ["ไฟล์ {1} ชิ้น ÷ {2} ชุด = {3}/ชุด", "File {1} pcs ÷ {2} sets = {3}/set"],
   ["{1} › {2}: ไฟล์ {3} ชิ้น = {4}/ชุด → BOM {5}/ชุด (= {6} ชิ้น)", "{1} › {2}: file {3} pcs = {4}/set → BOM {5}/set (= {6} pcs)"],
 ];
-registerI18n({ dict: DICT, tpls: [...FIX_TPLS, ...TPLS] });
+// รอบ 2 (2026-10-26 "ทั้งแอพ"): หน้าเครื่อง/แท็บเล็ต (Station) · ข้อความที่ยังขาดใน App · นำเข้า Excel · ข้อความจากฐานข้อมูล
+const DICT2 = {
+ "หน้าประกอบ (ซับ)": "Assembly page (sub)",
+ "หน้าแพ็ก": "Packing page",
+ "ลองรหัสผิดหลายครั้ง — ระบบพักบัญชีนี้ไว้ 5 นาที แล้วลองใหม่": "Too many wrong passwords — account locked for 5 minutes, then try again",
+ "เช่น ประกอบ-01": "e.g. ASSY-01",
+ "เช่น แผง-01": "e.g. PANEL-01",
+ "เช่น กระจก-01": "e.g. GLASS-01",
+ "เช่น แพ็กแผง-01": "e.g. PACKPANEL-01",
+ "เช่น แพ็กไซต์-01": "e.g. PACKSITE-01",
+ "เช่น แพ็ก-01": "e.g. PACK-01",
+ "ลดจำนวน": "Decrease qty",
+ "เลือกอย่างน้อย 1 ขั้นตอนก่อนบันทึก": "Select at least 1 step before saving",
+ "กู้รายการที่สแกนค้างไว้ (": "Restore pending scans (",
+ "ลูกนี้": "this child",
+ "ใส่ต่อ": "Add anyway",
+ "ซับ (subassembly)": "Sub (subassembly)",
+ "ไซต์ไอเทม": "Site item",
+ "หรือ": "or",
+ "ไม่ใส่": "Don't add",
+ "ออฟไลน์": "Offline",
+ "ค้างซิงค์": "Pending sync",
+ "บัญชีอื่น": "Other account",
+ "ซิงค์ไม่สำเร็จ": "Sync failed",
+ "เลือกอย่างน้อย 1 ขั้นตอน": "Select at least 1 step",
+ "แยกขั้นตอน": "Separate steps",
+ "รายงานวันนี้": "Today's report",
+ "ทำงาน": "Working",
+ "ทำเสร็จ": "Finished",
+ "ความยาววัสดุ": "Material length",
+ "เริ่ม": "Start",
+ "สแกน": "Scan",
+ "① สแกนเพื่อเริ่ม": "① Scan to start",
+ "สแกนของเข้าบั้ง": "Scan items into bundle",
+ "ยาว": "Length",
+ "ทิ้ง": "Discard",
+ "เบอร์แม่ (ซับ)": "Parent code (sub)",
+ "ใส่ของเพิ่มในชิ้นเดิม (ไม่ได้ทำเพิ่ม)": "Add items to existing piece (no extra made)",
+ "ซับประกอบ": "Assembly sub",
+ "ขนาด/ยาว": "Size/Length",
+ "เบอร์แม่ที่กำลังทำ": "Current parent code",
+ "สแกนเข้าไปแล้ว": "Scanned in",
+ "ประกอบแล้ว": "Assembled",
+ "ใส่ของเพิ่มในชิ้นเดิม · ยอดทำไม่เพิ่ม": "Add items to existing piece · done qty unchanged",
+ "จำนวนที่จะทำ": "Qty to make",
+ "ลูกที่สแกนเข้าไปแล้ว": "Scanned children",
+ "เอาคืน": "Take back",
+ "ถ่ายรูปแพ็ก": "Pack photo",
+ "ถ่าย": "Take",
+ "หน้าต่าง/แผง": "Window/Panel",
+ "รอติดกระจก": "Awaiting glazing",
+ "ติดแล้ว": "Glazed",
+ "เริ่มแล้ว": "Started",
+ "ของที่ใส่": "Items added",
+ "ลูก": "Child",
+ "ไม่ต้องกรอกความยาว · ไม่จับเวลา": "No length entry · no timing",
+ "สแกนครั้งเดียวตอนเสร็จ": "Scan once when finished",
+ "เข้ายอดวันนี้ทันที": "Counts toward today immediately",
+ "ช่องขวามือ (มม.)": "Right-hand box (mm)",
+ "เปิดกล้องสแกน": "Open camera to scan",
+ "เวลาเริ่มนับตอนสแกน": "Timer starts at scan",
+ "ใส่จำนวน + เลือกสถานะ": "Enter qty + pick status",
+ "พร้อมเริ่มงาน": "Ready to start",
+ "นี้": "this",
+ "ไม่": "No",
+ "← กลับ": "← Back",
+ "อยู่": "active",
+ "ยังไม่ได้ทำขั้นตอนนี้": "Step not done yet",
+ "คิวซิงค์ไม่สำเร็จ": "Sync queue failed",
+ "ล้างทิ้ง": "Clear",
+ "อยู่ต่อ": "Stay",
+ "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่ (งานที่ค้างจะซิงค์อัตโนมัติหลังล็อกอินด้วยบัญชีเดิม)": "Session expired — please sign in again (pending work syncs automatically after signing in with the same account)",
+ "กำลังไปหน้าเข้าสู่ระบบ…": "Going to sign-in page…",
+ "ไปหน้าแอดมิน (ตั้งค่า → พนักงาน)": "Go to admin (Settings → Employees)",
+ "— เข้าสู่ระบบ": "— Sign in",
+ "จอนี้สำหรับติดหน้า": "This screen is mounted at",
+ "(แนวนอน)": "(landscape)",
+ "→ ไปหน้าปกติ (สำนักงาน)": "→ Go to normal page (office)",
+ "ทำงานให้": "Working for",
+ "→ สแกน QR": "→ Scan QR",
+ "ใส่จำนวน + สถานะ →": "Enter qty + status →",
+ "กรอก": "Enter",
+ "สแกน QR ชิ้นงาน": "Scan piece QR",
+ "ทำเสร็จ → สแกนอีกครั้ง →": "Finished → scan again →",
+ "แล้วสแกน QR ของชิ้นงาน — เวลาเริ่มนับตอนสแกน": "then scan the piece QR — timer starts at scan",
+ "(ป้ายไหนก็ได้ของเบอร์": "(any label of code",
+ "② สแกนจบงาน — ป้ายไหนก็ได้ของ": "② Scan to finish — any label of",
+ "หน้าจอมีปัญหาชั่วคราว": "Screen error (temporary)",
+ "งานที่บันทึกไปแล้วไม่หาย · กด “โหลดใหม่” เพื่อใช้งานต่อ — ถ้ายังไม่หาย แคปข้อความด้านล่างส่งแอดมิน": "Saved work is not lost · Tap “Reload” to continue — if it persists, screenshot the message below and send it to admin",
+ "❌ ยังไม่ได้ตั้งค่า Supabase!\n": "❌ Supabase is not configured!\n",
+ "สร้างไฟล์ .env.local แล้วใส่:\n": "Create a .env.local file and add:\n",
+ "impact_unknown: อ่านจำนวนข้อมูลที่จะถูกลบไม่ได้ — ลองใหม่อีกครั้ง (ยังไม่ได้ลบอะไร)": "impact_unknown: Could not read how many records would be deleted — please try again (nothing was deleted)",
+ "ที่เก็บข้อมูลเต็ม — บันทึกไม่สำเร็จ": "Storage is full — save failed",
+ "station_job_set ยังไม่มีใน DB (รัน migration-part-machine-status.sql) — ข้ามการแจ้งงานที่กำลังทำ": "station_job_set not in DB yet (run migration-part-machine-status.sql) — skipping current-job update",
+ "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ / หมดเวลา": "Cannot connect to server / timed out",
+ "หัวหน้างาน (เดิม)": "Supervisor (legacy)",
+ "หาหัวตาราง (คอลัมน์ Code / Qty) ในไฟล์ไม่เจอ — ตรวจสอบว่าเป็นไฟล์ฟอร์มที่ถูกต้อง": "Table header (Code / Qty columns) not found in file — check that it is the correct form file",
+ "ไม่พบรายการ Part ในไฟล์ — ตรวจสอบว่ากรอกจำนวน (Qty) ไว้ครบ": "No Part items found in file — check that all quantities (Qty) are filled in",
+ "หาหัวตาราง (Code / Quantity) ไม่เจอ — ก็อป/เลือกไฟล์ให้มีแถวหัวตาราง (Code, Quantity/Sum) มาด้วย": "Table header (Code / Quantity) not found — copy/select the file including the header row (Code, Quantity/Sum)",
+ "ไม่พบกลุ่มเบอร์แม่–ลูก — ตรวจว่าแถวแม่มีเลข Item/จำนวน และแถวลูกมีจำนวน": "No parent–child code groups found — check that parent rows have Item no./qty and child rows have qty",
+ "อ่านฟอร์มแผงไม่พบรายการ — ตรวจว่ามีคอลัมน์ Code/Sum และกรอกจำนวนใน Sum": "No items found in panel form — check that Code/Sum columns exist and quantities are filled in Sum",
+ "หาหัวตาราง (Panel No / Qty) ไม่เจอ — ก็อปให้มีแถวหัว (Panel No + Qty) มาด้วย": "Table header (Panel No / Qty) not found — copy including the header row (Panel No + Qty)",
+ "ไม่พบรายชื่อแผง — ตรวจว่ากรอก Panel No + Qty ครบ": "No panel list found — check that Panel No + Qty are all filled in",
+ "ไม่พบข้อมูลบั้ง — ตรวจว่ามีหัว 'BUNK NO.' + ตาราง Unit No/Weight": "No bundle data found — check for the 'BUNK NO.' header + Unit No/Weight table",
+ "(ไม่มีข้อมูลในช่วงนี้)": "(No data in this period)",
+ "<div style=\"color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6\">โหลดแอปไม่สำเร็จ<br>กำลังลองใหม่อัตโนมัติ…</div>": "<div style=\"color:#9db1a8;font-family:system-ui,sans-serif;text-align:center;font-size:16px;line-height:1.6\">App failed to load<br>Retrying automatically…</div>",
+ "โหลดแอปไม่สำเร็จ": "App failed to load",
+ "กำลังลองใหม่อัตโนมัติ…": "Retrying automatically…",
+ "เลือกคอลัมน์": "Choose columns",
+ "กำหนดเอง": "Custom",
+ "เดือน": "Month",
+ "โหลดข้อมูลล่าสุด": "Load latest data",
+ "ซ่อน": "Hide",
+ "ข้ามตัวที่ซ้ำ": "Skip duplicates",
+ "ไม่มี INV": "No INV",
+ "บันทึกแล้ว": "Saved",
+ "INV ซ้ำกันในตาราง": "Duplicate INV in table",
+ "แก้": "Edit",
+ "ใหม่": "New",
+ "ที่มา": "Source",
+ "กรอกเอง": "Manual entry",
+ "INV ที่ Part ในโปรเจคนี้ใช้อยู่ แต่ยังไม่มีในรายการ": "INVs used by Parts in this project but not yet in the list",
+ "ตามโปรเจค": "By project",
+ "ตอนสร้าง Release: Weight/M ที่เว้นว่างจะเติมจาก INV ของโปรเจคก่อน ไม่มีค่อยใช้ Center Stock · INV ใหม่ที่ยังไม่มีทั้ง 2 ที่ จะถูกบันทึกเข้าโปรเจคให้อัตโนมัติ — มากรอกความยาว/จำนวนต่อที่นี่ · OFF CUT (เศษ) ไม่บันทึกน้ำหนัก กรอกเองตอนสร้าง Release": "When creating a Release: blank Weight/M is filled from the project's INV first, otherwise from Center Stock · New INVs not found in either are saved to the project automatically — fill in length/qty here · OFF CUT (offcut) has no saved weight; enter it when creating the Release",
+ "คอลัมน์": "Columns",
+ "ลองใหม่": "Retry",
+ "ไม่พบรายการที่ตรงกับตัวกรอง": "No items match the filter",
+ "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์ — วางจาก Excel (ไม่มีหัวตาราง) จะเรียงตามลำดับนี้": "Drag the ⠿ handle to move columns — pasting from Excel (without header) follows this order",
+ "ต้องเป็นตัวเลข ≥ 0": "Must be a number ≥ 0",
+ "ลำดับคอลัมน์": "Column order",
+ "บัญชีนี้ยังไม่มีสิทธิ์ Modify ฝั่งฐานข้อมูล — ให้แอดมินรัน migration-office-release-rights.sql (เปิดสิทธิ์ให้พนักงานออฟฟิศ)": "This account has no Modify rights in the database yet — ask admin to run migration-office-release-rights.sql (grants rights to office staff)",
+ "ยังไม่ได้รัน migration-release-modify-revert.sql เวอร์ชันล่าสุด (มีวันที่ของ M) ใน Supabase": "Latest migration-release-modify-revert.sql (with M date) has not been run in Supabase yet",
+ "ยังไม่ได้ติดตั้งส่วน “ยกเลิก/ย้อน M” — รัน migration-release-modify-revert.sql ใน Supabase ก่อน": "The “Cancel/Revert M” feature is not installed — run migration-release-modify-revert.sql in Supabase first",
+ "เลือกการแก้ไข": "Select edit",
+ "Release Order ต้องเป็นรูปแบบ P-ตัวเลข": "Release Order must be in the format P-number",
+ "บันทึกเป็น": "Save as",
+ "เดิม": "Original",
+ "ยกเลิก QR ที่ยังไม่ใช้": "Cancel unused QR",
+ "ยังไม่เลือก": "Not selected",
+ "ลงแอป": "Into app",
+ "การแก้ไข": "Edit",
+ "ใช้อยู่": "In use",
+ "หัวข้อ": "Item",
+ "ค่า": "Value",
+ "แก้ใน M นี้": "Edited in this M",
+ "เพิ่มใหม่": "Add new",
+ "เหตุผล": "Reason",
+ "วิธี": "Method",
+ "ประวัติ": "History",
+ "สรุป": "Summary",
+ "ตอนนี้": "Now",
+ "เบอร์พาร์ท": "Part No.",
+ "ไม่มีงานหน้าเครื่อง (ยอดจากการสแกนออฟฟิศ)": "No machine work (qty from office scans)",
+ "1 แถว = 1 เบอร์ + 1 เครื่อง · เบอร์ที่ผ่าน 2 เครื่อง = 2 แถว (ข้อมูลของเบอร์ซ้ำในทุกแถว → sort / filter ใน Excel ได้ทันที)": "1 row = 1 code + 1 machine · a code through 2 machines = 2 rows (code data repeats on every row → sort / filter in Excel right away)",
+ "อ่านก่อน": "Read first",
+ "คำอธิบาย": "Description",
+ "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase ก่อน": "Modify feature is not installed — run migration-release-modify.sql in Supabase first",
+ "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase": "Modify feature is not installed — run migration-release-modify.sql in Supabase",
+ "ทำไปบางส่วน รอชุดถัดไป": "Partly done, waiting for next set",
+ "ยังไม่ได้ติดตั้งส่วนสถานะเครื่อง — รัน migration-part-machine-status.sql ใน Supabase": "Machine status feature is not installed — run migration-part-machine-status.sql in Supabase",
+ "เบอร์": "Code",
+ "กำลังโหลด…": "Loading…",
+ "สั่ง": "Ordered",
+ "สแกนสำนักงาน": "Office scan",
+ "ยังไม่มีสแกน": "No scans yet",
+ "รายละเอียดการสแกน": "Scan details",
+ "จำนวนสแกน": "Scan qty",
+ "แถว": "Rows",
+ "รวมจำนวน": "Total qty",
+ "ไม่มีการสแกน": "No scans",
+ "วันทำงาน": "Work days",
+ "คน": "People",
+ "มี.ค.": "Mar",
+ "เม.ย.": "Apr",
+ "พ.ค.": "May",
+ "มิ.ย.": "Jun",
+ "ก.ค.": "Jul",
+ "ส.ค.": "Aug",
+ "ก.ย.": "Sep",
+ "รายสัปดาห์": "Weekly",
+ "ไม่ขึ้นกับช่วงเวลาด้านบน (ใช้ตัวกรองโปรเจค/Part/Release/แผนก เดียวกัน) · สัปดาห์เริ่มวันจันทร์ · ช่วงล่าสุดยังไม่จบ": "Independent of the period above (uses the same Project/Part/Release/Department filters) · Weeks start Monday · Latest period not yet complete",
+ "เดือนก่อน": "Previous month",
+ "เวลาเครื่อง": "Machine time",
+ "ยังไม่ได้รัน migration-audit-round11.sql — เติมย้อนหลังไม่ได้": "migration-audit-round11.sql has not been run — cannot backfill",
+ "ขั้นตอนเดียว": "Single step",
+ "หลายขั้นตอนพร้อมกัน": "Multiple steps at once",
+ "ภาพรวม": "Overview",
+ "แนวโน้มรายสัปดาห์ / รายเดือน": "Weekly / monthly trend",
+ "รายงานการทำงาน": "Work report",
+ "รายการสแกน": "Scan list",
+ "วัน-เวลา": "Date-time",
+ "ปัจจุบัน": "Current",
+ "คิดจากจำนวน": "Based on qty",
+ "ทุกเครื่อง": "All machines",
+ "ระหว่างทำงาน": "Working",
+ "ปัญหาระหว่างทำงาน": "Problems during work",
+ "เวลาหยุด": "Stop time",
+ "ชิ้นงาน": "Piece",
+ "เป้า": "Target",
+ "ยังไม่ได้รัน migration-daily-report-settings.sql ใน Supabase": "migration-daily-report-settings.sql has not been run in Supabase yet",
+ "เลิก": "End",
+ "เป้า ณ ตอนนี้": "Target so far",
+ "ยังไม่มีงาน": "No work yet",
+ "ปกติ": "Normal",
+ "เฉลี่ย 7 วัน": "7-day avg",
+ "เวลาเดินเครื่อง %": "Machine run time %",
+ "นาที/ชิ้น": "min/pc",
+ "ช่วงรายงาน": "Report period",
+ "ชิ้นที่กด Finished": "Pcs marked Finished",
+ "เวลากะ": "Shift time",
+ "สาเหตุ": "Cause",
+ "นาที": "min",
+ "สัปดาห์": "Week",
+ "วันก่อนหน้า": "Previous day",
+ "กะ": "Shift",
+ "รายวัน": "Daily",
+ "เลือกเดือน": "Select month",
+ "โหลดใหม่": "Reload",
+ "ทุกแผนก": "All departments",
+ "ทุกสถานะ": "All statuses",
+ "เทียบ": "Compare",
+ "ต้องดู": "Needs attention",
+ "เป้า/ชม.": "Target/hr",
+ "เดินเครื่อง": "Running",
+ "ตามแผน": "On plan",
+ "รายงานการทำงาน (รอบช้า) ตามเหตุผล": "Work report (slow cycles) by reason",
+ "รายสัปดาห์ / รายเดือน / รายปี": "Weekly / monthly / yearly",
+ "▲▼ เทียบ": "▲▼ Compare",
+ "Release ทั้งหมดในโปรเจคนี้ · แตะแถวเพื่อดู Part และรายละเอียด · สร้างงานใหม่ในโปรเจคนี้ได้จากปุ่ม เพิ่ม / นำเข้า": "All Releases in this project · Tap a row to see Parts and details · Create new work in this project with the Add / Import buttons",
+ "ยังไม่ได้รัน migration-round13.sql — ยังไม่มีข้อมูลสถานะหน้าเครื่อง": "migration-round13.sql has not been run — no machine status data yet",
+ "ซิงค์ไม่ขึ้น": "Sync failed",
+ "แอปรุ่นเก่า": "Old app version",
+ "เฉพาะที่มีปัญหา": "Problems only",
+ "นาฬิกาเพี้ยน": "Clock off",
+ "ไม่สำเร็จ": "Failed",
+ "ผูกเครื่อง": "Bind machine",
+ "ผู้ดูแลระบบ": "System administrator",
+ "ฝ่ายผลิต": "Production"
+};
+
+const TPLS2 = [
+[
+"กำลังเปิด{1}…",
+"Opening {1}…"
+],
+[
+"(ใช้งานล่าสุด {1})",
+"(last used {1})"
+],
+[
+"มีเครื่องอื่นใช้บัญชีนี้อยู่{1} — เข้าไม่ได้ · ให้ออกจากระบบที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว",
+"Another device is using this account{1} — can't sign in · Sign out on that device first, or wait a moment if it was turned off"
+],
+[
+"ล็อกอินด้วยบัญชีของแผนก{1} (บัญชีที่ผูกสถานี{2}ไว้)",
+"Sign in with the department account{1} (the account linked to station{2})"
+],
+[
+"รหัสสถานี{1} / พนักงาน",
+"Station{1} / employee ID"
+],
+[
+"⛔ {1} ถูกย้ายไปเบอร์อื่นหมดแล้วใน {2} — สแกนชิ้นที่ติดป้ายใหม่ หรือแจ้งออฟฟิศ",
+"⛔ {1} was fully moved to other codes in {2} — scan the piece with the new label, or tell the office"
+],
+[
+"⛔ {1} ถูกยกเลิกใน {2} — หยุดทำ · ชิ้นที่ทำแล้วแยกเก็บตามที่ออฟฟิศกำหนด",
+"⛔ {1} was cancelled in {2} — stop · keep finished pieces apart as the office instructs"
+],
+[
+"ป้ายนี้ ({1}) เพิ่งบันทึกไปเมื่อ {2} วินาทีที่แล้ว — ทำชิ้นนี้เพิ่มอีกจริงไหม?\n\nถ้าป้ายเดิมยังอยู่หน้ากล้อง กด \"ไม่ใช่\"",
+"This label ({1}) was saved {2} seconds ago — really make another piece?\n\nIf the same label is still in front of the camera, tap \"No\""
+],
+[
+"สแกนป้ายของ {1} · โปรเจค {2} · Release {3}",
+"Scan labels of {1} · Project {2} · Release {3}"
+],
+[
+"⛔ QR นี้ถูกยกเลิกใน {1} ({2}{3}) — ไม่ต้องทำชิ้นนี้ · แยกออก · แจ้งออฟฟิศถ้าทำไปแล้ว",
+"⛔ This QR was cancelled in {1} ({2}{3}) — don't make this piece · set it aside · tell the office if already made"
+],
+[
+"ยังไม่ครบจำนวน ({1}/{2}) — เลือก Finished ได้เมื่อครบ",
+"Qty not complete ({1}/{2}) — Finished is available when complete"
+],
+[
+"จำนวน {1} ชิ้นในการบันทึกครั้งเดียว มากผิดปกติ — ยืนยันหรือไม่?",
+"{1} pcs in one entry is unusually high — confirm?"
+],
+[
+"· ปกติ ~{1} ต่อชิ้น",
+"· usually ~{1} per pc"
+],
+[
+"⏱ เวลาเร็วผิดปกติ: {1} สำหรับ {2} ชิ้น{3}\n\nลืมสแกนรอบแรกตอนเริ่มงาน หรือใส่จำนวนผิดหรือเปล่า?",
+"⏱ Unusually fast: {1} for {2} pcs{3}\n\nForgot the first scan at start, or entered the wrong qty?"
+],
+[
+"⏱ เวลานานผิดปกติ: {1} สำหรับ {2} ชิ้น{3}\n\nลืมกด \"พักงาน/แจ้งหยุด\" หรือเปล่า? ถ้ารอบนี้ช้าจริง กด \"กลับไปตรวจ\" แล้วใช้ปุ่ม แจ้งปัญหา → ใส่เหตุผล",
+"⏱ Unusually long: {1} for {2} pcs{3}\n\nForgot to tap \"Pause/Report stop\"? If this round really was slow, tap \"Go back to check\" then use Report problem → enter a reason"
+],
+[
+"⛔ {1} — ออฟฟิศเพิ่งแก้ Release นี้ · สแกนใหม่",
+"⛔ {1} — the office just edited this Release · scan again"
+],
+[
+"บันทึก {1}/{2} ขั้นตอน · พลาด {3} ({4}){5}",
+"Saved {1}/{2} steps · failed {3} ({4}){5}"
+],
+[
+"บันทึกครบ {1} ขั้นตอน ✓",
+"All {1} steps saved ✓"
+],
+[
+"เอา {1} ออกจากเบอร์แม่? (ลบชิ้นที่บันทึกไปแล้ว)",
+"Remove {1} from the parent code? (deletes saved pieces)"
+],
+[
+"{1}: ในใบบั้งมี {2} · ใส่รอบนี้แล้วรวมจะเป็น {3} (เกิน {4})\nใส่ต่อไหม?",
+"{1}: bundle sheet has {2} · adding this round makes {3} (over by {4})\nAdd anyway?"
+],
+[
+"สเตชันติดกระจกเปิดได้เฉพาะเบอร์ ซับ (หน้าต่าง) หรือ แผง — เบอร์นี้เป็น {1}",
+"Glazing station only accepts sub (window) or panel codes — this code is {1}"
+],
+[
+"{1} ยังไม่มีบันทึกที่สเตชัน{2} — บันทึกที่นั่นก่อน แล้วค่อยติดกระจก",
+"{1} has no record at station{2} yet — record it there first, then glaze"
+],
+[
+"บั้ง: {1}",
+"Bundle: {1}"
+],
+[
+"เบอร์แม่นี้ต้องใส่ {1} — เบอร์นี้เป็น {2} ใส่ไม่ได้",
+"This parent code needs {1} — this code is {2}, can't add"
+],
+[
+"{1} ครบแล้ว",
+"{1} complete"
+],
+[
+"{1} ยังไม่มีบันทึกที่สเตชัน{2}",
+"{1} has no record at station{2} yet"
+],
+[
+"{1} อยู่ในบั้ง {2} แล้ว",
+"{1} is already in bundle {2}"
+],
+[
+"✓ ติดกระจก {1} ชิ้น — เก็บเข้าคิว รอซิงค์",
+"✓ Glazed {1} pcs — queued, waiting to sync"
+],
+[
+"✓ ติดกระจกแล้ว {1} ชิ้น",
+"✓ Glazed {1} pcs"
+],
+[
+"ใส่ {1} รายการ",
+"Add {1} items"
+],
+[
+"ทำ {1} ชิ้น · ใส่ {2} รายการ",
+"Make {1} pcs · add {2} items"
+],
+[
+"ใส่เพิ่ม {1} รายการ",
+"Add {1} more items"
+],
+[
+"✓ บันทึกแล้ว {1} — {2} · เก็บเข้าคิว รอซิงค์",
+"✓ Saved {1} — {2} · queued, waiting to sync"
+],
+[
+"✓ บันทึกแล้ว {1} — {2}",
+"✓ Saved {1} — {2}"
+],
+[
+"✓ บันทึกแล้ว {1} รายการ — เก็บเข้าคิว รอซิงค์",
+"✓ Saved {1} items — queued, waiting to sync"
+],
+[
+"✓ เก็บเข้าคิว {1} ชิ้น (เน็ตหลุด) — จะซิงค์ให้อัตโนมัติ",
+"✓ Queued {1} pcs (offline) — will sync automatically"
+],
+[
+"✓ บันทึกแล้ว {1} รายการ",
+"✓ Saved {1} items"
+],
+[
+"✓ บันทึกแล้ว {1} ชิ้น — ยังไม่ครบ BOM (ส่งต่อสเตชันถัดไปได้)",
+"✓ Saved {1} pcs — BOM not complete (can go to next station)"
+],
+[
+"งานของ {1}{2} {3} รายการ รอซิงค์",
+"Work of {1}{2}: {3} items waiting to sync"
+],
+[
+"เปลี่ยนเป็น \"{1}\"?\nเบอร์แม่ + ลูกที่สแกนไว้ (ยังไม่ยืนยัน) จะถูกล้าง",
+"Switch to \"{1}\"?\nThe parent code + scanned children (not confirmed) will be cleared"
+],
+[
+"เบอร์นี้มีอยู่แล้ว {1} ชิ้น — กรอกจำนวนที่จะเพิ่ม",
+"This code already has {1} pcs — enter qty to add"
+],
+[
+"รอบก่อนใส่ไปแล้ว {1} ชิ้น — กรอกจำนวนที่ใส่รอบนี้",
+"Last round added {1} pcs — enter qty for this round"
+],
+[
+"✓ เพิ่ม (รวม {1})",
+"✓ Add (total {1})"
+],
+[
+"ประกอบไว้ {1} ชิ้น · ใส่จำนวนที่ติดกระจกรอบนี้",
+"Assembled {1} pcs · enter qty glazed this round"
+],
+[
+"ทำไว้แล้ว {1} ชิ้น · ใส่จำนวนที่ทำรอบนี้ แล้วสแกนลูก",
+"Already made {1} pcs · enter qty for this round, then scan children"
+],
+[
+"ต่อไป (ติดกระจก {1} ชิ้น)",
+"Next (glaze {1} pcs)"
+],
+[
+"เริ่มสแกนลูก (จะทำ {1} ชิ้น)",
+"Start scanning children (making {1} pcs)"
+],
+[
+"ทิ้ง{1}ที่สแกนไว้รอบนี้ {2} ชิ้น แล้วย้อนกลับ?",
+"Discard the {1} scanned this round ({2} pcs) and go back?"
+],
+[
+"ทำไว้แล้ว {1} ชิ้น",
+"Already made {1} pcs"
+],
+[
+"สแกน{1}ที่ประกอบ",
+"Scan {1} assembled"
+],
+[
+"· {1} รายการที่สแกน",
+"· {1} items scanned"
+],
+[
+"✓ บันทึกติดกระจก {1} ชิ้น{2}",
+"✓ Glazing saved {1} pcs{2}"
+],
+[
+"สแกน{1}ที่ใส่รอบนี้ก่อน",
+"Scan the {1} added this round first"
+],
+[
+"สแกน{1}ที่ประกอบรอบนี้ก่อน",
+"Scan the {1} assembled this round first"
+],
+[
+"✓ บันทึก (ทำ {1} ชิ้น · {2} รายการ)",
+"✓ Save (made {1} pcs · {2} items)"
+],
+[
+"✓ บันทึก (ใส่เพิ่ม {1} รายการ)",
+"✓ Save (added {1} items)"
+],
+[
+"✓ บันทึก ({1} รายการ)",
+"✓ Save ({1} items)"
+],
+[
+"✓ {1} — ครบ ปิดงาน ({2})",
+"✓ {1} — complete, job closed ({2})"
+],
+[
+"ไปที่ แอป → {1} → เปิดสวิตช์ \"กล้อง\" (Camera)",
+"Go to Apps → {1} → turn on the \"Camera\" switch"
+],
+[
+"เลือก{1}ที่จะประกอบ",
+"Select {1} to assemble"
+],
+[
+"ไม่มี{1}ที่ค้างอยู่ — สแกน QR เพื่อเริ่ม",
+"No pending {1} — scan a QR to start"
+],
+[
+"ใส่แล้ว {1} รายการ",
+"Added {1} items"
+],
+[
+"ทำแล้ว {1} จาก {2}",
+"Done {1} of {2}"
+],
+[
+"เวลาที่จับไว้ ({1}) จะถูกล้างและเริ่มใหม่",
+"Recorded time ({1}) will be cleared and restarted"
+],
+[
+"⚠ เกินจำนวนสั่ง +{1} ชิ้น",
+"⚠ Over order qty +{1} pcs"
+],
+[
+"ทำให้ครบ {1} ชิ้นก่อน ถึงจะเลือก \"เสร็จแล้ว\" ได้ (ตอนนี้ {2})",
+"Finish all {1} pcs before choosing \"Done\" (now {2})"
+],
+[
+"ครบ {1} แล้ว — กด \"เสร็จแล้ว\" เพื่อปิดงาน หรือทำสแปร์ต่อได้ (กำลังทำ)",
+"All {1} done — tap \"Done\" to close the job, or keep making spares (In progress)"
+],
+[
+"ยังมีงานค้างซิงค์ {1} ชิ้น — จะซิงค์อัตโนมัติเมื่อบัญชีนี้ล็อกอินอีกครั้ง (ข้อมูลไม่หาย)",
+"{1} pcs still pending sync — will sync automatically when this account signs in again (no data lost)"
+],
+[
+"บัญชี {1} ยังไม่มีเครื่อง — ให้แอดมินตั้งค่าให้ก่อน",
+"Account {1} has no machine yet — ask an admin to set it up first"
+]
+];
+
+// รอบ 3: ข้อความที่ยังเป็นไทยล้วน (flash/toast บนแท็บเล็ต · หัวคอลัมน์ · เดือนย่อ)
+const DICT3 = {
+ "ทำงานต่อ": "Resume",
+ "เลือกขั้นตอน (ตัด/เจาะ/บาก) ก่อน": "Pick a step (cut/drill/notch) first",
+ "ไม่พบ QR/เบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง": "QR / part code not found — scan again or type it correctly",
+ "ไม่พบเบอร์พาร์ทนี้ในระบบ — สแกนใหม่ หรือพิมพ์ให้ถูกต้อง": "Part code not found — scan again or type it correctly",
+ "กลับไปตรวจ": "Go back and check",
+ "ถูกยกเลิกใน Modify": "cancelled in Modify",
+ "— เก็บไว้ที่ \"ซิงค์ไม่สำเร็จ\" แล้ว": "— kept under \"Sync failed\"",
+ ") กลับมาแล้ว — ตรวจแล้วกดยืนยันได้เลย": ") restored — check it, then confirm",
+ "part ธรรมดา": "a plain part",
+ "· รูปยังไม่อัป (ออนไลน์แล้วถ่ายซ้ำ)": "· photo not uploaded (retake when online)",
+ "· แนบรูปไม่สำเร็จ (รูปไม่บังคับ)": "· photo upload failed (photo is optional)",
+ "กำลังซิงค์งานค้าง": "Syncing pending work",
+ "รอซิงค์": "Waiting to sync",
+ "· รอซิงค์": "· waiting to sync",
+ "พร้อมทำงาน": "Ready",
+ "สแกนเมื่อทำเสร็จ": "Scan when done",
+ "กด เริ่ม ก่อน": "Press Start first",
+ "แจ้งปัญหา": "Report a problem",
+ "แพ็กแล้ว": "Packed",
+ "เบราว์เซอร์ที่ใช้": "Browser in use",
+ "แล้วแตะเปิดกล้องอีกครั้ง (ถ้ายังไม่ได้ ให้โหลดหน้าใหม่)": "then tap to open the camera again (if it still fails, reload the page)",
+ "หน้าต่าง/ซับ": "Window/sub",
+ "ติดกระจกแล้ว": "Glazed",
+ "✕ ยกเลิก": "✕ Cancel",
+ "· ออฟไลน์อยู่ ต่อเน็ตแล้วลองใหม่": "· offline — reconnect and try again",
+ "— กดอัปเดตเมื่อพร้อม (งานที่ทำอยู่ไม่หาย)": "— press Update when ready (current work is kept)",
+ "บน GitHub ตอนนี้เป็นโค้ดของหน้าเครื่อง (Station.jsx)": "on GitHub is currently the machine-screen code (Station.jsx)",
+ "ยกชิ้นงานขึ้นเครื่อง · ทำเสร็จแล้วกด": "Load the piece on the machine · when done press",
+ "สแกนอีกครั้ง": "Scan again",
+ "เปลี่ยนรหัสผ่านแล้ว": "Password changed",
+ "(ว่าง)": "(empty)",
+ "ใช้ได้ทุกโปรเจค": "Usable in every project",
+ "ยังไม่กรอก": "Not filled in",
+ "กก./ม.": "kg/m",
+ "จำนวนต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป": "Quantity must be a whole number ≥ 1",
+ "เกิน (สแปร์)": "Extra (spare)",
+ "โปรเจคนี้ปิดแล้ว — เปิดโปรเจคก่อนถึงแก้ได้": "This project is closed — reopen it before editing",
+ "ลดจนเหลือ 0 ไม่ได้ — ใช้ “ยกเลิก Part”": "Can't reduce to 0 — use “Cancel part”",
+ "เบอร์ปลายทาง": "Target code",
+ "(ไม่ได้ระบุ = วันที่ลงแอป)": "(blank = date entered in app)",
+ "ลงแอป:": "Entered:",
+ "จำนวนก่อน": "Qty before",
+ "ย้ายหมดแล้ว": "All moved",
+ "การกระทำ": "Action",
+ "เวอร์ชัน": "Version",
+ "ลงแอปเมื่อ": "Entered on",
+ "ยกเลิกไม่ได้": "Can't cancel",
+ "สถานะเครื่อง": "Machine status",
+ "Mat. Length (มม.)": "Mat. Length (mm)",
+ "ยังไม่มีเครื่องเริ่ม": "No machine started yet",
+ "ล็อตนี้ไม่มี Release แบบใหม่ (ปล่อยด้วยวิธีเก่า) — ไม่มีข้อมูลใบงานให้สร้างใบปล่อย": "This lot wasn't released with the new Release (old method) — no sheet data to build a release sheet",
+ "ไม่พบรายการของล็อตนี้": "No items found for this lot",
+ "ต้องมีเลขที่ Release Order ก่อน": "A Release Order number is required first",
+ "เก็บเป็นหลักฐาน": "kept as record",
+ "สแกนรอบแรกแล้ว เวลากำลังเดิน": "First scan done, timer running",
+ "ครบจำนวนสั่ง หรือกด Finished": "Ordered qty reached, or Finished pressed",
+ "ยังไม่มีข้อมูล": "No data yet",
+ "โหลด QR บางส่วนไม่สำเร็จ — ป้ายอาจไม่ครบ กด “ค้นหา QR” อีกครั้ง": "Some QRs failed to load — labels may be incomplete; press “Search QR” again",
+ "กก./ชิ้น": "kg/pc",
+ "วัน · เวลา": "Date · time",
+ "สร้างไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง": "Couldn't create the file — try again",
+ "ชิ้น/ชม.": "pcs/h",
+ "ต.ค.": "Oct",
+ "พ.ย.": "Nov",
+ "วันที่มีงาน": "Days with work",
+ "สัปดาห์ก่อน": "Previous week",
+ "ไม่มีแถวที่ต้องเติม": "No rows to fill",
+ "ทุกโปรเจค": "All projects",
+ "ทุก Release": "All Releases",
+ "ทุก Part": "All parts",
+ "กำลังโหลดข้อมูลล็อต — รอสักครู่แล้วกดอีกครั้ง": "Loading lot data — wait a moment and press again",
+ "เปลี่ยนจำนวนสั่งใช้ปุ่ม ✎ Modify ที่หน้า Release (สร้าง/ยกเลิก QR + เก็บประวัติให้)": "Change ordered qty with ✎ Modify on the Release page (creates/cancels QR + keeps history)",
+ "ตรวจประวัติ Modify ไม่สำเร็จ — ลองอีกครั้ง": "Couldn't check Modify history — try again",
+ "ไม่พบข้อมูลพาร์ทของล็อตนี้ — แก้ Part No./INV ไม่ได้ (โหลดหน้าใหม่แล้วลองอีกครั้ง)": "No part data for this lot — can't edit Part No./INV (reload and try again)",
+ "ต่อเครื่องต่อวัน": "per machine per day",
+ "▼ ต่ำกว่าเป้า": "▼ Below target",
+ "ชื่อเครื่อง": "Machine name",
+ "ว่าง/อื่นๆ": "Blank/other",
+ "เวลาหยุด (นาที)": "Downtime (min)",
+ "แตะแถวเครื่องเพื่อดูการสแกนทั้งหมดของเครื่องนั้น": "Tap a machine row to see all its scans",
+ "อ่านจำนวนข้อมูลของโปรเจคไม่ได้ — การลบจะต้องพิมพ์รหัสยืนยัน": "Couldn't read the project's data count — deleting requires typing the code to confirm",
+ "รหัสโปรเจคไม่ตรง ยกเลิกการลบ": "Project code doesn't match — delete cancelled",
+ "เมื่อสักครู่": "just now",
+ "บัญชี": "Account",
+ "นานสุด": "Longest",
+ "ที่แล้ว": "ago",
+ "บังคับออกจากระบบแล้ว": "Signed out remotely",
+ "เตะเครื่องที่กำลังใช้อยู่ไม่ได้": "Can't sign out the device you're using",
+ "เครื่องนั้นออกไปแล้ว หรือไม่พบเซสชัน": "That device already signed out, or the session wasn't found",
+ "จุดเขียว = กำลังออนไลน์": "Green dot = online",
+ "กรอกชื่อขั้นตอน": "Enter a step name",
+ "ลบไม่ได้ — ขั้นตอนนี้ถูกใช้งานอยู่ (มีเครื่อง/งาน/การสแกนอ้างอิงถึง)": "Can't delete — this step is in use (machines/jobs/scans refer to it)",
+ "ลบไม่ได้ — รายการนี้ถูกใช้งานอยู่ (มีเครื่องจักร/งาน/การสแกนอ้างอิงถึง) · ต้องเอาการอ้างอิงออกก่อน หรือปล่อยไว้เพื่อรักษาประวัติ": "Can't delete — this item is in use (machines/jobs/scans refer to it) · remove the references first, or keep it to preserve history",
+ "กรอกโปรเจคและรหัส Part ให้ครบ": "Fill in both project and part code",
+ "ตรวจข้อมูลที่ผูกกับ Part นี้ไม่ได้ — ลองใหม่อีกครั้ง (ยังไม่ได้ลบ)": "Couldn't check data linked to this part — try again (nothing deleted)",
+ "เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่": "Session expired — please sign in again",
+ "ม.ค.": "Jan",
+ "ก.พ.": "Feb",
+ "มี.ค.": "Mar",
+ "เม.ย.": "Apr",
+ "พ.ค.": "May",
+ "มิ.ย.": "Jun",
+ "ก.ค.": "Jul",
+ "ส.ค.": "Aug",
+ "ก.ย.": "Sep",
+ "ธ.ค.": "Dec"
+};
+const TPLS3 = [
+[
+"ไป{1}",
+"Go to {1}"
+],
+[
+"{1} — บันทึกไว้แล้ว {2} รายการ · ใส่เพิ่มได้",
+"{1} — {2} items saved · you can add more"
+],
+[
+"{1} ยังประกอบไม่เสร็จ — ใส่ไม่ได้",
+"{1} isn't fully assembled — can't add"
+],
+[
+"{1} อยู่ในบั้งนี้แล้ว (บันทึกไว้ก่อนหน้า)",
+"{1} is already in this bundle (saved before)"
+],
+[
+"{1} ไม่อยู่ในใบบั้งนี้",
+"{1} isn't on this bundle sheet"
+],
+[
+"{1} ใส่ครบตามใบแล้ว ({2} ชิ้น) — ชิ้นนี้จะเกิน",
+"{1} already complete per sheet ({2} pcs) — this piece would be extra"
+],
+[
+"สแกน{1}",
+"Scan {1}"
+],
+[
+"{1}ต้องใช้บัญชีที่ตั้ง \"เครื่อง/สถานีประจำ\" ไว้ที่ ตั้งค่า → พนักงาน",
+"{1}needs an account with a \"home machine/station\" set in Setup → Employees"
+]
+];
+
+registerI18n({ dict: { ...DICT, ...DICT2, ...DICT3 }, tpls: [...FIX_TPLS, ...TPLS3, ...TPLS, ...TPLS2] });
 export default true;
