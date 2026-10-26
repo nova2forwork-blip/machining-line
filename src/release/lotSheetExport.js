@@ -19,8 +19,13 @@ const TITLES = {
   FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
 };
 const BLACK = { argb: "FF000000" }, GREY = { argb: "FF8C8C8C" }, RED = { argb: "FFC00000" };
-const THIN = { style: "thin", color: BLACK };
-const BOX = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+// ตาราง (2026-10-26 จัดใหม่): เส้นในสีเทา · กรอบนอก/ใต้หัวตารางเส้นดำหนา · หัวพื้นเทา · แถวสลับสีอ่อน · แถวซับ (SET) พื้นเทาอ่อน · แถวรวมพื้นเทา
+const LINE = { style: "thin", color: { argb: "FFB4B9C0" } }, EDGE = { style: "medium", color: BLACK };
+const FILL = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+const HEAD_BG = "FFE6E9ED", HEAD2_BG = "FFF2F4F6", ZEBRA_BG = "FFF8F9FB", SET_BG = "FFECEFF3", TOTAL_BG = "FFE6E9ED", INK2 = { argb: "FF4B5563" };
+// คอลัมน์ที่จัดกลาง / เบอร์ที่ตัวหนา
+const CENTER_COLS = new Set(["NO.", "ITEM", "UOM", "UNIT", "REV."]);
+const CODE_COLS = new Set(["CODE", "MATERIAL CODE", "UNIT"]);
 const FONT = "Tahoma";
 
 const fmtDate = (d) => { try { return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; } catch { return ""; } };
@@ -57,7 +62,7 @@ function columnsFor(sheet) {
   if (sheet.k === "GLASS") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "HEIGHT (mm.)", th: "", w: 12 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "REMARK", th: "", w: 22 }] };
   if (sheet.k === "FIXING") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 52 }, { en: "REQUIRED QTY", th: "", w: 13 }, { en: "UNIT", th: "", w: 9 }, { en: "REMARK", th: "", w: 22 }] };
   // MACHINING / BENDING / STEEL
-  return { cols: [{ en: "NO.", th: "ลำดับ", w: 6 }, { en: "CODE", th: "เบอร์พาร์ท", w: 20 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "QTY", th: "สั่งตัดเพิ่ม", w: 10 }, { en: "REV.", th: "แก้ไข", w: 8 }, { en: "MATERIAL", th: "วัตถุดิบ", w: 28 }, { en: "REMARK", th: "หมายเหตุ", w: 44 }] };
+  return { cols: [{ en: "NO.", th: "ลำดับ", w: 7 }, { en: "CODE", th: "เบอร์พาร์ท", w: 22 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "QTY", th: "สั่งตัดเพิ่ม", w: 11 }, { en: "REV.", th: "แก้ไข", w: 8 }, { en: "MATERIAL", th: "วัตถุดิบ", w: 26 }, { en: "REMARK", th: "หมายเหตุ", w: 32 }] };
 }
 
 // แถวข้อมูลของชีต: [{ vals:[...ตามคอลัมน์], bold?, kid?, cancelled? }] + รวมจำนวน
@@ -178,34 +183,40 @@ export function buildLotWorkbook(ExcelJS, args) {
     if (mat) put(7, 1, W, sh.note, { italic: true, size: 10, color: GREY }, { horizontal: "left" });
     // ── หัวตาราง ──
     void sheet; const hr = 9; const hr2 = two ? hr + 1 : hr;
-    ws.getRow(hr).height = two ? 20 : 34; if (two) ws.getRow(hr2).height = 20;
+    ws.getRow(hr).height = two ? 20 : 30; if (two) ws.getRow(hr2).height = 17;
+    const edge = (i, top, bottom) => ({ top: top || LINE, bottom: bottom || LINE, left: i === 1 ? EDGE : LINE, right: i === W ? EDGE : LINE });
     cols.forEach((c, i) => {
-      const a = ws.getCell(hr, i + 1); a.value = c.en || null;
-      a.font = { name: FONT, size: 11, bold: true, color: c.grey ? GREY : BLACK }; a.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; a.border = BOX;
-      if (two) { const b = ws.getCell(hr2, i + 1); b.value = c.th || null; b.font = { name: FONT, size: 11, bold: true }; b.alignment = { horizontal: "center", vertical: "middle" }; b.border = BOX; }
+      const a = ws.getCell(hr, i + 1); a.value = c.en || null; a.fill = FILL(HEAD_BG);
+      a.font = { name: FONT, size: 10.5, bold: true, color: c.grey ? GREY : BLACK }; a.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      a.border = edge(i + 1, EDGE, two ? LINE : EDGE);
+      if (two) { const b = ws.getCell(hr2, i + 1); b.value = c.th || null; b.fill = FILL(HEAD2_BG); b.font = { name: FONT, size: 9.5, color: INK2 }; b.alignment = { horizontal: "center", vertical: "middle" }; b.border = edge(i + 1, LINE, EDGE); }
     });
-    for (const [a, b, label] of groups || []) { ws.mergeCells(hr, a, hr, b); const x = ws.getCell(hr, a); x.value = label; x.alignment = { horizontal: "center", vertical: "middle" }; x.font = { name: FONT, size: 11, bold: true }; }
+    for (const [a, b, label] of groups || []) { ws.mergeCells(hr, a, hr, b); const x = ws.getCell(hr, a); x.value = label; x.alignment = { horizontal: "center", vertical: "middle" }; x.font = { name: FONT, size: 10.5, bold: true }; }
     // ── ข้อมูล ──
+    let zebra = 0;
     out.forEach((row, ri) => {
-      const rr = hr2 + 1 + ri;
-      row.vals.forEach((v, i) => {
-        const c = cols[i]; const x = ws.getCell(rr, i + 1); x.value = v === "" || v == null ? null : v; x.border = BOX;
-        const numeric = typeof v === "number"; const head = c.en;
-        const center = head === "NO." || head === "ITEM" || head === "UOM" || head === "UNIT" || head === "REV.";
-        const kidCode = row.kid && head === "CODE";
-        x.font = { name: FONT, size: 11, bold: !!row.bold && !c.grey && head !== "Remark", color: c.grey || (row.kid && (head === "SUB QTY." || head === "QTY OF PART/SUB")) ? GREY : row.bold && head === "LENGTH (mm.)" ? RED : BLACK };
-        x.alignment = { vertical: "middle", horizontal: center ? "center" : numeric ? "right" : "left", wrapText: head === "DESCRIPTION" || head === "MATERIAL DESCRIPTION" || head === "REMARK" || head === "Remark", indent: kidCode ? 1 : 0 };
-        if (numeric && !Number.isInteger(v)) x.numFmt = "#,##0.00";
+      const rr = hr2 + 1 + ri; ws.getRow(rr).height = 18;
+      if (!row.kid) zebra += 1;   // ซับ: ลูกใช้สีเดียวกับแถวพ่อ
+      const bg = row.bold && sh.kind === "sub" ? SET_BG : zebra % 2 === 0 ? ZEBRA_BG : null;
+      const lastRow = ri === out.length - 1 && total == null;
+      for (let i = 0; i < W; i++) {
+        const c = cols[i]; const v = row.vals[i]; const x = ws.getCell(rr, i + 1); x.value = v === "" || v == null ? null : v;
+        x.border = edge(i + 1, null, lastRow ? EDGE : null); if (bg) x.fill = FILL(bg);
+        const numeric = typeof v === "number"; const head = c.en; const rm = head === "REMARK" || head === "Remark";
+        const kidCode = row.kid && head === "CODE"; const uomCol = head === "UNIT" && sh.kind === "mat";
+        const strong = (!!row.bold && !c.grey && !rm) || (CODE_COLS.has(head) && !uomCol && !row.kid && !numeric);
+        x.font = { name: FONT, size: rm ? 10 : 10.5, bold: strong, color: c.grey || (row.kid && (head === "SUB QTY." || head === "QTY OF PART/SUB")) ? GREY : row.bold && head === "LENGTH (mm.)" ? RED : rm ? INK2 : BLACK };
+        x.alignment = { vertical: "middle", horizontal: (CENTER_COLS.has(head) && head !== "UNIT") || uomCol ? "center" : numeric ? "right" : "left", wrapText: head === "DESCRIPTION" || head === "MATERIAL DESCRIPTION" || rm, indent: kidCode ? 2 : CENTER_COLS.has(head) || uomCol ? 0 : 1 };
+        if (numeric) x.numFmt = Number.isInteger(v) ? "#,##0" : "#,##0.00";
         if (row.cancelled && head !== "NO." && head !== "ITEM") x.font = { ...x.font, strike: true, color: RED };
-      });
-      for (let i = row.vals.length; i < W; i++) ws.getCell(rr, i + 1).border = BOX;
+      }
     });
     let last = hr2 + out.length;
     if (total != null && out.length) {
-      const tr = last + 1; last = tr;
-      for (let i = 1; i <= W; i++) ws.getCell(tr, i).border = BOX;
-      const x = ws.getCell(tr, totalAt); x.value = total; x.font = { name: FONT, size: 11, bold: true }; x.alignment = { horizontal: "right" };
-      const lab = ws.getCell(tr, totalAt - 1); lab.value = "รวม"; lab.font = { name: FONT, size: 11, bold: true }; lab.alignment = { horizontal: "right" };
+      const tr = last + 1; last = tr; ws.getRow(tr).height = 20;
+      for (let i = 1; i <= W; i++) { const c = ws.getCell(tr, i); c.border = edge(i, EDGE, EDGE); c.fill = FILL(TOTAL_BG); }
+      const x = ws.getCell(tr, totalAt); x.value = total; x.numFmt = "#,##0"; x.font = { name: FONT, size: 11, bold: true }; x.alignment = { horizontal: "right", vertical: "middle", indent: 1 };
+      const lab = ws.getCell(tr, totalAt - 1); lab.value = "รวม"; lab.font = { name: FONT, size: 11, bold: true }; lab.alignment = { horizontal: "right", vertical: "middle" };
     }
     if (!out.length) { const x = ws.getCell(hr2 + 1, 1); x.value = "(ไม่มีรายการ)"; x.font = { name: FONT, size: 10, color: GREY }; }
     ws.views = [{ state: "frozen", ySplit: hr2, showGridLines: false }];
@@ -217,7 +228,7 @@ export function buildLotWorkbook(ExcelJS, args) {
 
 // ── หน้าตัวอย่าง (HTML → พิมพ์ / บันทึกเป็น PDF จากเบราว์เซอร์) — หน้าตาเดียวกับ Excel ──
 const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmtN = (v) => (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : esc(v));
+const fmtN = (v) => (typeof v === "number" ? (Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : esc(v));
 export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
   const { meta } = model;
   const pages = model.sheets.map((sh) => {
@@ -226,11 +237,12 @@ export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
     const colgroup = sh.cols.map((c) => `<col style="width:${(c.w / tot * 100).toFixed(2)}%">`).join("");
     const head1 = (() => { const cells = []; for (let i = 0; i < W; i++) { const g = (sh.groups || []).find(([a]) => a === i + 1); if (g) { cells.push(`<th colspan="${g[1] - g[0] + 1}">${esc(g[2])}</th>`); i = g[1] - 1; } else cells.push(`<th${sh.cols[i].grey ? ' class="grey"' : ""}${sh.two ? "" : ' rowspan="1"'}>${esc(sh.cols[i].en)}</th>`); } return cells.join(""); })();
     const head2 = sh.two ? `<tr>${sh.cols.map((c) => `<th>${esc(c.th)}</th>`).join("")}</tr>` : "";
-    const body = sh.rows.map((r) => `<tr class="${r.bold ? "b" : ""}${r.kid ? " k" : ""}${r.cancelled ? " x" : ""}">${r.vals.map((v, i) => {
-      const h = sh.cols[i].en; const cls = [typeof v === "number" ? "n" : "", ["NO.", "ITEM", "UOM", "UNIT", "REV."].includes(h) ? "c" : "", sh.cols[i].grey || (r.kid && (h === "SUB QTY." || h === "QTY OF PART/SUB")) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", h === "Remark" || h === "REMARK" ? "rm" : ""].filter(Boolean).join(" ");
+    let zebra = 0;
+    const body = sh.rows.map((r) => { if (!r.kid) zebra += 1; return `<tr class="${r.bold ? "b" : ""}${r.bold && sh.kind === "sub" ? " set" : ""}${!r.kid && !(r.bold && sh.kind === "sub") && zebra % 2 === 0 ? " z" : ""}${r.kid ? " k" : ""}${r.kid && zebra % 2 === 0 ? " z" : ""}${r.cancelled ? " x" : ""}">${r.vals.map((v, i) => {
+      const h = sh.cols[i].en; const uom = h === "UNIT" && sh.kind === "mat"; const cls = [typeof v === "number" ? "n" : "", (CENTER_COLS.has(h) && h !== "UNIT") || uom ? "c" : "", CODE_COLS.has(h) && !uom && typeof v !== "number" ? "code" : "", sh.cols[i].grey || (r.kid && (h === "SUB QTY." || h === "QTY OF PART/SUB")) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", h === "Remark" || h === "REMARK" ? "rm" : ""].filter(Boolean).join(" ");
       return `<td class="${cls}">${v === "" || v == null ? "" : fmtN(v)}</td>`;
-    }).join("")}${"<td></td>".repeat(Math.max(0, W - r.vals.length))}</tr>`).join("");
-    const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? sh.total : i + 2 === sh.totalAt ? "รวม" : ""}</td>`).join("")}</tr>` : "";
+    }).join("")}${"<td></td>".repeat(Math.max(0, W - r.vals.length))}</tr>`; }).join("");
+    const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? fmtN(sh.total) : i + 2 === sh.totalAt ? "รวม" : ""}</td>`).join("")}</tr>` : "";
     return `<section class="pg ${land ? "land" : "port"}">
 <div class="top"><div class="logo">${logoUrl ? `<img src="${esc(logoUrl)}" alt="">` : ""}</div><div class="ttl"><b>PRODUCTION ORDER</b><br><b class="s">${esc(sh.line2)}</b></div><div class="rr">RPT:<br>REV:</div></div>
 <div class="info"><div class="l"><b>Release Order : ${esc(meta.ro)}</b><b>Project : ${esc(meta.project)}</b></div><div class="m"><b>${esc(sh.t1)}</b><b>${esc(sh.t2)}</b></div><div class="r"><b>Print date : ${esc(meta.date)}</b><b>Prepared by : ${esc(meta.by)}</b></div></div>
@@ -247,9 +259,16 @@ ${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
 .info{display:flex;justify-content:space-between;align-items:stretch;border-top:2px solid #000;border-bottom:2px solid #000;padding:3px 0;font-size:12px;margin-bottom:6mm}
 .info>div{display:flex;flex-direction:column;gap:3px;line-height:1.35}.info .m{text-align:center;flex:1}.info .r{text-align:right}.info .l{min-width:60mm}
 .note{font-size:10px;font-style:italic;color:#777;margin:-4mm 0 3mm}
-table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #000;padding:2px 4px;vertical-align:middle;word-wrap:break-word;overflow-wrap:anywhere}
-th{font-weight:700;text-align:center;font-size:10.5px}td.n{text-align:right}td.c{text-align:center}.grey{color:#8c8c8c}.red{color:#c00000}td.ind{padding-left:14px}
-tr.b td{font-weight:700}tr.b td.rm{font-weight:400}tr.k td{font-weight:400}tr.x td{text-decoration:line-through;color:#c00000}tr.t td{font-weight:700}td.lab{text-align:right}
+table{width:100%;border-collapse:collapse;table-layout:fixed;border:1.5px solid #000}
+th,td{border:1px solid #b4b9c0;padding:3px 6px;vertical-align:middle;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.35}
+thead th{background:#e6e9ed;font-weight:700;text-align:center;font-size:10.5px;padding:5px 4px}
+thead tr:last-child th{border-bottom:1.5px solid #000}thead tr+tr th{background:#f2f4f6;font-weight:400;font-size:9.5px;color:#4b5563;padding:2px 4px}
+td.n{text-align:right;font-variant-numeric:tabular-nums}td.c{text-align:center}td.code{font-weight:700}td.rm{font-size:9.5px;color:#4b5563}
+.grey{color:#8c8c8c!important}.red{color:#c00000}td.ind{padding-left:18px}
+tr.z td{background:#f8f9fb}tr.set td{background:#eceff3}
+tr.b td{font-weight:700}tr.b td.rm{font-weight:400}tr.k td{font-weight:400}tr.x td{text-decoration:line-through;color:#c00000}
+tr.t td{font-weight:700;background:#e6e9ed;border-top:1.5px solid #000;padding:4px 6px}td.lab{text-align:right}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 thead{display:table-header-group}tr{break-inside:avoid}
 @media print{html,body{background:#fff}.pg{margin:0;box-shadow:none;width:auto!important;min-height:0!important;padding:0}}
 </style></head><body>${pages || "<p style='padding:20px'>(ล็อตนี้ไม่มีรายการ)</p>"}</body></html>`;
