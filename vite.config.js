@@ -13,8 +13,11 @@ const devProxy = Object.fromEntries(
 );
 devProxy["/realtime/v1"] = { target: LOCAL_SUPABASE, changeOrigin: true, ws: true };
 
-export default defineConfig({
-  plugins: [react()],
+// ★ 2026-10-26 npm run dev:https (= vite --host --mode https) → เปิดแบบ https ใบรับรองทำเอง
+//   ให้ iPad/แท็บเล็ตในวง LAN ใช้ได้ (Chrome บน iPad บังคับ https · กล้องสแกน QR ใช้ได้เฉพาะ https)
+//   ครั้งแรกเบราว์เซอร์จะเตือน "ไม่ปลอดภัย" → กด แสดงรายละเอียด/ขั้นสูง → เข้าชมเว็บไซต์ · ไม่มีผลกับ build/Vercel
+export default defineConfig(async ({ mode }) => ({
+  plugins: [react(), ...(mode === "https" ? [(await import("@vitejs/plugin-basic-ssl")).default()] : [])],
   server: { proxy: devProxy },
   build: {
     rollupOptions: {
@@ -27,4 +30,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
