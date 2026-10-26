@@ -718,15 +718,23 @@ export function lotMaterials(plan, need, rows, sheetsOf) {
     for (const it of items || []) {
       if ((it[4] || "") === "ยกเลิก" || it[0] === "sub") continue;
       const n = mult * (Number(it[2]) || 0); if (!(n > 0)) continue;
+      let hit = false;
       for (const k of ["GLASS", "FIXING", "OTHER"]) {
         const base = pick[k].get(NC(it[1])); if (!base) continue;
-        const cur = acc[k].get(base.code) || { ...base, qty: 0 }; cur.qty += n; acc[k].set(base.code, cur); break;
+        const cur = acc[k].get(base.code) || { ...base, qty: 0 }; cur.qty += n; acc[k].set(base.code, cur); hit = true; break;
       }
+      if (hit) continue;
+      // บรรทัดที่มีแต่ใน PDF ซับ (full) ไม่อยู่ใน need — สกรู/ยาง → ACCESSORIES · GL… → GLASS · พาร์ทอื่นไม่นับ (เป็นของผลิตเอง)
+      const d = bom.parts?.[findKey(bom.parts, it[1])] || {};
+      const k = it[0] === "hw" || d.k === "hw" ? "FIXING" : /^GL/i.test(String(it[1])) ? "GLASS" : null; if (!k) continue;
+      const u = lineUom(it[0], d, it[2]);
+      const cur = acc[k].get(it[1]) || { code: it[1], qty: 0, d: d.d || "", l: d.l ?? null, h: d.h ?? null, f: d.f || "", u: u === "mm." ? "mm." : d.u || u, mm: false };
+      cur.qty += n; acc[k].set(it[1], cur);
     }
   };
   for (const r of live) {
     if (r.kind === "panel") { const pk = findKey(bom.panels, r.code); if (pk) add(bom.panels[pk].items, Number(r.qty)); }
-    else if (r.kind === "subassembly") { const sk = findKey(bom.subs, r.code); if (sk) add(bom.subs[sk].items, Number(r.qty)); }
+    else if (r.kind === "subassembly") { const sk = findKey(bom.subs, r.code); if (sk) add(subLines(bom.subs[sk]), Number(r.qty)); }
   }
   const list = (m) => [...m.values()].sort((a, b) => ncmp(a.code, b.code));
   return { mat: cutMaterials(cut), glass: list(acc.GLASS), hw: list(acc.FIXING), other: list(acc.OTHER) };
@@ -1012,11 +1020,35 @@ export function lotModMap(plan, lotNo) {
 // เก็บเฉพาะ BOM ที่ใบนี้ใช้ (แผนเล็กลง)
 export function trimBom(bom, need) {
   const keep = (obj, codes) => { const o = {}; for (const c of codes) { const k = findKey(obj, c); if (k) o[k] = obj[k]; } return o; };
+  const subs = keep(bom.subs, need.subs.map((s) => s.code));
+  // + พาร์ทที่อยู่แค่ใน "full" ของซับ (สกรู/ยางจาก PDF ที่ไม่อยู่ใน BOM ระบบ) → เก็บรายละเอียด/หน่วยไว้ให้ใบปล่อย
+  const fullCodes = Object.values(subs).flatMap((x) => (x.full || []).filter((i) => i[0] !== "sub").map((i) => i[1]));
   return {
     panels: keep(bom.panels, need.panels.map((p) => p.code)),
-    subs: keep(bom.subs, need.subs.map((s) => s.code)),
-    parts: keep(bom.parts, [...need.parts, ...need.glass, ...need.hw, ...need.other].map((p) => p.code)),
+    subs,
+    parts: keep(bom.parts, [...need.parts, ...need.glass, ...need.hw, ...need.other].map((p) => p.code).concat(fullCodes)),
   };
+}
+// ลูกของซับ "ครบทุกบรรทัด" สำหรับแสดง/ใบเบิก (2026-10-26):
+//   items = BOM ในระบบ (มีแต่ซับ/พาร์ทที่มี QR · มีผล Modify) · full = ทุกบรรทัดจาก PDF ซับ (รวมสกรู/ยาง/กระจก ที่ไม่มี QR)
+//   เรียงตาม PDF (full) · เบอร์ที่อยู่ใน items ใช้จำนวน/สถานะจาก items · บรรทัดที่มีแต่ใน full ต่อท้ายตามลำดับ · ยกเลิก = ไม่เอา
+export function subLines(sub) {
+  if (!sub) return [];
+  const its = sub.items || []; const byCode = new Map(its.map((i) => [NC(i[1]), i]));
+  const out = []; const used = new Set();
+  for (const f of sub.full || []) {
+    const k = NC(f[1]); if (!k || used.has(k) || (f[4] || "") === "ยกเลิก") continue; used.add(k);
+    const it = byCode.get(k); if (!it) out.push(f); else if ((it[4] || "") !== "ยกเลิก") out.push(it);
+  }
+  for (const it of its) { const k = NC(it[1]); if (!k || used.has(k) || (it[4] || "") === "ยกเลิก") continue; used.add(k); out.push(it); }
+  return out;
+}
+// หน่วยของพาร์ทลูก: ซับ = SET · สกรู/ยางวัดเป็นมม. = mm. · อื่น = หน่วยใน BOM / pcs.
+export function lineUom(t, d, q) {
+  if (t === "sub") return "SET";
+  if (d && d.mm) return "mm.";
+  if ((d && d.k === "hw") || t === "hw") return (d && d.u) || (Number.isInteger(Number(q)) ? "pcs." : "mm.");
+  return "pcs.";
 }
 // แถวที่จะส่งให้ create_release_batch ของ 1 ล็อต
 //   sel = { addrs:Set, subs:Map(code→qty), parts:Map(code→qty) } · หมายเหตุ "ใบ: …" = ใบงานที่ส่งไป (ดูย้อนหลังได้)

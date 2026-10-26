@@ -769,7 +769,7 @@ function LotMats({ plan, need, lot, sheetsOf }) {
         <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>
         <tbody>{m.hw.map((x) => (
           <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
-            <td className="r rl-sc-q">{x.u === "m." ? nlen(Math.round(hwQ(x) * 100) / 100) : nf(hwQ(x))} <small className="rw-muted">{x.u || (x.mm ? "mm." : "pcs.")}</small></td></tr>))}</tbody>
+            <td className="r rl-sc-q">{x.u === "m." || x.u === "mm." ? nlen(Math.round(hwQ(x) * 100) / 100) : nf(hwQ(x))} <small className="rw-muted">{x.u || (x.mm ? "mm." : "pcs.")}</small></td></tr>))}</tbody>
       </table></div>
     </section>);
   if (m.other.length) cards.push(

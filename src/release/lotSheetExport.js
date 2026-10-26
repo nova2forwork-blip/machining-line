@@ -2,7 +2,7 @@
 //   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
 //   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
-import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials } from "./releaseCore.js";
+import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
 const TITLES = {
@@ -53,12 +53,13 @@ function bomTree(plan, items, mult = 1, lvl = 1, seen = new Set(), out = []) {
     const isSub = t === "sub"; const sk = isSub ? findKey(bom.subs, c) : null;
     const d = (isSub ? bom.subs[sk] : bom.parts[findKey(bom.parts, c)]) || {};
     const per = q * mult;
-    out.push({ code: c, d: d.d || "", l: d.l ?? null, q: per, uom: isSub ? "SET" : d.k === "hw" ? d.u || "pcs." : "pcs.", lvl, isSub });
-    if (isSub && sk && !seen.has(sk) && lvl < 8) bomTree(plan, bom.subs[sk].items, per, lvl + 1, new Set([...seen, sk]), out);
+    out.push({ code: c, d: d.d || "", l: d.l ?? null, q: per, uom: lineUom(t, d, q), lvl, isSub });
+    if (isSub && sk && !seen.has(sk) && lvl < 8) bomTree(plan, subLines(bom.subs[sk]), per, lvl + 1, new Set([...seen, sk]), out);
   }
   return out;
 }
-const subTree = (plan, code) => { const bom = plan.bom || {}; const sk = findKey(bom.subs, code); return sk ? bomTree(plan, bom.subs[sk].items, 1, 1, new Set([sk])) : []; };
+// ลูกของซับ = BOM ระบบ + บรรทัดจาก PDF ที่ไม่มี QR (สกรู/ยาง) — ดู subLines
+const subTree = (plan, code) => { const bom = plan.bom || {}; const sk = findKey(bom.subs, code); return sk ? bomTree(plan, subLines(bom.subs[sk]), 1, 1, new Set([sk])) : []; };
 
 // คอลัมน์: { en, th, w, key? }  ·  groups = หัวรวมเหนือหลายคอลัมน์ [ก, ข, ชื่อ] (ตอนนี้ไม่มีชีตไหนใช้)
 //   2026-10-26: เอาคอลัมน์ว่าง PRODUCTION QTY ×3 / DATE ×3 ออก (user สั่ง)
@@ -120,7 +121,7 @@ function matRows(sheet, lm) {
   const out = []; let n = 0;
   if (sheet.k === "MAT") { for (const m of lm.mat) out.push({ vals: [++n, m.inv || "(ไม่มี INV)", m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), "", m.off || "", [m.off ? `เศษ (มม.) ${offTxt(m.offLens)}` : "", m.noLen ? `ไม่มีความยาว ${m.noLen} ชิ้น` : "", m.over ? `ยาวกว่าเส้น ${m.over} ชิ้น` : ""].filter(Boolean).join(" · ")] }); return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
   if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
-  else for (const p of lm.hw) out.push({ vals: [++n, p.code, p.d || "", num(p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
+  else for (const p of lm.hw) out.push({ vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
   return { out, total: null };
 }
 
