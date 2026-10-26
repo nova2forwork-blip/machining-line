@@ -26,6 +26,10 @@ const HEAD_BG = "FFE6E9ED", HEAD2_BG = "FFF2F4F6", ZEBRA_BG = "FFF8F9FB", SET_BG
 // คอลัมน์ที่จัดกลาง / เบอร์ที่ตัวหนา
 const CENTER_COLS = new Set(["NO.", "ITEM", "UOM", "UNIT", "REV."]);
 const CODE_COLS = new Set(["CODE", "MATERIAL CODE", "UNIT"]);
+const KID_GREY = new Set(["SUB QTY.", "QTY OF PART/SUB"]);   // ช่องของแถวลูกที่เป็นตัวคูณ → สีเทา
+const isRm = (h) => /remark/i.test(h || "");
+const WRAP = (h) => h === "DESCRIPTION" || h === "MATERIAL DESCRIPTION" || isRm(h);
+const hasSet = (kind) => kind === "sub";   // ใบที่มีแถวหัว (SET) + ลูก (ASSEMBLY คงแบบเดิม: 1 แถวต่อที่อยู่ — user สั่ง)
 const FONT = "Tahoma";
 
 const fmtDate = (d) => { try { return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; } catch { return ""; } };
@@ -39,19 +43,22 @@ export function lotRowSheets(r, need) {
   return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"];
 }
 
-// ลูกของซับ (ตาม BOM): พาร์ท / ซับย่อย / สกรู-ยาง
-function subKids(plan, code) {
-  const bom = plan.bom || {}; const sk = findKey(bom.subs, code); if (!sk) return [];
-  const out = [];
-  for (const it of bom.subs[sk].items || []) {
+// ลูกทุกชั้นตาม BOM (2026-10-26 user: "แสดงลูกทุกเบอร์"): พาร์ท / สกรู-ยาง / ซับย่อย + ลูกของซับย่อยต่อลงไป
+//   q = จำนวนต่อ 1 ชุดของแถวบนสุด (คูณสะสมตามชั้น) · lvl 1 = ลูกตรง · กันวน (seen) · ไม่เกิน 8 ชั้น
+function bomTree(plan, items, mult = 1, lvl = 1, seen = new Set(), out = []) {
+  const bom = plan.bom || {};
+  for (const it of items || []) {
     if ((it[4] || "") === "ยกเลิก") continue;
-    const [t, c, q] = it; if (!c || !(q > 0)) continue;
-    const isSub = t === "sub";
-    const d = (isSub ? bom.subs[findKey(bom.subs, c)] : bom.parts[findKey(bom.parts, c)]) || {};
-    out.push({ code: c, d: d.d || "", l: d.l ?? null, q, uom: isSub ? "SET" : d.k === "hw" ? d.u || "pcs." : "pcs." });
+    const [t, c, q0] = it; const q = Number(q0) || 0; if (!c || !(q > 0)) continue;
+    const isSub = t === "sub"; const sk = isSub ? findKey(bom.subs, c) : null;
+    const d = (isSub ? bom.subs[sk] : bom.parts[findKey(bom.parts, c)]) || {};
+    const per = q * mult;
+    out.push({ code: c, d: d.d || "", l: d.l ?? null, q: per, uom: isSub ? "SET" : d.k === "hw" ? d.u || "pcs." : "pcs.", lvl, isSub });
+    if (isSub && sk && !seen.has(sk) && lvl < 8) bomTree(plan, bom.subs[sk].items, per, lvl + 1, new Set([...seen, sk]), out);
   }
   return out;
 }
+const subTree = (plan, code) => { const bom = plan.bom || {}; const sk = findKey(bom.subs, code); return sk ? bomTree(plan, bom.subs[sk].items, 1, 1, new Set([sk])) : []; };
 
 // คอลัมน์: { en, th, w, key? }  ·  groups = หัวรวมเหนือหลายคอลัมน์ [ก, ข, ชื่อ] (ตอนนี้ไม่มีชีตไหนใช้)
 //   2026-10-26: เอาคอลัมน์ว่าง PRODUCTION QTY ×3 / DATE ×3 ออก (user สั่ง)
@@ -91,7 +98,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
       const others = (s.procs || []).filter((p) => p !== sheet.k);
       const cx = !!r.mod_cancelled_at;
       out.push({ vals: [++n, r.code, s.d || "", num(s.l), q, "", "", "SET", [others.length ? "อยู่ในใบอื่นด้วย: " + others.join(", ") : "", modNote(r)].filter(Boolean).join(" · ")], bold: true, cancelled: cx });
-      for (const k of subKids(plan, r.code)) out.push({ vals: ["", k.code, k.d, num(k.l), q, num(k.q), num(k.q * q), k.uom, ""], kid: true, cancelled: cx });
+      for (const k of subTree(plan, r.code)) out.push({ vals: ["", k.code, k.d, num(k.l), q, num(k.q), num(k.q * q), k.uom, ""], kid: true, lvl: k.lvl, sub2: k.isSub, cancelled: cx });
     }
     return { out, total };
   }
@@ -195,18 +202,21 @@ export function buildLotWorkbook(ExcelJS, args) {
     // ── ข้อมูล ──
     let zebra = 0;
     out.forEach((row, ri) => {
-      const rr = hr2 + 1 + ri; ws.getRow(rr).height = 18;
-      if (!row.kid) zebra += 1;   // ซับ: ลูกใช้สีเดียวกับแถวพ่อ
-      const bg = row.bold && sh.kind === "sub" ? SET_BG : zebra % 2 === 0 ? ZEBRA_BG : null;
+      const rr = hr2 + 1 + ri;
+      // ความสูงแถว: ข้อความยาวในช่องที่ตัดบรรทัด → เพิ่มบรรทัด (ประมาณจากความกว้างคอลัมน์)
+      const lines = Math.max(1, ...cols.map((c, i) => (WRAP(c.en) && row.vals[i] ? Math.ceil(String(row.vals[i]).length / Math.max(1, c.w * 1.05)) : 1)));
+      ws.getRow(rr).height = Math.max(18, 14 * lines + 4);
+      if (!row.kid) zebra += 1;   // ซับ/แผง: ลูกใช้สีเดียวกับแถวพ่อ
+      const bg = row.bold && hasSet(sh.kind) ? SET_BG : zebra % 2 === 0 ? ZEBRA_BG : null;
       const lastRow = ri === out.length - 1 && total == null;
       for (let i = 0; i < W; i++) {
         const c = cols[i]; const v = row.vals[i]; const x = ws.getCell(rr, i + 1); x.value = v === "" || v == null ? null : v;
         x.border = edge(i + 1, null, lastRow ? EDGE : null); if (bg) x.fill = FILL(bg);
-        const numeric = typeof v === "number"; const head = c.en; const rm = head === "REMARK" || head === "Remark";
+        const numeric = typeof v === "number"; const head = c.en; const rm = isRm(head);
         const kidCode = row.kid && head === "CODE"; const uomCol = head === "UNIT" && sh.kind === "mat";
-        const strong = (!!row.bold && !c.grey && !rm) || (CODE_COLS.has(head) && !uomCol && !row.kid && !numeric);
-        x.font = { name: FONT, size: rm ? 10 : 10.5, bold: strong, color: c.grey || (row.kid && (head === "SUB QTY." || head === "QTY OF PART/SUB")) ? GREY : row.bold && head === "LENGTH (mm.)" ? RED : rm ? INK2 : BLACK };
-        x.alignment = { vertical: "middle", horizontal: (CENTER_COLS.has(head) && head !== "UNIT") || uomCol ? "center" : numeric ? "right" : "left", wrapText: head === "DESCRIPTION" || head === "MATERIAL DESCRIPTION" || rm, indent: kidCode ? 2 : CENTER_COLS.has(head) || uomCol ? 0 : 1 };
+        const strong = (!!row.bold && !c.grey && !rm) || (CODE_COLS.has(head) && !uomCol && !row.kid && !numeric) || (row.sub2 && (head === "CODE" || head === "UOM"));
+        x.font = { name: FONT, size: rm ? 10 : 10.5, bold: strong, color: c.grey || (row.kid && KID_GREY.has(head)) ? GREY : row.bold && head === "LENGTH (mm.)" ? RED : rm ? INK2 : BLACK };
+        x.alignment = { vertical: "middle", horizontal: (CENTER_COLS.has(head) && head !== "UNIT") || uomCol ? "center" : numeric ? "right" : "left", wrapText: WRAP(head), indent: kidCode ? 1 + (row.lvl || 1) : CENTER_COLS.has(head) || uomCol ? 0 : 1 };
         if (numeric) x.numFmt = Number.isInteger(v) ? "#,##0" : "#,##0.00";
         if (row.cancelled && head !== "NO." && head !== "ITEM") x.font = { ...x.font, strike: true, color: RED };
       }
@@ -238,9 +248,9 @@ export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
     const head1 = (() => { const cells = []; for (let i = 0; i < W; i++) { const g = (sh.groups || []).find(([a]) => a === i + 1); if (g) { cells.push(`<th colspan="${g[1] - g[0] + 1}">${esc(g[2])}</th>`); i = g[1] - 1; } else cells.push(`<th${sh.cols[i].grey ? ' class="grey"' : ""}${sh.two ? "" : ' rowspan="1"'}>${esc(sh.cols[i].en)}</th>`); } return cells.join(""); })();
     const head2 = sh.two ? `<tr>${sh.cols.map((c) => `<th>${esc(c.th)}</th>`).join("")}</tr>` : "";
     let zebra = 0;
-    const body = sh.rows.map((r) => { if (!r.kid) zebra += 1; return `<tr class="${r.bold ? "b" : ""}${r.bold && sh.kind === "sub" ? " set" : ""}${!r.kid && !(r.bold && sh.kind === "sub") && zebra % 2 === 0 ? " z" : ""}${r.kid ? " k" : ""}${r.kid && zebra % 2 === 0 ? " z" : ""}${r.cancelled ? " x" : ""}">${r.vals.map((v, i) => {
-      const h = sh.cols[i].en; const uom = h === "UNIT" && sh.kind === "mat"; const cls = [typeof v === "number" ? "n" : "", (CENTER_COLS.has(h) && h !== "UNIT") || uom ? "c" : "", CODE_COLS.has(h) && !uom && typeof v !== "number" ? "code" : "", sh.cols[i].grey || (r.kid && (h === "SUB QTY." || h === "QTY OF PART/SUB")) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", h === "Remark" || h === "REMARK" ? "rm" : ""].filter(Boolean).join(" ");
-      return `<td class="${cls}">${v === "" || v == null ? "" : fmtN(v)}</td>`;
+    const body = sh.rows.map((r) => { if (!r.kid) zebra += 1; return `<tr class="${r.bold ? "b" : ""}${r.bold && hasSet(sh.kind) ? " set" : ""}${r.sub2 ? " s2" : ""}${!r.kid && !(r.bold && hasSet(sh.kind)) && zebra % 2 === 0 ? " z" : ""}${r.kid ? " k" : ""}${r.kid && zebra % 2 === 0 ? " z" : ""}${r.cancelled ? " x" : ""}">${r.vals.map((v, i) => {
+      const h = sh.cols[i].en; const uom = h === "UNIT" && sh.kind === "mat"; const cls = [typeof v === "number" ? "n" : "", (CENTER_COLS.has(h) && h !== "UNIT") || uom ? "c" : "", CODE_COLS.has(h) && !uom && typeof v !== "number" ? "code" : "", sh.cols[i].grey || (r.kid && KID_GREY.has(h)) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", isRm(h) ? "rm" : ""].filter(Boolean).join(" ");
+      return `<td class="${cls}"${r.kid && h === "CODE" ? ` style="padding-left:${6 + 12 * (r.lvl || 1)}px"` : ""}>${v === "" || v == null ? "" : fmtN(v)}</td>`;
     }).join("")}${"<td></td>".repeat(Math.max(0, W - r.vals.length))}</tr>`; }).join("");
     const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? fmtN(sh.total) : i + 2 === sh.totalAt ? "รวม" : ""}</td>`).join("")}</tr>` : "";
     return `<section class="pg ${land ? "land" : "port"}">
@@ -265,7 +275,7 @@ thead th{background:#e6e9ed;font-weight:700;text-align:center;font-size:10.5px;p
 thead tr:last-child th{border-bottom:1.5px solid #000}thead tr+tr th{background:#f2f4f6;font-weight:400;font-size:9.5px;color:#4b5563;padding:2px 4px}
 td.n{text-align:right;font-variant-numeric:tabular-nums}td.c{text-align:center}td.code{font-weight:700}td.rm{font-size:9.5px;color:#4b5563}
 .grey{color:#8c8c8c!important}.red{color:#c00000}td.ind{padding-left:18px}
-tr.z td{background:#f8f9fb}tr.set td{background:#eceff3}
+tr.z td{background:#f8f9fb}tr.set td{background:#eceff3}tr.s2 td.ind,tr.s2 td.c{font-weight:700}
 tr.b td{font-weight:700}tr.b td.rm{font-weight:400}tr.k td{font-weight:400}tr.x td{text-decoration:line-through;color:#c00000}
 tr.t td{font-weight:700;background:#e6e9ed;border-top:1.5px solid #000;padding:4px 6px}td.lab{text-align:right}
 *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
