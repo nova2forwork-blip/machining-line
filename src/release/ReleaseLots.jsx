@@ -36,7 +36,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
   const [modify, setModify] = useState(false);
-  const [open, setOpen] = useState(null);
+  const [open, setOpenRaw] = useState(null);
+  const [lotQ, setLotQ] = useState("");   // ★ ค้นหาในล็อตที่เปิด (เบอร์ / รายละเอียด / ที่อยู่ / INV)
+  const setOpen = (v) => { setOpenRaw(v); setLotQ(""); };
   useEffect(() => { document.body.style.overflow = builder || modify ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [builder, modify]);
   // BOM ที่ยังไม่มีในแผนนี้ → ดึงจาก Release อื่นของโปรเจคเดียวกันให้เอง (เฉพาะที่ว่าง)
   const gaps = useMemo(() => bomGaps(plan), [plan]);
@@ -56,6 +58,25 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const descMap = useMemo(() => new Map([...need.parts, ...need.subs].map((x) => [NC(x.code), x.d])), [need]);
   const descOf = (code) => descMap.get(NC(code)) || "";
   const [sheetPrev, setSheetPrev] = useState(null);   // ตัวอย่างใบปล่อย (PDF / Excel) ของล็อต
+  // ★ ความคืบหน้าต่อล็อต: ยอดที่ทำแล้วต่อแถว release (get_release_modify_info) — โหลดเบื้องหลัง · ไม่ได้ = ไม่โชว์
+  const lotKey = rel.lots.map((l) => `${l.no}:${l.rows.length}:${l.qty}`).join("|");
+  const [prod, setProd] = useState(null);   // Map(release_id → ทำแล้ว)
+  useEffect(() => {
+    if (!api?.lotLimits || !rel.lots.length) { setProd(null); return; }
+    let alive = true;
+    api.lotLimits(plan, rel.lots.map((l) => l.no))
+      .then(({ limits }) => { if (!alive) return; const m = new Map(); for (const [rid, v] of limits || []) m.set(String(rid), Number(v?.produced) || 0); setProd(m); })
+      .catch(() => { if (alive) setProd(null); });
+    return () => { alive = false; };
+  }, [lotKey, plan.projectId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const doneRow = (r) => (prod && r.id != null ? Math.min(Number(r.qty) || 0, prod.get(String(r.id)) || 0) : null);
+  const lotProg = (L) => {
+    if (!prod) return null;
+    const g = { part: [0, 0], sub: [0, 0], panel: [0, 0] };
+    for (const r of L.rows) { if (r.mod_cancelled_at) continue; const k = r.kind === "panel" ? "panel" : r.kind === "subassembly" ? "sub" : "part"; g[k][0] += doneRow(r) || 0; g[k][1] += Number(r.qty) || 0; }
+    const d = g.part[0] + g.sub[0] + g.panel[0], t = g.part[1] + g.sub[1] + g.panel[1];
+    return { g, d, t, pct: t ? Math.round((d / t) * 100) : 0 };
+  };
   const lastLot = rel.lots[rel.lots.length - 1];
   const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map((l) => (SHEETS.find((s) => s.label === l || s.k === l) || {}).k || l); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
   return (
@@ -101,6 +122,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                     <span className="rw-muted">{fmtD(L.date)}</span>
                     {lotVers.length ? <Pill tone="mod">Modify {lotVers.join(", ")}</Pill> : null}
                     <span>{[L.panels && `แผง ${nf(L.panels)}`, L.subs && `ซับ ${nf(L.subs)} เบอร์`, L.parts && `พาร์ท ${nf(L.parts)} เบอร์`].filter(Boolean).join(" · ")}</span>
+                    {(() => { const pg = lotProg(L); if (!pg || !pg.t) return null;
+                      const tip = [["พาร์ท", "part"], ["ซับ", "sub"], ["แผง", "panel"]].filter(([, k]) => pg.g[k][1]).map(([n, k]) => `${n} ${nf(pg.g[k][0])}/${nf(pg.g[k][1])}`).join(" · ");
+                      return <span className={`rl-lot-prog ${pg.pct >= 100 ? "full" : pg.d ? "" : "zero"}`} title={`ทำแล้ว (ชิ้น) · ${tip}`}><i><b style={{ width: `${pg.pct}%` }} /></i>{pg.pct >= 100 ? "เสร็จครบ" : `ทำแล้ว ${pg.pct}%`}</span>; })()}
                     <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}</span>
                     <span className="rl-caret" aria-hidden="true">▾</span>
                   </button>
@@ -108,14 +132,23 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                     <div className="rl-lot-body">
                       <div className="rl-lot-bar">
                         <div className="rl-lot-bar-txt"><b>ใบปล่อย / QR ของล็อต {L.no}</b><span>ใบปล่อย: ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel{onPrintQr ? " · QR: เปิดหน้าพิมพ์ป้ายพร้อมเลือกเบอร์ของล็อตนี้ให้" : ""}</span></div>
+                        <div className="rl-lot-search">
+                          <Icon name="search" size={14} />
+                          <input className="input" value={lotQ} onChange={(e) => setLotQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด / ที่อยู่ / INV" aria-label={`ค้นหาในล็อต ${L.no}`} />
+                          {lotQ ? <button type="button" className="rl-x-sm" onClick={() => setLotQ("")} aria-label="ล้างคำค้นหา">×</button> : null}
+                        </div>
                         <div className="rl-lot-bar-btns">
                           {onPrintQr ? QR_GROUPS.map((g) => { const ids = L.rows.filter((r) => g.kinds.includes(r.kind) && !r.mod_cancelled_at && r.id).map((r) => r.id); return ids.length ? (
                             <button key={g.k} type="button" className={`btn btn-ghost btn-sm rl-qrbtn ${g.k}`} onClick={() => onPrintQr(ids)} title={g.k === "panel" ? `เปิดหน้าพิมพ์ QR ของแผงในล็อต ${L.no} (${nf(L.panels)} แผง · 1 QR ต่อที่อยู่)` : `เปิดหน้าพิมพ์ QR ของ${g.th}ในล็อต ${L.no} (${ids.length} เบอร์)`}><Icon name="qr" size={14} /> QR {g.label} <small>{nf(g.k === "panel" ? L.panels || ids.length : ids.length)}</small></button>) : null; }) : null}
                           <button type="button" className="btn btn-accent btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}><Icon name="printer" size={14} /> ใบปล่อย · PDF / Excel</button>
                         </div>
                       </div>
+                      {(() => { const qq = lotQ.trim().toUpperCase(); if (!qq) return null;
+                        const hit = L.rows.filter((r) => rowHit(r, qq, descOf)).length;
+                        return <div className={`rl-lot-found ${hit ? "" : "none"}`}>{hit ? <>เจอ <b>{nf(hit)}</b> เบอร์ในใบงาน{L.rows.length > hit ? <span className="rw-muted"> · ซ่อนที่ไม่ตรง {nf(L.rows.length - hit)} เบอร์</span> : null}</> : <>ไม่เจอ “{lotQ.trim()}” ในใบงานของล็อตนี้</>}</div>; })()}
                       <div className="rl-sc-grid">
-                      {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => { const rows = bySheet.get(s.k);
+                      {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => { const all = bySheet.get(s.k); const qq = lotQ.trim().toUpperCase();
+                        const rows = qq ? all.filter((r) => rowHit(r, qq, descOf)) : all; if (!rows.length) return null;
                         const others = (r) => rowSheets(r).filter((k) => k !== s.k);
                         const showOthers = s.kind === "sub" && rows.some((r) => others(r).length);
                         const pcs = s.kind === "panel" ? rows.reduce((t, r) => t + (Number(r.qty) || 0), 0) : rows.reduce((t, r) => t + (Number(r.qty) || 0), 0);
@@ -123,7 +156,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                         <section key={s.k} className={`rl-sc ${s.kind}`}>
                           <header className="rl-sc-h">
                             <div className="rl-sc-t"><b>{s.label}</b><span>{s.th}</span></div>
-                            <div className="rl-sc-n">{s.kind === "panel" ? <><b>{nf(pcs)}</b> แผง<small> · {nf(rows.length)} แบบ</small></> : <><b>{nf(rows.length)}</b> เบอร์<small> · {nf(pcs)} ชิ้น</small></>}</div>
+                            <div className="rl-sc-n">{qq ? <><b>{nf(rows.length)}</b><small>/{nf(all.length)}</small> {s.kind === "panel" ? "แบบ" : "เบอร์"}</> : s.kind === "panel" ? <><b>{nf(pcs)}</b> แผง<small> · {nf(rows.length)} แบบ</small></> : <><b>{nf(rows.length)}</b> เบอร์<small> · {nf(pcs)} ชิ้น</small></>}</div>
                           </header>
                           <div className="rl-sc-tw"><table className="rl-sc-table">
                             <thead><tr>
@@ -131,22 +164,24 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                               {s.kind === "panel" ? <th>ที่อยู่</th> : <th>รายละเอียด</th>}
                               {showOthers ? <th>อยู่ในใบอื่นด้วย</th> : null}
                               <th className="r">จำนวน</th>
+                              {prod ? <th className="r" title="ชิ้นที่ทำแล้ว / ชิ้นที่ปล่อย">ทำแล้ว</th> : null}
                             </tr></thead>
                             <tbody>{rows.map((r) => { const m = mm.get(NC(r.code)); const cancel = !!(r.mod_cancelled_at || m?.cancel);
                               const addrs = s.kind === "panel" ? addrsFromNote(r.note) : [];
                               return (
                               <tr key={r.code} className={cancel ? "rl-cancelrow" : ""}>
-                                <td className="rl-sc-code"><Code code={r.code} cancel={cancel} /></td>
+                                <td className="rl-sc-code">{qq && !cancel ? <Hl t={r.code} q={qq} /> : <Code code={r.code} cancel={cancel} />}</td>
                                 {s.kind === "panel"
-                                  ? <td>{addrs.length ? <div className="rl-sc-addr">{addrs.map((x) => <span key={x} className={/^MOCK-/.test(x) ? "mock" : ""}>{/^MOCK-/.test(x) ? <i>Mockup</i> : null}{x}</span>)}</div> : <span className="rw-muted">—</span>}</td>
-                                  : <td className="rl-sc-desc" title={descOf(r.code)}>{descOf(r.code) || <span className="rw-muted">—</span>}</td>}
+                                  ? <td>{addrs.length ? <div className="rl-sc-addr">{addrs.map((x) => <span key={x} className={/^MOCK-/.test(x) ? "mock" : ""}>{/^MOCK-/.test(x) ? <i>Mockup</i> : null}<Hl t={x} q={qq} /></span>)}</div> : <span className="rw-muted">—</span>}</td>
+                                  : <td className="rl-sc-desc" title={descOf(r.code)}>{descOf(r.code) ? <Hl t={descOf(r.code)} q={qq} /> : <span className="rw-muted">—</span>}</td>}
                                 {showOthers ? <td>{others(r).map((k) => <Pill key={k} tone="sub">SUB {SUB_SHORT[k] || k}</Pill>)}</td> : null}
                                 <td className="r rl-sc-q">{m || cancel ? <ModQty orig={m ? m.orig : r.qty} cur={r.qty} ver={m?.ver || r.mod_version} cancel={cancel} /> : <>{r.mod_version ? <><Pill tone="mod">{r.mod_version}</Pill> </> : null}{nf(r.qty)}</>}</td>
+                                {prod ? (() => { const d = doneRow(r); const q = Number(r.qty) || 0; return <td className={`r rl-sc-done ${cancel ? "" : d >= q && q ? "full" : d ? "part" : "zero"}`}>{cancel ? "" : d >= q && q ? <>✓ {nf(d)}</> : <>{nf(d)}<small>/{nf(q)}</small></>}</td>; })() : null}
                               </tr>); })}</tbody>
                           </table></div>
                         </section>); })}
                       </div>
-                      <LotMats plan={plan} need={need} lot={L} sheetsOf={rowSheets} />
+                      <LotMats plan={plan} need={need} lot={L} sheetsOf={rowSheets} q={lotQ.trim().toUpperCase()} />
                     </div>) : null}
                 </div>); })}
           </div>
@@ -729,6 +764,14 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
   );
 }
 
+// ค้นหาในล็อต: เบอร์ / รายละเอียด / ที่อยู่แผง (qq = ตัวพิมพ์ใหญ่แล้ว)
+const rowHit = (r, qq, descOf) => String(r.code).toUpperCase().includes(qq) || String(descOf(r.code) || "").toUpperCase().includes(qq) || (r.kind === "panel" && addrsFromNote(r.note).some((a) => a.includes(qq)));
+// ไฮไลต์คำที่ค้น (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+function Hl({ t, q }) {
+  const s = String(t ?? ""); if (!q) return s;
+  const i = s.toUpperCase().indexOf(q); if (i < 0) return s;
+  return <>{s.slice(0, i)}<mark className="rl-hl">{s.slice(i, i + q.length)}</mark>{s.slice(i + q.length)}</>;
+}
 // ปุ่มพิมพ์ QR ของล็อต — แยกตามแผนกของหน้าพิมพ์ QR (พาร์ท = Machine · ซับ = Sub-Assembly · แผง = Assembly)
 const QR_GROUPS = [
   { k: "part", label: "พาร์ท", th: "พาร์ท", kinds: ["part"] },
@@ -739,8 +782,11 @@ const QR_GROUPS = [
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
 // เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"
 const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.set(x, (m.get(x) || 0) + 1); return [...m].map(([l, n]) => `${nf(l)}${n > 1 ? ` ×${n}` : ""}`).join(" · "); };
-function LotMats({ plan, need, lot, sheetsOf }) {
-  const m = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
+function LotMats({ plan, need, lot, sheetsOf, q = "" }) {
+  const m0 = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // ค้นหา: รหัส / INV / รายละเอียด / เบอร์พาร์ทที่ใช้วัตถุดิบนั้น
+  const has = (...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
+  const m = q ? { mat: m0.mat.filter((x) => has(x.inv, x.d, ...x.parts.map((p) => p.code))), glass: m0.glass.filter((x) => has(x.code, x.d)), hw: m0.hw.filter((x) => has(x.code, x.d)), other: m0.other.filter((x) => has(x.code, x.d)) } : m0;
   const cards = [];
   if (m.mat.length) cards.push(
     <section key="mat" className="rl-sc mat wide">
@@ -790,6 +836,7 @@ function LotMats({ plan, need, lot, sheetsOf }) {
         <tbody>{m.other.map((x) => <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>)}</tbody>
       </table></div>
     </section>);
+  if (q && !cards.length) return null;   // ค้นหาแล้วไม่เจอในวัสดุ → ซ่อนทั้งส่วน
   return (
     <div className="rl-lot-mats">
       <div className="rl-lot-mats-h"><b>วัสดุของล็อตนี้</b><span>ใบเบิก · ไม่มี QR · คิดเฉพาะของที่ปล่อยในล็อต {lot.no}</span></div>

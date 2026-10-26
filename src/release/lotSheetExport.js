@@ -126,7 +126,8 @@ function matRows(sheet, lm) {
 }
 
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
-export function buildLotModel({ plan, need, lot, userName, printDate }) {
+// only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
+export function buildLotModel({ plan, need, lot, userName, printDate, only = null }) {
   const by = new Map();
   for (const r of lot.rows) for (const k of lotRowSheets(r, need)) (by.get(k) || by.set(k, []).get(k)).push(r);
   const known = SHEETS.filter((s) => by.has(s.k));
@@ -147,9 +148,10 @@ export function buildLotModel({ plan, need, lot, userName, printDate }) {
     const { cols, groups } = columnsFor(sheet);
     const [t1, t2] = TITLES[sheet.k] || [`${sheet.label || sheet.k}`, sheet.th || ""];
     const { out, total, totalAt } = mat ? matRows(sheet, lm) : rowsFor(sheet, rows, { plan, need });
-    return { key: sheet.k, kind: sheet.kind, name, cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}` : "" };
+    return { key: sheet.k, kind: sheet.kind, name, tab: String(sheet.tab || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}` : "" };
   });
-  return { meta, sheets, file: `ใบปล่อย ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
+  const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
+  return { meta, sheets: pick, all: sheets.map((sh) => ({ key: sh.key, name: sh.tab || sh.name, kind: sh.kind, t1: sh.t1, rows: sh.rows.filter((r) => !r.kid).length })), file: `ใบปล่อย ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
 }
 
 export function buildLotWorkbook(ExcelJS, args) {

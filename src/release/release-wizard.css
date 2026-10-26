@@ -698,3 +698,32 @@ tr.rw-miss-row.focus>td:first-child{box-shadow:inset 4px 0 0 #e0a100,inset 0 1px
 .rl-qrbtn:hover { background: var(--surface-2); }
 @media (max-width: 640px) { .rl-lot-bar-btns { width: 100%; } .rl-lot-bar-btns .btn { flex: 1 1 auto; justify-content: center; } }
 .rl-lot-bar-txt { flex: 1 1 280px; }
+/* ★ ค้นหาในล็อต + ความคืบหน้าต่อล็อต (2026-10-26) */
+.rl-lot-search { display: flex; align-items: center; gap: 6px; flex: 1 1 240px; max-width: 360px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); }
+.rl-lot-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--rw-ring, rgba(16,185,129,.2)); }
+.rl-lot-search .input { border: 0; box-shadow: none; background: transparent; padding: 7px 0; min-width: 0; flex: 1; outline: none; }
+.rl-x-sm { border: 0; background: var(--surface-3); color: var(--muted); width: 22px; height: 22px; border-radius: 99px; cursor: pointer; font-size: 15px; line-height: 1; flex: none; }
+.rl-lot-found { margin: -4px 2px 12px; font-size: 12.5px; }
+.rl-lot-found.none { padding: 10px 14px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); }
+mark.rl-hl { background: #fde68a; color: inherit; padding: 0 1px; border-radius: 3px; }
+.rl-lot-prog { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--accent-dk); white-space: nowrap; }
+.rl-lot-prog i { display: inline-block; width: 72px; height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.rl-lot-prog i b { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.rl-lot-prog.zero { color: var(--muted); }
+.rl-lot-prog.full { color: var(--accent-dk); } .rl-lot-prog.full i b { background: var(--accent-dk); }
+.rl-sc-done { width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.rl-sc-done small { color: var(--muted); }
+.rl-sc-done.full { color: var(--accent-dk); font-weight: 600; } .rl-sc-done.zero { color: var(--muted); } .rl-sc-done.part { color: #b45309; font-weight: 600; }
+@media (max-width: 640px) { .rl-lot-search { max-width: none; flex-basis: 100%; } }
+/* เลือกใบที่จะพิมพ์ (หน้าตัวอย่างใบปล่อย) */
+.lp-pick{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.lp-pick-lab{font-size:12px;color:#93a4c4;margin-right:2px}
+.lp-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:99px;border:1px solid #2c3d63;background:transparent;color:#93a4c4;font:inherit;font-size:12.5px;cursor:pointer}
+.lp-chip small{font-size:11px;opacity:.75}
+.lp-chip .lp-box{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:4px;border:1px solid #3a4d78;font-size:11px;line-height:1}
+.lp-chip.on{color:#fff;border-color:#4b6ba8;background:#1f2d4d}
+.lp-chip.on .lp-box{background:#ffa74d;border-color:#ffa74d;color:#1a1204}
+.lp-chip.on.sub{border-color:#8b5cf6}.lp-chip.on.panel{border-color:#10b981}.lp-chip.on.mat{border-color:#f0a020}
+.lp-chip.all.on{background:#ffa74d;border-color:#ffa74d;color:#1a1204}
+.lp-chip:hover{background:#18233d}.lp-chip.all.on:hover{background:#ffb565}
+@media (max-width: 640px) { .rl-lot-bar-btns .rl-qrbtn { flex: 1 1 0; min-width: 0; padding-left: 6px; padding-right: 6px; } .rl-lot-bar-btns .btn-accent { flex-basis: 100%; } }
