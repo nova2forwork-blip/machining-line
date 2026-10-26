@@ -47,15 +47,15 @@ function subKids(plan, code) {
   return out;
 }
 
-// คอลัมน์: { en, th, w, key? }  ·  group = หัวรวมเหนือคอลัมน์ว่าง (PRODUCTION QTY / DATE)
-const PROD = (n) => Array.from({ length: n }, () => ({ en: "", th: "", w: 8, blank: true }));
+// คอลัมน์: { en, th, w, key? }  ·  groups = หัวรวมเหนือหลายคอลัมน์ [ก, ข, ชื่อ] (ตอนนี้ไม่มีชีตไหนใช้)
+//   2026-10-26: เอาคอลัมน์ว่าง PRODUCTION QTY ×3 / DATE ×3 ออก (user สั่ง)
 function columnsFor(sheet) {
   if (sheet.k === "panel") return { cols: [{ en: "NO.", th: "ลำดับ", w: 7 }, { en: "UNIT", th: "แผง", w: 22 }, { en: "ADDRESS", th: "ที่อยู่", w: 26 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "REMARK", th: "หมายเหตุ", w: 46 }] };
   if (sheet.kind === "sub") return { cols: [{ en: "ITEM", th: "", w: 7 }, { en: "CODE", th: "", w: 18 }, { en: "DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "SUB QTY.", th: "", w: 9 }, { en: "QTY OF PART/SUB", th: "", w: 12, grey: true }, { en: "PART QTY.", th: "", w: 10 }, { en: "UOM", th: "", w: 8 }, { en: "Remark", th: "", w: 26 }] };
   if (sheet.k === "GLASS") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "HEIGHT (mm.)", th: "", w: 12 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "REMARK", th: "", w: 22 }] };
   if (sheet.k === "FIXING") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 52 }, { en: "REQUIRED QTY", th: "", w: 13 }, { en: "UNIT", th: "", w: 9 }, { en: "REMARK", th: "", w: 22 }] };
   // MACHINING / BENDING / STEEL
-  return { cols: [{ en: "NO.", th: "ลำดับ", w: 6 }, { en: "CODE", th: "เบอร์พาร์ท", w: 20 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "QTY", th: "สั่งตัดเพิ่ม", w: 10 }, { en: "REV.", th: "แก้ไข", w: 8 }, { en: "MATERIAL", th: "วัตถุดิบ", w: 24 }, ...PROD(6), { en: "REMARK", th: "หมายเหตุ", w: 30 }], groups: [[7, 9, "PRODUCTION QTY"], [10, 12, "DATE"]] };
+  return { cols: [{ en: "NO.", th: "ลำดับ", w: 6 }, { en: "CODE", th: "เบอร์พาร์ท", w: 20 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "QTY", th: "สั่งตัดเพิ่ม", w: 10 }, { en: "REV.", th: "แก้ไข", w: 8 }, { en: "MATERIAL", th: "วัตถุดิบ", w: 28 }, { en: "REMARK", th: "หมายเหตุ", w: 44 }] };
 }
 
 // แถวข้อมูลของชีต: [{ vals:[...ตามคอลัมน์], bold?, kid?, cancelled? }] + รวมจำนวน
@@ -92,7 +92,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
   for (const r of sorted) {
     const q = Number(r.qty) || 0;
     const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
-    out.push({ vals: [++n, r.code, q, "", p.rev || "", p.inv || "", ...PROD(6).map(() => ""), [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
+    out.push({ vals: [++n, r.code, q, "", p.rev || "", p.inv || "", [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
     total += q;
   }
   return { out, total, totalAt: 3 };
