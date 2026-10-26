@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -106,25 +106,42 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                   </button>
                   {open === L.no ? (
                     <div className="rl-lot-body">
-                      <div className="rl-lot-tools">
-                        <button type="button" className="btn btn-accent btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}><Icon name="printer" size={13} /> ใบปล่อย (ดูตัวอย่าง · PDF / Excel)</button>
-                        <span className="rw-muted small">ดูตัวอย่างหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel · 1 ใบงานต่อ 1 หน้า/ชีต</span>
+                      <div className="rl-lot-bar">
+                        <div className="rl-lot-bar-txt"><b>ใบปล่อยของล็อต {L.no}</b><span>ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel · 1 ใบงาน = 1 หน้า/ชีต</span></div>
+                        <button type="button" className="btn btn-accent btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}><Icon name="printer" size={14} /> ใบปล่อย · PDF / Excel</button>
                       </div>
-                      {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => (
-                        <div key={s.k} className="rl-lot-sheet">
-                          <div className="rl-lot-sheet-h"><b>{s.label}</b> <span className="rw-muted small">{s.th} · {bySheet.get(s.k).length} รายการ</span></div>
-                          <div className="table-wrap rw-tw short"><table className="data-table rw-table">
-                            <thead><tr><th>{s.kind === "panel" ? "Unit" : "Code"}</th>{s.kind !== "panel" ? <th>Description</th> : null}<th className="r">จำนวน</th>{s.kind !== "part" ? <th>{s.kind === "panel" ? "ที่อยู่" : "อยู่ในใบอื่นด้วย"}</th> : null}</tr></thead>
-                            <tbody>{bySheet.get(s.k).map((r) => { const m = mm.get(NC(r.code)); const cancel = !!(r.mod_cancelled_at || m?.cancel); return (
+                      <div className="rl-sc-grid">
+                      {SHEETS.filter((s) => bySheet.has(s.k)).map((s) => { const rows = bySheet.get(s.k);
+                        const others = (r) => rowSheets(r).filter((k) => k !== s.k);
+                        const showOthers = s.kind === "sub" && rows.some((r) => others(r).length);
+                        const pcs = s.kind === "panel" ? rows.reduce((t, r) => t + (Number(r.qty) || 0), 0) : rows.reduce((t, r) => t + (Number(r.qty) || 0), 0);
+                        return (
+                        <section key={s.k} className={`rl-sc ${s.kind}`}>
+                          <header className="rl-sc-h">
+                            <div className="rl-sc-t"><b>{s.label}</b><span>{s.th}</span></div>
+                            <div className="rl-sc-n">{s.kind === "panel" ? <><b>{nf(pcs)}</b> แผง<small> · {nf(rows.length)} แบบ</small></> : <><b>{nf(rows.length)}</b> เบอร์<small> · {nf(pcs)} ชิ้น</small></>}</div>
+                          </header>
+                          <div className="rl-sc-tw"><table className="rl-sc-table">
+                            <thead><tr>
+                              <th>{s.kind === "panel" ? "แผง (Unit)" : "เบอร์ (Code)"}</th>
+                              {s.kind === "panel" ? <th>ที่อยู่</th> : <th>รายละเอียด</th>}
+                              {showOthers ? <th>อยู่ในใบอื่นด้วย</th> : null}
+                              <th className="r">จำนวน</th>
+                            </tr></thead>
+                            <tbody>{rows.map((r) => { const m = mm.get(NC(r.code)); const cancel = !!(r.mod_cancelled_at || m?.cancel);
+                              const addrs = s.kind === "panel" ? addrsFromNote(r.note) : [];
+                              return (
                               <tr key={r.code} className={cancel ? "rl-cancelrow" : ""}>
-                                <td className="rw-mono"><Code code={r.code} cancel={cancel} /></td>
-                                {s.kind !== "panel" ? <td className="rw-desc">{descOf(r.code)}</td> : null}
-                                <td className="r">{m || cancel ? <ModQty orig={m ? m.orig : r.qty} cur={r.qty} ver={m?.ver || r.mod_version} cancel={cancel} /> : <>{nf(r.qty)}{r.mod_version ? <> <Pill tone="mod">{r.mod_version}</Pill></> : null}</>}</td>
-                                {s.kind === "panel" ? <td className="rw-desc">{(r.note.split("ที่อยู่:")[1] || "").trim()}</td>
-                                  : s.kind === "sub" ? <td className="rw-desc">{rowSheets(r).filter((k) => k !== s.k).map((k) => "SUB " + (SUB_SHORT[k] || k)).join(", ")}</td> : null}
+                                <td className="rl-sc-code"><Code code={r.code} cancel={cancel} /></td>
+                                {s.kind === "panel"
+                                  ? <td>{addrs.length ? <div className="rl-sc-addr">{addrs.map((x) => <span key={x} className={/^MOCK-/.test(x) ? "mock" : ""}>{/^MOCK-/.test(x) ? <i>Mockup</i> : null}{x}</span>)}</div> : <span className="rw-muted">—</span>}</td>
+                                  : <td className="rl-sc-desc" title={descOf(r.code)}>{descOf(r.code) || <span className="rw-muted">—</span>}</td>}
+                                {showOthers ? <td>{others(r).map((k) => <Pill key={k} tone="sub">SUB {SUB_SHORT[k] || k}</Pill>)}</td> : null}
+                                <td className="r rl-sc-q">{m || cancel ? <ModQty orig={m ? m.orig : r.qty} cur={r.qty} ver={m?.ver || r.mod_version} cancel={cancel} /> : <>{r.mod_version ? <><Pill tone="mod">{r.mod_version}</Pill> </> : null}{nf(r.qty)}</>}</td>
                               </tr>); })}</tbody>
                           </table></div>
-                        </div>))}
+                        </section>); })}
+                      </div>
                     </div>) : null}
                 </div>); })}
           </div>
