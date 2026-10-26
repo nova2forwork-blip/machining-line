@@ -328,6 +328,29 @@ function LoginSplash({ text = "กำลังเข้าสู่ระบบ�
   );
 }
 
+// ★ 2026-10-26: ถูกเด้งมาจากหน้าแผนกอื่น (?from=glazing ฯลฯ) → บอกให้ชัดว่าทำไม + แก้ที่ไหน (เดิมเด้งเงียบ ๆ คนงานงงว่า "เปิด /glazing ทำไมขึ้นซับ")
+function StnMovedNote({ dept }) {
+  const [lang] = useLang();
+  const t = (th, en) => (lang === "en" ? en : th);
+  const [from, setFrom] = useState(() => {
+    try { const f = new URLSearchParams(window.location.search).get("from"); return f && f !== dept && DEPT_META[f] ? f : null; } catch { return null; }
+  });
+  if (!from) return null;
+  const a = DEPT_META[from], b = DEPT_META[dept] || DEPT_META.machine;
+  const close = () => { setFrom(null); try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ } };
+  return (
+    <div className="stn-moved" role="alert">
+      <Icon name="warn" size={18} className="stn-ico" />
+      <div className="stn-moved-tx">
+        <b>{t(`เปิด${a.th}ไม่ได้ — พามาที่${b.th}แทน`, `Can't open ${a.en} — showing ${b.en} instead`)}</b>
+        <span>{t(`เครื่อง/สถานีของบัญชีนี้ยังไม่มีขั้นตอนประเภท "${a.word}" · ให้ออฟฟิศไปที่ ตั้งค่า → เครื่อง/สถานี → แก้ไข สถานีนี้ → ติ๊กขั้นตอน "${a.word}" แล้วล็อกอินใหม่`,
+          `This account's station has no "${a.wordEn}" operation. Office: Setup → Machines/Stations → Edit this station → tick "${a.wordEn}", then log in again.`)}</span>
+      </div>
+      <button type="button" className="stn-moved-x" onClick={close} aria-label={t("ปิด", "Close")}>×</button>
+    </div>
+  );
+}
+
 function StnDeptRedirect({ dept, acctDepts, onLogout, t }) {
   const here = DEPT_META[dept] || DEPT_META.machine;
   const targets = (acctDepts || []).filter((d) => DEPT_META[d]).map((d) => DEPT_META[d]);
@@ -2320,7 +2343,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   if (!acctDepts.includes(dept)) {
     // บัญชีนี้ไม่ใช่แผนกนี้ → เด้งเข้า "แผนกแรก" ของบัญชีอัตโนมัติ (กันลูป: first ต่างจาก dept แน่ เพราะ !includes(dept))
     const first = acctDepts.find((d) => DEPT_META[d]);
-    if (first && typeof window !== "undefined") { window.location.replace(DEPT_META[first].path); return <StnDeptChecking dept={first} t={t} />; }
+    if (first && typeof window !== "undefined") { window.location.replace(`${DEPT_META[first].path}?from=${dept}`); return <StnDeptChecking dept={first} t={t} />; }
     return <StnDeptRedirect dept={dept} acctDepts={acctDepts} onLogout={onLogout} t={t} />;   // ไม่มีแผนกให้ไป → fallback
   }
 
@@ -4277,5 +4300,5 @@ export default function StationApp({ dept = "machine" } = {}) {
   } else {
     content = <MachineStation user={user} onLogout={logout} onKicked={onKicked} onExpired={onExpired} dept={dept} />;
   }
-  return <><StationUpdateBanner /><StationErrorBoundary onLogout={logout}>{content}</StationErrorBoundary><ConfirmHost /></>;
+  return <><StationUpdateBanner />{user ? <StnMovedNote dept={dept} /> : null}<StationErrorBoundary onLogout={logout}>{content}</StationErrorBoundary><ConfirmHost /></>;
 }

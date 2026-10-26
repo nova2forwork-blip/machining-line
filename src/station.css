@@ -1193,3 +1193,10 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-asm-badge.dept-glazing { color: #032a33; background: #3fc9dc; }
 .stn-asm-shell.dept-glazing .stn-oppick-btn.sel { background: #22b8cf; border-color: #22b8cf; color: #032a33; }
 .stn-asm-shell.dept-glazing .stn-netbar.syncing { background: #1597a8; }
+
+/* ★ 2026-10-26: แจ้งว่าถูกเด้งมาจากหน้าแผนกอื่น (?from=) */
+.stn-moved { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 60; width: min(640px, calc(100vw - 32px)); display: flex; gap: 10px; align-items: flex-start; background: #fff7e6; color: #7a4b00; border: 1px solid #f3c66b; border-radius: 14px; padding: 12px 14px; box-shadow: 0 12px 28px -12px rgba(0,0,0,.35); font-family: 'IBM Plex Sans Thai', sans-serif; }
+.stn-moved .stn-ico { flex: none; margin-top: 2px; color: #d98a00; }
+.stn-moved-tx { display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.45; flex: 1; }
+.stn-moved-tx b { font-size: 14px; color: #5c3800; }
+.stn-moved-x { flex: none; border: none; background: transparent; font-size: 22px; line-height: 1; color: #7a4b00; cursor: pointer; padding: 0 4px; }
