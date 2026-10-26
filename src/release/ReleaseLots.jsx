@@ -14,6 +14,7 @@ import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
 import "./release-wizard.css";
+import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
 const todayYmd = () => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
 const dateToIso = (ymd) => { if (!ymd) return new Date().toISOString(); const now = new Date(); const d = new Date(`${ymd}T00:00:00`); d.setHours(now.getHours(), now.getMinutes(), now.getSeconds()); return d.toISOString(); };

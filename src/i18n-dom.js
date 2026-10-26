@@ -669,11 +669,69 @@ const RULES = [
   [/^กำลังลบ\s+(\d+\/\d+)$/, (m) => `Deleting ${m[1]}`],
 ];
 
-function toEN(trimmed) {
+// ★ 2026-10-26 พจนานุกรมเพิ่มจากโมดูลอื่น (เช่นหน้า Release โหลดตอนเปิดหน้า) — registerI18n({ dict, tpls })
+//   tpls = [[แม่แบบไทย, แม่แบบอังกฤษ]] ที่มี {1},{2}… = ค่าที่ใส่ตอนรัน (ตัวเลข/เบอร์/ข้อความ) → ค่าที่เป็นไทยแปลต่อให้
+const EXTRA = {};       // ไทย → อังกฤษ (ไม่ทับ DICT เดิม)
+const XRULES = [];      // [regex, enTemplate] — ลองก่อนกฎทั่วไปของ RULES (เฉพาะเจาะจงกว่า)
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function registerI18n({ dict = {}, tpls = [] } = {}) {
+  for (const [k, v] of Object.entries(dict)) { const kk = k.replace(/\s+/g, " ").trim(); if (kk && DICT[kk] == null && EXTRA[kk] == null) EXTRA[kk] = v; }
+  for (const [th, en] of tpls) {
+    const parts = th.replace(/\s+/g, " ").trim().split(/\{(\d+)\}/);   // [ตัวอักษร, เลข, ตัวอักษร, …]
+    let src = "^"; const order = [];
+    for (let i = 0; i < parts.length; i++) { if (i % 2) { src += "([\\s\\S]+?)"; order.push(Number(parts[i])); } else src += escRe(parts[i]).replace(/ /g, "\\s*"); }
+    if (!order.length) { const kk = th.replace(/\s+/g, " ").trim(); if (DICT[kk] == null && EXTRA[kk] == null) EXTRA[kk] = en; continue; }
+    // ตัวกรองเร็ว: ท่อนตัวอักษรที่ยาวสุดของแม่แบบ ต้องมีในข้อความก่อนลอง regex
+    const lits = parts.filter((_, i) => !(i % 2)).map((x) => x.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+    // แม่แบบที่ตัวอักษรคงที่น้อย (เช่น "{1} แผง") = ค่าที่ใส่ต้องไม่มีภาษาไทย (ตัวเลข/เบอร์) — กันจับทั้งประโยคแล้วแปลเพี้ยน
+    const strict = lits.join("").replace(/[^\u0E00-\u0E7FA-Za-z]/g, "").length < 10;
+    try { XRULES.push([new RegExp(src + "$"), en, order, lits[0] || "", strict]); } catch { /* แม่แบบเพี้ยน — ข้าม */ }
+  }
+  // แม่แบบยาว (ตัวอักษรเยอะ) ลองก่อน = ตรงกว่า
+  XRULES.sort((a, b) => b[0].source.replace(/\(\[[^)]*\)/g, "").length - a[0].source.replace(/\(\[[^)]*\)/g, "").length);
+  MEMO.clear();
+  if (typeof document !== "undefined" && LANG === "en") applyLang();
+}
+// จำผลแปล (ตารางยาวมีข้อความซ้ำเยอะ) — ล้างเมื่อมีพจนานุกรมใหม่
+const MEMO = new Map();
+function toEN(trimmed, depth = 0) {
+  if (depth === 0) {
+    if (MEMO.has(trimmed)) return MEMO.get(trimmed);
+    const r = toEN1(trimmed, 0);
+    if (MEMO.size > 20000) MEMO.clear();
+    MEMO.set(trimmed, r); return r;
+  }
+  return toEN1(trimmed, depth);
+}
+function toEN1(trimmed, depth) {
   if (DICT[trimmed] != null) return DICT[trimmed];
+  // หลายบรรทัด (tooltip/กล่องยืนยัน) → แปลทีละบรรทัดก่อน (กันแม่แบบจับข้ามบรรทัด)
+  if (/\n/.test(trimmed)) {
+    let ok = true;
+    const out = trimmed.split(/(\n+)/).map((b, i) => { if (i % 2 || !THAI.test(b)) return b; const e = toEN(b.trim(), depth + 1); if (e == null) ok = false; return e ?? b; }).join("");
+    return ok ? out : null;
+  }
+  const flat = trimmed.replace(/\s+/g, " ");
+  if (EXTRA[flat] != null) return EXTRA[flat];
+  if (DICT[flat] != null) return DICT[flat];
+  if (depth < 4) for (const [re, en, order, lit, strict] of XRULES) {
+    if (lit && !flat.includes(lit)) continue;
+    const m = flat.match(re); if (!m) continue;
+    const vals = m.slice(1).map((g) => (depth < 3 ? subD(g, depth + 1) : g));
+    if (strict && vals.some((g) => THAI.test(g))) continue;   // ค่าที่ใส่ยังมีไทย (แปลไม่ได้) → แม่แบบหลวมไม่ใช้
+    let out = en; order.forEach((num, i) => { out = out.split("{" + num + "}").join(vals[i]); });
+    return out;
+  }
   for (const [re, fn] of RULES) { const m = trimmed.match(re); if (m) return fn(m); }
+  // ★ ข้อความหลายท่อน "ก · ข — ค" → แปลทีละท่อน (ได้ครบทุกท่อนที่มีไทยเท่านั้น)
+  if (depth < 3 && /\s[·—|]\s/.test(flat)) {
+    const bits = flat.split(/(\s[·—|]\s)/); let ok = true;
+    const outB = bits.map((b, i) => { if (i % 2 || !THAI.test(b)) return b; const e = toEN(b.trim(), depth + 1); if (e == null) ok = false; return e ?? b; });
+    if (ok) return outB.join("");
+  }
   return null;
 }
+function subD(v, depth) { const t = String(v ?? ""); if (!THAI.test(t)) return t; const e = toEN(t.trim(), depth); return e == null ? t : t.match(/^\s*/)[0] + e + t.match(/\s*$/)[0]; }
 
 // ── เครื่องมือแปล DOM ────────────────────────────────────────────────────────
 let LANG = "th";
@@ -802,3 +860,5 @@ export function useLang() {
   useEffect(() => { listeners.add(setL); return () => listeners.delete(setL); }, []);
   return [l, setLang];
 }
+// ทดสอบใน node (ไม่มี DOM): แปลข้อความเดียว
+export const __i18nTest = (t) => toEN(String(t).trim());

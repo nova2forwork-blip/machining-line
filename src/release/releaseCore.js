@@ -622,14 +622,14 @@ export function roKey(raw) {
 // ★ 2026-10-26 ชื่อเดียวกันทุกที่ (การ์ด/แท็บในแอป · ชื่อชีต Excel · หัวใบที่พิมพ์ · ชิปเลือกใบ): label = tab = ชื่อหมวดพาร์ท
 //   aka = ชื่อเดิมที่เคยเขียนลงหมายเหตุ "ใบ: …" ของล็อตที่ปล่อยไปแล้ว → ยังอ่านได้ (sheetKeyOf)
 export const SHEETS = [
-  { k: "CUTTING", kind: "part", label: "MACHINING PART", tab: "MACHINING PART", th: "งานตัด / เจาะ / บาก" },
-  { k: "BENDING", kind: "part", label: "BENDING PART", tab: "BENDING PART", th: "งานพับ", aka: ["BENDING"] },
-  { k: "STEEL", kind: "part", label: "STEEL PART", tab: "STEEL PART", th: "งานเหล็ก", aka: ["STEEL"] },
-  { k: "พับ", kind: "sub", label: "SUB-ASSEMBLY (พับ)", tab: "SUB-ASSEMBLY (พับ)", th: "ซับงานพับ", aka: ["SUB-ASSEMBLY (งานพับ)", "SUB A'ssy (พับ)"] },
-  { k: "เชื่อม", kind: "sub", label: "SUB-ASSEMBLY (เชื่อม)", tab: "SUB-ASSEMBLY (เชื่อม)", th: "ซับงานเชื่อม", aka: ["SUB-ASSEMBLY (งานเชื่อม)", "SUB A'ssy (เชื่อม)"] },
-  { k: "ยิง", kind: "sub", label: "SUB-ASSEMBLY (ยิง)", tab: "SUB-ASSEMBLY (ยิง)", th: "ซับงานยิงประกอบ", aka: ["SUB A'ssy (ยิง)", "SUB-ASSEMBLY (งานยิงประกอบ)"] },
-  { k: "Site Item", kind: "sub", label: "SUB-ASSEMBLY (Site Item)", tab: "SUB-ASSEMBLY (Site Item)", th: "ซับส่งไซต์ · Loose Parts (เบอร์ *)", aka: ["SUB-ASSEMBLY (Loose Parts)", "SUB A'ssy (Site Item)"] },
-  { k: "panel", kind: "panel", label: "ASSEMBLY (แผง)", tab: "ASSEMBLY (แผง)", th: "ประกอบแผง · 1 QR ต่อที่อยู่" },
+  { k: "CUTTING", kind: "part", label: "MACHINING PART", tab: "MACHINING PART", th: "งานตัด / เจาะ / บาก", en: "MACHINING PART", thEn: "Cutting / drilling / notching" },
+  { k: "BENDING", kind: "part", label: "BENDING PART", tab: "BENDING PART", th: "งานพับ", aka: ["BENDING"], en: "BENDING PART", thEn: "Bending" },
+  { k: "STEEL", kind: "part", label: "STEEL PART", tab: "STEEL PART", th: "งานเหล็ก", aka: ["STEEL"], en: "STEEL PART", thEn: "Steel work" },
+  { k: "พับ", kind: "sub", label: "SUB-ASSEMBLY (พับ)", tab: "SUB-ASSEMBLY (พับ)", th: "ซับงานพับ", aka: ["SUB-ASSEMBLY (งานพับ)", "SUB A'ssy (พับ)"], en: "SUB-ASSEMBLY (Bending)", thEn: "Bending sub-assembly" },
+  { k: "เชื่อม", kind: "sub", label: "SUB-ASSEMBLY (เชื่อม)", tab: "SUB-ASSEMBLY (เชื่อม)", th: "ซับงานเชื่อม", aka: ["SUB-ASSEMBLY (งานเชื่อม)", "SUB A'ssy (เชื่อม)"], en: "SUB-ASSEMBLY (Welding)", thEn: "Welding sub-assembly" },
+  { k: "ยิง", kind: "sub", label: "SUB-ASSEMBLY (ยิง)", tab: "SUB-ASSEMBLY (ยิง)", th: "ซับงานยิงประกอบ", aka: ["SUB A'ssy (ยิง)", "SUB-ASSEMBLY (งานยิงประกอบ)"], en: "SUB-ASSEMBLY (Fastening)", thEn: "Fastening sub-assembly" },
+  { k: "Site Item", kind: "sub", label: "SUB-ASSEMBLY (Site Item)", tab: "SUB-ASSEMBLY (Site Item)", th: "ซับส่งไซต์ · Loose Parts (เบอร์ *)", aka: ["SUB-ASSEMBLY (Loose Parts)", "SUB A'ssy (Site Item)"], en: "SUB-ASSEMBLY (Site Item)", thEn: "Site items · loose parts (codes with *)" },
+  { k: "panel", kind: "panel", label: "ASSEMBLY (แผง)", tab: "ASSEMBLY (แผง)", th: "ประกอบแผง · 1 QR ต่อที่อยู่", en: "ASSEMBLY (Panels)", thEn: "Panel assembly · 1 QR per address" },
 ];
 // ชื่อใบ (จากหมายเหตุ "ใบ: …" ของแถวที่ปล่อย) → key ของใบ · รับทั้ง key / ชื่อปัจจุบัน / ชื่อเดิม (aka) · ไม่รู้จัก = คืนชื่อเดิม
 export function sheetKeyOf(name) {

@@ -2,12 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { buildLotModel, lotSheetsHtml, downloadLotSheets } from "./lotSheetExport.js";
+import { getLang } from "../i18n-dom.js";
 import "./release-wizard.css";
+import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
 const SEL_KEY = "mls-lot-sheet-pick";   // ใบที่เลือกล่าสุด (key ของใบ) · null = ทุกใบ
 const kindTone = (k) => (k === "sub" ? "sub" : k === "panel" ? "panel" : k === "mat" ? "mat" : "part");
 
-export default function LotSheetPreview({ args, onClose }) {
+export default function LotSheetPreview({ args: args0, onClose }) {
+  // ★ ภาษาใบพิมพ์ = ภาษาที่เลือกในแอปตอนเปิดตัวอย่าง
+  const args = useMemo(() => ({ ...args0, lang: getLang() }), [args0]);
   const frame = useRef(null);
   const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   // ★ เลือกใบที่จะพิมพ์/โหลด (2026-10-26) — จำที่เลือกล่าสุดไว้ในเครื่อง (เช่น ฝ่ายตัดพิมพ์แค่ MACHINING)

@@ -5,12 +5,18 @@
 import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
+// ★ 2026-10-26 ภาษาใบพิมพ์ = ภาษาที่เลือกในแอป (args.lang "th" | "en") — หัวคอลัมน์ 2 ภาษาอยู่แล้ว · EN = ข้อความไทยล้วนเป็นอังกฤษ + ไม่มีแถวหัวภาษาไทย
+let LANG = "th";
+const T = (th, en) => (LANG === "en" ? en : th);
 // หัวใบที่พิมพ์ = ชื่อใบเดียวกับในแอป (SHEETS: label + ชื่อไทย) · ใบเบิกวัสดุใช้ชื่อตามใบเดิม
-const TITLES = {
-  ...Object.fromEntries(SHEETS.map((x) => [x.k, [x.label, x.th]])),
-  MAT: ["MATERIAL LIST FOR CUTTING", "วัตถุดิบงานตัด"],
-  GLASS: ["GLASS", "รายการวัสดุกระจก"],
-  FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
+const titleOf = (k) => {
+  const s = SHEETS.find((x) => x.k === k);
+  if (s) return LANG === "en" ? [s.en || s.label, s.thEn || ""] : [s.label, s.th];
+  return {
+    MAT: ["MATERIAL LIST FOR CUTTING", T("วัตถุดิบงานตัด", "Raw material for cutting")],
+    GLASS: ["GLASS", T("รายการวัสดุกระจก", "Glass list")],
+    FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
+  }[k];
 };
 const BLACK = { argb: "FF000000" }, GREY = { argb: "FF8C8C8C" }, RED = { argb: "FFC00000" };
 // ตาราง (2026-10-26 จัดใหม่): เส้นในสีเทา · กรอบนอก/ใต้หัวตารางเส้นดำหนา · หัวพื้นเทา · แถวสลับสีอ่อน · แถวซับ (SET) พื้นเทาอ่อน · แถวรวมพื้นเทา
@@ -70,7 +76,7 @@ function columnsFor(sheet) {
 // แถวข้อมูลของชีต: [{ vals:[...ตามคอลัมน์], bold?, kid?, cancelled? }] + รวมจำนวน
 function rowsFor(sheet, lotRows, { plan, need }) {
   const out = []; let total = null;
-  const modNote = (r) => (r.mod_cancelled_at ? "ยกเลิก" : r.mod_version ? `แก้ ${r.mod_version}` : "");
+  const modNote = (r) => (r.mod_cancelled_at ? T("ยกเลิก", "Cancelled") : r.mod_version ? T(`แก้ ${r.mod_version}`, `Rev ${r.mod_version}`) : "");
   if (sheet.k === "panel") {
     let n = 0; total = 0;
     for (const r of lotRows) {
@@ -92,7 +98,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
       const s = need.subs.find((x) => NC(x.code) === NC(r.code)) || {};
       const others = (s.procs || []).filter((p) => p !== sheet.k);
       const cx = !!r.mod_cancelled_at;
-      out.push({ vals: [++n, r.code, s.d || "", num(s.l), q, "", "", "SET", [others.length ? "อยู่ในใบอื่นด้วย: " + others.join(", ") : "", modNote(r)].filter(Boolean).join(" · ")], bold: true, cancelled: cx });
+      out.push({ vals: [++n, r.code, s.d || "", num(s.l), q, "", "", "SET", [others.length ? T("อยู่ในใบอื่นด้วย: ", "Also on: ") + others.map((k) => (LANG === "en" ? (SHEETS.find((x) => x.k === k) || {}).en || k : k)).join(", ") : "", modNote(r)].filter(Boolean).join(" · ")], bold: true, cancelled: cx });
       for (const k of subTree(plan, r.code)) out.push({ vals: ["", k.code, k.d, num(k.l), q, num(k.q), num(k.q * q), k.uom, ""], kid: true, lvl: k.lvl, sub2: k.isSub, cancelled: cx });
     }
     return { out, total };
@@ -114,7 +120,7 @@ const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.se
 //   iss = ยอดเบิกจริงที่กรอกในแอปของล็อตนี้ (plan.lotIssue[ล็อต][INV] = { n, r }) → ช่อง ACTUAL ISSUE + หมายเหตุ
 function matRows(sheet, lm, iss = {}) {
   const out = []; let n = 0;
-  if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ vals: [++n, m.inv || "(ไม่มี INV)", m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? `เศษ (มม.) ${offTxt(m.offLens)}` : "", m.noLen ? `ไม่มีความยาว ${m.noLen} ชิ้น` : "", m.over ? `ยาวกว่าเส้น ${m.over} ชิ้น` : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
+  if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ vals: [++n, m.inv || T("(ไม่มี INV)", "(no INV)"), m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? T(`เศษ (มม.) ${offTxt(m.offLens)}`, `Offcuts (mm) ${offTxt(m.offLens)}`) : "", m.noLen ? T(`ไม่มีความยาว ${m.noLen} ชิ้น`, `No length: ${m.noLen} pcs`) : "", m.over ? T(`ยาวกว่าเส้น ${m.over} ชิ้น`, `Longer than bar: ${m.over} pcs`) : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
   if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
   else for (const p of lm.hw) out.push({ vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
   return { out, total: null };
@@ -122,36 +128,39 @@ function matRows(sheet, lm, iss = {}) {
 
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
 // only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
-export function buildLotModel({ plan, need, lot, userName, printDate, only = null }) {
+export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th" }) {
+  LANG = lang === "en" ? "en" : "th";
   const by = new Map();
   for (const r of lot.rows) for (const k of lotRowSheets(r, need)) (by.get(k) || by.set(k, []).get(k)).push(r);
   const known = SHEETS.filter((s) => by.has(s.k));
   const unknown = [...by.keys()].filter((k) => !SHEETS.some((s) => s.k === k));   // ใบที่ไม่รู้จัก → รวมชีต "อื่นๆ"
   const list = [
     ...known.map((s) => ({ sheet: s, rows: by.get(s.k) })),
-    ...(unknown.length ? [{ sheet: { k: "OTHER", kind: "part", label: "OTHER", tab: "อื่นๆ", th: "ใบงานอื่น" }, rows: unknown.flatMap((k) => by.get(k)) }] : []),
+    ...(unknown.length ? [{ sheet: { k: "OTHER", kind: "part", label: "OTHER", tab: T("อื่นๆ", "OTHER"), th: T("ใบงานอื่น", "Other sheets") }, rows: unknown.flatMap((k) => by.get(k)) }] : []),
   ];
   // ใบเบิกวัสดุ (ทั้ง Release) — ใส่ท้ายถ้ามีรายการ
   const lm = lotMaterials(plan, need, lot.rows, (r) => lotRowSheets(r, need));
-  if (lm.mat.length) list.push({ sheet: { k: "MAT", kind: "mat", tab: "วัตถุดิบงานตัด" }, mat: true });
+  if (lm.mat.length) list.push({ sheet: { k: "MAT", kind: "mat", tab: T("วัตถุดิบงานตัด", "CUTTING MATERIAL") }, mat: true });
   if (lm.glass.length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
   if (lm.hw.length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
-  const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(printDate || new Date()) };
+  const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(printDate || new Date()), lang: LANG };
   const used = new Set();
   const sheets = list.map(({ sheet, rows, mat }) => {
-    let name = String(sheet.tab).replace(/[\\/?*[\]:']/g, " ").slice(0, 31); if (used.has(name)) name = name.slice(0, 27) + " (2)"; used.add(name);
-    const { cols, groups } = columnsFor(sheet);
-    const [t1, t2] = TITLES[sheet.k] || [`${sheet.label || sheet.k}`, sheet.th || ""];
+    const sh0 = SHEETS.find((x) => x.k === sheet.k); const tabName = LANG === "en" && sh0 ? sh0.en || sheet.tab : sheet.tab;
+    let name = String(tabName).replace(/[\\/?*[\]:']/g, " ").slice(0, 31); if (used.has(name)) name = name.slice(0, 27) + " (2)"; used.add(name);
+    const { cols: cols0, groups } = columnsFor(sheet);
+    const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
+    const [t1, t2] = titleOf(sheet.k) || [`${sheet.label || sheet.k}`, sheet.th || ""];
     const { out, total, totalAt } = mat ? matRows(sheet, lm, (plan.lotIssue || {})[lot.no] || {}) : rowsFor(sheet, rows, { plan, need });
-    return { key: sheet.k, kind: sheet.kind, name, tab: String(sheet.tab || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? `ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}` : "" };
+    return { key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
   });
   const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
-  return { meta, sheets: pick, all: sheets.map((sh) => ({ key: sh.key, name: sh.tab || sh.name, kind: sh.kind, t1: sh.t1, rows: sh.rows.filter((r) => !r.kid).length })), file: `ใบปล่อย ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
+  return { meta, sheets: pick, all: sheets.map((sh) => ({ key: sh.key, name: sh.tab || sh.name, kind: sh.kind, t1: sh.t1, rows: sh.rows.filter((r) => !r.kid).length })), file: `${T("ใบปล่อย", "Release sheet")} ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
 }
 
 export function buildLotWorkbook(ExcelJS, args) {
   const { logo } = args;
-  const model = buildLotModel(args); const { meta } = model; const lot = { no: meta.ro }; const plan = { projectCode: meta.project };
+  const model = buildLotModel(args); const { meta } = model; LANG = meta.lang || "th"; const lot = { no: meta.ro }; const plan = { projectCode: meta.project };
   const wb = new ExcelJS.Workbook(); wb.creator = "Artclad Production"; wb.created = new Date();
   const logoId = logo ? wb.addImage({ buffer: logo, extension: "png" }) : null;
   const releaser = meta.by; const today = meta.date;
@@ -224,13 +233,13 @@ export function buildLotWorkbook(ExcelJS, args) {
       const tr = last + 1; last = tr; ws.getRow(tr).height = 20;
       for (let i = 1; i <= W; i++) { const c = ws.getCell(tr, i); c.border = edge(i, EDGE, EDGE); c.fill = FILL(TOTAL_BG); }
       const x = ws.getCell(tr, totalAt); x.value = total; x.numFmt = "#,##0"; x.font = { name: FONT, size: 11, bold: true }; x.alignment = { horizontal: "right", vertical: "middle", indent: 1 };
-      const lab = ws.getCell(tr, totalAt - 1); lab.value = "รวม"; lab.font = { name: FONT, size: 11, bold: true }; lab.alignment = { horizontal: "right", vertical: "middle" };
+      const lab = ws.getCell(tr, totalAt - 1); lab.value = T("รวม", "Total"); lab.font = { name: FONT, size: 11, bold: true }; lab.alignment = { horizontal: "right", vertical: "middle" };
     }
-    if (!out.length) { const x = ws.getCell(hr2 + 1, 1); x.value = "(ไม่มีรายการ)"; x.font = { name: FONT, size: 10, color: GREY }; }
+    if (!out.length) { const x = ws.getCell(hr2 + 1, 1); x.value = T("(ไม่มีรายการ)", "(no items)"); x.font = { name: FONT, size: 10, color: GREY }; }
     ws.views = [{ state: "frozen", ySplit: hr2, showGridLines: false }];
     ws.pageSetup.printTitlesRow = `1:${hr2}`;   // ใบยาวหลายหน้า → หัวใบ + หัวตารางซ้ำทุกหน้า
   }
-  if (!model.sheets.length) { const ws = wb.addWorksheet("ใบปล่อย"); ws.getCell("A1").value = "(ล็อตนี้ไม่มีรายการ)"; }
+  if (!model.sheets.length) { const ws = wb.addWorksheet(T("ใบปล่อย", "Release sheet")); ws.getCell("A1").value = T("(ล็อตนี้ไม่มีรายการ)", "(this lot has no items)"); }
   return wb;
 }
 
@@ -238,7 +247,7 @@ export function buildLotWorkbook(ExcelJS, args) {
 const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtN = (v) => (typeof v === "number" ? (Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : esc(v));
 export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
-  const { meta } = model;
+  const { meta } = model; LANG = meta.lang || "th";
   const pages = model.sheets.map((sh) => {
     const W = sh.cols.length; const tot = sh.cols.reduce((n, c) => n + c.w, 0);
     const land = W > 6; const mat = sh.kind === "mat";
@@ -250,15 +259,15 @@ export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
       const h = sh.cols[i].en; const uom = h === "UNIT" && sh.kind === "mat"; const cls = [typeof v === "number" ? "n" : "", (CENTER_COLS.has(h) && h !== "UNIT") || uom ? "c" : "", CODE_COLS.has(h) && !uom && typeof v !== "number" ? "code" : "", sh.cols[i].grey || (r.kid && KID_GREY.has(h)) ? "grey" : "", r.bold && h === "LENGTH (mm.)" ? "red" : "", r.kid && h === "CODE" ? "ind" : "", isRm(h) ? "rm" : ""].filter(Boolean).join(" ");
       return `<td class="${cls}"${r.kid && h === "CODE" ? ` style="padding-left:${6 + 12 * (r.lvl || 1)}px"` : ""}>${v === "" || v == null ? "" : fmtN(v)}</td>`;
     }).join("")}${"<td></td>".repeat(Math.max(0, W - r.vals.length))}</tr>`; }).join("");
-    const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? fmtN(sh.total) : i + 2 === sh.totalAt ? "รวม" : ""}</td>`).join("")}</tr>` : "";
+    const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? fmtN(sh.total) : i + 2 === sh.totalAt ? T("รวม", "Total") : ""}</td>`).join("")}</tr>` : "";
     return `<section class="pg ${land ? "land" : "port"}">
 <div class="top"><div class="logo">${logoUrl ? `<img src="${esc(logoUrl)}" alt="">` : ""}</div><div class="ttl"><b>PRODUCTION ORDER</b><br><b class="s">${esc(sh.line2)}</b></div><div class="rr">RPT:<br>REV:</div></div>
 <div class="info"><div class="l"><b>Release Order : ${esc(meta.ro)}</b><b>Project : ${esc(meta.project)}</b></div><div class="m"><b>${esc(sh.t1)}</b><b>${esc(sh.t2)}</b></div><div class="r"><b>Print date : ${esc(meta.date)}</b><b>Prepared by : ${esc(meta.by)}</b></div></div>
 ${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
-<table><colgroup>${colgroup}</colgroup><thead><tr>${head1}</tr>${head2}</thead><tbody>${body || `<tr><td colspan="${W}" class="grey">(ไม่มีรายการ)</td></tr>`}${totRow}</tbody></table>
+<table><colgroup>${colgroup}</colgroup><thead><tr>${head1}</tr>${head2}</thead><tbody>${body || `<tr><td colspan="${W}" class="grey">${T("(ไม่มีรายการ)", "(no items)")}</td></tr>`}${totRow}</tbody></table>
 </section>`;
   }).join("\n");
-  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${esc(model.file)}</title><style>
+  return `<!doctype html><html lang="${LANG}"><head><meta charset="utf-8"><title>${esc(model.file)}</title><style>
 @page land{size:A4 landscape;margin:8mm}@page port{size:A4 portrait;margin:8mm}
 *{box-sizing:border-box}html,body{margin:0;background:#e5e7eb;font-family:Tahoma,"Noto Sans Thai","Leelawadee UI",sans-serif;color:#000}
 .pg{background:#fff;margin:14px auto;padding:8mm;box-shadow:0 1px 8px rgba(0,0,0,.25);font-size:10.5px;break-after:page}
@@ -279,7 +288,7 @@ tr.t td{font-weight:700;background:#e6e9ed;border-top:1.5px solid #000;padding:4
 *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 thead{display:table-header-group}tr{break-inside:avoid}
 @media print{html,body{background:#fff}.pg{margin:0;box-shadow:none;width:auto!important;min-height:0!important;padding:0}}
-</style></head><body>${pages || "<p style='padding:20px'>(ล็อตนี้ไม่มีรายการ)</p>"}</body></html>`;
+</style></head><body>${pages || `<p style='padding:20px'>${T("(ล็อตนี้ไม่มีรายการ)", "(this lot has no items)")}</p>`}</body></html>`;
 }
 
 export async function downloadLotSheets(args) {

@@ -10,6 +10,7 @@ import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UN
 import { Pill, SubKids } from "./releaseUi.jsx";
 import FileBrowser from "./FileBrowser.jsx";
 import "./release-wizard.css";
+import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
 const EMPTY = { panels: {}, subs: {}, parts: {} };
 

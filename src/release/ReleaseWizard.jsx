@@ -13,6 +13,7 @@ import {
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
 import "./release-wizard.css";
+import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
 const DRAFT_KEY = "mls.relwiz.draft.v1";
 const STEPS = ["สร้าง Release", "Address & Unit", "อัพ PDF แผง", "ตรวจ + บันทึก"];
