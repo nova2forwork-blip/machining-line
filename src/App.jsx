@@ -13725,6 +13725,26 @@ function StationsPage() {
         </div>
         <Btn variant="accent" onClick={() => setEditing({ __new: true })} disabled={caps === null}>+ {L("เพิ่มสถานี", "Add station")}</Btn>
       </div>
+      <HowTo id="setup-stations" style={{ marginBottom: 12 }} short={L("แตะการ์ดเพื่อแก้ · เลือกว่าสถานีทำงานอะไร ระบบจัดหน้าให้เอง", "Tap a card to edit · pick what the station does and the page is set automatically")}>
+        <ul>
+          <li>{L("สถานี = จุดที่คนงานล็อกอินทำงาน (เครื่องตัด โต๊ะประกอบ โต๊ะแพ็ก …) · 1 สถานี = 1 การ์ด · จัดกลุ่มตาม \"หน้าที่แท็บเล็ตจะเปิด\" เมื่อพนักงานของสถานีนั้นล็อกอิน",
+                 "A station is where a worker logs in (saw, assembly bench, packing bench …) · one card each · grouped by the page the tablet opens when that station's employee logs in")}</li>
+          <li><b>{L("เพิ่ม", "Add")}:</b> {L("กด \"+ เพิ่มสถานี\" → ใส่รหัส (แก้ทีหลังไม่ได้) และชื่อ → เลือกงาน 1 อย่าง → บันทึก",
+                 "press \"+ Add station\" → code (can't change later) and name → pick one job → Save")}</li>
+          <li><b>{L("งานเครื่อง", "Machining")}:</b> {L("ติ๊กขั้นตอนที่เครื่องนี้ทำได้ (ตัด/บาก/กัด/เจาะ…) และเลือกการสแกน — \"สแกน 2 ครั้ง · จับเวลา\" (ปกติ) หรือ \"สแกนครั้งเดียวตอนเสร็จ\"",
+                 "tick the steps this machine does (cut/notch/mill/drill …) and pick scanning — \"scan twice · timed\" (default) or \"scan once when done\"")}</li>
+          <li><b>{L("ประกอบซับ / แผง / ติดกระจก / แพ็ก", "Sub-assembly / Panel / Glazing / Packing")}:</b> {L("ไม่ต้องติ๊กอะไรเพิ่ม — ระบบตั้งขั้นตอนให้ แท็บเล็ตจะเปิดหน้านั้น (สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก · ไม่จับเวลา)",
+                 "nothing else to tick — the step is set for you and the tablet opens that page (scan parent → scan children → save · no timer)")}</li>
+          <li><b>{L("จากนั้น", "Then")}:</b> {L("ไปแท็บ \"พนักงาน\" → ตั้ง \"เครื่อง/สถานีประจำ\" ให้บัญชีคนงาน → ล็อกอินใหม่บนแท็บเล็ต ระบบพาเข้าหน้าที่ถูกเอง",
+                 "go to \"Employees\" → set the worker's home station → log in again on the tablet; it opens the right page")}</li>
+          <li><b>{L("กรอบส้ม \"ตั้งข้ามหลายหน้า\"", "Orange \"set across several pages\"")}:</b> {L("สถานีเลือกงานปนกัน แท็บเล็ตเข้าได้หน้าเดียว — แตะแล้วเลือกใหม่ให้เหลืออย่างเดียว",
+                 "the station has mixed jobs but a tablet can open only one page — tap and pick one")}</li>
+          <li><b>{L("ยังไม่ตั้ง", "Not set")}:</b> {L("เครื่องที่ไม่ได้สแกนงาน (ปั๊มลม เครื่องเป่าแห้ง …) ใช้แค่ในรายงานปัญหาเครื่อง — ปล่อยไว้ได้",
+                 "machines that don't scan work (air pumps, dryers …) only appear in machine-issue reports — fine to leave")}</li>
+          <li><b>{L("ลบ", "Delete")}:</b> {L("เปิดการ์ด → \"ลบสถานี\" · ถ้ามีประวัติผลิต ระบบจะถามซ้ำ (เครื่องเลิกใช้ แนะนำเก็บไว้ ตัวเลขในรายงานจะได้ไม่หาย)",
+                 "open the card → \"Delete\" · with production history it asks again (a retired machine is better kept so reports stay intact)")}</li>
+        </ul>
+      </HowTo>
       {err && <div className="stp-err">{err}</div>}
       {STATION_GROUPS.map((g) => {
         const list = items.filter((x) => g.types.includes(x.info.stype));
@@ -14485,6 +14505,16 @@ function EmployeeCrud() {
         </div>
         <Btn variant={showAdd ? "ghost" : "accent"} onClick={() => setShowAdd((v) => !v)}>{showAdd ? L("ปิดฟอร์ม", "Close form") : "+ " + L("เพิ่มพนักงาน", "Add employee")}</Btn>
       </div>
+      <HowTo id="setup-employees" style={{ marginBottom: 12 }} short={L("ทุกบัญชีคนงานต้องมี \"เครื่อง/สถานีประจำ\" — ระบบพาเข้าหน้าตามสถานี", "Every worker account needs a home station — it decides which page opens")}>
+        <ul>
+          <li>{L("เพิ่ม: กด \"+ เพิ่มพนักงาน\" → รหัส ชื่อ รหัสผ่านเริ่มต้น → สิทธิ์ (Admin / ออฟฟิศ / หน้าเครื่อง) → เครื่อง/สถานีประจำ → ขั้นตอนประจำ (ไม่ติ๊ก = ตามสถานี)",
+                 "Add: press \"+ Add employee\" → code, name, initial password → role (Admin / Office / Operator) → home station → home steps (none ticked = as the station)")}</li>
+          <li>{L("รหัสพนักงาน = รหัสเครื่อง (เช่น CT-001) → ระบบเลือกสถานีประจำให้เอง · มีคนยังไม่ผูกแต่รหัสตรงกับเครื่อง → ปุ่ม \"ผูกเครื่องตามรหัส\" จะโผล่",
+                 "If the employee code equals a machine code (e.g. CT-001) the home station is picked for you · unassigned people whose code matches a machine get a one-click \"assign by code\" button")}</li>
+          <li>{L("แก้ชื่อ/สิทธิ์/สถานี · ตั้งรหัสผ่านใหม่ · ปิดใช้งาน · ลบ: ปุ่ม \"แก้ไข\" ท้ายแถว · บังคับออกจากระบบอยู่ที่ ระบบ → ผู้ใช้ออนไลน์ · \"แผนก\" (รายชื่อในช่องเลือก) อยู่กล่องพับด้านล่าง",
+                 "Edit name/role/station · set a new password · disable · delete: \"Edit\" at the end of the row · force logout is under System → Online users · \"Departments\" (the dropdown list) is in the box at the bottom")}</li>
+        </ul>
+      </HowTo>
       {showAdd && (<div className="stp-addbox">
       <div className="stp-lbl" style={{ marginTop: 0 }}>{L("เพิ่มพนักงานใหม่", "New employee")}</div>
       <div className="grid-3" style={{ marginBottom: 6 }}>
