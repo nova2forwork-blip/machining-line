@@ -284,7 +284,7 @@ function opDept(o) {
 const DEPT_META = {
   machine:  { th: "หน้าเครื่อง", en: "Machine",  path: "/station",  word: "เครื่อง", wordEn: "machine" },
   assembly: { th: "หน้าประกอบ (ซับ)", en: "Sub-assembly", path: "/assembly", word: "ประกอบ", wordEn: "sub-assembly" },
-  panel:    { th: "หน้าแผง",   en: "Panel",    path: "/panel",    word: "แผง",   wordEn: "panel" },
+  panel:    { th: "หน้าแผง (Assembly)", en: "Panel (Assembly)", path: "/panel", word: "แผง", wordEn: "panel" },
   packing:  { th: "หน้าแพ็ก",   en: "Packing",  path: "/packing",  word: "แพ็ก",   wordEn: "packing" },
   packpanel:{ th: "หน้าแพ็กแผง", en: "Pack Panel", path: "/packing-panel", word: "แพ็กแผง", wordEn: "pack-panel" },
   packsite: { th: "หน้าแพ็กไซต์ไอเทม", en: "Pack Site Item", path: "/packing-site", word: "แพ็กไซต์ไอเทม", wordEn: "pack-site" },

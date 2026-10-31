@@ -13588,7 +13588,7 @@ async function syncMachineOps(machineId, selectedIds, _caps) {
 const OP_TYPE_DEST = {
   machining:  { th: "หน้าเครื่อง (ตัด/เจาะ/บาก…)", path: "/station" },
   assembly:   { th: "หน้าประกอบ · ซับ",            path: "/assembly" },
-  panel:      { th: "หน้าแผง",                     path: "/panel" },
+  panel:      { th: "หน้าแผง (Assembly)",          path: "/panel" },
   pack_panel: { th: "หน้าแพ็กแผง",                 path: "/packing-panel" },
   pack_site:  { th: "หน้าแพ็กไซต์ไอเทม",           path: "/packing-site" },
   packing:    { th: "หน้าแพ็ก · รวมทุกบั้ง",       path: "/packing" },
@@ -13662,8 +13662,8 @@ const QUICK_ADD_CHIPS = [
 //   งานเครื่อง → ติ๊ก ตัด/บาก/กัด/เจาะ… + รูปแบบการสแกน · งานอื่น → ระบบหา/สร้างขั้นตอนประเภทนั้นให้เอง
 const STATION_TYPES = [
   { key: "machine",    th: "งานเครื่อง",      en: "Machining",      subTh: "ตัด · บาก · กัด · เจาะ", subEn: "cut · notch · mill · drill", path: "/station", color: "#0f9d6e" },
-  { key: "assembly",   th: "ประกอบซับ",       en: "Sub-assembly",   path: "/assembly",      op_type: "assembly",   def: "ประกอบ",        color: "#7c5cff" },
-  { key: "panel",      th: "แผง",             en: "Panel",          path: "/panel",         op_type: "panel",      def: "แผง",           color: "#e08a00" },
+  { key: "assembly",   th: "ประกอบซับ (Sub-Assembly)", en: "Sub-assembly",   path: "/assembly",      op_type: "assembly",   def: "ประกอบ",        color: "#7c5cff" },
+  { key: "panel",      th: "แผง (Assembly)",   en: "Panel (Assembly)",          path: "/panel",         op_type: "panel",      def: "แผง",           color: "#e08a00" },
   { key: "glazing",    th: "ติดกระจก",        en: "Glazing",        path: "/glazing",       op_type: "glazing",    def: "ติดกระจก",      color: "#0aa3c2" },
   { key: "pack_panel", th: "แพ็กแผง",         en: "Pack panel",     path: "/packing-panel", op_type: "pack_panel", def: "แพ็กแผง",       color: "#2f6fe0" },
   { key: "pack_site",  th: "แพ็กไซต์ไอเทม",   en: "Pack site item", path: "/packing-site",  op_type: "pack_site",  def: "แพ็กไซต์ไอเทม", color: "#2f6fe0" },
@@ -14013,7 +14013,7 @@ function SystemSetup() {
 const OP_TYPES = [
   { value: "machining", label: "งานเครื่อง (machining)" },
   { value: "assembly", label: "ประกอบ · ซับ (subassembly)" },
-  { value: "panel", label: "แผง (panel)" },
+  { value: "panel", label: "แผง · Assembly (panel)" },
   { value: "pack_panel", label: "แพ็กแผง (pack panel)" },
   { value: "pack_site", label: "แพ็กไซต์ไอเทม (pack site item)" },
   { value: "packing", label: "แพ็ก · รวมทุกบั้ง (packing)" },
