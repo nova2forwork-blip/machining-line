@@ -179,7 +179,7 @@ export function buildLotWorkbook(ExcelJS, args) {
     put(2, 3, W, sh.line2, { bold: true, size: 13 }, { horizontal: "center" });
     put(3, Math.max(1, W - 1), W, "RPT:", { size: 11 }, { horizontal: "right" });
     put(4, Math.max(1, W - 1), W, "REV:", { size: 11 }, { horizontal: "right" });
-    if (logoId != null) ws.addImage(logoId, { tl: { col: 0.1, row: 0.1 }, ext: { width: 178, height: 50 } });
+    if (logoId != null) ws.addImage(logoId, { tl: { col: 0.1, row: 0.15 }, ext: { width: 168, height: 74 } });   // โลโก้บริษัทจริง (1200×529 · อัตราส่วน 2.27)
     // แบ่งแถวหัว 3 ช่วง: ซ้าย (Release Order/Project) · กลาง (ชื่อใบ) · ขวา (Print date/Prepared by) ตามความกว้างคอลัมน์
     const needL = Math.max(27, (String(lot.no).length + 16) * 1.2);
     let aEnd = 1; { let acc = 0; for (let i = 0; i < W; i++) { acc += cols[i].w; aEnd = i + 1; if (acc >= needL) break; } }
@@ -272,7 +272,7 @@ ${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
 *{box-sizing:border-box}html,body{margin:0;background:#e5e7eb;font-family:Tahoma,"Noto Sans Thai","Leelawadee UI",sans-serif;color:#000}
 .pg{background:#fff;margin:14px auto;padding:8mm;box-shadow:0 1px 8px rgba(0,0,0,.25);font-size:10.5px;break-after:page}
 .pg.land{page:land;width:297mm;min-height:210mm}.pg.port{page:port;width:210mm;min-height:297mm}
-.top{display:flex;align-items:flex-start;min-height:17mm}.logo{width:52mm}.logo img{height:15mm}.ttl{flex:1;text-align:center;font-size:15px;line-height:1.5}.ttl .s{font-size:13px}.rr{width:52mm;text-align:right;font-size:11px;line-height:1.5}
+.top{display:flex;align-items:flex-start;min-height:17mm}.logo{width:52mm}.logo img{height:16mm;max-width:50mm;object-fit:contain}.ttl{flex:1;text-align:center;font-size:15px;line-height:1.5}.ttl .s{font-size:13px}.rr{width:52mm;text-align:right;font-size:11px;line-height:1.5}
 .info{display:flex;justify-content:space-between;align-items:stretch;border-top:2px solid #000;border-bottom:2px solid #000;padding:3px 0;font-size:12px;margin-bottom:6mm}
 .info>div{display:flex;flex-direction:column;gap:3px;line-height:1.35}.info .m{text-align:center;flex:1}.info .r{text-align:right}.info .l{min-width:60mm}
 .note{font-size:10px;font-style:italic;color:#777;margin:-4mm 0 3mm}
@@ -295,7 +295,7 @@ export async function downloadLotSheets(args) {
   const mod = await import("exceljs/dist/exceljs.min.js");
   const ExcelJS = (mod && mod.Workbook) ? mod : (mod && mod.default && mod.default.Workbook) ? mod.default : (typeof window !== "undefined" && window.ExcelJS) || mod.default || mod;
   let logo = null;
-  try { const base = (import.meta.env && import.meta.env.BASE_URL) || "/"; const r = await fetch(`${base}brand/artclad-logo.png`); if (r.ok) logo = await r.arrayBuffer(); } catch { /* ไม่มีโลโก้ก็ยังออกใบได้ */ }
+  try { const base = (import.meta.env && import.meta.env.BASE_URL) || "/"; const r = await fetch(`${base}brand/artclad-company.png`); if (r.ok) logo = await r.arrayBuffer(); } catch { /* ไม่มีโลโก้ก็ยังออกใบได้ */ }
   const wb = buildLotWorkbook(ExcelJS, { ...args, logo });
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

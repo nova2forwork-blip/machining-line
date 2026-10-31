@@ -31,7 +31,7 @@ export default function LotSheetPreview({ args: args0, onClose }) {
   const only = sel.length === keys.length ? null : sel;
   const model = useMemo(() => buildLotModel({ ...args, only }), [args, only && only.join("|")]);   // eslint-disable-line react-hooks/exhaustive-deps
   const html = useMemo(() => {
-    let logoUrl = ""; try { logoUrl = new URL(`${(import.meta.env && import.meta.env.BASE_URL) || "/"}brand/artclad-logo.png`, window.location.origin).href; } catch { /* ไม่มีโลโก้ก็ได้ */ }
+    let logoUrl = ""; try { logoUrl = new URL(`${(import.meta.env && import.meta.env.BASE_URL) || "/"}brand/artclad-company.png`, window.location.origin).href; } catch { /* ไม่มีโลโก้ก็ได้ */ }
     return lotSheetsHtml(model, { logoUrl });
   }, [model]);
   useEffect(() => {
