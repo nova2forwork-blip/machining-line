@@ -384,7 +384,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       )}
 
       {step === 1 && !itemsMode && <UnitsStep units={units} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
-      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} />}
+      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} />}
 
       {step === 2 && !itemsMode && (
         <PdfStep onReloadLib={() => setLibTick((t) => t + 1)} pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
@@ -754,8 +754,12 @@ function SumCard({ tone, title, big, children, wide }) {
 }
 // ══ ④ ตรวจ + บันทึก ══
 // ── ขั้น ② โหมด "เฉพาะซับ / พาร์ท": เลือกเบอร์จากคลังของโปรเจค + จำนวน (ไม่มีแผง · ไม่ต้องอัพ PDF) ──
-function PicksStep({ project, picks, setPicks, bom, libState, catOf, onReloadLib }) {
+function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onReloadLib, api, userName }) {
   const [tab, setTab] = useState("sub");
+  // ★ 2026-11-03: วาง PDF แบบซับ/พาร์ทได้ที่นี่เลย (เหมือนขั้นอัพ PDF แผง) — อ่าน → บันทึกลงคลังของโปรเจคทันที → เลือกให้ ×1
+  const [reading, setReading] = useState(null);
+  const [drag, setDrag] = useState(false);
+  const fileRef = useRef(null);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState({});
   const Q = q.trim().toUpperCase();
@@ -769,11 +773,50 @@ function PicksStep({ project, picks, setPicks, bom, libState, catOf, onReloadLib
     setPicks((old) => { const rest = old.filter((p) => key(p.kind, p.code) !== key(kind, code)); return n > 0 ? [...rest, { code, kind, qty: n }] : rest; });
   };
   const nSub = picks.filter((p) => p.kind === "sub").length, nPart = picks.length - nSub;
+  async function addFiles(list) {
+    const files = [...list].filter((f) => /\.pdf$/i.test(f.name)); if (!files.length || !project) return;
+    setReading({ n: 0, of: files.length });
+    try {
+      const all = await readPdfFiles(files, (n, of) => setReading({ n, of }));
+      const got = all.filter((d) => d.kind === "sub" || d.kind === "part");
+      const skip = all.filter((d) => !(d.kind === "sub" || d.kind === "part"));
+      const skipTxt = skip.length ? `ข้าม ${skip.length} ไฟล์ (${skip.slice(0, 4).map((d) => d.kind === "panel" ? "แบบแผง " + d.code + " — ใช้โหมดปล่อยแผง" : "อ่านไม่ออก " + d.file).join(", ")}${skip.length > 4 ? " …" : ""})` : "";
+      if (!got.length) { setReading({ err: "ไม่มีแบบซับ/พาร์ทในไฟล์ที่วาง" + (skipTxt ? " — " + skipTxt : "") }); return; }
+      if (!api?.saveLibrary) { setReading({ err: "ระบบนี้ยังบันทึกลงคลังจากหน้านี้ไม่ได้ — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค”" }); return; }
+      // รวมกับคลังเดิม → บันทึกลงคลังของโปรเจค (เหมือนกด "บันทึก" ที่หน้า ซับ / พาร์ท ของโปรเจค) · หมวด/งานซับใช้ค่าของคลัง
+      const base = lib || EMPTY_LIB; const ov = base.ov || {};
+      const merged = buildBom({ lib: base, pdfs: got, ack: {}, useLib: true });
+      const cfg = { partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] };
+      const catOfLib = makeCatOf(merged, ov.catOv || {}, cfg);
+      setReading({ msg: "บันทึกลงคลังของโปรเจค…" });
+      const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
+        newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
+        pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: userName || "" }, (m) => setReading({ msg: m }));
+      // เลือกเบอร์ที่เพิ่งวางให้เลย ×1 (แก้จำนวนได้) — เบอร์ที่เลือกอยู่แล้วคงจำนวนเดิม
+      setPicks((old) => { const have = new Set(old.map((p) => key(p.kind, p.code))); return [...old, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: 1 }))]; });
+      onReloadLib();
+      const gs = got.filter((d) => d.kind === "sub").length, gp = got.length - gs;
+      const errs = (r && r.errors) || [];
+      setReading({ ok: `เพิ่มลงคลังแล้ว ซับ ${nf(gs)} · พาร์ท ${nf(gp)} เบอร์ — เลือกให้แล้ว ×1 แก้จำนวนในตารางได้เลย`, warn: [skipTxt, ...errs].filter(Boolean).join(" · ") });
+    } catch (e) { setReading({ err: "วาง PDF ไม่สำเร็จ: " + (e?.message || e) }); }
+  }
   if (!project) return <div className="card rw-card"><div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่ได้เลือกโปรเจค</b><span>กลับไปขั้น ① แล้วเลือกโปรเจค — เบอร์ที่เลือกได้มาจากคลังของโปรเจค</span></div></div>;
   return (
     <div className="card rw-card">
       <SecHead title="เลือกซับ / พาร์ท" sub={`จากคลังของโปรเจค ${project.code} — ใส่จำนวนที่ต้องการปล่อย · ซับจะแตกลูก (ซับย่อย + พาร์ท) ให้เองตาม BOM ในคลัง`}
         right={<button type="button" className="btn btn-ghost btn-sm" onClick={onReloadLib} title="โหลดคลังใหม่ (หลังเพิ่มซับ/พาร์ทที่หน้า ซับ / พาร์ท ของโปรเจค)">↻ โหลดคลังใหม่</button>} />
+      <div className={`rw-drop rw-drop-sm ${drag ? "drag" : ""}`} role="button" tabIndex={0}
+        onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+        onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}>
+        <div className="rw-drop-ic"><Icon name="plus" size={20} /></div>
+        <div><b>ลาก PDF แบบซับ / พาร์ท มาวาง หรือกดเพื่อเลือก</b><span>ระบบอ่านแล้วลงคลังของโปรเจคให้ทันที พร้อมเลือกเบอร์นั้นให้ · หลายไฟล์พร้อมกันได้ · ไฟล์ชื่อซ้ำ = แทนที่ของเดิม</span></div>
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" multiple hidden data-testid="pick-pdf-input" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+      </div>
+      {reading ? <div className={`rw-msg ${reading.err ? "bad" : reading.ok ? (reading.warn ? "warn" : "ok") : "info"}`}>
+        {reading.err || (reading.ok ? <>✓ {reading.ok}{reading.warn ? <> · {reading.warn}</> : null}</> : reading.msg ? reading.msg : `กำลังอ่าน PDF ${reading.n}/${reading.of}…`)}
+        {(reading.err || reading.ok) ? <button type="button" className="rw-link" style={{ marginLeft: 8 }} onClick={() => setReading(null)}>ปิด</button> : null}
+      </div> : null}
       {libState.s === "loading" ? <div className="rw-msg info">กำลังโหลดคลังของโปรเจค…</div> : null}
       {libState.s === "err" ? <div className="rw-msg bad">✗ โหลดคลังไม่ได้: {libState.err}</div> : null}
       <div className="rw-picked">
@@ -805,7 +848,7 @@ function PicksStep({ project, picks, setPicks, bom, libState, catOf, onReloadLib
               </Fragment>); })}</tbody>
         </table>
         {list.length > 300 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 300 จาก {nf(list.length)} เบอร์ — พิมพ์ค้นหาเพื่อดูที่เหลือ</div> : null}
-        {!list.length ? <div className="rw-muted small" style={{ padding: 14 }}>{libState.s === "loading" ? "กำลังโหลด…" : Q ? "ไม่พบเบอร์ที่ค้นหา" : tab === "sub" ? "ยังไม่มีซับในคลังของโปรเจคนี้ — ลงแบบซับที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด ↻ โหลดคลังใหม่" : "ยังไม่มีพาร์ทที่มี QR ในคลัง — ลงแบบพาร์ทที่หน้า “ซับ / พาร์ท ของโปรเจค”"}</div> : null}
+        {!list.length ? <div className="rw-muted small" style={{ padding: 14 }}>{libState.s === "loading" ? "กำลังโหลด…" : Q ? "ไม่พบเบอร์ที่ค้นหา" : tab === "sub" ? "ยังไม่มีซับในคลังของโปรเจคนี้ — ลาก PDF แบบซับมาวางด้านบนได้เลย (หรือลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด ↻ โหลดคลังใหม่)" : "ยังไม่มีพาร์ทที่มี QR ในคลัง — ลงแบบพาร์ทที่หน้า “ซับ / พาร์ท ของโปรเจค”"}</div> : null}
       </div>
       <div className="rw-muted small" style={{ marginTop: 8 }}>แสดงเฉพาะพาร์ทที่ผลิตเอง (มี QR) · สกรู / ยาง / กระจก ไม่ทำ QR · ซับที่ปล่อยจะไปเป็นใบงานพับ / เชื่อม / ยิง ตามกติกาเบอร์ (แก้ได้ในขั้นตรวจ + บันทึก)</div>
     </div>

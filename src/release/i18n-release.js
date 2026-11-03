@@ -1551,6 +1551,13 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  // ★ 2026-11-03 วาง PDF ซับ/พาร์ท ในขั้นเลือกซับ/พาร์ท
+  "ลาก PDF แบบซับ / พาร์ท มาวาง หรือกดเพื่อเลือก": "Drop sub-assembly / part PDFs here, or click to choose",
+  "ระบบอ่านแล้วลงคลังของโปรเจคให้ทันที พร้อมเลือกเบอร์นั้นให้ · หลายไฟล์พร้อมกันได้ · ไฟล์ชื่อซ้ำ = แทนที่ของเดิม": "Read and saved to the project library right away, and the codes are selected for you · several files at once · same file name replaces the old one",
+  "บันทึกลงคลังของโปรเจค…": "Saving to the project library…",
+  "ไม่มีแบบซับ/พาร์ทในไฟล์ที่วาง": "No sub-assembly / part drawings in the dropped files",
+  "ระบบนี้ยังบันทึกลงคลังจากหน้านี้ไม่ได้ — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค”": "Can't save to the library from here — use the “Project subs / parts” page",
+  "ยังไม่มีซับในคลังของโปรเจคนี้ — ลาก PDF แบบซับมาวางด้านบนได้เลย (หรือลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด ↻ โหลดคลังใหม่)": "No subs in this project's library yet — drop sub PDFs above (or add them on “Project subs / parts” and press ↻ Reload)",
   "รายการกระจก": "Glass list", "ใบเบิก ไม่มี QR": "issue sheet, no QR", "แยกหมวดตามกติกาเบอร์": "categorised by code rules", "เบอร์ที่มี * = SITE ITEM": "codes with * = SITE ITEM",
   "(ติดแผงโดยตรง)": "(directly on panel)",
   "จาก BOM แผง/ซับในล็อต": "from the BOM of panels/subs in this lot",
@@ -1560,6 +1567,9 @@ const FIX_DICT = {
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
 };
 const FIX_TPLS = [
+  ["เพิ่มลงคลังแล้ว ซับ {1} · พาร์ท {2} เบอร์ — เลือกให้แล้ว ×1 แก้จำนวนในตารางได้เลย", "Added to the library: {1} subs · {2} parts — selected ×1, change the quantity in the table"],
+  ["วาง PDF ไม่สำเร็จ: {1}", "PDF drop failed: {1}"],
+  ["ข้าม {1} ไฟล์ ({2})", "Skipped {1} file(s) ({2})"],
   ["พับ {1}", "Bending {1}"], ["เชื่อม {1}", "Welding {1}"], ["ยิง {1}", "Fastening {1}"],
   ["{1} แผ่น", "{1} pcs"],
   ["{1} ซับ", "{1} subs"], ["เศษ {1}", "offcut {1}"],

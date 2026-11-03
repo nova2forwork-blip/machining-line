@@ -732,3 +732,6 @@ mark.rl-hl { background: #fde68a; color: inherit; padding: 0 1px; border-radius:
 .rl-iss { width: 74px; text-align: right; padding: 4px 8px; }
 .rl-iss.diff { border-color: #f0a020; background: #fff8e8; font-weight: 600; }
 .rl-iss-r { width: 170px; padding: 4px 8px; }
+
+/* ★ 2026-11-03 กล่องวาง PDF ในขั้นเลือกซับ/พาร์ท (เตี้ยกว่าของแผง) */
+.rw-drop.rw-drop-sm { padding: 12px 16px; margin-bottom: 10px; }
