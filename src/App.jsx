@@ -13664,7 +13664,7 @@ const STATION_TYPES = [
   { key: "machine",    th: "งานเครื่อง",      en: "Machining",      subTh: "ตัด · บาก · กัด · เจาะ", subEn: "cut · notch · mill · drill", path: "/station", color: "#0f9d6e" },
   { key: "assembly",   th: "ประกอบซับ (Sub-Assembly)", en: "Sub-assembly",   path: "/assembly",      op_type: "assembly",   def: "ประกอบ",        color: "#7c5cff" },
   { key: "panel",      th: "แผง (Assembly)",   en: "Panel (Assembly)",          path: "/panel",         op_type: "panel",      def: "แผง",           color: "#e08a00" },
-  { key: "glazing",    th: "ติดกระจก",        en: "Glazing",        path: "/glazing",       op_type: "glazing",    def: "ติดกระจก",      color: "#0aa3c2" },
+  { key: "glazing",    th: "ติดกระจก (Glazing)", en: "Glazing",        path: "/glazing",       op_type: "glazing",    def: "ติดกระจก",      color: "#0aa3c2" },
   { key: "pack_panel", th: "แพ็กแผง",         en: "Pack panel",     path: "/packing-panel", op_type: "pack_panel", def: "แพ็กแผง",       color: "#2f6fe0" },
   { key: "pack_site",  th: "แพ็กไซต์ไอเทม",   en: "Pack site item", path: "/packing-site",  op_type: "pack_site",  def: "แพ็กไซต์ไอเทม", color: "#2f6fe0" },
   { key: "packing",    th: "แพ็ก (รวมทุกบั้ง)", en: "Packing (all)", path: "/packing",       op_type: "packing",    def: "แพ็ก",          color: "#2f6fe0", legacy: true },
