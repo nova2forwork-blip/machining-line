@@ -10,7 +10,7 @@ import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
-  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter } from "./releaseCore.js";
+  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
@@ -68,7 +68,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const itemsMode = mode === "items";
   const [unitsRaw, setUnits] = useState([]);
   const [pdfsRaw, setPdfs] = useState([]);
-  const units = itemsMode ? NONE : unitsRaw;           // โหมด items = ไม่มีแผง/PDF แผง (ข้อมูลที่กรอกไว้ในโหมดแผงยังอยู่ — สลับกลับมาได้)
+  // ★ 2026-11-03 แถว Mockup ที่ใส่จำนวน → กางเป็นแผงละแถว (1 QR ต่อแผง) ก่อนใช้คำนวณ/บันทึก · ตาราง Address & Unit ยังแสดงแถวดิบ
   const pdfs = itemsMode ? NONE : pdfsRaw;
   const [ack, setAck] = useState({});
   const [ackMeta, setAckMeta] = useState({});
@@ -98,6 +98,8 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     return c;
   }, [api, releases, plans, project]);
   const libEff = lib || EMPTY_LIB;
+  const unitsX = useMemo(() => expandUnits(unitsRaw, ctx.usedAddr), [unitsRaw, ctx.usedAddr]);
+  const units = itemsMode ? NONE : unitsX;              // โหมด items = ไม่มีแผง/PDF แผง (ข้อมูลที่กรอกไว้ในโหมดแผงยังอยู่ — สลับกลับมาได้)
 
   // ── derived ──
   const bom = useMemo(() => buildBom({ lib: libEff, pdfs, ack, useLib }), [libEff, pdfs, ack, useLib]);
@@ -105,7 +107,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const catOf = useMemo(() => makeCatOf(bom, catOv, partCfg), [catOv, bom, partCfg]);
   const procOf = useCallback((code) => procOv[code] ?? ruleProc(code), [procOv]);
   const cnt = useMemo(() => countUnits(units, bom), [units, bom]);
-  const ui = useMemo(() => unitIssues(units, ctx.usedAddr), [units, ctx.usedAddr]);
+  const ui = useMemo(() => unitIssues(itemsMode ? NONE : unitsRaw, ctx.usedAddr), [itemsMode, unitsRaw, ctx.usedAddr]);   // ตามแถวดิบ (ดัชนีตรงตาราง)
   const cv = useMemo(() => coverage(units, bom, pdfs, catOf), [units, bom, pdfs, catOf]);
   const roNorm0 = normalizeRO(hdr.ro);
   const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : {}) }),
@@ -383,7 +385,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         </div>
       )}
 
-      {step === 1 && !itemsMode && <UnitsStep units={units} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
+      {step === 1 && !itemsMode && <UnitsStep units={unitsRaw} total={units.length} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
       {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} />}
 
       {step === 2 && !itemsMode && (
@@ -422,7 +424,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
 }
 
 // ══ ② Address & Unit ══
-function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go }) {
+function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go }) {
   // ทุกการแก้ผ่านตัวนี้ → แถว Mockup (PMU/VMU/EMU) ได้ที่อยู่สมมติ MOCK-xxx-n ให้อัตโนมัติ
   const setUnits = useCallback((fn) => setUnitsRaw((u) => normMockUnits(typeof fn === "function" ? fn(u) : fn, usedAddr)), [setUnitsRaw, usedAddr]);
   const [paste, setPaste] = useState("");
@@ -477,7 +479,8 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
     } catch (e) { setMsg("อ่าน PDF ไม่ได้: " + (e?.message || e)); }
   }
   const setCell = (i, k, v) => setUnits((u) => u.map((r, j) => (j === i ? { ...r, [k]: v.toUpperCase() } : r)));
-  const toggleMock = (i) => setUnits((u) => u.map((r, j) => (j === i ? (r.mock ? { ...r, mock: false } : { ...r, mock: true, addr: "" }) : r)));
+  const toggleMock = (i) => setUnits((u) => u.map((r, j) => (j === i ? (r.mock ? { ...r, mock: false, qty: undefined } : { ...r, mock: true, addr: "" }) : r)));
+  const setQty = (i, v) => setUnits((u) => u.map((r, j) => (j === i ? { ...r, qty: v === "" ? undefined : Math.max(1, Math.min(999, Math.round(Number(v) || 1))) } : r)));
   const del = (i) => setUnits((u) => u.filter((_, j) => j !== i));
   const badIdx = Object.keys(ui.row).map(Number);
   const view = (onlyBad ? badIdx : units.map((_, i) => i)).slice(0, 400);
@@ -516,7 +519,7 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
                     <tr key={i} className={bad ? "rw-rowbad" : is.length ? "rw-rowwarn" : ""}>
                       <td className="rw-num">{i + 1}</td>
                       <td><input className="input rw-cell rw-mono" value={r.unit} onChange={(e) => setCell(i, "unit", e.target.value)} aria-label={`Unit แถว ${i + 1}`} /></td>
-                      <td>{r.mock ? <span className="rw-mock-addr" title="ที่อยู่สมมติ — ระบบออกให้ ใช้แทนที่อยู่จริงของแผง Mockup"><b>MOCKUP</b> {mockType(r.unit)} <i className="rw-mono">{r.addr}</i></span>
+                      <td>{r.mock ? <span className="rw-mock-addr" title="ที่อยู่สมมติ — ระบบออกให้ ใช้แทนที่อยู่จริงของแผง Mockup"><b>MOCKUP</b> {mockType(r.unit)} <label className="rw-mock-qty" title="จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)">× <input className="input rw-cell" type="number" min="1" max="999" step="1" inputMode="numeric" value={r.qty || 1} onChange={(e) => setQty(i, e.target.value)} aria-label={`จำนวน Mockup แถว ${i + 1}`} /></label> <i className="rw-mono">{mockQty(r) > 1 ? `${String(r.addr || "").replace(/-\d+$/, "")}-1…${mockQty(r)}` : r.addr}</i></span>
                         : <input className="input rw-cell rw-mono" value={r.addr} onChange={(e) => setCell(i, "addr", e.target.value)} aria-label={`Address แถว ${i + 1}`} />}</td>
                       <td style={{ textAlign: "center" }}><input type="checkbox" checked={!!r.mock} onChange={() => toggleMock(i)} aria-label={`Mockup แถว ${i + 1}`} /></td>
                       <td>{is.length ? is.map(([t, m], k) => <Pill key={k} tone={t === "bad" ? "bad" : "warn"}>{m}</Pill>) : (cnt.find((c) => c.unit === r.unit)?.has ? <Pill tone="ok">✓ มี BOM</Pill> : <Pill tone="muted">รอ PDF</Pill>)}</td>
@@ -534,7 +537,7 @@ function UnitsStep({ units, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demo
       <div className="card rw-card rw-sticky">
         <SecHead title="สรุปแผง" sub="นับให้เองต่อแบบ (แทนชีต Units)" />
         <div className="rw-stats">
-          <div className="rw-stat"><b>{nf(units.length)}</b><span>แผงทั้งหมด{units.some((r) => r.mock) ? ` (Mockup ${units.filter((r) => r.mock).length})` : ""}</span></div>
+          <div className="rw-stat"><b>{nf(total ?? units.length)}</b><span>แผงทั้งหมด{units.some((r) => r.mock) ? ` (Mockup ${nf(units.filter((r) => r.mock).reduce((a, r) => a + mockQty(r), 0))})` : ""}{(total ?? units.length) !== units.length ? ` · ${nf(units.length)} แถว` : ""}</span></div>
           <div className="rw-stat"><b>{cnt.length}</b><span>แบบแผง</span></div>
           <div className="rw-stat"><b className={withBom < cnt.length ? "warn" : "ok"}>{withBom}</b><span>มี BOM แล้ว</span></div>
         </div>

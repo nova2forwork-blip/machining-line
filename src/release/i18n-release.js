@@ -1551,6 +1551,7 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  "จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)": "How many mock-up panels of this type (released alike from one PDF set · one QR per panel)",
   // ★ 2026-11-03 รุ่น (revision) ของเบอร์
   "ไม่ได้เพิ่ม — คลังมีรุ่นใหม่กว่าอยู่แล้ว เลือกรุ่นล่าสุดให้แทน": "Nothing added — the library already has a newer revision; the latest one was selected instead",
   "มีรุ่นใหม่กว่าของเบอร์นี้ — เวลาปล่อยงาน/แตกลูกซับ ระบบใช้รุ่นล่าสุด": "A newer revision of this code exists — releases and sub explosions use the latest one",
@@ -1570,6 +1571,7 @@ const FIX_DICT = {
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
 };
 const FIX_TPLS = [
+  ["จำนวน Mockup แถว {1}", "Mock-up quantity row {1}"],
   ["รุ่นเก่ากว่าในคลัง {1} ไฟล์ ไม่เอาทับ ({2})", "{1} file(s) older than the library revision, not applied ({2})"],
   ["{1} → ใช้ {2}", "{1} → using {2}"], ["{1} → มี {2} แล้ว", "{1} → {2} already exists"],
   ["รุ่นเก่า → {1}", "old rev → {1}"],

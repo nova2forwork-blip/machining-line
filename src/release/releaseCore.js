@@ -458,6 +458,15 @@ export function normMockUnits(units, usedAddr) {
     return a === u.addr && mock === u.mock ? u : { ...u, addr: a, ...(mock !== undefined ? { mock } : {}) };
   });
 }
+// ★ 2026-11-03 แผง Mockup ใส่ "จำนวน" ได้ (PMU/VMU ปล่อยเหมือนกันหลายแผง ใช้ PDF ชุดเดียว) — แถวดิบ 1 แถว qty N
+//   → กางเป็น N แผง (1 QR ต่อแผง) ก่อนใช้ทุกที่ปลายทาง · ที่อยู่สมมติ MOCK-xxx-n ออกใหม่ตามลำดับหลังกาง
+export const mockQty = (u) => (u && u.mock ? Math.max(1, Math.min(999, Math.round(Number(u.qty) || 1))) : 1);
+export function expandUnits(units, usedAddr) {
+  if (!units.some((u) => u.mock && mockQty(u) > 1)) return units;
+  const out = [];
+  for (const u of units) { const n = mockQty(u); if (n === 1) out.push(u); else for (let i = 0; i < n; i++) out.push({ ...u, addr: "", qty: undefined, _of: u }); }
+  return normMockUnits(out, usedAddr);
+}
 export function unitIssues(units, usedAddr) {
   const row = {}, block = [], warn = []; const seen = new Map();
   units.forEach((u, i) => { const a = String(u.addr || "").trim().toUpperCase(); if (a) { if (!seen.has(a)) seen.set(a, []); seen.get(a).push(i); } });
@@ -500,6 +509,7 @@ export function parseUnitsPaste(text) {
   for (const r of cells.slice(start)) {
     const unit = (r[ui] || "").trim().toUpperCase(), addr = (r[ai] || "").trim().toUpperCase();
     if (!unit && !addr) { skipped++; continue; }
+    if (mockType(unit) && /^\d{1,3}$/.test(addr) && Number(addr) >= 1) { rows.push({ unit, addr: "", mock: true, qty: Number(addr) }); continue; }   // ★ "PMU-01 | 4" = Mockup 4 แผง
     rows.push({ unit, addr });
   }
   return { rows, skipped };
