@@ -13,6 +13,20 @@ export const fnum = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n
 export const isStar = (code) => /\*$/.test(String(code || "").trim());
 const clone = (o) => JSON.parse(JSON.stringify(o || {}));
 export const findKey = (obj, c) => { if (!obj || !c) return null; if (obj[c]) return c; const n = NC(c); return Object.keys(obj).find((k) => NC(k) === n) || null; };
+// ★ 2026-11-03 รุ่น (revision) ของเบอร์: "HZ02-025 A" = เบอร์ HZ02-025 รุ่น A · ผู้ใช้: "ถ้ามีตัวชื่อเหมือนกันอยู่ ให้เลือกตัวที่ revise ล่าสุด"
+//   baseOf = เบอร์ไม่รวมตัวรุ่น/ดาว · revRank = A=1 … Z=26 (ไม่มี = 0) · findLatest = คีย์ของเบอร์เดียวกันที่รุ่นสูงสุด (รุ่นเท่ากัน = ตัวที่ตรงตัวสะกด)
+const REV_RE = /^(.*?)\s+([A-Z])(\*?)$/;
+export const baseOf = (c) => { const n = NC(c).replace(/\*$/, ""); const m = REV_RE.exec(n); return m ? m[1] : n; };
+export const revRank = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "") + ""); return m ? m[2].charCodeAt(0) - 64 : 0; };
+export const revLetter = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "")); return m ? m[2] : ""; };
+export function findLatest(obj, c) {
+  if (!obj || !c) return null;
+  const exact = findKey(obj, c); const b = baseOf(c); let best = exact, br = exact ? revRank(exact) : -1;
+  for (const k of Object.keys(obj)) { if (k === exact || baseOf(k) !== b) continue; const r = revRank(k); if (r > br) { best = k; br = r; } }
+  return best;
+}
+// รุ่นที่ใหม่กว่า "ของเบอร์เดียวกัน" ที่มีอยู่แล้ว (ไว้เตือน/ข้ามไฟล์รุ่นเก่า) → คีย์ หรือ null
+export const newerRevOf = (obj, c) => { const k = findLatest(obj, c); return k && revRank(k) > revRank(c) ? k : null; };
 export const nf = (n, d = 0) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const nlen = (n) => (n == null || n === "" ? "" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }));
 
@@ -230,6 +244,7 @@ export function buildBom({ lib, pdfs, ack, useLib }) {
       if (d.kind === "panel") { const pk = findKey(PANELS, d.code) || d.code; PANELS[pk] = { d: (PANELS[pk] || {}).d || "", items, pdf: d.file }; }
       else { const sk = findKey(SUBS, d.code) || d.code; const old = SUBS[sk] || {}; const Ln = fnum(d.title.LENGTH); SUBS[sk] = { d: old.d || d.title.DESC || "", l: kept(d, "subL") ? old.l : (Ln ?? old.l), f: old.f || "", lvl: old.lvl || 1, items, pdf: d.file }; }
     } else if (d.kind === "part") {
+      if (newerRevOf(PARTS, d.code)) continue;   // ★ 2026-11-03 มีรุ่นใหม่กว่าของเบอร์นี้อยู่แล้ว → ไม่เอาแบบรุ่นเก่าทับ
       const t = d.title; const pk = findKey(PARTS, d.code) || d.code; const p = PARTS[pk] = PARTS[pk] || { d: "", k: "part" };
       const set = (lab, fn) => { if (!kept(d, lab)) fn(); };
       const Ln = fnum(t.LENGTH), H = fnum(t.HEIGHT), inv = (t["INV.CODE"] || "").trim();
@@ -375,8 +390,9 @@ export function explode(units, bom, picks = null) {
         const sk = findKey(bom.subs, code);
         if (sk && !seen.has(sk)) walk(explodeLines(bom.subs[sk]), n, depth + 1, "sub", new Set([...seen, sk]));
       } else {
-        const p = parts.get(code) || { code, qty: 0, loose: 0, kind: t };
-        p.qty += n; if (parentKind === "panel") p.loose += n; parts.set(code, p);
+        const key = findLatest(bom.parts, code) || code;   // ★ 2026-11-03 BOM เขียนรุ่นเก่า แต่คลังมีรุ่นใหม่กว่า → ปล่อยรุ่นล่าสุด
+        const p = parts.get(key) || { code: key, qty: 0, loose: 0, kind: t };
+        p.qty += n; if (parentKind === "panel") p.loose += n; parts.set(key, p);
       }
     }
   };
@@ -388,7 +404,7 @@ export function explode(units, bom, picks = null) {
       const s = subs.get(code) || { code, qty: 0, depth: 1 }; s.qty += q; s.depth = 1; subs.set(code, s);
       if (sk) walk(explodeLines(bom.subs[sk]), q, 2, "sub", new Set([sk]));
     } else {
-      const code = findKey(bom.parts, pk.code) || pk.code;
+      const code = findLatest(bom.parts, pk.code) || pk.code;
       const p = parts.get(code) || { code, qty: 0, loose: 0, kind: "part" }; p.qty += q; p.loose += q; parts.set(code, p);
     }
   }
@@ -806,7 +822,7 @@ export function explodeFrom(bom, panelQty, subQty) {
       if ((it[4] || "") === "ยกเลิก") continue;
       const [t, code, q] = it; const n = mult * (q || 0); if (!(n > 0)) continue;
       if (t === "sub") { subs.set(code, (subs.get(code) || 0) + n); const sk = findKey(bom.subs, code); if (sk && !seen.has(sk)) walk(bom.subs[sk].items, n, new Set([...seen, sk])); }
-      else parts.set(code, (parts.get(code) || 0) + n);
+      else { const key = findLatest(bom.parts, code) || code; parts.set(key, (parts.get(key) || 0) + n); }
     }
   };
   for (const [code, q] of panelQty || []) { const pk = findKey(bom.panels, code); if (pk) walk(bom.panels[pk].items, q, new Set()); }

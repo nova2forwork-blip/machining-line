@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
-import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf } from "./releaseCore.js";
+import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf } from "./releaseCore.js";
 import { Pill, SubKids } from "./releaseUi.jsx";
 import FileBrowser from "./FileBrowser.jsx";
 import "./release-wizard.css";
@@ -75,9 +75,13 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     setReading({ n: 0, of: files.length });
     try {
       const all = await readPdfFiles(files, (n, of) => setReading({ n, of }));
-      const got = all.filter((d) => d.kind === "sub" || d.kind === "part"); const skip = all.filter((d) => !(d.kind === "sub" || d.kind === "part"));
+      // ★ 2026-11-03 รุ่นเก่ากว่าที่มีในคลัง (วาง "X A" ทั้งที่มี "X B") → ข้าม ใช้รุ่นล่าสุดเสมอ
+      const older = all.filter((d) => d.kind === "part" && newerRevOf(bom.parts, d.code));
+      const got = all.filter((d) => (d.kind === "sub" || d.kind === "part") && !older.includes(d)); const skip = all.filter((d) => !(d.kind === "sub" || d.kind === "part"));
       setPdfs((old) => { const names = new Set(got.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...got]; });
-      setReading(skip.length ? { warn: `ข้าม ${skip.length} ไฟล์ (${skip.map((d) => d.kind === "panel" ? "แบบแผง " + d.code : "อ่านไม่ออก " + d.file).slice(0, 4).join(", ")}) — แบบแผงลงที่ "ปล่อยงานใหม่"` } : null);
+      const olderTxt = older.length ? `รุ่นเก่ากว่าในคลัง ${older.length} ไฟล์ ไม่เอาทับ (${older.slice(0, 4).map((d) => `${d.code} → มี ${newerRevOf(bom.parts, d.code)} แล้ว`).join(", ")})` : "";
+      if (!skip.length && olderTxt) { setReading({ warn: olderTxt }); return; }
+      setReading(skip.length ? { warn: (olderTxt ? olderTxt + " · " : "") + `ข้าม ${skip.length} ไฟล์ (${skip.map((d) => d.kind === "panel" ? "แบบแผง " + d.code : "อ่านไม่ออก " + d.file).slice(0, 4).join(", ")}) — แบบแผงลงที่ "ปล่อยงานใหม่"` } : null);
     } catch (e) { setReading({ err: "โหลดตัวอ่าน PDF ไม่ได้: " + (e?.message || e) }); }
   }
   const setCat = (codes, v) => setCatOv((o) => { const n = { ...o }; for (const c of codes) { if (!v || v === UNCAT) delete n[c]; else n[c] = v; } return n; });
@@ -198,7 +202,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
                     <td className="rl-desc"><span>{p.d}</span></td>
                     <td className="r rw-num">{nlen(p.l)}</td>
                     <td className="rw-mono rt-inv">{p.binv || p.m || <span className="rw-muted">—</span>}</td>
-                                        <td>{srcOf(p.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{pdfOf.has(NC(p.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(p.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
+                                        <td>{srcOf(p.code) === "pdf" ? <Pill tone="ok">PDF ใหม่</Pill> : <Pill tone="info">ในระบบ</Pill>}{(() => { const lt = findLatest(bom.parts, p.code); return lt && lt !== p.code ? <> <Pill tone="warn" title="มีรุ่นใหม่กว่าของเบอร์นี้ — เวลาปล่อยงาน/แตกลูกซับ ระบบใช้รุ่นล่าสุด">รุ่นเก่า → {lt}</Pill></> : null; })()}{pdfOf.has(NC(p.code)) && api.getLibPdfUrl ? <> <button type="button" className="rw-link" onClick={() => openPdf(p.code)} title="เปิดไฟล์ PDF ต้นฉบับ">PDF</button></> : null}</td>
                   </tr>);
                 return rows;
               })}</tbody>

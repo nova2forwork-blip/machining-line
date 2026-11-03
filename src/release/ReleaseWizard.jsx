@@ -10,7 +10,7 @@ import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
-  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf } from "./releaseCore.js";
+  RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
@@ -766,7 +766,8 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
   const key = (kind, code) => kind + "|" + NC(code);
   const qtyOf = useMemo(() => new Map(picks.map((p) => [key(p.kind, p.code), p.qty])), [picks]);
   const subs = useMemo(() => Object.entries(bom.subs).map(([code, x]) => ({ code, ...x, nKids: (x.items || []).filter((i) => (i[4] || "") !== "ยกเลิก").length })).sort((a, b) => ncmp(a.code, b.code)), [bom]);
-  const parts = useMemo(() => Object.entries(bom.parts).filter(([, x]) => x.k !== "hw").map(([code, x]) => { const cat = catOf(code, "part"); const base = PART_CATS.includes(cat) ? cat : ruleCat(code, "part"); return { code, ...x, cat, qr: QR_CATS.has(base) }; }).filter((x) => x.qr).sort((a, b) => ncmp(a.code, b.code)), [bom, catOf]);
+  const nOldRev = useMemo(() => Object.keys(bom.parts).filter((c) => findLatest(bom.parts, c) !== c).length, [bom]);   // รุ่นเก่าที่ซ่อน
+  const parts = useMemo(() => Object.entries(bom.parts).filter(([code, x]) => x.k !== "hw" && findLatest(bom.parts, code) === code).map(([code, x]) => { const cat = catOf(code, "part"); const base = PART_CATS.includes(cat) ? cat : ruleCat(code, "part"); return { code, ...x, cat, qr: QR_CATS.has(base) }; }).filter((x) => x.qr).sort((a, b) => ncmp(a.code, b.code)), [bom, catOf]);
   const list = (tab === "sub" ? subs : parts).filter((r) => !Q || r.code.toUpperCase().includes(Q) || String(r.d || "").toUpperCase().includes(Q));
   const setQty = (kind, code, v) => {
     const n = Math.round(Number(v));
@@ -778,13 +779,25 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
     setReading({ n: 0, of: files.length });
     try {
       const all = await readPdfFiles(files, (n, of) => setReading({ n, of }));
-      const got = all.filter((d) => d.kind === "sub" || d.kind === "part");
+      const base = lib || EMPTY_LIB;
+      // ★ 2026-11-03 เบอร์เดียวกันแต่รุ่นเก่ากว่าที่มีในคลัง (เช่น วาง "X A" ทั้งที่มี "X B") → ข้าม ใช้รุ่นล่าสุดเสมอ
+      const older = all.filter((d) => d.kind === "part" && newerRevOf(base.parts, d.code));
+      const got = all.filter((d) => (d.kind === "sub" || d.kind === "part") && !older.includes(d));
       const skip = all.filter((d) => !(d.kind === "sub" || d.kind === "part"));
-      const skipTxt = skip.length ? `ข้าม ${skip.length} ไฟล์ (${skip.slice(0, 4).map((d) => d.kind === "panel" ? "แบบแผง " + d.code + " — ใช้โหมดปล่อยแผง" : "อ่านไม่ออก " + d.file).join(", ")}${skip.length > 4 ? " …" : ""})` : "";
-      if (!got.length) { setReading({ err: "ไม่มีแบบซับ/พาร์ทในไฟล์ที่วาง" + (skipTxt ? " — " + skipTxt : "") }); return; }
+      const skipTxt = [
+        skip.length ? `ข้าม ${skip.length} ไฟล์ (${skip.slice(0, 4).map((d) => d.kind === "panel" ? "แบบแผง " + d.code + " — ใช้โหมดปล่อยแผง" : "อ่านไม่ออก " + d.file).join(", ")}${skip.length > 4 ? " …" : ""})` : "",
+        older.length ? `รุ่นเก่ากว่าในคลัง ${older.length} ไฟล์ ไม่เอาทับ (${older.slice(0, 4).map((d) => `${d.code} → ใช้ ${newerRevOf(base.parts, d.code)}`).join(", ")}${older.length > 4 ? " …" : ""})` : "",
+      ].filter(Boolean).join(" · ");
+      if (!got.length) {
+        if (older.length) {   // วางแต่รุ่นเก่า → เลือกรุ่นล่าสุดในคลังให้แทน
+          setPicks((old) => { const have = new Set(old.map((p) => key(p.kind, p.code))); const add = older.map((d) => newerRevOf(base.parts, d.code)).filter((c) => !have.has(key("part", c))); return [...old, ...[...new Set(add)].map((c) => ({ code: c, kind: "part", qty: 1 }))]; });
+          setReading({ ok: "ไม่ได้เพิ่ม — คลังมีรุ่นใหม่กว่าอยู่แล้ว เลือกรุ่นล่าสุดให้แทน", warn: skipTxt }); return;
+        }
+        setReading({ err: "ไม่มีแบบซับ/พาร์ทในไฟล์ที่วาง" + (skipTxt ? " — " + skipTxt : "") }); return;
+      }
       if (!api?.saveLibrary) { setReading({ err: "ระบบนี้ยังบันทึกลงคลังจากหน้านี้ไม่ได้ — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค”" }); return; }
       // รวมกับคลังเดิม → บันทึกลงคลังของโปรเจค (เหมือนกด "บันทึก" ที่หน้า ซับ / พาร์ท ของโปรเจค) · หมวด/งานซับใช้ค่าของคลัง
-      const base = lib || EMPTY_LIB; const ov = base.ov || {};
+      const ov = base.ov || {};
       const merged = buildBom({ lib: base, pdfs: got, ack: {}, useLib: true });
       const cfg = { partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] };
       const catOfLib = makeCatOf(merged, ov.catOv || {}, cfg);
@@ -793,7 +806,12 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
         newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
         pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: userName || "" }, (m) => setReading({ msg: m }));
       // เลือกเบอร์ที่เพิ่งวางให้เลย ×1 (แก้จำนวนได้) — เบอร์ที่เลือกอยู่แล้วคงจำนวนเดิม
-      setPicks((old) => { const have = new Set(old.map((p) => key(p.kind, p.code))); return [...old, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: 1 }))]; });
+      // เลือกรุ่นล่าสุดของเบอร์นั้นให้ (ไฟล์ที่วางเป็นรุ่นใหม่กว่าอยู่แล้ว · ถ้าเคยเลือกรุ่นเก่าไว้ → เปลี่ยนเป็นรุ่นใหม่)
+      setPicks((old) => {
+        const next = old.map((p) => { const d = p.kind === "part" ? got.find((g) => g.kind === "part" && NC(g.code) !== NC(p.code) && newerRevOf({ [g.code]: 1 }, p.code)) : null; return d ? { ...p, code: d.code } : p; });
+        const have = new Set(next.map((p) => key(p.kind, p.code)));
+        return [...next, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: 1 }))];
+      });
       onReloadLib();
       const gs = got.filter((d) => d.kind === "sub").length, gp = got.length - gs;
       const errs = (r && r.errors) || [];
@@ -850,7 +868,7 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
         {list.length > 300 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 300 จาก {nf(list.length)} เบอร์ — พิมพ์ค้นหาเพื่อดูที่เหลือ</div> : null}
         {!list.length ? <div className="rw-muted small" style={{ padding: 14 }}>{libState.s === "loading" ? "กำลังโหลด…" : Q ? "ไม่พบเบอร์ที่ค้นหา" : tab === "sub" ? "ยังไม่มีซับในคลังของโปรเจคนี้ — ลาก PDF แบบซับมาวางด้านบนได้เลย (หรือลงที่หน้า “ซับ / พาร์ท ของโปรเจค” แล้วกด ↻ โหลดคลังใหม่)" : "ยังไม่มีพาร์ทที่มี QR ในคลัง — ลงแบบพาร์ทที่หน้า “ซับ / พาร์ท ของโปรเจค”"}</div> : null}
       </div>
-      <div className="rw-muted small" style={{ marginTop: 8 }}>แสดงเฉพาะพาร์ทที่ผลิตเอง (มี QR) · สกรู / ยาง / กระจก ไม่ทำ QR · ซับที่ปล่อยจะไปเป็นใบงานพับ / เชื่อม / ยิง ตามกติกาเบอร์ (แก้ได้ในขั้นตรวจ + บันทึก)</div>
+      <div className="rw-muted small" style={{ marginTop: 8 }}>{nOldRev ? <>เบอร์ที่มีหลายรุ่น แสดงเฉพาะรุ่นล่าสุด (ซ่อนรุ่นเก่า {nf(nOldRev)} เบอร์) · </> : null}แสดงเฉพาะพาร์ทที่ผลิตเอง (มี QR) · สกรู / ยาง / กระจก ไม่ทำ QR · ซับที่ปล่อยจะไปเป็นใบงานพับ / เชื่อม / ยิง ตามกติกาเบอร์ (แก้ได้ในขั้นตรวจ + บันทึก)</div>
     </div>
   );
 }

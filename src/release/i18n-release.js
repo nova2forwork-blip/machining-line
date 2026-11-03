@@ -1551,6 +1551,9 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  // ★ 2026-11-03 รุ่น (revision) ของเบอร์
+  "ไม่ได้เพิ่ม — คลังมีรุ่นใหม่กว่าอยู่แล้ว เลือกรุ่นล่าสุดให้แทน": "Nothing added — the library already has a newer revision; the latest one was selected instead",
+  "มีรุ่นใหม่กว่าของเบอร์นี้ — เวลาปล่อยงาน/แตกลูกซับ ระบบใช้รุ่นล่าสุด": "A newer revision of this code exists — releases and sub explosions use the latest one",
   // ★ 2026-11-03 วาง PDF ซับ/พาร์ท ในขั้นเลือกซับ/พาร์ท
   "ลาก PDF แบบซับ / พาร์ท มาวาง หรือกดเพื่อเลือก": "Drop sub-assembly / part PDFs here, or click to choose",
   "ระบบอ่านแล้วลงคลังของโปรเจคให้ทันที พร้อมเลือกเบอร์นั้นให้ · หลายไฟล์พร้อมกันได้ · ไฟล์ชื่อซ้ำ = แทนที่ของเดิม": "Read and saved to the project library right away, and the codes are selected for you · several files at once · same file name replaces the old one",
@@ -1567,6 +1570,10 @@ const FIX_DICT = {
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
 };
 const FIX_TPLS = [
+  ["รุ่นเก่ากว่าในคลัง {1} ไฟล์ ไม่เอาทับ ({2})", "{1} file(s) older than the library revision, not applied ({2})"],
+  ["{1} → ใช้ {2}", "{1} → using {2}"], ["{1} → มี {2} แล้ว", "{1} → {2} already exists"],
+  ["รุ่นเก่า → {1}", "old rev → {1}"],
+  ["เบอร์ที่มีหลายรุ่น แสดงเฉพาะรุ่นล่าสุด (ซ่อนรุ่นเก่า {1} เบอร์) · ", "Codes with several revisions show only the latest ({1} older hidden) · "],
   ["เพิ่มลงคลังแล้ว ซับ {1} · พาร์ท {2} เบอร์ — เลือกให้แล้ว ×1 แก้จำนวนในตารางได้เลย", "Added to the library: {1} subs · {2} parts — selected ×1, change the quantity in the table"],
   ["วาง PDF ไม่สำเร็จ: {1}", "PDF drop failed: {1}"],
   ["ข้าม {1} ไฟล์ ({2})", "Skipped {1} file(s) ({2})"],

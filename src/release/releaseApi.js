@@ -12,7 +12,7 @@ import {
   listReleaseIdsOfOrder, setReleaseMdf, addMaterialsFromRelease, getMaterials, getReleaseModifyInfo, applyReleaseModify,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan } from "./releaseCore.js";
+import { NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -281,9 +281,12 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   const e1 = await pool(kinds, 6, async (w) => { await updateRow("part_master", pmBy.get(NC(w.code)).id, { kind: w.kind }); }, (d, n) => onProgress(`ตั้งชนิดเบอร์ ${d}/${n}`));
   if (e1.length) st.errors.push(`ตั้งชนิดไม่สำเร็จ ${e1.length} เบอร์`);
   // BOM ซับ — เฉพาะซับที่อัพ PDF ใหม่รอบนี้ (ซับเดิมในระบบไม่แตะ)
-  const jobs = subCodes.filter((c) => !newCodes || newCodes.has(NC(c))).map((c) => {
+  // ★ 2026-11-03 ลูกที่เป็นพาร์ท → ใช้รุ่นล่าสุดในคลัง (BOM เขียน "X A" แต่มี "X B" แล้ว = ตั้งเป็น B) · ซับเดิมที่อ้างรุ่นเก่าของพาร์ทที่อัพรอบนี้ → ตั้ง BOM ใหม่ด้วย
+  const newBases = new Set([...(newCodes || [])].filter((c) => bom.parts[findKey(bom.parts, c)] ).map((c) => baseOf(c)));
+  const refsNew = (c) => (bom.subs[c].items || []).some((it) => it[0] !== "sub" && newBases.has(baseOf(it[1])) && findLatest(bom.parts, it[1]) !== findKey(bom.parts, it[1]));
+  const jobs = subCodes.filter((c) => !newCodes || newCodes.has(NC(c)) || refsNew(c)).map((c) => {
     const comp = new Map();
-    for (const it of bom.subs[c].items || []) { if ((it[4] || "") === "ยกเลิก") continue; const [t, cc, q] = it; if (!(q > 0)) continue; const ok = t === "sub" ? !!findKey(bom.subs, cc) : qr(findKey(bom.parts, cc) || cc); if (!ok) continue; const pm = pmBy.get(NC(cc)); if (!pm) continue; const e = comp.get(pm.id) || { child_pm_id: pm.id, qty: 0 }; e.qty += q; comp.set(pm.id, e); }
+    for (const it of bom.subs[c].items || []) { if ((it[4] || "") === "ยกเลิก") continue; const [t, cc0, q] = it; if (!(q > 0)) continue; const cc = t === "sub" ? cc0 : (findLatest(bom.parts, cc0) || cc0); const ok = t === "sub" ? !!findKey(bom.subs, cc) : qr(findKey(bom.parts, cc) || cc); if (!ok) continue; const pm = pmBy.get(NC(cc)); if (!pm) continue; const e = comp.get(pm.id) || { child_pm_id: pm.id, qty: 0 }; e.qty += q; comp.set(pm.id, e); }
     return { code: c, parent: pmBy.get(NC(c)), comps: [...comp.values()].map((e) => ({ ...e, qty: Math.max(1, Math.round(e.qty)) })) };
   }).filter((j) => j.parent && j.comps.length);
   const e2 = await pool(jobs, 4, async (j) => { const r = await setBom(j.parent.id, j.comps); if (r && r.ok === false) throw new Error(r.reason || "set_bom"); }, (d, n) => onProgress(`ตั้ง BOM ซับ ${d}/${n}`));
