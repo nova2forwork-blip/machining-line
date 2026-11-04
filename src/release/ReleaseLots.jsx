@@ -782,9 +782,8 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
     return { p, need, rel, addr, left };
   }).sort((a, b) => ncmp(b.p.ro, a.p.ro)), [plans, releases]);
   // ★ 2026-11-04 ผู้ใช้: "ปล่อยครบแล้วไม่ใช่หรอ" — การ์ดนี้แสดงเฉพาะที่ยังเหลือ · ที่ปล่อยครบพับไว้ (กดดูได้ · เปิดจากรายการ Release ปกติได้เหมือนเดิม)
-  const [showDone, setShowDone] = useState(false);
-  const pending = rows.filter((r) => r.left > 0), done = rows.filter((r) => r.left <= 0);
-  const shown = showDone ? rows : pending;
+  const pending = rows.filter((r) => r.left > 0);
+  const shown = pending;   // ปล่อยครบแล้ว = ไม่อยู่ในการ์ดนี้ (ดูในรายการล็อตด้านล่าง)
   if (!pending.length) return null;   // ★ ปล่อยครบทุกใบ = ไม่แสดงการ์ดนี้เลย (ใบที่ครบดูได้ในรายการล็อตด้านล่าง)
   return (
     <div className="card rl-planscard">
@@ -803,7 +802,6 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
             </tr>))}</tbody>
         </table>
       </div>
-      {done.length ? <div style={{ padding: "8px 2px 0" }}><button type="button" className="rw-link" onClick={() => setShowDone((v) => !v)}>{showDone ? "ซ่อนที่ปล่อยครบแล้ว" : `แสดงที่ปล่อยครบแล้ว ${nf(done.length)} ใบ`}</button></div> : null}
     </div>
   );
 }
