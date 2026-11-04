@@ -785,7 +785,7 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
   const [showDone, setShowDone] = useState(false);
   const pending = rows.filter((r) => r.left > 0), done = rows.filter((r) => r.left <= 0);
   const shown = showDone ? rows : pending;
-  if (!rows.length) return null;
+  if (!pending.length) return null;   // ★ ปล่อยครบทุกใบ = ไม่แสดงการ์ดนี้เลย (ใบที่ครบดูได้ในรายการล็อตด้านล่าง)
   return (
     <div className="card rl-planscard">
       <div className="card-head"><div><div className="card-title">Release ที่ยังปล่อยไม่ครบ{pending.length ? ` (${nf(pending.length)})` : ""}</div><div className="card-sub">บันทึกแล้ว · เลือกปล่อยเป็นล็อต P-xxx.1 / .2 … ได้ทีละส่วน</div></div></div>

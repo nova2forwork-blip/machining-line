@@ -7380,10 +7380,12 @@ const DEPT_TABS = [
 ];
 // ชนิด part → แผนก: package=แพ็ก · panel=แผง · subassembly=ซับ · อื่น ๆ=เครื่องจักร
 const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : k === "subassembly" ? "sub" : "machine");
-function DeptTabs({ value, onChange, counts }) {
+// ★ 2026-11-04 แท็บ "ทั้งหมด" (หน้าโปรเจค) — ผู้ใช้: ".2 ทำไมไม่มี" (ล็อตแผงอยู่แท็บ Assembly · ล็อตพาร์ทอยู่แท็บ Machine)
+const DEPT_ALL = { value: "all", label: "ทั้งหมด", sub: "ทุกล็อตในโปรเจค", color: "#334155", soft: "rgba(51,65,85,.08)", icon: "folder" };
+function DeptTabs({ value, onChange, counts, withAll = false }) {
   return (
     <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
-      {DEPT_TABS.map((d) => {
+      {(withAll ? [DEPT_ALL, ...DEPT_TABS] : DEPT_TABS).map((d) => {
         const active = value === d.value;
         return (
           <button key={d.value} type="button" onClick={() => onChange(d.value)}
@@ -11991,14 +11993,15 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   useEffect(() => { load(); }, [load]);
 
   const deptCounts = useMemo(() => {
-    const c = { machine: 0, sub: 0, panel: 0, packing: 0 };
+    const c = { all: 0, machine: 0, sub: 0, panel: 0, packing: 0 };
     if (!rels) return c;
     DEPT_TABS.forEach((d) => { c[d.value] = groupReleases(rels.filter((r) => deptOfKind(r.part_master?.kind) === d.value)).length; });
+    c.all = groupReleases(rels).length;
     return c;
   }, [rels]);
-  const curDept = dept || DEPT_TABS.find((d) => deptCounts[d.value] > 0)?.value || "machine";
-  const groups = useMemo(() => (rels ? groupReleases(rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)) : null), [rels, curDept]);
-  const curTab = DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0];
+  const curDept = dept || "all";
+  const groups = useMemo(() => (rels ? groupReleases(curDept === "all" ? rels : rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)) : null), [rels, curDept]);
+  const curTab = curDept === "all" ? { ...DEPT_ALL, label: "" } : (DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0]);
 
   // เจาะเข้า Release Order → แสดง Part + รายละเอียด (เหมือนหน้า Release Production)
   if (viewGroup) {
@@ -12064,7 +12067,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
           <ReleasePlansCardLazy plans={plans} releases={rels} onOpen={(p) => setPlanView({ plan: p, openBuilder: false })} />
         </Suspense>
       ) : null}
-      <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} />
+      <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} withAll />
       <Card title={groups ? `Release ${curTab.label} (${groups.length})` : "Release ทั้งหมด"}>
         <SortControl sort={sort} options={[
           { k: "date", label: "วันที่" }, { k: "order", label: "Release Order" }, { k: "parts", label: "Part No." },
