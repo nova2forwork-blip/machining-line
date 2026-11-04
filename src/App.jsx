@@ -6786,7 +6786,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const rel = core.releasedOf(releases, plan);
       const lot = rel.lots.find((l) => core.roKey(l.no) === core.roKey(hdr.ro));
       if (!lot) { mlsToast("ไม่พบรายการของล็อตนี้", "error"); return; }
-      setSheetPrev({ plan, need: core.needOf(plan), lot, userName: user?.name || "" });
+      const projectName = (releases.find((r) => r.part_master?.projects?.code === plan.projectCode && r.part_master?.projects?.name) || {}).part_master?.projects?.name || "";
+      setSheetPrev({ plan, need: core.needOf(plan), lot, userName: user?.name || "", projectName });
     } catch (e) {
       console.warn("export release sheet error", e);
       mlsToast("สร้างใบปล่อยไม่สำเร็จ: " + (e?.message || e), "error");

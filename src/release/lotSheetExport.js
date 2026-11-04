@@ -2,7 +2,7 @@
 //   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
 //   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
-import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf } from "./releaseCore.js";
+import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf, lotOf, ncmp } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
 // ★ 2026-10-26 ภาษาใบพิมพ์ = ภาษาที่เลือกในแอป (args.lang "th" | "en") — หัวคอลัมน์ 2 ภาษาอยู่แล้ว · EN = ข้อความไทยล้วนเป็นอังกฤษ + ไม่มีแถวหัวภาษาไทย
@@ -127,9 +127,52 @@ function matRows(sheet, lm, iss = {}) {
   return { out, total: null };
 }
 
+// ══ ★ 2026-11-04 ใบปะหน้า (INSTRUCTION FORM · ตามฟอร์ม FM(PL)-01/02/03 ของออฟฟิศ · A4 ตั้ง) ══
+//   ใส่หน้าแรกของใบ MACHINING / BENDING / STEEL · แก้ได้ที่หน้าล็อต: plan.sheetEdit[ล็อต].__cover[ใบ] = { no, of, remark, approved, name }
+export const COVER_FORMS = {
+  CUTTING: { form: "FM(PL)-01 REV.00 DATE :20/02/2017", th: "ใบเบิกอลูมิเนียม Extrusion ( ใบสั่งงาน )", en: "CUTTING / MACHINING INSTRUCTION", toEn: "Cutting Section", toTh: "แผนกตัด,สโตร์" },
+  BENDING: { form: "FM(PL)-02 REV.00 DATE :20/02/2017", th: "ใบเบิกอลูมิเนียมชีท,สังกะสี ( ใบสั่งงาน )", en: "SHEARING / BENDING  INSTRUCTION", toEn: "Bending Section", toTh: "แผนกพับ,สโตร์" },
+  STEEL: { form: "FM(PL)-03 REV.00 DATE :20/02/2017", th: "ใบเบิกเหล็ก Steel ( ใบสั่งงาน )", en: "CUTTING / WELDING INSTRUCTION", toEn: "Cutting Welding Instruction", toTh: "แผนกตัด,สโตร์" },
+};
+export const COVER_ROWS = 15;
+const ymdDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
+function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName }) {
+  const f = COVER_FORMS[key]; if (!f) return null;
+  const ed = (((plan.sheetEdit || {})[lot.no] || {}).__cover || {})[key] || {};
+  const d = ymdDate(lot.date) || new Date();
+  const items = [];
+  if (key === "CUTTING") {
+    const iss = (plan.lotIssue || {})[lot.no] || {};
+    for (const m of lm.mat) { const n = iss[m.inv || "—"]?.n; items.push({ inv: m.inv || T("(ไม่มี INV)", "(no INV)"), stock: m.stock || "", req: n === "" || n == null ? m.bars : Number(n), rm: [m.d, m.origs && m.origs.length ? T(`เปลี่ยนจาก ${m.origs.join(", ")}`, `instead of ${m.origs.join(", ")}`) : ""].filter(Boolean).join(" · ") }); }
+  } else {
+    // งานพับ / เหล็ก: รวมพาร์ทในใบตามรหัสวัตถุดิบ (INV) → จำนวนชิ้น
+    const by = new Map();
+    for (const r of rows || []) {
+      if (r.mod_cancelled_at || !(Number(r.qty) > 0)) continue;
+      const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
+      const k = p.inv || ""; const g = by.get(k) || by.set(k, { inv: k, pcs: 0, codes: 0, d: p.d || "", stock: p.ml || "", orig: p.invOrig }).get(k);
+      g.pcs += Number(r.qty); g.codes += 1;
+    }
+    for (const g of [...by.values()].sort((a, b) => ncmp(a.inv, b.inv))) items.push({ inv: g.inv || T("(ไม่มี INV)", "(no INV)"), stock: g.stock || "", req: g.pcs, rm: [T(`ชิ้น · ${g.codes} เบอร์`, `pcs · ${g.codes} codes`), g.orig != null ? T(`เปลี่ยนจาก ${g.orig || "-"}`, `instead of ${g.orig || "-"}`) : ""].filter(Boolean).join(" · ") });
+  }
+  // แถวรายการ 15 แถว: เกิน = 14 แถว + "SEE ATTACHED FILE" · ไม่มี/ครบ = แถวถัดไปเขียน SEE ATTACHED FILE (เหมือนฟอร์มเดิม)
+  let list = items.slice(0, COVER_ROWS);
+  if (items.length >= COVER_ROWS) list = [...items.slice(0, COVER_ROWS - 1), { inv: "SEE ATTACHED FILE", rm: T(`+ อีก ${items.length - (COVER_ROWS - 1)} รายการ`, `+ ${items.length - (COVER_ROWS - 1)} more`), see: true }];
+  else list = [...items, { inv: "SEE ATTACHED FILE", see: true }];
+  const perPage = 24;   // ใบงานพาร์ท (A4 นอน) ≈ 24 แถวต่อหน้า → หน้าทั้งหมด = ใบปะหน้า 1 + ใบงาน
+  return {
+    key, ...f,
+    no: ed.no || `${String(lotOf(lot.no) || 1).padStart(3, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
+    of: ed.of || String(1 + Math.max(1, Math.ceil((nRows || 0) / perPage))),
+    project: plan.projectCode || "", name: ed.name || projectName || "",
+    issued: meta.by, date: fmtDate(d), rel: lot.no, remark: ed.remark || "", approved: ed.approved || "",
+    items: list,
+  };
+}
+
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
 // only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
-export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th" }) {
+export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th", projectName = "" }) {
   LANG = lang === "en" ? "en" : "th";
   const by = new Map();
   for (const r of lot.rows) for (const k of lotRowSheets(r, need)) (by.get(k) || by.set(k, []).get(k)).push(r);
@@ -157,10 +200,52 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     cols0.forEach((c, i) => { if (isRm(c.en) || c.th === "สั่งตัดเพิ่ม" || c.en === "REV." || c.en === "ADDRESS") { cols0[i] = { ...c, edit: true }; } });
     for (const r of out) { const e = r.id != null ? edits[r.id] : null; if (e) for (const [ci, v] of Object.entries(e)) if (cols0[ci] && cols0[ci].edit && !r.kid) { r.vals[ci] = v; r.edited = true; } }
     const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
-    return { key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
+    const cover = !mat && COVER_FORMS[sheet.k] ? coverOf(sheet.k, { plan, need, lot, lm, rows, nRows: out.length, meta, projectName }) : null;
+    return { cover, key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
   });
   const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
   return { meta, sheets: pick, all: sheets.map((sh) => ({ key: sh.key, name: sh.tab || sh.name, kind: sh.kind, t1: sh.t1, rows: sh.rows.filter((r) => !r.kid).length })), file: `${T("ใบปล่อย", "Release sheet")} ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
+}
+
+// ใบปะหน้าใน Excel — ชีตแยก "ปะหน้า …" วางก่อนชีตใบงาน · ขนาดคอลัมน์/แถวตามฟอร์มเดิม
+function addCoverSheet(wb, sh, logoId, usedNames) {
+  const c = sh.cover;
+  let nm = `ปะหน้า ${sh.name}`.slice(0, 31); while (usedNames.has(nm)) nm = nm.slice(0, 28) + "_2"; usedNames.add(nm);
+  const ws = wb.addWorksheet(nm, { pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 1, margins: { left: 0.5, right: 0.4, top: 0.5, bottom: 0.4, header: 0.2, footer: 0.2 } }, views: [{ showGridLines: false }] });
+  [12.7, 24.9, 13.1, 16.7, 25.3].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  const F = (o = {}) => ({ name: "Tahoma", size: 11, ...o });
+  const set = (addr, v, font = {}, al = {}) => { const x = ws.getCell(addr); x.value = v === "" ? null : v; x.font = F(font); x.alignment = { vertical: "middle", ...al }; return x; };
+  const thin = { style: "thin", color: BLACK }; const box = { top: thin, left: thin, bottom: thin, right: thin };
+  const under = (addr) => { ws.getCell(addr).border = { bottom: thin }; };
+  for (let r = 2; r <= 19; r++) ws.getRow(r).height = [5, 6, 9, 11].includes(r) ? 23 : 19;
+  if (logoId != null) ws.addImage(logoId, { tl: { col: 0.1, row: 0.4 }, ext: { width: 168, height: 74 } });
+  set("C2", "Artclad (Thailand ) Co., Ltd.", { bold: true, size: 13 }); set("C3", "บริษัท อาร์ทแคลด ( ประเทศไทย ) จำกัด", { bold: true, size: 12 });
+  set("A5", c.th, { bold: true, size: 12 }); set("A6", c.en, { bold: true, size: 12, underline: true });
+  set("A7", "Instruction No.", { size: 10 }); set("A8", "ใบสั่งงาน เลขที่", { size: 9.5 });
+  ws.mergeCells("B7:B8"); set("B7", c.no, { bold: true, size: 13 }, { horizontal: "center" });
+  set("C7", { richText: [{ text: "Project Name / No. ", font: F({ size: 10 }) }, { text: c.project, font: F({ bold: true, size: 12 }) }] });
+  set("C8", { richText: [{ text: "โครงการเลขที่ ", font: F({ size: 9.5 }) }, { text: c.name, font: F({ bold: true, size: 12 }) }] });
+  set("E7", `Page   1   of   ${c.of}`, { bold: true }, { horizontal: "center" }); set("E8", `หน้า   1   /   ${c.of}`, { bold: true }, { horizontal: "center" });
+  for (const a of ["A7", "A8", "B7", "B8", "E7", "E8"]) ws.getCell(a).border = box;
+  ws.getCell("C7").border = { top: thin, left: thin }; ws.getCell("D7").border = { top: thin, right: thin }; ws.getCell("C8").border = { bottom: thin, left: thin }; ws.getCell("D8").border = { bottom: thin, right: thin };
+  set("A9", "To :", {}, { horizontal: "right" }); set("B9", c.toEn); under("B9"); set("A10", "ถึง ", { size: 10 }, { horizontal: "right" }); set("B10", c.toTh, { size: 10 }); under("B10");
+  set("A11", "Issued by :"); set("B11", c.issued); under("B11"); under("C11"); set("A12", "ออกใบสั่งงาน โดย ", { size: 10 });
+  set("D11", "Date :", {}, { horizontal: "right" }); set("E11", c.date, { bold: true, size: 12 }, { horizontal: "center" }); under("E11");
+  set("A13", "Approved by :"); set("B13", c.approved); under("B13"); under("C13"); set("A14", "อนุมัติโดย ", { size: 10 });
+  set("D13", "Rel No. :", {}, { horizontal: "right" }); set("E13", c.rel, { bold: true, size: 12 }, { horizontal: "center" }); under("E13");
+  set("E14", c.remark, { bold: true, size: 12 }, { horizontal: "center" });
+  set("A15", "INSTRUCTION  DETAILS", { bold: true, size: 12, underline: true });
+  const head = [["Item", "", "", ""], ["Inventory Code", "", "", "รหัสอลูมิเนียม"], ["Stock ", "Length", "จำนวน", "เส้นยาว"], ["Total", "Req'd", "จำนวนที่", "ต้องการ"], ["หมายเหตุ", "", "", ""]];
+  head.forEach((h, ci) => h.forEach((t, ri) => { const x = ws.getCell(16 + ri, ci + 1); x.value = t || null; x.font = F({ size: ri >= 2 || ci === 4 ? 9.5 : 11 }); x.alignment = { horizontal: "center", vertical: "middle" }; x.border = { left: thin, right: thin, top: ri === 0 ? thin : undefined, bottom: ri === 3 ? thin : undefined }; }));
+  for (let i = 0; i < COVER_ROWS; i++) {
+    const r = 20 + i, it = c.items[i] || {}; ws.getRow(r).height = 19;
+    const vals = [i + 1, it.inv || "", it.stock ? Number(it.stock) || it.stock : "", it.req != null && it.req !== "" ? it.req : "", it.rm || ""];
+    vals.forEach((v, ci) => { const x = ws.getCell(r, ci + 1); x.value = v === "" ? null : v; x.border = box; x.font = F({ size: ci === 4 ? 9.5 : 11, bold: ci === 1 && !!v });
+      x.alignment = { vertical: "middle", horizontal: ci === 0 ? "center" : typeof v === "number" ? "right" : "left", indent: ci === 1 || ci === 4 ? 1 : 0, wrapText: ci === 4 };
+      if (typeof v === "number" && ci > 1) x.numFmt = "#,##0"; });
+  }
+  set("E37", c.form, { bold: true, size: 10 }, { horizontal: "right" });
+  ws.pageSetup.printArea = "A1:E37";
 }
 
 export function buildLotWorkbook(ExcelJS, args) {
@@ -170,7 +255,9 @@ export function buildLotWorkbook(ExcelJS, args) {
   const logoId = logo ? wb.addImage({ buffer: logo, extension: "png" }) : null;
   const releaser = meta.by; const today = meta.date;
 
+  const usedNames = new Set(model.sheets.map((x) => x.name));
   for (const sh of model.sheets) {
+    if (sh.cover && args.covers !== false) addCoverSheet(wb, sh, logoId, usedNames);
     const { name, cols, groups, two, t1, t2, rows: out, total, totalAt } = sh; const sheet = { kind: sh.kind }; const mat = sh.kind === "mat"; const W = cols.length;
     const ws = wb.addWorksheet(name, { pageSetup: { paperSize: 9, orientation: W > 6 ? "landscape" : "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } }, views: [{ showGridLines: false }] });
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.w; });
@@ -251,9 +338,45 @@ export function buildLotWorkbook(ExcelJS, args) {
 // ── หน้าตัวอย่าง (HTML → พิมพ์ / บันทึกเป็น PDF จากเบราว์เซอร์) — หน้าตาเดียวกับ Excel ──
 const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtN = (v) => (typeof v === "number" ? (Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : esc(v));
-export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
+// ใบปะหน้า 1 หน้า (A4 ตั้ง) — ตำแหน่ง/ขนาดตามฟอร์ม Excel เดิม (คอลัมน์ A–E กว้าง 12.7 / 24.9 / 13.1 / 16.7 / 25.3)
+export function coverHtml(c, logoUrl = "") {
+  const rows = Array.from({ length: COVER_ROWS }, (_, i) => c.items[i] || {});
+  return `<section class="pg port cv">
+<div class="cv-top"><div class="cv-logo">${logoUrl ? `<img src="${esc(logoUrl)}" alt="">` : ""}</div><div class="cv-co"><b>Artclad (Thailand ) Co., Ltd.</b><b>บริษัท อาร์ทแคลด ( ประเทศไทย ) จำกัด</b></div></div>
+<div class="cv-t1">${esc(c.th)}</div><div class="cv-t2">${esc(c.en)}</div>
+<table class="cv-box"><colgroup><col style="width:13.7%"><col style="width:26.9%"><col style="width:32%"><col style="width:27.4%"></colgroup><tr>
+<td><span>Instruction No.</span><small>ใบสั่งงาน เลขที่</small></td><td class="cv-no">${esc(c.no)}</td>
+<td><span>Project Name / No. <b class="big">${esc(c.project)}</b></span><small>โครงการเลขที่ <b class="big">${esc(c.name)}</b></small></td>
+<td><span class="pgx"><b>Page</b><b>1</b><b>of</b><b>${esc(c.of)}</b></span><small class="pgx"><b>หน้า</b><b>1</b><b>/</b><b>${esc(c.of)}</b></small></td></tr></table>
+<div class="cv-to"><div class="lab"><span>To :</span><small>ถึง</small></div><div class="val"><span class="ul">${esc(c.toEn)}</span><small class="ul">${esc(c.toTh)}</small></div></div>
+<div class="cv-row"><div class="l"><span>Issued by : <u class="fill">${esc(c.issued)}</u></span><small>ออกใบสั่งงาน โดย</small></div><div class="r"><span>Date : <u class="fill b">${esc(c.date)}</u></span></div></div>
+<div class="cv-row"><div class="l"><span>Approved by : <u class="fill">${esc(c.approved)}</u></span><small>อนุมัติโดย</small></div><div class="r"><span>Rel No. : <u class="fill b">${esc(c.rel)}</u></span><b class="rmk">${esc(c.remark)}</b></div></div>
+<div class="cv-t3">INSTRUCTION  DETAILS</div>
+<table class="cv-tb"><colgroup><col style="width:13.7%"><col style="width:26.9%"><col style="width:14.1%"><col style="width:18%"><col style="width:27.3%"></colgroup>
+<thead><tr><th>Item<br><br><br>&nbsp;</th><th>Inventory Code<br><br><br><small>รหัสอลูมิเนียม</small></th><th>Stock<br>Length<br><small>จำนวน<br>เส้นยาว</small></th><th>Total<br>Req'd<br><small>จำนวนที่<br>ต้องการ</small></th><th><small>หมายเหตุ</small><br><br><br>&nbsp;</th></tr></thead>
+<tbody>${rows.map((r, i) => `<tr><td class="c">${i + 1}</td><td class="${r.see ? "see" : "code"}">${esc(r.inv || "")}</td><td class="n">${r.stock ? fmtN(Number(r.stock) || r.stock) : ""}</td><td class="n">${r.req != null && r.req !== "" ? fmtN(r.req) : ""}</td><td class="rm">${esc(r.rm || "")}</td></tr>`).join("")}</tbody></table>
+<div class="cv-form">${esc(c.form)}</div>
+</section>`;
+}
+const COVER_CSS = `.cv{font-family:"Noto Sans Thai","Leelawadee UI",Tahoma,sans-serif;font-size:12.5px;padding:12mm 14mm!important}
+.cv-top{display:flex;align-items:center;gap:6mm;margin-bottom:7mm}.cv-logo{width:62mm}.cv-logo img{width:58mm;height:auto;display:block}.cv-co{display:flex;flex-direction:column;font-size:15px;line-height:1.45}.cv-co b+b{font-size:14px}
+.cv-t1{font-weight:700;font-size:14.5px}.cv-t2{font-weight:700;font-size:14.5px;text-decoration:underline}
+.cv-box{width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:3mm}.cv-box td{border:1px solid #000;padding:1px 4px;vertical-align:middle;line-height:1.35}
+.cv-box td>span,.cv-box td>small{display:block;white-space:nowrap;overflow:hidden}.cv-box small{font-size:11.5px}.cv-box .big{font-size:14px}
+.cv-box .cv-no{text-align:center;font-weight:700;font-size:15px}.pgx{display:grid!important;grid-template-columns:1.4fr .6fr .6fr .6fr;text-align:center}.pgx b{font-weight:700}
+.cv-to{display:flex;gap:2mm;margin:0 0 3mm 20mm;line-height:1.5}.cv-to .lab{text-align:right;display:flex;flex-direction:column}.cv-to .val{display:flex;flex-direction:column;min-width:58mm}
+.ul{border-bottom:1px solid #000}.cv-to .lab small,.cv-to .val small{font-size:11.5px}
+.cv-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2mm;line-height:1.5}.cv-row .l{display:flex;flex-direction:column}.cv-row .l small{font-size:11.5px}
+.cv-row .r{display:flex;flex-direction:column;align-items:flex-end;min-width:80mm}.cv-row .r .rmk{font-size:14px;align-self:center;margin-left:22mm}
+u.fill{text-decoration:none;border-bottom:1px solid #000;display:inline-block;min-width:44mm;padding:0 2mm}.cv-row .r u.fill{min-width:52mm;text-align:center}u.fill.b{font-weight:700;font-size:14.5px}
+.cv-t3{font-weight:700;font-size:14.5px;text-decoration:underline;margin:1mm 0 0}
+.cv-tb{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #000}.cv-tb th,.cv-tb td{border:1px solid #000;padding:1px 5px;height:7.2mm;line-height:1.3}
+.cv-tb th{font-weight:400;text-align:center;vertical-align:top;font-size:12.5px;padding-top:2px}.cv-tb th small{font-size:11px}
+.cv-tb td.c{text-align:center}.cv-tb td.n{text-align:right;font-variant-numeric:tabular-nums}.cv-tb td.code{font-weight:600}.cv-tb td.see{font-weight:700}.cv-tb td.rm{font-size:10.5px}
+.cv-form{text-align:right;font-weight:700;font-size:12px;margin-top:14mm}`;
+export function lotSheetsHtml(model, { logoUrl = "", covers = true } = {}) {
   const { meta } = model; LANG = meta.lang || "th";
-  const pages = model.sheets.map((sh) => {
+  const pages = model.sheets.map((sh) => (covers && sh.cover ? coverHtml(sh.cover, logoUrl) + "\n" : "") + (() => {
     const W = sh.cols.length; const tot = sh.cols.reduce((n, c) => n + c.w, 0);
     const land = W > 6; const mat = sh.kind === "mat";
     const colgroup = sh.cols.map((c) => `<col style="width:${(c.w / tot * 100).toFixed(2)}%">`).join("");
@@ -271,7 +394,7 @@ export function lotSheetsHtml(model, { logoUrl = "" } = {}) {
 ${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
 <table><colgroup>${colgroup}</colgroup><thead><tr>${head1}</tr>${head2}</thead><tbody>${body || `<tr><td colspan="${W}" class="grey">${T("(ไม่มีรายการ)", "(no items)")}</td></tr>`}${totRow}</tbody></table>
 </section>`;
-  }).join("\n");
+  })()).join("\n");
   return `<!doctype html><html lang="${LANG}"><head><meta charset="utf-8"><title>${esc(model.file)}</title><style>
 @page land{size:A4 landscape;margin:8mm}@page port{size:A4 portrait;margin:8mm}
 *{box-sizing:border-box}html,body{margin:0;background:#e5e7eb;font-family:Tahoma,"Noto Sans Thai","Leelawadee UI",sans-serif;color:#000}
@@ -292,6 +415,7 @@ tr.b td{font-weight:700}tr.b td.rm{font-weight:400}tr.k td{font-weight:400}tr.x 
 tr.t td{font-weight:700;background:#e6e9ed;border-top:1.5px solid #000;padding:4px 6px}td.lab{text-align:right}
 *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 thead{display:table-header-group}tr{break-inside:avoid}
+${COVER_CSS}
 @media print{html,body{background:#fff}.pg{margin:0;box-shadow:none;width:auto!important;min-height:0!important;padding:0}}
 </style></head><body>${pages || `<p style='padding:20px'>${T("(ล็อตนี้ไม่มีรายการ)", "(this lot has no items)")}</p>`}</body></html>`;
 }
@@ -301,7 +425,7 @@ export async function downloadLotSheets(args) {
   const ExcelJS = (mod && mod.Workbook) ? mod : (mod && mod.default && mod.default.Workbook) ? mod.default : (typeof window !== "undefined" && window.ExcelJS) || mod.default || mod;
   let logo = null;
   try { const base = (import.meta.env && import.meta.env.BASE_URL) || "/"; const r = await fetch(`${base}brand/artclad-company.png`); if (r.ok) logo = await r.arrayBuffer(); } catch { /* ไม่มีโลโก้ก็ยังออกใบได้ */ }
-  const wb = buildLotWorkbook(ExcelJS, { ...args, logo });
+  const wb = buildLotWorkbook(ExcelJS, { ...args, logo });   // args.covers = false → ไม่ใส่ใบปะหน้า
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob); const a = document.createElement("a");

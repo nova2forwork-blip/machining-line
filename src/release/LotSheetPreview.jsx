@@ -29,11 +29,14 @@ export default function LotSheetPreview({ args: args0, onClose }) {
     const next = sel.includes(k) ? sel.filter((x) => x !== k) : keys.filter((x) => sel.includes(x) || x === k); if (next.length) choose(next);
   };
   const only = sel.length === keys.length ? null : sel;
+  // ★ 2026-11-04 ใบปะหน้า (FM(PL)-01/02/03) หน้าแรกของใบ MACHINING / BENDING / STEEL — เปิด/ปิดได้ · จำในเครื่อง
+  const [covers, setCovers] = useState(() => { try { return localStorage.getItem("mls-lot-cover") !== "0"; } catch { return true; } });
+  const flipCovers = () => setCovers((v) => { try { localStorage.setItem("mls-lot-cover", v ? "0" : "1"); } catch { /* ignore */ } return !v; });
   const model = useMemo(() => buildLotModel({ ...args, only }), [args, only && only.join("|")]);   // eslint-disable-line react-hooks/exhaustive-deps
   const html = useMemo(() => {
     let logoUrl = ""; try { logoUrl = new URL(`${(import.meta.env && import.meta.env.BASE_URL) || "/"}brand/artclad-company.png`, window.location.origin).href; } catch { /* ไม่มีโลโก้ก็ได้ */ }
-    return lotSheetsHtml(model, { logoUrl });
-  }, [model]);
+    return lotSheetsHtml(model, { logoUrl, covers });
+  }, [model, covers]);
   useEffect(() => {
     const k = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", k); const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
@@ -45,7 +48,7 @@ export default function LotSheetPreview({ args: args0, onClose }) {
   }
   async function excel() {
     setBusy(true); setErr("");
-    try { await downloadLotSheets({ ...args, only }); } catch (e) { setErr("สร้าง Excel ไม่สำเร็จ: " + (e?.message || e)); } finally { setBusy(false); }
+    try { await downloadLotSheets({ ...args, only, covers }); } catch (e) { setErr("สร้าง Excel ไม่สำเร็จ: " + (e?.message || e)); } finally { setBusy(false); }
   }
   const n = model.sheets.length;
   return (
@@ -65,6 +68,13 @@ export default function LotSheetPreview({ args: args0, onClose }) {
               <span className="lp-box" aria-hidden="true">{on ? "✓" : ""}</span>{x.name}<small>{x.rows}</small>
             </button>); })}
         </div>
+        {model.sheets.some((x) => x.cover) || full.all.some((x) => ["CUTTING", "BENDING", "STEEL"].includes(x.key)) ? (
+          <div className="lp-pick" role="group" aria-label="ใบปะหน้า">
+            <span className="lp-pick-lab">ใบปะหน้า:</span>
+            <button type="button" className={`lp-chip part ${covers ? "on" : ""}`} onClick={flipCovers} aria-pressed={covers} title="ฟอร์ม FM(PL)-01/02/03 · หน้าแรกของใบ MACHINING / BENDING / STEEL · แก้เลขที่ / หมายเหตุ ได้ที่หน้าล็อต">
+              <span className="lp-box" aria-hidden="true">{covers ? "✓" : ""}</span>ใส่ใบปะหน้า (Instruction) <small>{model.sheets.filter((x) => x.cover).length}</small>
+            </button>
+          </div>) : null}
         <div className="lp-hint">ปุ่ม <b>พิมพ์ / PDF</b> → ที่ปลายทางเลือก <b>“บันทึกเป็น PDF”</b> (Save as PDF) · ปุ่ม <b>Excel</b> โหลดไฟล์ .xlsx · แต่ละใบงานขึ้นหน้าใหม่{err ? <span className="lp-err"> · {err}</span> : null}</div>
       </div>
       <iframe ref={frame} className="lp-frame" title="ตัวอย่างใบปล่อย" srcDoc={html} />

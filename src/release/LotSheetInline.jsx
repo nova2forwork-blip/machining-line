@@ -41,7 +41,8 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
     const need = needOf(plan); const rel = releasedOf(releases, plan);
     const lot = rel.lots.find((l) => roKey(l.no) === roKey(ro)); if (!lot) return null;
     const planX = { ...plan, sheetEdit: { ...(plan.sheetEdit || {}), [lot.no]: draft } };
-    const model = buildLotModel({ plan: planX, need, lot, userName, printDate: new Date(), lang });
+    const projectName = ((releases || []).find((r) => r.part_master?.projects?.code === plan.projectCode && r.part_master?.projects?.name) || {}).part_master?.projects?.name || "";
+    const model = buildLotModel({ plan: planX, need, lot, userName, printDate: new Date(), lang, projectName });
     return { need, lot, model };
   }, [plan, releases, ro, draft, userName, lang]);
 
@@ -57,6 +58,9 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
     const s = { ...(d[sh.key] || {}) }; const r = { ...(s[rowId] || {}) };
     r[ci] = v; s[rowId] = r; return { ...d, [sh.key]: s };
   });
+  // ★ ใบปะหน้า (Instruction) ของใบนี้ — เก็บใน draft.__cover[ใบ]
+  const setCover = (k, v) => setDraft((d) => { const all = { ...(d.__cover || {}) }; const c = { ...(all[sh.key] || {}) }; if (v === "") delete c[k]; else c[k] = v; all[sh.key] = c; return { ...d, __cover: all }; });
+  const cv = ((draft.__cover || {})[sh.key]) || {};
   const resetRow = (rowId) => setDraft((d) => { const s = { ...(d[sh.key] || {}) }; delete s[rowId]; return { ...d, [sh.key]: s }; });
   async function save() {
     if (saving) return; setSaving("…"); setMsg("");
@@ -85,6 +89,15 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
       <div className="rl-inl-tabs">
         {sheets.map((x) => <button key={x.key} type="button" className={x.key === sh.key ? "on" : ""} onClick={() => setKey(x.key)}>{x.tab}<small>{x.rows.filter((r) => !r.kid).length}</small></button>)}
       </div>
+      {sh.cover ? (
+        <div className="rl-inl-cover">
+          <b>{L("ใบปะหน้า", "Cover sheet")} <span className="rw-muted small">({sh.cover.form.split(" ")[0]} · {L("พิมพ์เป็นหน้าแรกของใบนี้", "printed as the first page of this sheet")})</span></b>
+          <label>Instruction No.<input className="input" value={cv.no ?? ""} placeholder={sh.cover.no} onChange={(e) => setCover("no", e.target.value)} /></label>
+          <label>{L("หน้าทั้งหมด", "Total pages")}<input className="input" value={cv.of ?? ""} placeholder={sh.cover.of} onChange={(e) => setCover("of", e.target.value)} style={{ width: 70 }} /></label>
+          <label>{L("ชื่อโครงการ", "Project name")}<input className="input" value={cv.name ?? ""} placeholder={sh.cover.name || "—"} onChange={(e) => setCover("name", e.target.value)} /></label>
+          <label>{L("หมายเหตุใต้ Rel No.", "Note under Rel No.")}<input className="input" value={cv.remark ?? ""} placeholder={L("เช่น SITE REQUEST / L5-8", "e.g. SITE REQUEST / L5-8")} onChange={(e) => setCover("remark", e.target.value)} /></label>
+          <label>Approved by<input className="input" value={cv.approved ?? ""} placeholder="—" onChange={(e) => setCover("approved", e.target.value)} /></label>
+        </div>) : null}
       {/* หัวใบเหมือนใบที่พิมพ์ */}
       <div className="rl-inl-paper">
         <div className="rl-inl-top">
