@@ -1551,6 +1551,7 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  "หมวดย่อยวัสดุ": "Material subcategory", "วัตถุดิบงานตัด": "Cutting raw material", "อื่นๆ": "Other",
   "จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)": "How many mock-up panels of this type (released alike from one PDF set · one QR per panel)",
   // ★ 2026-11-03 รุ่น (revision) ของเบอร์
   "ไม่ได้เพิ่ม — คลังมีรุ่นใหม่กว่าอยู่แล้ว เลือกรุ่นล่าสุดให้แทน": "Nothing added — the library already has a newer revision; the latest one was selected instead",

@@ -353,6 +353,15 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
           onFilter={(g) => { setPartGrp(g); setLimit(PAGE); }}
           onChange={(patch) => onPlanChange({ ...plan, ...patch })} />) : null}
 
+      {grp === "mat" ? (
+        <div className="rt-mode" role="tablist" aria-label="หมวดย่อยวัสดุ">
+          <span className="rt-mode-lab">หมวดย่อย:</span>
+          {MAT_SHEETS.filter((m) => m.k !== "OTHER" || head.mat.OTHER > 0).map((m) => (
+            <button key={m.k} type="button" role="tab" aria-selected={cur === m.k} className={`rt-grp-chip tab ${cur === m.k ? "on" : ""}`} title={m.th}
+              onClick={() => { setSub((x) => ({ ...x, mat: m.k })); setLimit(PAGE); setOpenMat(null); }}>
+              {m.k === "MAT" ? m.tab : m.label} <small>{nf(head.mat[m.k] || 0)}</small>
+            </button>))}
+        </div>) : null}
       {grp === "bom" ? <BomView plan={plan} need={need} /> : (
         <>
       <div className="rt-tools">
