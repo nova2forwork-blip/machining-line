@@ -9,7 +9,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -155,7 +155,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
               const lotVers = [...new Set([...[...mm.values()].map((x) => x.ver), ...L.rows.map((r) => r.mod_version).filter(Boolean)])].sort();
               return (
                 <div key={L.no} className={`rl-lot ${open === L.no ? "open" : ""}`}>
-                  <button type="button" className="rl-lot-h" onClick={() => setOpen(open === L.no ? null : L.no)} aria-expanded={open === L.no}>
+                  <button type="button" className="rl-lot-h" onClick={() => (onOpenLot ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))} aria-expanded={onOpenLot ? undefined : open === L.no}>
                     <b className="rw-mono">{L.no}</b>
                     <span className="rw-muted">{fmtD(L.date)}</span>
                     {lotVers.length ? <Pill tone="mod">Modify {lotVers.join(", ")}</Pill> : null}
@@ -164,11 +164,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                       const tip = [["พาร์ท", "part"], ["ซับ", "sub"], ["แผง", "panel"]].filter(([, k]) => pg.g[k][1]).map(([n, k]) => `${n} ${nf(pg.g[k][0])}/${nf(pg.g[k][1])}`).join(" · ");
                       return <span className={`rl-lot-prog ${pg.pct >= 100 ? "full" : pg.d ? "" : "zero"}`} title={`ทำแล้ว (ชิ้น) · ${tip}`}><i><b style={{ width: `${pg.pct}%` }} /></i>{pg.pct >= 100 ? "เสร็จครบ" : `ทำแล้ว ${pg.pct}%`}</span>; })()}
                     <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}</span>
-                    {onOpenLot ? <span role="button" tabIndex={0} className="rl-lot-open" title="เปิดหน้าล็อต (รายละเอียดทุกเบอร์ · ความคืบหน้า · ใบปล่อยที่แก้ได้ · Modify)"
-                      onClick={(e) => { e.stopPropagation(); onOpenLot(L.no); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpenLot(L.no); } }}>เปิดหน้าล็อต →</span> : null}
-                    <span className="rl-caret" aria-hidden="true">▾</span>
+                    {onOpenLot ? <span className="rl-caret" aria-hidden="true">›</span> : <span className="rl-caret" aria-hidden="true">▾</span>}
                   </button>
-                  {open === L.no ? (
+                  {open === L.no && !onOpenLot ? (
                     <div className="rl-lot-body">
                       <div className="rl-lot-bar">
                         <div className="rl-lot-bar-txt"><b>ใบปล่อย / QR ของล็อต {L.no}</b><span>ใบปล่อย: ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel{onPrintQr ? " · QR: เปิดหน้าพิมพ์ป้ายพร้อมเลือกเบอร์ของล็อตนี้ให้" : ""}</span></div>
@@ -566,6 +564,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const blockers = [
     !nChange && "ยังไม่ได้แก้อะไร",
     !reason.trim() && "ใส่เหตุผล (เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B)",
+    adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
     verErr,
     ops.errors.length && `${ops.errors.length} รายการลดไม่ได้ (ดูแถวสีแดง)`,
     needAdmin && "แก้ของที่ปล่อยแล้ว (ลด/ยกเลิกในล็อต) ต้องเป็นแอดมิน",
@@ -616,6 +615,60 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
     } catch (e) { setBusy(""); setErr(e?.message || String(e)); }
   }
 
+  // ★ 2026-11-04 วาง PDF ใน Modify: แบบซับ/แผงที่มีในใบ → เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · แบบพาร์ท/ซับใหม่ → เพิ่มเบอร์ใหม่ (ลงข้อมูลให้ ใส่แค่จำนวน · แก้ได้)
+  const [pdfMsg, setPdfMsg] = useState(null);
+  const [pdfDrag, setPdfDrag] = useState(false);
+  const pdfRef = useRef(null);
+  async function onModPdfs(list) {
+    const files = [...list].filter((f) => /\.pdf$/i.test(f.name)); if (!files.length) return;
+    setPdfMsg({ info: `กำลังอ่าน PDF ${files.length} ไฟล์…` });
+    let all; try { all = await readPdfFiles(files); } catch (e) { setPdfMsg({ bad: "อ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
+    const notes = []; let jump = null; const newAdds = []; const bAdds = []; const bChg = {};
+    const exists = (c) => need.parts.concat(need.subs).some((x) => NC(x.code) === NC(c)) || adds.some((a) => NC(a.code) === NC(c));
+    for (const d of all) {
+      const scope = d.kind === "panel" ? "panel" : d.kind === "sub" ? "sub" : null;
+      const col = scope ? bomCol(scope) : null; const ok = col ? findKey(col, d.code) : null;
+      if (scope && ok) {
+        // เทียบ BOM: แถวเดิม (ไม่นับที่ยกเลิก) vs แถวใน PDF (รวมเบอร์ซ้ำ)
+        const items = col[ok].items || []; const pdfQ = new Map();
+        for (const b of d.bom || []) { const c = NC(b.code); if (!c) continue; const e = pdfQ.get(c) || { code: String(b.code).trim().toUpperCase(), qty: 0, d: b.desc || "" }; e.qty += Number(b.qty) || 0; pdfQ.set(c, e); }
+        let nq = 0, nc = 0, na = 0; const seen = new Set();
+        items.forEach((it, idx) => {
+          if (it[4] === "ยกเลิก") return; const c = NC(it[1]); seen.add(c); const k = `${scope}|${ok}|${idx}`; const e = pdfQ.get(c);
+          if (!e) { bChg[k] = { type: "cancel" }; nc++; }
+          else if (Math.abs(e.qty - Number(it[2])) > 1e-9) { bChg[k] = { type: "qty", qty: String(e.qty) }; nq++; }
+        });
+        for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { bAdds.push({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; }
+        notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${[nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน"}`);
+        if (nq || nc || na) jump = jump || { scope, owner: ok };
+      } else if (d.kind === "part" || d.kind === "sub") {
+        if (exists(d.code)) { notes.push(`${d.code}: มีในใบแล้ว — แก้จำนวนที่แท็บ${d.kind === "sub" ? "ซับ" : "พาร์ท"}`); continue; }
+        const t = d.title || {}; const L = parseFloat(t.LENGTH); const inv = String(t["INV.CODE"] || "").trim();
+        const old = d.kind === "part" ? need.parts.find((x) => baseOf(x.code) === baseOf(d.code) && NC(x.code) !== NC(d.code)) : null;
+        newAdds.push({ kind: d.kind, code: String(d.code).trim().toUpperCase(), d: t.DESC || "", qty: "", l: Number.isFinite(L) ? String(L) : "", inv: inv && inv !== "-" ? inv : "", dest: ruleDest(d.code), procs: "ยิง", fromPdf: true, note: old ? `รุ่นใหม่ของ ${old.code} — ถ้าใช้แทนกัน ให้ยกเลิก ${old.code} ที่แท็บพาร์ท` : (d.kind === "sub" ? "ซับใหม่: สร้าง QR ซับ · ลูกของซับตั้งที่หน้า ซับ / พาร์ท ของโปรเจค" : "") });
+      } else if (scope && !ok) notes.push(`${d.code}: ${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`);
+      else notes.push(`อ่านไม่ออก: ${d.file}`);
+    }
+    if (Object.keys(bChg).length) setBchg((o) => ({ ...o, ...bChg }));
+    if (bAdds.length) setBadds((a) => [...a.filter((x) => !bAdds.some((y) => y.scope === x.scope && NC(y.owner) === NC(x.owner) && NC(y.code) === NC(x.code))), ...bAdds]);
+    if (newAdds.length) { setAdds((a) => [...a, ...newAdds]); setTab("add"); notes.push(`เพิ่มเบอร์ใหม่ ${newAdds.length} เบอร์ — ใส่จำนวนในตาราง (ข้อมูลอื่นแก้ได้)`); }
+    else if (jump) { setTab(jump.scope === "panel" ? "bom" : "sub"); setBscope(jump.scope); setBowner(jump.owner); }
+    setPdfMsg({ ok: notes });
+  }
+  const pdfDropEl = (
+    <div className={`rw-drop rw-drop-sm ${pdfDrag ? "drag" : ""}`} role="button" tabIndex={0} style={{ margin: "0 0 10px" }}
+      onClick={() => pdfRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pdfRef.current?.click(); } }}
+      onDragOver={(e) => { e.preventDefault(); setPdfDrag(true); }} onDragLeave={() => setPdfDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setPdfDrag(false); onModPdfs(e.dataTransfer.files); }}>
+      <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
+      <div><b>ลาก PDF แบบใหม่มาวาง (ซับ / แผง / พาร์ท)</b><span>ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · พาร์ท/ซับที่ยังไม่มี = เพิ่มเบอร์ใหม่ ลงข้อมูลให้ ใส่แค่จำนวน</span></div>
+      <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
+    </div>);
+  const pdfMsgEl = pdfMsg ? (
+    <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
+      {pdfMsg.bad || pdfMsg.info || <>{pdfMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)}<div className="rw-muted small">ตรวจแล้วแก้ต่อได้ · ยังไม่บันทึกจนกว่าจะกด "บันทึก {ver}"</div></>}
+      {pdfMsg.ok || pdfMsg.bad ? <button type="button" className="rw-link" style={{ marginLeft: 8 }} onClick={() => setPdfMsg(null)}>ปิด</button> : null}
+    </div>) : null;
   // ★ 2026-11-04 ผู้ใช้: "Sub ให้มีที่เดียวพอ" — แก้ลูกของซับอยู่ในแท็บ "ซับ" (ปุ่ม แก้ลูก) · แท็บ BOM เหลือแผงอย่างเดียว
   const bomEditorEl = (
     <div className="rl-bomedit">
@@ -691,11 +744,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
         </div>
         <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>
         <div className="rl-tabs" role="tablist">
-          {[["part", "พาร์ท", need.parts.length], ["sub", "ซับ", need.subs.length], ["addr", "ที่อยู่แผง", plan.units.length], ["bom", "BOM แผง", null], ["add", "เพิ่มเบอร์ใหม่", null]].map(([k, l, n]) => (
+          {[["part", "พาร์ท", need.parts.length], ["sub", "ซับ", need.subs.length], ["bom", "BOM แผง", null], ["add", "เพิ่มเบอร์ใหม่", null], ["addr", "ที่อยู่แผง", plan.units.length]].map(([k, l, n]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => { setTab(k); if (k === "bom") { setBscope("panel"); setBowner(""); } else if (k === "sub") { setBscope("sub"); setBowner(""); } }}>
               <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
             </button>))}
         </div>
+        {tab === "sub" || tab === "bom" || tab === "add" ? <>{pdfDropEl}{pdfMsgEl}</> : null}
         {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
           <div className="rl-tools">
             <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -755,8 +809,20 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
               {formErr ? <div className="rw-msg warn">{formErr}</div> : null}
               {adds.length ? (
                 <table className="data-table rw-table">
-                  <thead><tr><th>ชนิด</th><th>Code</th><th>Description</th><th className="r">จำนวน</th><th>ใบงาน</th><th /></tr></thead>
-                  <tbody>{adds.map((a, i) => <tr key={a.code}><td>{a.kind === "sub" ? "ซับ" : "พาร์ท"}</td><td className="rw-mono"><b>{a.code}</b> <Pill tone="mod">เพิ่ม {ver}</Pill></td><td className="rw-desc">{a.d}</td><td className="r">{nf(Number(a.qty))}</td><td>{a.kind === "sub" ? `SUB ${SUB_SHORT[a.procs]}` : a.dest}</td><td><button type="button" className="rw-x" onClick={() => setAdds((x) => x.filter((_, j) => j !== i))} aria-label={`เอา ${a.code} ออก`}>×</button></td></tr>)}</tbody>
+                  <thead><tr><th>ชนิด</th><th>Code</th><th>Description</th><th className="r">จำนวน *</th><th className="r">ยาว (มม.)</th><th>INV</th><th>ใบงาน</th><th /></tr></thead>
+                  <tbody>{adds.map((a, i) => { const up = (patch) => setAdds((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x))); const noQ = !(Number(a.qty) > 0); return (
+                    <tr key={a.code} className={noQ ? "rl-needqty" : ""}>
+                      <td>{a.kind === "sub" ? "ซับ" : "พาร์ท"}</td>
+                      <td className="rw-mono"><b>{a.code}</b> <Pill tone="mod">เพิ่ม {ver}</Pill>{a.fromPdf ? <> <Pill tone="info">PDF</Pill></> : null}{a.note ? <div className="rw-muted small">{a.note}</div> : null}</td>
+                      <td><input className="input rw-cell" value={a.d || ""} onChange={(e) => up({ d: e.target.value })} aria-label={`Description ${a.code}`} /></td>
+                      <td className="r"><input className="input rw-cell rl-qty" type="number" min="1" step="1" placeholder="จำนวน" value={a.qty} onChange={(e) => up({ qty: e.target.value })} aria-label={`จำนวน ${a.code}`} autoFocus={a.fromPdf && noQ && i === adds.findIndex((x) => !(Number(x.qty) > 0))} /></td>
+                      <td className="r"><input className="input rw-cell rl-qty" type="number" min="0" value={a.l || ""} onChange={(e) => up({ l: e.target.value })} aria-label={`ความยาว ${a.code}`} /></td>
+                      <td>{a.kind === "part" ? <input className="input rw-cell rw-mono" value={a.inv || ""} onChange={(e) => up({ inv: e.target.value.toUpperCase() })} aria-label={`INV ${a.code}`} /> : null}</td>
+                      <td>{a.kind === "part"
+                        ? <select className="select rw-cellsel" value={a.dest} onChange={(e) => up({ dest: e.target.value })} aria-label={`ใบงาน ${a.code}`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select>
+                        : <select className="select rw-cellsel" value={a.procs} onChange={(e) => up({ procs: e.target.value })} aria-label={`งานซับ ${a.code}`}>{PROCS.map((p) => <option key={p} value={p}>SUB {SUB_SHORT[p]}</option>)}</select>}</td>
+                      <td><button type="button" className="rl-x" onClick={() => setAdds((xs) => xs.filter((_, j) => j !== i))} aria-label={`เอา ${a.code} ออก`}>×</button></td>
+                    </tr>); })}</tbody>
                 </table>
               ) : <div className="rw-muted small" style={{ padding: 12 }}>เบอร์ที่ไม่มีใน BOM เดิม (เช่นแบบ Rev ใหม่เพิ่มพาร์ท) — เพิ่มแล้วจะอยู่ในยอดคงเหลือ ปล่อยในล็อตถัดไป</div>}
             </div>
@@ -833,7 +899,7 @@ const QR_GROUPS = [
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
 // เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"
 const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.set(x, (m.get(x) || 0) + 1); return [...m].map(([l, n]) => `${nf(l)}${n > 1 ? ` ×${n}` : ""}`).join(" · "); };
-function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null }) {
+export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null }) {
   // ★ ยอดเบิกจริงต่อล็อต (ACTUAL ISSUE) — เก็บใน plan.lotIssue[เลขล็อต][INV] = { n, r } · ว่าง = ใช้ยอดคำนวณ · ใส่ลงใบเบิกด้วย
   const iss = (plan.lotIssue || {})[lot.no] || {};
   const setIss = (key, patch) => onPlanChange && onPlanChange({ ...plan, lotIssue: { ...(plan.lotIssue || {}), [lot.no]: { ...iss, [key]: { ...(iss[key] || {}), ...patch } } } });

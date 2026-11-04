@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { getLang } from "../i18n-dom.js";
 import { needOf, releasedOf, roKey, inPlan } from "./releaseCore.js";
-import { buildLotModel } from "./lotSheetExport.js";
+import { buildLotModel, lotRowSheets } from "./lotSheetExport.js";
+import { LotMats } from "./ReleaseLots.jsx";
 import "./release-wizard.css";
 
 export default function LotSheetInline({ api, projectId, ro, releases, userName, onOpenPrint }) {
@@ -113,6 +114,10 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
             {sh.total != null ? <tr className="tot">{sh.cols.map((c, i) => <td key={i} className={i + 1 === sh.totalAt ? "n" : ""}>{i + 2 === sh.totalAt ? L("รวม", "Total") : i + 1 === sh.totalAt ? sh.total : ""}</td>)}<td /></tr> : null}
           </tbody>
         </table>
+      </div>
+      {/* ★ 2026-11-04 วัสดุของล็อต (เบิกจริง / เศษ) ย้ายมาอยู่หน้าล็อต — หน้าใบหลักกดแถวล็อตแล้วเข้าหน้านี้เลย */}
+      <div style={{ marginTop: 14 }}>
+        <LotMats plan={plan} need={ctx.need} lot={ctx.lot} sheetsOf={(r) => lotRowSheets(r, ctx.need)} onPlanChange={(np) => { setPlan(np); clearTimeout(window.__mlsLotMatT); window.__mlsLotMatT = setTimeout(() => { api.updatePlan(np).catch((e) => setMsg(L("บันทึกยอดเบิกไม่สำเร็จ: ", "Saving issue failed: ") + (e?.message || e))); }, 800); }} />
       </div>
     </div>
   );
