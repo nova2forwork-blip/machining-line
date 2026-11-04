@@ -6516,7 +6516,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
         if (!alive || !plan) return;
         const of = core.originIndex(plan.bom || {});
-        const byUnit = new Map(); for (const u of plan.units || []) { const k = core.NC(u.unit); if (!byUnit.has(k)) byUnit.set(k, []); byUnit.get(k).push(u.mock ? `MOCKUP ${core.mockType(u.unit)}`.trim() : u.addr); }
+        const byUnit = new Map(); for (const u of plan.units || []) { const k = core.NC(u.unit); if (!byUnit.has(k)) byUnit.set(k, []); byUnit.get(k).push(u.addr); }
         setOrigin({ of, addrsOf: (unit) => byUnit.get(core.NC(unit)) || [], ro: plan.ro });
       } catch { /* ไม่มีแผนแบบใหม่ / ยังไม่รัน SQL — ไม่แสดงคอลัมน์ */ }
     })();

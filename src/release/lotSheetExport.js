@@ -85,7 +85,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
       for (const a of list) {
         const isMock = /^MOCK-[A-Z]+-\d+$/.test(a); const row = (plan.units || []).find((u) => String(u.addr || "").trim().toUpperCase() === a);
         const mk = isMock || row?.mock;
-        out.push({ vals: [++n, r.code, mk ? "MOCKUP" : a, 1, [mk ? a : "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at }); total += 1;
+        out.push({ vals: [++n, r.code, a, 1, [mk ? "MOCKUP" : "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at }); total += 1;
       }
     }
     return { out, total, totalAt: 4 };
