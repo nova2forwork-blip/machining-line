@@ -1641,3 +1641,8 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
   .stp-tabs button small { display: none; }
 }
 .stp-addbox { border: 1px solid var(--border-soft); background: var(--surface-2); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+
+/* ★ 2026-11-04 คอลัมน์ 'ใช้ใน / มาจากแผง' หน้าล็อตที่ปล่อยแล้ว */
+.rl-origin { font-size: 12px; line-height: 1.45; color: var(--text); }
+.rl-origin b { font-weight: 700; color: var(--accent-dk); margin-right: 2px; }
+.rl-origin.muted { color: var(--muted); }

@@ -467,6 +467,20 @@ export function expandUnits(units, usedAddr) {
   for (const u of units) { const n = mockQty(u); if (n === 1) out.push(u); else for (let i = 0; i < n; i++) out.push({ ...u, addr: "", qty: undefined, _of: u }); }
   return normMockUnits(out, usedAddr);
 }
+// ★ 2026-11-04 "เบอร์นี้ใช้ในอะไร / มาจากแผงไหน" — ไล่ขึ้นจาก BOM ของแผน: พาร์ท → ซับ (ทุกชั้น) → แผง
+//   คืน fn(code) → { subs:[…], panels:[…] } (ตัดบรรทัด "ยกเลิก" · กันวนซ้ำ) · ใช้ที่หน้าล็อตที่ปล่อยแล้ว
+export function originIndex(bom) {
+  const par = new Map();
+  const add = (child, parent) => { const k = NC(child); if (!par.has(k)) par.set(k, []); par.get(k).push(parent); };
+  for (const [pc, p] of Object.entries((bom && bom.panels) || {})) for (const it of p.items || []) if ((it[4] || "") !== "ยกเลิก") add(it[1], { kind: "panel", code: pc });
+  for (const [sc, sub] of Object.entries((bom && bom.subs) || {})) for (const it of sub.items || []) if ((it[4] || "") !== "ยกเลิก") add(it[1], { kind: "sub", code: sc });
+  return (code) => {
+    const subs = [], panels = [], seen = new Set();
+    const walk = (c, d) => { if (d > 8) return; for (const q of par.get(NC(c)) || par.get(baseOf(c)) || []) { const k = q.kind + "|" + NC(q.code); if (seen.has(k)) continue; seen.add(k); if (q.kind === "panel") panels.push(q.code); else { subs.push(q.code); walk(q.code, d + 1); } } };
+    walk(code, 0);
+    return { subs, panels };
+  };
+}
 export function unitIssues(units, usedAddr) {
   const row = {}, block = [], warn = []; const seen = new Map();
   units.forEach((u, i) => { const a = String(u.addr || "").trim().toUpperCase(); if (a) { if (!seen.has(a)) seen.set(a, []); seen.get(a).push(i); } });

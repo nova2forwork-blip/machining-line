@@ -6504,6 +6504,39 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [modInfo, setModInfo] = useState(null);     // { origin, mods, limits, next_no } | { ok:false, reason }
   const [modOpen, setModOpen] = useState(false);
   const [modView, setModView] = useState(null);     // null | M0 | "M-03"
+  // ★ 2026-11-04 ผู้ใช้: "ที่ปล่อยไปแล้ว มันคืออะไร ส่วนไหน ปล่อยมาจากแผงไหน" → โหลดแผน Release ของล็อต (P-241.1 → P-241) แล้วไล่ BOM ขึ้นไป
+  const [origin, setOrigin] = useState(null);   // { of(code) → {subs,panels}, addrsOf(panel) → [addr…] } | null = ไม่มีแผน/ยังไม่โหลด
+  useEffect(() => {
+    let alive = true; setOrigin(null);
+    if (!projectId || !hdr.ro) return undefined;
+    (async () => {
+      try {
+        const core = await import("./release/releaseCore.js");
+        const { plans } = await realReleaseApi.listPlans(projectId);
+        const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
+        if (!alive || !plan) return;
+        const of = core.originIndex(plan.bom || {});
+        const byUnit = new Map(); for (const u of plan.units || []) { const k = core.NC(u.unit); if (!byUnit.has(k)) byUnit.set(k, []); byUnit.get(k).push(u.mock ? `MOCKUP ${core.mockType(u.unit)}`.trim() : u.addr); }
+        setOrigin({ of, addrsOf: (unit) => byUnit.get(core.NC(unit)) || [], ro: plan.ro });
+      } catch { /* ไม่มีแผนแบบใหม่ / ยังไม่รัน SQL — ไม่แสดงคอลัมน์ */ }
+    })();
+    return () => { alive = false; };
+  }, [projectId, hdr.ro]);
+  const originCell = (r) => {
+    if (!origin) return null;
+    const pn = r.part_master?.part_no || ""; const kind = r.part_master?.kind;
+    if (kind === "panel") { const a = origin.addrsOf(pn); return a.length ? <span className="rl-origin" title={a.join(", ")}>{lang === "en" ? "Panel · addresses: " : "แผง · ที่อยู่: "}{a.slice(0, 4).join(", ")}{a.length > 4 ? ` +${a.length - 4}` : ""}</span> : <span className="rl-origin">{lang === "en" ? "Panel" : "แผง"}</span>; }
+    if (kind === "package") return null;
+    const o = origin.of(pn);
+    if (!o.subs.length && !o.panels.length) return <span className="rl-origin muted">{lang === "en" ? (kind === "subassembly" ? "Sub-assembly · released on its own" : "Part · released on its own") : (kind === "subassembly" ? "ซับ · ปล่อยเดี่ยว" : "พาร์ท · ปล่อยเดี่ยว")}</span>;
+    const cut = (arr, n) => arr.slice(0, n).join(", ") + (arr.length > n ? ` +${arr.length - n}` : "");
+    return (
+      <span className="rl-origin" title={[o.subs.length ? (lang === "en" ? "In sub: " : "ในซับ: ") + o.subs.join(", ") : "", o.panels.length ? (lang === "en" ? "Panel: " : "แผง: ") + o.panels.join(", ") : ""].filter(Boolean).join("\n")}>
+        {o.subs.length ? <><b>{lang === "en" ? "sub" : "ซับ"}</b> {cut(o.subs, 2)}</> : null}
+        {o.subs.length && o.panels.length ? " → " : null}
+        {o.panels.length ? <><b>{lang === "en" ? "panel" : "แผง"}</b> {cut(o.panels, 3)}</> : null}
+      </span>);
+  };
   const loadModInfo = useCallback(async () => {
     if (!projectId || !hdr.ro) { setModInfo(null); return; }
     const d = await getReleaseModifyInfo(projectId, hdr.ro);
@@ -6662,6 +6695,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const matLenText = (r) => { const a = matLenList(r); return a.length ? a.map((n) => fmtNum(n)).join(" · ") : "-"; };
 
   const sortAccessors = {
+    origin: (r) => { if (!origin) return ""; const o = origin.of(r.part_master?.part_no || ""); return (o.panels[0] || "") + "|" + (o.subs[0] || ""); },
     part_no: (r) => r.part_master?.part_no || "", part_name: (r) => r.part_master?.part_name || "",
     qty: (r) => Number(r.qty) || 0,
     finished: (r) => rowProg(r).done,
@@ -7018,6 +7052,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 </div>
                 );
               } },
+            ...(origin ? [{ key: "origin", header: lang === "en" ? "Used in / from panel" : "ใช้ใน / มาจากแผง", sortKey: "origin", dataLabel: lang === "en" ? "Used in" : "ใช้ใน", cell: (r) => originCell(r) }] : []),
             { key: "qty", header: lang === "en" ? "Qty" : "จำนวน", sortKey: "qty", align: "right", cell: (r) => fmtNum(r.qty) },
             { key: "finished", header: lang === "en" ? "Finished" : "เสร็จแล้ว", sortKey: "finished",
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : (

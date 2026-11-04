@@ -2536,6 +2536,7 @@ const TPLS2 = [
 
 // รอบ 3: ข้อความที่ยังเป็นไทยล้วน (flash/toast บนแท็บเล็ต · หัวคอลัมน์ · เดือนย่อ)
 const DICT3 = {
+ "ใช้ใน / มาจากแผง": "Used in / from panel", "ใช้ใน": "Used in",
  "ฐานข้อมูลยังไม่รู้จักประเภทงานนี้ (เช่น ติดกระจก) — รัน migration-glazing-optype.sql ใน Supabase › SQL Editor ก่อน แล้วกดบันทึกใหม่": "The database doesn't know this operation type yet (e.g. Glazing) — run migration-glazing-optype.sql in Supabase › SQL Editor, then save again",
  "รูปแบบการสแกน": "Scan mode",
  "สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก": "Scan parent → scan children → Save",
