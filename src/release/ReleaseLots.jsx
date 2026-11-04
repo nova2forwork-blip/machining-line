@@ -782,12 +782,14 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
     return { p, need, rel, addr, left };
   }).sort((a, b) => ncmp(b.p.ro, a.p.ro)), [plans, releases]);
   // ★ 2026-11-04 ผู้ใช้: "ปล่อยครบแล้วไม่ใช่หรอ" — การ์ดนี้แสดงเฉพาะที่ยังเหลือ · ที่ปล่อยครบพับไว้ (กดดูได้ · เปิดจากรายการ Release ปกติได้เหมือนเดิม)
+  // ★ 2026-11-04 ผู้ใช้: "P-241 หายไปไหน" — การ์ดนี้เป็นทางเข้าหน้า Release หลัก (Total / ปล่อยล็อต) จึงต้องมีทุกใบ
+  //   ยังเหลือ = ขึ้นก่อน · ปล่อยครบ = ต่อท้าย (ป้ายเขียว)
   const pending = rows.filter((r) => r.left > 0);
-  const shown = pending;   // ปล่อยครบแล้ว = ไม่อยู่ในการ์ดนี้ (ดูในรายการล็อตด้านล่าง)
-  if (!pending.length) return null;   // ★ ปล่อยครบทุกใบ = ไม่แสดงการ์ดนี้เลย (ใบที่ครบดูได้ในรายการล็อตด้านล่าง)
+  const shown = [...pending, ...rows.filter((r) => r.left <= 0)];
+  if (!rows.length) return null;
   return (
     <div className="card rl-planscard">
-      <div className="card-head"><div><div className="card-title">Release ที่ยังปล่อยไม่ครบ{pending.length ? ` (${nf(pending.length)})` : ""}</div><div className="card-sub">บันทึกแล้ว · เลือกปล่อยเป็นล็อต P-xxx.1 / .2 … ได้ทีละส่วน</div></div></div>
+      <div className="card-head"><div><div className="card-title">Release (ใบหลัก){pending.length ? ` · ยังปล่อยไม่ครบ ${nf(pending.length)}` : ""}</div><div className="card-sub">กดเปิดเพื่อดู Total · BOM · ล็อตที่ปล่อย · ปล่อยล็อตใหม่ (P-xxx.1 / .2 …)</div></div></div>
       <div className="table-wrap">
         <table className="data-table">
           <thead><tr><th>Release</th><th>โปรเจค</th><th>วันที่</th><th style={{ textAlign: "right" }}>แผงปล่อยแล้ว</th><th style={{ textAlign: "right" }}>ล็อต</th><th>สถานะ</th><th /></tr></thead>
