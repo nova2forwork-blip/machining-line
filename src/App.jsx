@@ -13805,16 +13805,41 @@ function StationsPage() {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null);
   const [openNone, setOpenNone] = useState(false);
+  const [emps, setEmps] = useState([]);   // ★ 2026-11-04 สถานี = บัญชีล็อกอิน (รหัสเดียวกัน เช่น CT-065)
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
 
   const load = useCallback(async () => {
+    getEmployees().then((e) => setEmps(Array.isArray(e) ? e : [])).catch(() => setEmps([]));
     setRows(await listRows("machines", { order: "code" }));
     setOperations(await listRows("operations", { order: "seq" }));
     try { setCaps(await listRows("machine_operations", { strict: true })); setErr(""); }
     catch (e) { setCaps(null); setErr(L("โหลดขั้นตอนของสถานีไม่สำเร็จ — กดรีเฟรชหน้า: ", "Couldn't load station steps — refresh the page: ") + (e?.message || e)); }
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
+
+  const accOf = (m) => emps.find((e) => String(e.code || "").trim().toUpperCase() === String(m.code || "").trim().toUpperCase()) || null;
+  // สถานีที่ทำงานจริง (มีงาน) แต่ยังไม่มีบัญชีรหัสเดียวกัน หรือมีแต่ยังไม่ผูก
+  const needAcc = rows.filter((m) => caps && stationInfo(m, operations, caps).stype !== "none").filter((m) => { const a = accOf(m); return !a || a.machine_id !== m.id; });
+  async function bulkAccounts() {
+    if (bulkBusy || !needAcc.length) return;
+    const list = needAcc.map((m) => { const a = accOf(m); return `${m.code} — ${a ? L("ผูกบัญชีที่มีอยู่", "bind existing account") : L("สร้างบัญชีใหม่ (รหัสผ่านเริ่มต้น = รหัสสถานี)", "create account (initial password = station code)")}`; }).join("\n");
+    if (!(await askConfirm({ title: L(`ตั้งบัญชีล็อกอินให้ ${needAcc.length} สถานี`, `Set up login for ${needAcc.length} station(s)`), message: list + L("\n\nบัญชีที่สร้างใหม่ ให้เปลี่ยนรหัสผ่านทีหลังได้ที่การ์ดสถานี", "\n\nChange new passwords later from each station card"), confirmText: L("ตั้งบัญชี", "Set up"), cancelText: L("ยกเลิก", "Cancel") }))) return;
+    setBulkBusy(true); let ok = 0; const bad = [];
+    for (const m of needAcc) {
+      const a = accOf(m); const op = stationInfo(m, operations, caps).ops[0];
+      try {
+        if (a) await upsertEmployee({ id: a.id, code: a.code, name: a.name, password: "", role: a.role || "operator", department_id: a.department_id || null, machine_id: m.id, operation_id: a.operation_id || (op && op.id) || null, active: a.active ?? true });
+        else await upsertEmployee({ code: m.code, name: m.name || m.code, password: m.code, role: "operator", machine_id: m.id, operation_id: (op && op.id) || null });
+        auditRecord(a ? "employee_update" : "employee_create", "employee", a ? a.id : null, { code: m.code, name: m.name, station: m.code });
+        ok++;
+      } catch (e) { bad.push(`${m.code}: ${e?.message || "error"}`); }
+    }
+    setBulkBusy(false);
+    mlsToast(bad.length ? L(`ตั้งแล้ว ${ok} · ไม่สำเร็จ ${bad.length}: ${bad.join(" · ")}`, `Done ${ok} · failed ${bad.length}: ${bad.join(" · ")}`) : L(`ตั้งบัญชีแล้ว ${ok} สถานี`, `Accounts set for ${ok} station(s)`), bad.length ? "warn" : "success");
+    load();
+  }
 
   const s = q.trim().toLowerCase();
   const items = rows
@@ -13830,6 +13855,11 @@ function StationsPage() {
         </div>
         <Btn variant="accent" onClick={() => setEditing({ __new: true })} disabled={caps === null}>+ {L("เพิ่มสถานี", "Add station")}</Btn>
       </div>
+      {needAcc.length ? (
+        <div className="stp-accbar">
+          <span>👤 {L(`${needAcc.length} สถานียังไม่มีบัญชีล็อกอินรหัสเดียวกัน (หรือยังไม่ผูก): `, `${needAcc.length} station(s) have no login with the same code (or not bound): `)}<b>{needAcc.slice(0, 8).map((m) => m.code).join(", ")}{needAcc.length > 8 ? " …" : ""}</b></span>
+          <Btn variant="ghost" size="sm" onClick={bulkAccounts} disabled={bulkBusy}>{bulkBusy ? L("กำลังตั้ง…", "Working…") : L("ตั้งบัญชีให้ทั้งหมด", "Set up all")}</Btn>
+        </div>) : null}
       <HowTo id="setup-stations" style={{ marginBottom: 12 }} short={L("แตะการ์ดเพื่อแก้ · เลือกว่าสถานีทำงานอะไร ระบบจัดหน้าให้เอง", "Tap a card to edit · pick what the station does and the page is set automatically")}>
         <ul>
           <li>{L("สถานี = จุดที่คนงานล็อกอินทำงาน (เครื่องตัด โต๊ะประกอบ โต๊ะแพ็ก …) · 1 สถานี = 1 การ์ด · จัดกลุ่มตาม \"หน้าที่แท็บเล็ตจะเปิด\" เมื่อพนักงานของสถานีนั้นล็อกอิน",
@@ -13840,8 +13870,10 @@ function StationsPage() {
                  "tick the steps this machine does (cut/notch/mill/drill …) and pick scanning — \"scan twice · timed\" (default) or \"scan once when done\"")}</li>
           <li><b>{L("ประกอบซับ / แผง / ติดกระจก / แพ็ก", "Sub-assembly / Panel / Glazing / Packing")}:</b> {L("ไม่ต้องติ๊กอะไรเพิ่ม — ระบบตั้งขั้นตอนให้ แท็บเล็ตจะเปิดหน้านั้น (สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก · ไม่จับเวลา)",
                  "nothing else to tick — the step is set for you and the tablet opens that page (scan parent → scan children → save · no timer)")}</li>
-          <li><b>{L("จากนั้น", "Then")}:</b> {L("ไปแท็บ \"พนักงาน\" → ตั้ง \"เครื่อง/สถานีประจำ\" ให้บัญชีคนงาน → ล็อกอินใหม่บนแท็บเล็ต ระบบพาเข้าหน้าที่ถูกเอง",
-                 "go to \"Employees\" → set the worker's home station → log in again on the tablet; it opens the right page")}</li>
+          <li><b>{L("บัญชีล็อกอิน", "Login")}:</b> {L("สถานี = บัญชีล็อกอินรหัสเดียวกัน (เช่น CT-065 ล็อกอินด้วย CT-065) · ตอนบันทึกสถานีระบบสร้าง/ผูกบัญชีให้ (รหัสผ่านเริ่มต้น = รหัสสถานี ถ้าไม่ได้ตั้ง) · การ์ดบอก 👤 ล็อกอิน / ยังไม่มีบัญชี · ปุ่ม \"ตั้งบัญชีให้ทั้งหมด\" ทำทีเดียวทุกสถานี",
+                 "a station = a login with the same code (CT-065 logs in as CT-065) · saving a station creates/binds it (initial password = station code if blank) · cards show 👤 login / no login · \"Set up all\" does every station at once")}</li>
+          <li><b>{L("จากนั้น", "Then")}:</b> {L("ล็อกอินบนแท็บเล็ตด้วยรหัสสถานี ระบบพาเข้าหน้าที่ถูกเอง",
+                 "log in on the tablet with the station code; it opens the right page")}</li>
           <li><b>{L("กรอบส้ม \"ตั้งข้ามหลายหน้า\"", "Orange \"set across several pages\"")}:</b> {L("สถานีเลือกงานปนกัน แท็บเล็ตเข้าได้หน้าเดียว — แตะแล้วเลือกใหม่ให้เหลืออย่างเดียว",
                  "the station has mixed jobs but a tablet can open only one page — tap and pick one")}</li>
           <li><b>{L("ยังไม่ตั้ง", "Not set")}:</b> {L("เครื่องที่ไม่ได้สแกนงาน (ปั๊มลม เครื่องเป่าแห้ง …) ใช้แค่ในรายงานปัญหาเครื่อง — ปล่อยไว้ได้",
@@ -13885,6 +13917,7 @@ function StationsPage() {
                     )}
                     {g.key === "pack" && <span className="ops">{L(STYPE[info.stype].th, STYPE[info.stype].en)}</span>}
                     {info.stype === "machine" && m.scan_mode === "count" && <span className="tag">{L("สแกนครั้งเดียว", "Single scan")}</span>}
+                    {info.stype !== "none" ? (() => { const a = accOf(m); return a && a.machine_id === m.id ? <span className="acc ok">👤 {L("ล็อกอิน", "login")} {a.code}{a.active === false ? L(" (ปิด)", " (off)") : ""}</span> : <span className="acc warn">👤 {a ? L("บัญชียังไม่ผูก", "account not bound") : L("ยังไม่มีบัญชี", "no login yet")}</span>; })() : null}
                   </button>
                 ))}
               </div>
@@ -13893,7 +13926,7 @@ function StationsPage() {
         );
       })}
       {editing && (
-        <StationModal machine={editing} operations={operations} caps={caps || []}
+        <StationModal machine={editing} operations={operations} caps={caps || []} emps={emps}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }} />
       )}
@@ -13901,7 +13934,7 @@ function StationsPage() {
   );
 }
 
-function StationModal({ machine, operations, caps, onClose, onSaved }) {
+function StationModal({ machine, operations, caps, emps = [], onClose, onSaved }) {
   const isNew = !!machine.__new;
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
@@ -13919,6 +13952,12 @@ function StationModal({ machine, operations, caps, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const T = STYPE[stype];
+  // ★ 2026-11-04 ผู้ใช้: "สถานีกับคนงานเป็นอันเดียวกัน — รหัสล็อกอิน CT-065 ก็เป็นของเครื่อง CT-065"
+  const accCode = String(form.code || "").trim().toUpperCase();
+  const acc = accCode ? emps.find((e) => String(e.code || "").trim().toUpperCase() === accCode) || null : null;
+  const accBound = !!(acc && !isNew && acc.machine_id === machine.id);
+  const [accOn, setAccOn] = useState(true);       // สร้าง / ผูก บัญชีรหัสเดียวกัน
+  const [accPw, setAccPw] = useState("");         // รหัสผ่าน (บัญชีใหม่: ว่าง = ใช้รหัสสถานี · บัญชีเดิม: ว่าง = ไม่เปลี่ยน)
   const shownTypes = STATION_TYPES.filter((t) => !t.legacy || startType === t.key || info.kinds.includes(t.key));
 
   function toggleM(id) { setMSel((s0) => { const n = new Set(s0); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
@@ -13992,6 +14031,17 @@ function StationModal({ machine, operations, caps, onClose, onSaved }) {
         }
         if (!why && r && r.ok === false) why = r.reason === "forbidden" ? L("เฉพาะแอดมิน", "admin only") : (r.reason || "error");
         if (why) { setErr(L(`บันทึกแล้ว · แต่ตั้งรูปแบบการสแกนไม่สำเร็จ: ${why}`, `Saved, but scan mode failed: ${why}`)); setBusy(false); return; }
+      }
+      // บัญชีล็อกอินรหัสเดียวกับสถานี
+      if (stype !== "none" && (accOn || (accBound && accPw.trim()))) {
+        try {
+          if (acc) {
+            if (!accBound || accPw.trim()) await upsertEmployee({ id: acc.id, code: acc.code, name: acc.name, password: accPw.trim(), role: acc.role || "operator", department_id: acc.department_id || null, machine_id: row.id, operation_id: acc.operation_id || next[0] || null, active: acc.active ?? true });
+          } else {
+            await upsertEmployee({ code: row.code, name: form.name.trim() || row.code, password: accPw.trim() || row.code, role: "operator", machine_id: row.id, operation_id: next[0] || null });
+          }
+          auditRecord(acc ? "employee_update" : "employee_create", "employee", acc ? acc.id : null, { code: row.code, station: row.code });
+        } catch (e) { setErr(L("บันทึกสถานีแล้ว · แต่ตั้งบัญชีล็อกอินไม่สำเร็จ: ", "Station saved, but login setup failed: ") + (isDuplicateError(e) ? L("รหัสซ้ำ", "duplicate code") : (e?.message || e))); setBusy(false); return; }
       }
       auditRecord(isNew ? "create_station" : "edit_station", "machine", row.id, { code: row.code, type: stype, ops: next });
       onSaved();
@@ -14073,6 +14123,20 @@ function StationModal({ machine, operations, caps, onClose, onSaved }) {
           ? <>✓ {L("แท็บเล็ตของสถานีนี้จะเปิด", "Tablets of this station open")} <b>{L("หน้าเครื่อง", "the machine page")}</b> (/station)</>
           : <>✓ {L("แท็บเล็ตของสถานีนี้จะเปิด", "Tablets of this station open")} <b>{L(`หน้า${T.th}`, T.en)}</b> ({T.path}) · {L("สแกนเบอร์แม่ → สแกนเบอร์ลูก → บันทึก · ไม่จับเวลา", "scan parent → scan children → save · no timer")}</>}
       </div>
+      {stype !== "none" ? (
+        <div className="stp-acc">
+          <div className="stp-lbl" style={{ marginTop: 0 }}>{L("บัญชีล็อกอินของสถานี", "Station login")} <small className="stp-hint" style={{ display: "inline", marginLeft: 6 }}>{L("รหัสเดียวกับสถานี — คนงานใช้รหัสนี้ล็อกอินที่แท็บเล็ต", "same code as the station — workers log in with it on the tablet")}</small></div>
+          {accBound ? (
+            <div className="stp-acc-row"><span className="acc ok">👤 {acc.code} · {acc.name}{acc.active === false ? L(" · ปิดใช้งาน", " · disabled") : ""}</span>
+              <input className="input" type="text" placeholder={L("ตั้งรหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)", "New password (blank = keep)")} value={accPw} onChange={(e) => setAccPw(e.target.value)} autoComplete="new-password" /></div>
+          ) : (
+            <div className="stp-acc-row">
+              <label className="rw-check"><input type="checkbox" checked={accOn} onChange={(e) => setAccOn(e.target.checked)} /> {acc
+                ? L(`ผูกบัญชี ${acc.code} (${acc.name}) กับสถานีนี้`, `Bind account ${acc.code} (${acc.name}) to this station`)
+                : L(`สร้างบัญชีล็อกอิน ${accCode || "(รหัสสถานี)"}`, `Create login ${accCode || "(station code)"}`)}</label>
+              {accOn ? <input className="input" type="text" placeholder={acc ? L("รหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)", "New password (blank = keep)") : L(`รหัสผ่านเริ่มต้น (เว้นว่าง = ${accCode || "รหัสสถานี"})`, `Initial password (blank = ${accCode || "station code"})`)} value={accPw} onChange={(e) => setAccPw(e.target.value)} autoComplete="new-password" /> : null}
+            </div>)}
+        </div>) : null}
       {err && <div className="stp-err">{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         {isNew ? <span /> : <Btn type="button" variant="ghost" onClick={del} disabled={busy} style={{ color: "var(--danger-hi)" }}>{L("ลบสถานี", "Delete")}</Btn>}
