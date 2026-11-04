@@ -34,6 +34,7 @@ const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
 const ReleaseWizard = lazy(() => import("./release/ReleaseWizard.jsx"));
 const ProjectLibLazy = lazy(() => import("./release/ProjectLib.jsx"));
 const ReleasePlanViewLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlanView })));
+const LotSheetInlineLazy = lazy(() => import("./release/LotSheetInline.jsx"));
 const ReleasePlansCardLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlansCard })));
 
 // ── Ctrl+Z ย้อนการแก้ไขที่ยังไม่บันทึก (ทั้งแอปฝั่งสำนักงาน) ──────────────────────
@@ -7000,6 +7001,11 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       </div>
 
       {/* (ผู้ใช้ 2026-09-24: เอาการ์ด "ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)" ออก — ดูรายเครื่องในตาราง Part แทน) */}
+
+      {projectId && hdr.ro ? (
+        <Suspense fallback={null}>
+          <LotSheetInlineLazy api={realReleaseApi} projectId={projectId} ro={hdr.ro} releases={releases} userName={user?.name || ""} onOpenPrint={exportReleaseSheet} />
+        </Suspense>) : null}
 
       <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
         right={

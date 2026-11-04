@@ -85,7 +85,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
       for (const a of list) {
         const isMock = /^MOCK-[A-Z]+-\d+$/.test(a); const row = (plan.units || []).find((u) => String(u.addr || "").trim().toUpperCase() === a);
         const mk = isMock || row?.mock;
-        out.push({ vals: [++n, r.code, a, 1, [mk ? "MOCKUP" : "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at }); total += 1;
+        out.push({ id: `${r.code}@${a || n}`, vals: [++n, r.code, a, 1, [mk ? "MOCKUP" : "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at }); total += 1;
       }
     }
     return { out, total, totalAt: 4 };
@@ -98,8 +98,8 @@ function rowsFor(sheet, lotRows, { plan, need }) {
       const s = need.subs.find((x) => NC(x.code) === NC(r.code)) || {};
       const others = (s.procs || []).filter((p) => p !== sheet.k);
       const cx = !!r.mod_cancelled_at;
-      out.push({ vals: [++n, r.code, s.d || "", num(s.l), q, "", "", "SET", [others.length ? T("อยู่ในใบอื่นด้วย: ", "Also on: ") + others.map((k) => (LANG === "en" ? (SHEETS.find((x) => x.k === k) || {}).en || k : k)).join(", ") : "", modNote(r)].filter(Boolean).join(" · ")], bold: true, cancelled: cx });
-      for (const k of subTree(plan, r.code)) out.push({ vals: ["", k.code, k.d, num(k.l), q, num(k.q), num(k.q * q), k.uom, ""], kid: true, lvl: k.lvl, sub2: k.isSub, cancelled: cx });
+      out.push({ id: r.code, vals: [++n, r.code, s.d || "", num(s.l), q, "", "", "SET", [others.length ? T("อยู่ในใบอื่นด้วย: ", "Also on: ") + others.map((k) => (LANG === "en" ? (SHEETS.find((x) => x.k === k) || {}).en || k : k)).join(", ") : "", modNote(r)].filter(Boolean).join(" · ")], bold: true, cancelled: cx });
+      for (const k of subTree(plan, r.code)) out.push({ id: `${r.code}>${k.lvl}>${k.code}`, vals: ["", k.code, k.d, num(k.l), q, num(k.q), num(k.q * q), k.uom, ""], kid: true, lvl: k.lvl, sub2: k.isSub, cancelled: cx });
     }
     return { out, total };
   }
@@ -107,7 +107,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
   for (const r of sorted) {
     const q = Number(r.qty) || 0;
     const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
-    out.push({ vals: [++n, r.code, q, "", p.rev || "", p.inv || "", [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
+    out.push({ id: r.code, vals: [++n, r.code, q, "", p.rev || "", p.inv || "", [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
     total += q;
   }
   return { out, total, totalAt: 3 };
@@ -120,9 +120,9 @@ const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.se
 //   iss = ยอดเบิกจริงที่กรอกในแอปของล็อตนี้ (plan.lotIssue[ล็อต][INV] = { n, r }) → ช่อง ACTUAL ISSUE + หมายเหตุ
 function matRows(sheet, lm, iss = {}) {
   const out = []; let n = 0;
-  if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ vals: [++n, m.inv || T("(ไม่มี INV)", "(no INV)"), m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? T(`เศษ (มม.) ${offTxt(m.offLens)}`, `Offcuts (mm) ${offTxt(m.offLens)}`) : "", m.noLen ? T(`ไม่มีความยาว ${m.noLen} ชิ้น`, `No length: ${m.noLen} pcs`) : "", m.over ? T(`ยาวกว่าเส้น ${m.over} ชิ้น`, `Longer than bar: ${m.over} pcs`) : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
-  if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
-  else for (const p of lm.hw) out.push({ vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
+  if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ id: m.inv || "—", vals: [++n, m.inv || T("(ไม่มี INV)", "(no INV)"), m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? T(`เศษ (มม.) ${offTxt(m.offLens)}`, `Offcuts (mm) ${offTxt(m.offLens)}`) : "", m.noLen ? T(`ไม่มีความยาว ${m.noLen} ชิ้น`, `No length: ${m.noLen} pcs`) : "", m.over ? T(`ยาวกว่าเส้น ${m.over} ชิ้น`, `Longer than bar: ${m.over} pcs`) : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
+  if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
+  else for (const p of lm.hw) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
   return { out, total: null };
 }
 
@@ -149,9 +149,13 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     const sh0 = SHEETS.find((x) => x.k === sheet.k); const tabName = LANG === "en" && sh0 ? sh0.en || sheet.tab : sheet.tab;
     let name = String(tabName).replace(/[\\/?*[\]:']/g, " ").slice(0, 31); if (used.has(name)) name = name.slice(0, 27) + " (2)"; used.add(name);
     const { cols: cols0, groups } = columnsFor(sheet);
-    const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
     const [t1, t2] = titleOf(sheet.k) || [`${sheet.label || sheet.k}`, sheet.th || ""];
     const { out, total, totalAt } = mat ? matRows(sheet, lm, (plan.lotIssue || {})[lot.no] || {}) : rowsFor(sheet, rows, { plan, need });
+    // ★ 2026-11-04 แก้ใบปล่อยในหน้าล็อต: plan.sheetEdit[ล็อต][ใบ][rowId][คอลัมน์] = ข้อความ · แก้ได้เฉพาะ REMARK / สั่งตัดเพิ่ม / REV. / ADDRESS (ไม่แตะจำนวน/เบอร์ที่ผูก QR)
+    const edits = ((plan.sheetEdit || {})[lot.no] || {})[sheet.k] || {};
+    cols0.forEach((c, i) => { if (isRm(c.en) || c.th === "สั่งตัดเพิ่ม" || c.en === "REV." || c.en === "ADDRESS") { cols0[i] = { ...c, edit: true }; } });
+    for (const r of out) { const e = r.id != null ? edits[r.id] : null; if (e) for (const [ci, v] of Object.entries(e)) if (cols0[ci] && cols0[ci].edit && !r.kid) { r.vals[ci] = v; r.edited = true; } }
+    const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
     return { key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
   });
   const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
