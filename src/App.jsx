@@ -7305,7 +7305,7 @@ function useReleasePlans(projectId = null) {
   useEffect(() => { loadPlans(); }, [loadPlans]);
   return { plans, setPlans, loadPlans };
 }
-function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo }) {
+function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null }) {
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   const onPlanChange = (p) => {
@@ -7318,6 +7318,12 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
+        onOpenLot={onOpenGroup ? (lotNo) => {
+          // ★ 2026-11-04 เปิดหน้าล็อต (ReleaseGroupDetail) จากหน้าใบหลัก — กด "กลับ" แล้วกลับมาที่ใบหลัก
+          const k = String(lotNo || "").trim().toUpperCase().replace(/\s+/g, "");
+          const g = groupReleases(releases.filter((r) => String(r.release_order || "").trim().toUpperCase().replace(/\s+/g, "") === k && (!view.plan.projectCode || r.part_master?.projects?.code === view.plan.projectCode || !r.part_master?.projects?.code)))[0];
+          if (g) onOpenGroup(g); else mlsToast("ไม่พบรายการของล็อตนี้", "error");
+        } : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange}
         onModified={async (np, mod) => {
           setView((v) => (v ? { ...v, plan: np } : v));
@@ -7568,7 +7574,7 @@ function ReleasePage({ user, goTo }) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
   }
   if (planView) {
-    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} onOpenGroup={setViewGroup} />;
   }
   if (createOpen === "wizard") {
     return (
@@ -12086,7 +12092,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     );
   }
   if (planView) {
-    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} onOpenGroup={setViewGroup} />;
   }
   if (libOpen) {
     return (

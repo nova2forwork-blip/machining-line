@@ -32,7 +32,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -165,6 +165,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                       const tip = [["พาร์ท", "part"], ["ซับ", "sub"], ["แผง", "panel"]].filter(([, k]) => pg.g[k][1]).map(([n, k]) => `${n} ${nf(pg.g[k][0])}/${nf(pg.g[k][1])}`).join(" · ");
                       return <span className={`rl-lot-prog ${pg.pct >= 100 ? "full" : pg.d ? "" : "zero"}`} title={`ทำแล้ว (ชิ้น) · ${tip}`}><i><b style={{ width: `${pg.pct}%` }} /></i>{pg.pct >= 100 ? "เสร็จครบ" : `ทำแล้ว ${pg.pct}%`}</span>; })()}
                     <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}</span>
+                    {onOpenLot ? <span role="button" tabIndex={0} className="rl-lot-open" title="เปิดหน้าล็อต (รายละเอียดทุกเบอร์ · ความคืบหน้า · ใบปล่อยที่แก้ได้ · Modify)"
+                      onClick={(e) => { e.stopPropagation(); onOpenLot(L.no); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpenLot(L.no); } }}>เปิดหน้าล็อต →</span> : null}
                     <span className="rl-caret" aria-hidden="true">▾</span>
                   </button>
                   {open === L.no ? (

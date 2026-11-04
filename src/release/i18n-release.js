@@ -1551,6 +1551,7 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  "เปิดหน้าล็อต →": "Open lot →", "เปิดหน้าล็อต (รายละเอียดทุกเบอร์ · ความคืบหน้า · ใบปล่อยที่แก้ได้ · Modify)": "Open the lot page (every code · progress · editable release sheet · Modify)",
   "กดเปิดเพื่อดู Total · BOM · ล็อตที่ปล่อย · ปล่อยล็อตใหม่ (P-xxx.1 / .2 …)": "Open to see Total · BOM · released lots · release a new lot (P-xxx.1 / .2 …)",
   "Release (ใบหลัก)": "Releases (main)",
   "ปล่อยครบทุกใบแล้ว": "Every release is fully released", "ซ่อนที่ปล่อยครบแล้ว": "Hide fully released",
