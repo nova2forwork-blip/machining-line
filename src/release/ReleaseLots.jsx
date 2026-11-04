@@ -5,6 +5,7 @@
 //   ล็อต = P-142.1 / .2 / … (หรือ P-142 เอง) ปล่อยก่อนหลังได้ · ระบบหักของที่ปล่อยแล้ว ไม่ให้ปล่อยเกิน
 // ══════════════════════════════════════════════════════════════════════════
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUndoState, pushUndoGate } from "../undo.js";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
@@ -287,7 +288,8 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
   const [note, setNote] = useState("");
   const [q, setQ] = useState("");
   const [pull, setPull] = useState(true);
-  const [sel, setSel] = useState(() => ({ addrs: new Set(), subs: new Map(), parts: new Map() }));
+  const [sel, setSel] = useUndoState(() => ({ addrs: new Set(), subs: new Map(), parts: new Map() }), { label: "เลือกของที่จะปล่อย" });
+  useEffect(() => pushUndoGate(), []);   // ★ Ctrl+Z ในหน้าต่างนี้ไม่ย้อนหน้าหลัง
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState([]);
   const presetDone = useRef(false);
@@ -503,13 +505,14 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const [tab, setTab] = useState("part");
   const [q, setQ] = useState("");
   const [onlyChg, setOnlyChg] = useState(false);
-  const [chg, setChg] = useState({});                 // "part|CODE" → { type: "qty"|"cancel", qty }
-  const [addrs, setAddrs] = useState(() => new Set());  // ที่อยู่ที่จะยกเลิก
-  const [adds, setAdds] = useState([]);
+  const [chg, setChg] = useUndoState({}, { label: "Modify: จำนวน / ยกเลิก" });
+  useEffect(() => pushUndoGate(), []);                 // "part|CODE" → { type: "qty"|"cancel", qty }
+  const [addrs, setAddrs] = useUndoState(() => new Set(), { label: "Modify: ยกเลิกที่อยู่" });  // ที่อยู่ที่จะยกเลิก
+  const [adds, setAdds] = useUndoState([], { label: "Modify: เพิ่มเบอร์", coalesceMs: 800 });
   const [bscope, setBscope] = useState("sub");          // แก้ BOM ลูกของ: ซับ / แผง
   const [bowner, setBowner] = useState("");
-  const [bchg, setBchg] = useState({});                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
-  const [badds, setBadds] = useState([]);               // ลูกที่เพิ่มเข้า BOM ซับ/แผง
+  const [bchg, setBchg] = useUndoState({}, { label: "Modify: BOM ลูก", coalesceMs: 800 });                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
+  const [badds, setBadds] = useUndoState([], { label: "Modify: เพิ่มลูกใน BOM", coalesceMs: 800 });               // ลูกที่เพิ่มเข้า BOM ซับ/แผง
   const [bform, setBform] = useState({ kind: "part", code: "", qty: "", d: "" });
   const blankForm = { kind: "part", code: "", d: "", qty: "", l: "", inv: "", dest: "CUTTING", procs: "ยิง" };
   const [form, setForm] = useState(blankForm);

@@ -4,6 +4,7 @@
 //   เก็บ: part_master + BOM ของซับ (ในระบบเดิม) + หมวด/งานซับ/ใบงาน (แถว LIB ใน release_plans)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useUndoState } from "../undo.js";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf } from "./releaseCore.js";
@@ -18,12 +19,12 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const [lib, setLib] = useState(null);
   const [state, setState] = useState({ s: "loading" });
   const [pdfs, setPdfs] = useState([]);
-  const [catOv, setCatOv] = useState({});
-  const [procOv, setProcOv] = useState({});
-  const [partMode, setPartMode] = useState("auto");
-  const [partGroups, setPartGroups] = useState([]);
+  // ★ 2026-11-04 หมวด / งานซับ / ใบงาน / โหมดหมวด = state เดียวที่ Ctrl+Z ย้อนได้ (แก้หลายอย่างพร้อมกัน = 1 ขั้น)
+  const [ov, setOv, resetOvHist] = useUndoState({ catOv: {}, procOv: {}, destOv: {}, partMode: "auto", partGroups: [] }, { label: "หมวด / งานของซับ / ใบงาน", coalesceMs: 300 });
+  const { catOv, procOv, destOv, partMode, partGroups } = ov;
+  const field = (k) => (u) => setOv((o) => ({ ...o, [k]: typeof u === "function" ? u(o[k]) : u }));
+  const setCatOv = field("catOv"), setProcOv = field("procOv"), setDestOv = field("destOv"), setPartMode = field("partMode"), setPartGroups = field("partGroups");
   const [grpFilter, setGrpFilter] = useState("ALL");
-  const [destOv, setDestOv] = useState({});
   const [tab, setTab] = useState("sub");
   const [q, setQ] = useState("");
   const [onlyNoKids, setOnlyNoKids] = useState(false);   // กรอง: ซับที่ยังไม่มีแบบ (ไม่มีเบอร์ลูก)
@@ -36,7 +37,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
 
   useEffect(() => {
     let alive = true; setState({ s: "loading" });
-    api.loadBomLibrary(projectId).then((l) => { if (!alive) return; setLib(l || EMPTY); const ov = (l && l.ov) || {}; setCatOv(ov.catOv || {}); setProcOv(ov.procOv || {}); setDestOv(ov.destOv || {}); setPartMode(ov.partMode || "auto"); setPartGroups(ov.partGroups || []); setState({ s: "ok" }); })
+    api.loadBomLibrary(projectId).then((l) => { if (!alive) return; setLib(l || EMPTY); const ov0 = (l && l.ov) || {}; setOv({ catOv: ov0.catOv || {}, procOv: ov0.procOv || {}, destOv: ov0.destOv || {}, partMode: ov0.partMode || "auto", partGroups: ov0.partGroups || [] }); setTimeout(resetOvHist, 0); setState({ s: "ok" }); })
       .catch((e) => { if (alive) { setLib(EMPTY); setState({ s: "err", err: String(e?.message || e) }); } });
     return () => { alive = false; };
   }, [api, projectId]);

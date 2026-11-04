@@ -29,6 +29,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
+import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
 const ReleaseWizard = lazy(() => import("./release/ReleaseWizard.jsx"));
@@ -37,63 +38,9 @@ const ReleasePlanViewLazy = lazy(() => import("./release/ReleaseLots.jsx").then(
 const LotSheetInlineLazy = lazy(() => import("./release/LotSheetInline.jsx"));
 const ReleasePlansCardLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlansCard })));
 
-// ── Ctrl+Z ย้อนการแก้ไขที่ยังไม่บันทึก (ทั้งแอปฝั่งสำนักงาน) ──────────────────────
-// ใช้ useUndoable แทน useState ในฟอร์ม/ตาราง → เก็บประวัติ state (สูงสุด 50 ขั้น)
-// กด Ctrl/Cmd+Z จะย้อน "ฟอร์มที่เพิ่งแก้ล่าสุด" (ยึดลำดับการแก้ ไม่ใช่โฟกัส)
-//   • ถ้ากำลังพิมพ์ในช่องข้อความ → ปล่อยให้เบราว์เซอร์ undo ตัวอักษรเองตามปกติ
-//   • dropdown / ปุ่มเลือก (chip) / ตัวเพิ่ม-ลด ที่ไม่มี undo ในตัว → ใช้ตัวนี้ย้อน
-const _undoers = [];              // ฟอร์มที่ลงทะเบียนไว้ (ท้ายสุด = แก้ล่าสุด)
-let _undoKeyOn = false;
-let _editSeq = 0;                 // ลำดับการแก้ไข (นับขึ้นเรื่อยๆ) — ใช้กันย้อนฟอร์มที่ซ่อนหลัง modal
-const _modalStack = [];           // _editSeq ตอนที่แต่ละ modal เปิด (ล่าสุด = บนสุด)
-function _installUndoKey() {
-  if (_undoKeyOn || typeof window === "undefined") return;
-  _undoKeyOn = true;
-  window.addEventListener("keydown", (e) => {
-    if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "z" || e.key === "Z"))) return;
-    const a = document.activeElement;
-    const tag = a && a.tagName;
-    const isText =
-      (tag === "INPUT" && !/^(checkbox|radio|button|submit|reset|range|file|color)$/i.test(a.type || "")) ||
-      tag === "TEXTAREA" || (a && a.isContentEditable);
-    if (isText) return;           // อยู่ในช่องพิมพ์ → ให้เบราว์เซอร์ undo ตัวอักษรเอง
-    // ถ้ามี modal เปิดอยู่ → ย้อนได้เฉพาะฟอร์มที่ "แก้หลังจาก modal เปิด" (กันเผลอย้อนฟอร์มพื้นหลัง)
-    const gate = _modalStack.length ? _modalStack[_modalStack.length - 1] : -1;
-    for (let i = _undoers.length - 1; i >= 0; i--) {
-      if (_undoers[i].canUndo() && (_undoers[i].seq || 0) > gate) { e.preventDefault(); _undoers[i].undo(); return; }
-    }
-  });
-}
-function useUndoable(initial) {
-  const [state, setState] = useState(initial);
-  const hist = useRef([]);
-  const api = useRef(null);
-  if (!api.current) api.current = {};
-  const set = useCallback((updater) => {
-    const idx = _undoers.indexOf(api.current);   // ทำเครื่องหมายว่าแก้ล่าสุด → ย้ายไปท้ายสแตก
-    if (idx >= 0) { _undoers.splice(idx, 1); _undoers.push(api.current); }
-    api.current.seq = ++_editSeq;                // จำลำดับการแก้ล่าสุดของฟอร์มนี้
-    try { window.dispatchEvent(new Event("mls-undo-available")); } catch { /* ignore */ }
-    setState((prev) => {
-      hist.current = [...hist.current, prev].slice(-50);
-      return typeof updater === "function" ? updater(prev) : updater;
-    });
-  }, []);
-  api.current.canUndo = () => hist.current.length > 0;
-  api.current.undo = () => setState((prev) => {
-    if (hist.current.length === 0) return prev;
-    const last = hist.current[hist.current.length - 1];
-    hist.current = hist.current.slice(0, -1);
-    return last;
-  });
-  useEffect(() => {
-    _installUndoKey();
-    _undoers.push(api.current);
-    return () => { const i = _undoers.indexOf(api.current); if (i >= 0) _undoers.splice(i, 1); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return [state, set];
-}
+// ── Ctrl+Z / Ctrl+Y ย้อน/ทำซ้ำ (ทั้งแอป) — ทะเบียนกลางอยู่ที่ src/undo.js ──────────────
+//   useUndoable = useState ที่ย้อนได้ (ฟอร์ม / ตาราง) · แผน Release ใช้ useUndoHistory (บันทึกอัตโนมัติ)
+function useUndoable(initial) { const [s, set] = useUndoState(initial); return [s, set]; }
 
 // ── ตารางเรียงลำดับตามหัวข้อ (คลิกหัวคอลัมน์เพื่อเรียง) ─────────────────────────
 // useTableSort เก็บ key+ทิศทาง · sortRows เรียงจาก "ค่าจริง" (ตัวเลข/วันที่) ไม่ใช่ข้อความที่โชว์
@@ -525,7 +472,7 @@ function UndoHint() {
     return () => window.removeEventListener("mls-undo-available", on);
   }, []);
   if (!show) return null;
-  return <div className="mls-undo-hint" onClick={() => setShow(false)}>↶ กด Ctrl+Z เพื่อย้อนการแก้ไข</div>;
+  return <div className="mls-undo-hint" onClick={() => setShow(false)}>↶ Ctrl+Z ย้อนการแก้ไข · Ctrl+Y ทำซ้ำ</div>;
 }
 
 // parseReleaseExcel ถูก import แบบ dynamic ตอนเลือกไฟล์ (ดู ImportReleaseModal)
@@ -1015,8 +962,7 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
 
   // ลงทะเบียน modal ในสแตก (สำหรับ Ctrl+Z: ย้อนได้เฉพาะฟอร์มในหน้าต่างนี้ ไม่ย้อนฟอร์มพื้นหลัง)
   useEffect(() => {
-    _modalStack.push(_editSeq);
-    return () => { _modalStack.pop(); };
+    return pushUndoGate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2425,14 +2371,29 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
   const setRowsU = useCallback((updater) => {
     setRows((prev) => {
       historyRef.current = [...historyRef.current, prev].slice(-50);
+      futureRef.current = [];
       return typeof updater === "function" ? updater(prev) : updater;
     });
   }, []);
+  const futureRef = useRef([]);   // ★ 2026-11-04 Ctrl+Y / Ctrl+Shift+Z = ทำซ้ำ
+  const rowsNow = useRef(rows); rowsNow.current = rows;
 
   // Ctrl+Z / Cmd+Z — pop จาก stack แล้ว restore
   useEffect(() => {
     function onKeydown(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !busy) {
+      const k = String(e.key || "").toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && ((k === "z" && e.shiftKey) || k === "y") && !busy) {
+        if (futureRef.current.length === 0) return;
+        const a = document.activeElement; const tag = a && a.tagName;
+        const isText = (tag === "INPUT" && !/^(checkbox|radio|button|submit|reset|range|file|color)$/i.test(a.type || "")) || tag === "TEXTAREA" || (a && a.isContentEditable);
+        if (isText && !(rowsScrollRef.current && rowsScrollRef.current.contains(a))) return;
+        e.preventDefault();
+        const nx = futureRef.current.pop();
+        historyRef.current = [...historyRef.current, rowsNow.current].slice(-50);
+        setRows(nx);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && k === "z" && !e.shiftKey && !busy) {
         if (historyRef.current.length === 0) return;
         // ★ รอบ 12 (D): พิมพ์อยู่ในช่องอื่นนอกตาราง (เลข RO / Modify / ค้นหา …) → ให้เบราว์เซอร์ undo ตัวอักษรเอง ไม่ย้อนทั้งตาราง
         const a = document.activeElement; const tag = a && a.tagName;
@@ -2441,6 +2402,7 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         e.preventDefault();
         const prev = historyRef.current[historyRef.current.length - 1];
         historyRef.current = historyRef.current.slice(0, -1);
+        futureRef.current = [...futureRef.current, rowsNow.current];
         setRows(prev);
         setUndoCount((n) => n + 1);
         setTimeout(() => setUndoCount(0), 1200);
@@ -7308,12 +7270,18 @@ function useReleasePlans(projectId = null) {
 function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null }) {
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
-  const onPlanChange = (p) => {
+  const applyPlan = (p) => {
     setView((v) => (v ? { ...v, plan: p } : v));
     setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => { realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error")); }, 800);
   };
+  // ★ 2026-11-04 Ctrl+Z / Ctrl+Y ย้อน/ทำซ้ำการแก้แผน (หมวด / ใบงาน / วัสดุ / ยอดเบิก / ใบปล่อย …) — ย้อนแล้วบันทึกให้เลย
+  //   ปล่อยล็อต / Modify = งานในฐานข้อมูล → ล้างประวัติ (ย้อนด้วย "ย้อน Modify" / ยกเลิกล็อต ของมันเอง)
+  const hist = useUndoHistory(applyPlan, planChangeLabel);
+  const planId = view?.plan?.id;
+  useEffect(() => { hist.reset(); }, [planId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder}
@@ -7326,12 +7294,14 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
         } : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange}
         onModified={async (np, mod) => {
+          hist.reset();
           setView((v) => (v ? { ...v, plan: np } : v));
           setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
           await onReload();
         }}
         onReleased={async ({ lotNo, rows }) => {
+          hist.reset();
           const q = rows.reduce((a, r) => a + r.qty, 0);
           mlsToast(`ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง`, "success");
           await onReload();

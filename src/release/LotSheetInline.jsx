@@ -6,16 +6,20 @@ import { getLang } from "../i18n-dom.js";
 import { needOf, releasedOf, roKey, inPlan } from "./releaseCore.js";
 import { buildLotModel, lotRowSheets } from "./lotSheetExport.js";
 import { LotMats } from "./ReleaseLots.jsx";
+import { useUndoState, useUndoHistory, planChangeLabel } from "../undo.js";
 import "./release-wizard.css";
 
 export default function LotSheetInline({ api, projectId, ro, releases, userName, onOpenPrint }) {
   const [plan, setPlan] = useState(null);
   const [state, setState] = useState("loading");
   const [key, setKey] = useState(null);
-  const [draft, setDraft] = useState({});   // { [sheetKey]: { [rowId]: { [colIdx]: text } } } ของล็อตนี้
+  const [draft, setDraft, resetDraftHist] = useUndoState({}, { label: "แก้ใบปล่อยของล็อต", coalesceMs: 800 });   // { [sheetKey]: { [rowId]: { [colIdx]: text } } } ของล็อตนี้ · Ctrl+Z ย้อนได้
   const [saving, setSaving] = useState("");
   const [msg, setMsg] = useState("");
   const lang = getLang();
+  // ยอดเบิกของล็อต: บันทึกอัตโนมัติ + Ctrl+Z ย้อนได้
+  const applyMatPlan = (np) => { setPlan(np); clearTimeout(window.__mlsLotMatT); window.__mlsLotMatT = setTimeout(() => { api.updatePlan(np).catch((e) => setMsg((getLang() === "en" ? "Saving issue failed: " : "บันทึกยอดเบิกไม่สำเร็จ: ") + (e?.message || e))); }, 800); };
+  const matHist = useUndoHistory(applyMatPlan, planChangeLabel);
   const L = (th, en) => (lang === "en" ? en : th);
 
   useEffect(() => {
@@ -26,7 +30,7 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
         const p = (plans || []).find((x) => inPlan(ro, x.ro));
         if (!alive) return;
         if (!p) { setState("none"); return; }
-        setPlan(p); setDraft(((p.sheetEdit || {})[lotNoOf(p, ro)]) || {}); setState("ok");
+        setPlan(p); setDraft(((p.sheetEdit || {})[lotNoOf(p, ro)]) || {}); setTimeout(resetDraftHist, 0); setState("ok");
       } catch { if (alive) setState("none"); }
     })();
     return () => { alive = false; };
@@ -117,7 +121,7 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
       </div>
       {/* ★ 2026-11-04 วัสดุของล็อต (เบิกจริง / เศษ) ย้ายมาอยู่หน้าล็อต — หน้าใบหลักกดแถวล็อตแล้วเข้าหน้านี้เลย */}
       <div style={{ marginTop: 14 }}>
-        <LotMats plan={plan} need={ctx.need} lot={ctx.lot} sheetsOf={(r) => lotRowSheets(r, ctx.need)} onPlanChange={(np) => { setPlan(np); clearTimeout(window.__mlsLotMatT); window.__mlsLotMatT = setTimeout(() => { api.updatePlan(np).catch((e) => setMsg(L("บันทึกยอดเบิกไม่สำเร็จ: ", "Saving issue failed: ") + (e?.message || e))); }, 800); }} />
+        <LotMats plan={plan} need={ctx.need} lot={ctx.lot} sheetsOf={(r) => lotRowSheets(r, ctx.need)} onPlanChange={(np) => { matHist.record(plan, np); applyMatPlan(np); }} />
       </div>
     </div>
   );
