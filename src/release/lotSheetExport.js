@@ -2,7 +2,7 @@
 //   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
 //   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
-import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf, lotOf, ncmp } from "./releaseCore.js";
+import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf, lotOf, ncmp, roKey } from "./releaseCore.js";
 
 // หัวกลางของแต่ละใบ: [บรรทัดอังกฤษ, บรรทัดไทย]
 // ★ 2026-10-26 ภาษาใบพิมพ์ = ภาษาที่เลือกในแอป (args.lang "th" | "en") — หัวคอลัมน์ 2 ภาษาอยู่แล้ว · EN = ข้อความไทยล้วนเป็นอังกฤษ + ไม่มีแถวหัวภาษาไทย
@@ -135,8 +135,29 @@ export const COVER_FORMS = {
   STEEL: { form: "FM(PL)-03 REV.00 DATE :20/02/2017", th: "ใบเบิกเหล็ก Steel ( ใบสั่งงาน )", en: "CUTTING / WELDING INSTRUCTION", toEn: "Cutting Welding Instruction", toTh: "แผนกตัด,สโตร์" },
 };
 export const COVER_ROWS = 15;
+// ครั้งที่ปล่อยในเดือน ของแต่ละใบ: rows = แถว releases ทั้งเดือน (monthReleases) → { CUTTING: n, BENDING: n, STEEL: n }
+//   นับเลข Release (ล็อต) ที่มีพาร์ทลงใบนั้น · เรียงตามเวลาที่ปล่อยครั้งแรก (created_at) · ล็อตที่ไม่มีแถวในรายการ = ต่อท้าย
+export function coverSeqOf(lotNo, rows) {
+  const by = new Map();
+  for (const r of rows || []) {
+    const ro = String(r.release_order || "").trim(); if (!ro) continue;
+    const kind = r.part_master?.kind || r.kind || "part"; if (kind === "panel" || kind === "subassembly") continue;
+    const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || "");
+    const keys = m ? m[1].split(/\s*,\s*/).map(sheetKeyOf) : ["CUTTING"];   // ปล่อยแบบเก่า (ไม่มี "ใบ:") = งานตัด
+    const k = roKey(ro); const g = by.get(k) || by.set(k, { ro, first: "", keys: new Set() }).get(k);
+    const t = String(r.created_at || r.release_date || ""); if (!g.first || (t && t < g.first)) g.first = t;
+    for (const x of keys) g.keys.add(x);
+  }
+  const out = {};
+  for (const key of Object.keys(COVER_FORMS)) {
+    const list = [...by.values()].filter((g) => g.keys.has(key)).sort((a, b) => a.first.localeCompare(b.first) || ncmp(a.ro, b.ro));
+    const i = list.findIndex((g) => roKey(g.ro) === roKey(lotNo));
+    out[key] = i >= 0 ? i + 1 : list.length + 1;
+  }
+  return out;
+}
 const ymdDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
-function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName }) {
+function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName, coverSeq }) {
   const f = COVER_FORMS[key]; if (!f) return null;
   const ed = (((plan.sheetEdit || {})[lot.no] || {}).__cover || {})[key] || {};
   const d = ymdDate(lot.date) || new Date();
@@ -162,8 +183,10 @@ function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName }) {
   const perPage = 24;   // ใบงานพาร์ท (A4 นอน) ≈ 24 แถวต่อหน้า → หน้าทั้งหมด = ใบปะหน้า 1 + ใบงาน
   return {
     key, ...f,
-    no: ed.no || `${String(lotOf(lot.no) || 1).padStart(3, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
-    of: ed.of || String(1 + Math.max(1, Math.ceil((nRows || 0) / perPage))),
+    // Instruction No. = ครั้งที่ปล่อยในเดือน / เดือน (ไม่ได้โหลดข้อมูลเดือน = ใช้เลขล็อตไปก่อน) · แก้เองได้
+    no: ed.no || `${String((coverSeq && coverSeq[key]) || lotOf(lot.no) || 1).padStart(3, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
+    // หน้าทั้งหมด = ใบปะหน้า 1 + หน้าของใบงานที่แนบ (ค่าประมาณ · หน้าตัวอย่างพิมพ์นับจากหน้ากระดาษจริงให้อีกที)
+    of: ed.of || String(1 + Math.max(1, Math.ceil((nRows || 0) / perPage))), ofAuto: !ed.of,
     project: plan.projectCode || "", name: ed.name || projectName || "",
     issued: meta.by, date: fmtDate(d), rel: lot.no, remark: ed.remark || "", approved: ed.approved || "",
     items: list,
@@ -172,7 +195,7 @@ function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName }) {
 
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
 // only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
-export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th", projectName = "" }) {
+export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th", projectName = "", coverSeq = null }) {
   LANG = lang === "en" ? "en" : "th";
   const by = new Map();
   for (const r of lot.rows) for (const k of lotRowSheets(r, need)) (by.get(k) || by.set(k, []).get(k)).push(r);
@@ -200,7 +223,7 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     cols0.forEach((c, i) => { if (isRm(c.en) || c.th === "สั่งตัดเพิ่ม" || c.en === "REV." || c.en === "ADDRESS") { cols0[i] = { ...c, edit: true }; } });
     for (const r of out) { const e = r.id != null ? edits[r.id] : null; if (e) for (const [ci, v] of Object.entries(e)) if (cols0[ci] && cols0[ci].edit && !r.kid) { r.vals[ci] = v; r.edited = true; } }
     const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
-    const cover = !mat && COVER_FORMS[sheet.k] ? coverOf(sheet.k, { plan, need, lot, lm, rows, nRows: out.length, meta, projectName }) : null;
+    const cover = !mat && COVER_FORMS[sheet.k] ? coverOf(sheet.k, { plan, need, lot, lm, rows, nRows: out.length, meta, projectName, coverSeq }) : null;
     return { cover, key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
   });
   const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
@@ -347,7 +370,7 @@ export function coverHtml(c, logoUrl = "") {
 <table class="cv-box"><colgroup><col style="width:13.7%"><col style="width:26.9%"><col style="width:32%"><col style="width:27.4%"></colgroup><tr>
 <td><span>Instruction No.</span><small>ใบสั่งงาน เลขที่</small></td><td class="cv-no">${esc(c.no)}</td>
 <td><span>Project Name / No. <b class="big">${esc(c.project)}</b></span><small>โครงการเลขที่ <b class="big">${esc(c.name)}</b></small></td>
-<td><span class="pgx"><b>Page</b><b>1</b><b>of</b><b>${esc(c.of)}</b></span><small class="pgx"><b>หน้า</b><b>1</b><b>/</b><b>${esc(c.of)}</b></small></td></tr></table>
+<td><span class="pgx"><b>Page</b><b>1</b><b>of</b><b class="cv-of"${c.ofAuto ? ' data-auto="1"' : ""}>${esc(c.of)}</b></span><small class="pgx"><b>หน้า</b><b>1</b><b>/</b><b class="cv-of"${c.ofAuto ? ' data-auto="1"' : ""}>${esc(c.of)}</b></small></td></tr></table>
 <div class="cv-to"><div class="lab"><span>To :</span><small>ถึง</small></div><div class="val"><span class="ul">${esc(c.toEn)}</span><small class="ul">${esc(c.toTh)}</small></div></div>
 <div class="cv-row"><div class="l"><span>Issued by : <u class="fill">${esc(c.issued)}</u></span><small>ออกใบสั่งงาน โดย</small></div><div class="r"><span>Date : <u class="fill b">${esc(c.date)}</u></span></div></div>
 <div class="cv-row"><div class="l"><span>Approved by : <u class="fill">${esc(c.approved)}</u></span><small>อนุมัติโดย</small></div><div class="r"><span>Rel No. : <u class="fill b">${esc(c.rel)}</u></span><b class="rmk">${esc(c.remark)}</b></div></div>
@@ -374,6 +397,9 @@ u.fill{text-decoration:none;border-bottom:1px solid #000;display:inline-block;mi
 .cv-tb th{font-weight:400;text-align:center;vertical-align:top;font-size:12.5px;padding-top:2px}.cv-tb th small{font-size:11px}
 .cv-tb td.c{text-align:center}.cv-tb td.n{text-align:right;font-variant-numeric:tabular-nums}.cv-tb td.code{font-weight:600}.cv-tb td.see{font-weight:700}.cv-tb td.rm{font-size:10.5px}
 .cv-form{text-align:right;font-weight:700;font-size:12px;margin-top:14mm}`;
+// นับหน้าของใบงานที่แนบจากความสูงจริงบนหน้าจอ (กว้างเท่ากระดาษ) → ใส่ "Page 1 of N" ของใบปะหน้า (เฉพาะที่ไม่ได้แก้เอง)
+//   พื้นที่พิมพ์ A4 นอน 194 มม. / ตั้ง 281 มม. (ขอบ 8 มม.) · หัวตารางซ้ำทุกหน้า
+const COVER_PAGES_JS = `<script>(function(){function run(){var mm=96/25.4;document.querySelectorAll("section.cv").forEach(function(cv){var sh=cv.nextElementSibling;if(!sh||!sh.classList.contains("pg"))return;var land=sh.classList.contains("land");var P=(land?194:281)*mm;var h=sh.offsetHeight-16*mm;var th=sh.querySelector("thead");var tH=th?th.offsetHeight:0;var n=h<=P?1:1+Math.ceil((h-P)/Math.max(P-tH,1));cv.querySelectorAll(".cv-of[data-auto]").forEach(function(b){b.textContent=String(1+n);});});}if(document.readyState==="complete")run();else window.addEventListener("load",run);})();<\/script>`;
 export function lotSheetsHtml(model, { logoUrl = "", covers = true } = {}) {
   const { meta } = model; LANG = meta.lang || "th";
   const pages = model.sheets.map((sh) => (covers && sh.cover ? coverHtml(sh.cover, logoUrl) + "\n" : "") + (() => {
@@ -417,7 +443,7 @@ tr.t td{font-weight:700;background:#e6e9ed;border-top:1.5px solid #000;padding:4
 thead{display:table-header-group}tr{break-inside:avoid}
 ${COVER_CSS}
 @media print{html,body{background:#fff}.pg{margin:0;box-shadow:none;width:auto!important;min-height:0!important;padding:0}}
-</style></head><body>${pages || `<p style='padding:20px'>${T("(ล็อตนี้ไม่มีรายการ)", "(this lot has no items)")}</p>`}</body></html>`;
+</style></head><body>${pages || `<p style='padding:20px'>${T("(ล็อตนี้ไม่มีรายการ)", "(this lot has no items)")}</p>`}${COVER_PAGES_JS}</body></html>`;
 }
 
 export async function downloadLotSheets(args) {

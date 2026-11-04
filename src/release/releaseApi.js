@@ -366,4 +366,18 @@ export async function modifyRelease({ plan, mod, lotOps, docDate }, onProgress =
   return np;
 }
 
-export const realReleaseApi = { projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, listPlans, releaseLot, lotLimits, modifyRelease };
+// ★ 2026-11-04 ใบปะหน้า: Instruction No. = ครั้งที่ปล่อยในเดือน (เดือน 9 ครั้งแรก = 001/09) แยกตามใบ CUTTING / BENDING / STEEL
+//   โหลดแถว releases ทั้งเดือน (ทุกโปรเจค · เฉพาะคอลัมน์ที่ใช้นับ) — แบ่งหน้า 1000
+export async function monthReleases(ym) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(ym || "")); if (!m) return [];
+  const y = +m[1], mo = +m[2]; const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+  let all = []; let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from("releases").select("id, release_order, release_date, created_at, note, part_master(kind)")
+      .gte("release_date", `${ym}-01`).lt("release_date", `${next}-01`).order("id", { ascending: true }).range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data || []); if (!data || data.length < 1000) break; from += 1000;
+  }
+  return all;
+}
+export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, listPlans, releaseLot, lotLimits, modifyRelease };

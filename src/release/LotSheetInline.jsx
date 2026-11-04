@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getLang } from "../i18n-dom.js";
 import { needOf, releasedOf, roKey, inPlan } from "./releaseCore.js";
-import { buildLotModel, lotRowSheets } from "./lotSheetExport.js";
+import { buildLotModel, lotRowSheets, coverSeqOf } from "./lotSheetExport.js";
 import { LotMats } from "./ReleaseLots.jsx";
 import { useUndoState, useUndoHistory, planChangeLabel } from "../undo.js";
 import "./release-wizard.css";
@@ -36,15 +36,23 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
     return () => { alive = false; };
   }, [api, projectId, ro]);
 
+  // ใบปะหน้า: ครั้งที่ปล่อยในเดือน (โหลดแถว releases ทั้งเดือน)
+  const [coverSeq, setCoverSeq] = useState(null);
+  const lotDate = useMemo(() => { if (!plan) return ""; const l = releasedOf(releases, plan).lots.find((x) => roKey(x.no) === roKey(ro)); return l ? String(l.date || "").slice(0, 7) : ""; }, [plan, releases, ro]);
+  useEffect(() => {
+    if (!lotDate || !api.monthReleases) return; let alive = true;
+    api.monthReleases(lotDate).then((rows) => { if (alive) setCoverSeq(coverSeqOf(ro, rows)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [api, lotDate, ro]);
   const ctx = useMemo(() => {
     if (!plan) return null;
     const need = needOf(plan); const rel = releasedOf(releases, plan);
     const lot = rel.lots.find((l) => roKey(l.no) === roKey(ro)); if (!lot) return null;
     const planX = { ...plan, sheetEdit: { ...(plan.sheetEdit || {}), [lot.no]: draft } };
     const projectName = ((releases || []).find((r) => r.part_master?.projects?.code === plan.projectCode && r.part_master?.projects?.name) || {}).part_master?.projects?.name || "";
-    const model = buildLotModel({ plan: planX, need, lot, userName, printDate: new Date(), lang, projectName });
+    const model = buildLotModel({ plan: planX, need, lot, userName, printDate: new Date(), lang, projectName, coverSeq });
     return { need, lot, model };
-  }, [plan, releases, ro, draft, userName, lang]);
+  }, [plan, releases, ro, draft, userName, lang, coverSeq]);
 
   if (state === "loading") return <div className="card rl-inl"><div className="rw-muted small">{L("กำลังโหลดใบปล่อย…", "Loading release sheet…")}</div></div>;
   if (state !== "ok" || !ctx) return null;   // ล็อตเก่า (ไม่มีแผนแบบใหม่) = ไม่แสดง

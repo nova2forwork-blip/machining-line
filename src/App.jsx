@@ -6787,7 +6787,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const lot = rel.lots.find((l) => core.roKey(l.no) === core.roKey(hdr.ro));
       if (!lot) { mlsToast("ไม่พบรายการของล็อตนี้", "error"); return; }
       const projectName = (releases.find((r) => r.part_master?.projects?.code === plan.projectCode && r.part_master?.projects?.name) || {}).part_master?.projects?.name || "";
-      setSheetPrev({ plan, need: core.needOf(plan), lot, userName: user?.name || "", projectName });
+      // ใบปะหน้า: Instruction No. = ครั้งที่ปล่อยในเดือนนั้น (นับทุกโปรเจค แยกใบ) — โหลดไม่ได้ = ใช้เลขล็อตไปก่อน
+      let coverSeq = null;
+      try { const ex = await import("./release/lotSheetExport.js"); coverSeq = ex.coverSeqOf(lot.no, await realReleaseApi.monthReleases(String(lot.date || "").slice(0, 7))); } catch (e) { console.warn("cover seq", e); }
+      setSheetPrev({ plan, need: core.needOf(plan), lot, userName: user?.name || "", projectName, coverSeq });
     } catch (e) {
       console.warn("export release sheet error", e);
       mlsToast("สร้างใบปล่อยไม่สำเร็จ: " + (e?.message || e), "error");
