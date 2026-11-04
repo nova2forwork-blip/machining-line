@@ -80,7 +80,19 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
       <div className="rl-inl-tabs">
         {sheets.map((x) => <button key={x.key} type="button" className={x.key === sh.key ? "on" : ""} onClick={() => setKey(x.key)}>{x.tab}<small>{x.rows.filter((r) => !r.kid).length}</small></button>)}
       </div>
-      <div className="rl-inl-title"><b>{sh.t1}</b>{sh.t2 ? <span> · {sh.t2}</span> : null}</div>
+      {/* หัวใบเหมือนใบที่พิมพ์ */}
+      <div className="rl-inl-paper">
+        <div className="rl-inl-top">
+          <div className="logo"><img src={`${(import.meta.env && import.meta.env.BASE_URL) || "/"}brand/artclad-company.png`} alt="ARTCLAD" /></div>
+          <div className="ttl"><b>PRODUCTION ORDER</b>{sh.line2 ? <><br /><b className="s">{sh.line2}</b></> : null}</div>
+          <div className="rpt">RPT:<br />REV:</div>
+        </div>
+        <div className="rl-inl-meta">
+          <div>Release Order : <b>{ctx.model.meta.ro}</b><br />Project : <b>{ctx.model.meta.project}</b></div>
+          <div className="c"><b>{sh.t1}</b>{sh.t2 ? <><br /><b>{sh.t2}</b></> : null}</div>
+          <div className="r">Print date : <b>{ctx.model.meta.date}</b><br />Prepared by : <b>{ctx.model.meta.by}</b></div>
+        </div>
+      </div>
       <div className="table-wrap rl-inl-tw">
         <table className="rl-inl-t">
           <thead>
