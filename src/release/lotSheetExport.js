@@ -107,7 +107,7 @@ function rowsFor(sheet, lotRows, { plan, need }) {
   for (const r of sorted) {
     const q = Number(r.qty) || 0;
     const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
-    out.push({ id: r.code, vals: [++n, r.code, q, "", p.rev || "", p.inv || "", [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
+    out.push({ id: r.code, vals: [++n, r.code, q, "", p.rev || "", p.inv || "", [isStar(r.code) ? "LOOSE PARTS" : "", p.f || "", p.invOrig ? T(`เปลี่ยนวัสดุ (แบบ: ${p.invOrig})`, `Material changed (drawing: ${p.invOrig})`) : "", modNote(r)].filter(Boolean).join(" · ")], cancelled: !!r.mod_cancelled_at });
     total += q;
   }
   return { out, total, totalAt: 3 };
@@ -121,8 +121,9 @@ const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.se
 function matRows(sheet, lm, iss = {}) {
   const out = []; let n = 0;
   if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ id: m.inv || "—", vals: [++n, m.inv || T("(ไม่มี INV)", "(no INV)"), m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? T(`เศษ (มม.) ${offTxt(m.offLens)}`, `Offcuts (mm) ${offTxt(m.offLens)}`) : "", m.noLen ? T(`ไม่มีความยาว ${m.noLen} ชิ้น`, `No length: ${m.noLen} pcs`) : "", m.over ? T(`ยาวกว่าเส้น ${m.over} ชิ้น`, `Longer than bar: ${m.over} pcs`) : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
-  if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), p.f || ""] });
-  else for (const p of lm.hw) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), isStar(p.code) ? "LOOSE PARTS" : ""] });
+  const insteadOf = (p) => { const f = [...new Set([p.from, ...(p.froms || [])].filter((x) => x && x !== p.code))]; return f.length ? T(`ใช้แทน ${f.join(", ")}`, `Instead of ${f.join(", ")}`) : ""; };
+  if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), [p.f || "", insteadOf(p)].filter(Boolean).join(" · ")] });
+  else for (const p of lm.hw) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.u === "m." && p.mm ? p.qty / 1000 : p.qty), p.u || (p.mm ? "mm." : "pcs."), [isStar(p.code) ? "LOOSE PARTS" : "", insteadOf(p)].filter(Boolean).join(" · ")] });
   return { out, total: null };
 }
 

@@ -737,7 +737,8 @@ export function cutMaterials(parts) {
     if (p.cancelled || !(p.qty > 0) || p.dest !== "CUTTING") continue;
     const inv = String(p.inv || "").trim();
     const key = inv || "—";
-    const g = by.get(key) || by.set(key, { inv, stock: 0, src: "", parts: [], pcs: 0, len: 0, noLen: 0, desc: new Map() }).get(key);
+    const g = by.get(key) || by.set(key, { inv, stock: 0, src: "", parts: [], pcs: 0, len: 0, noLen: 0, desc: new Map(), origs: new Set(), notes: new Set() }).get(key);
+    if (p.invOrig != null) { g.origs.add(p.invOrig || "—"); if (p.matNote) g.notes.add(p.matNote); }
     if (!g.stock) { const s = stockLen(inv, p.ml); g.stock = s.len; g.src = inv ? s.src : "default"; }
     g.parts.push({ code: p.code, l: p.l, qty: p.qty });
     g.pcs += p.qty;
@@ -749,7 +750,7 @@ export function cutMaterials(parts) {
     const pk = packBars(g.parts.map((x) => ({ len: Number(x.l) || 0, qty: x.qty })), g.stock);
     const req = g.stock ? g.parts.reduce((a, x) => a + (x.l > 0 ? (x.l + KERF) * x.qty : 0), 0) / g.stock : 0;
     const d = [...g.desc.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
-    out.push({ inv: g.inv, d, stock: g.stock, src: g.src, parts: g.parts.sort((a, b) => ncmp(a.code, b.code)), pcs: g.pcs, len: g.len, noLen: g.noLen, req: Math.round(req * 100) / 100, bars: pk.bars, over: pk.over, waste: pk.waste, off: pk.off, offLens: pk.offLens });
+    out.push({ inv: g.inv, d, stock: g.stock, src: g.src, parts: g.parts.sort((a, b) => ncmp(a.code, b.code)), pcs: g.pcs, len: g.len, noLen: g.noLen, origs: [...g.origs], note: [...g.notes].join(" · "), req: Math.round(req * 100) / 100, bars: pk.bars, over: pk.over, waste: pk.waste, off: pk.off, offLens: pk.offLens });
   }
   return out.sort((a, b) => (a.inv ? 0 : 1) - (b.inv ? 0 : 1) || ncmp(a.inv, b.inv));
 }
@@ -768,7 +769,11 @@ export function lotMaterials(plan, need, rows, sheetsOf) {
     const p = pOf.get(NC(r.code)) || { code: r.code };
     cut.push({ ...p, code: r.code, qty: Number(r.qty), dest: "CUTTING", cancelled: false });
   }
-  const pick = { GLASS: new Map((need.glass || []).map((x) => [NC(x.code), x])), FIXING: new Map((need.hw || []).map((x) => [NC(x.code), x])), OTHER: new Map((need.other || []).map((x) => [NC(x.code), x])) };
+  // เบอร์ที่เปลี่ยนวัสดุแล้ว (matSwap) ยังหาได้จากเบอร์เดิมใน BOM (from / froms)
+  const keysOf = (x) => [x.code, x.from, ...(x.froms || [])].filter(Boolean).map(NC);
+  const mk = (list) => { const m = new Map(); for (const x of list || []) for (const k of keysOf(x)) m.set(k, x); return m; };
+  const pick = { GLASS: mk(need.glass), FIXING: mk(need.hw), OTHER: mk(need.other) };
+  const swap = plan.matSwap || {};
   const acc = { GLASS: new Map(), FIXING: new Map(), OTHER: new Map() };
   const add = (items, mult) => {
     for (const it of items || []) {
@@ -784,8 +789,9 @@ export function lotMaterials(plan, need, rows, sheetsOf) {
       const d = bom.parts?.[findKey(bom.parts, it[1])] || {};
       const k = it[0] === "hw" || d.k === "hw" ? "FIXING" : /^GL/i.test(String(it[1])) ? "GLASS" : null; if (!k) continue;
       const u = lineUom(it[0], d, it[2]);
-      const cur = acc[k].get(it[1]) || { code: it[1], qty: 0, d: d.d || "", l: d.l ?? null, h: d.h ?? null, f: d.f || "", u: u === "mm." ? "mm." : d.u || u, mm: false };
-      cur.qty += n; acc[k].set(it[1], cur);
+      const o = swap[it[1]]; const code = o && String(o.to || "").trim() ? String(o.to).trim().toUpperCase() : it[1];
+      const cur = acc[k].get(code) || { code, from: code !== it[1] ? it[1] : undefined, qty: 0, d: (code !== it[1] && o.d) || d.d || "", l: d.l ?? null, h: d.h ?? null, f: d.f || "", u: u === "mm." ? "mm." : d.u || u, mm: false };
+      cur.qty += n; acc[k].set(code, cur);
     }
   };
   for (const r of live) {
@@ -912,7 +918,42 @@ export function needOf(plan) {
   p.subs.forEach((s) => { s.procs = procList((plan.procOv || {})[s.code] ?? ruleProc(s.code)); });
   p.parts.forEach((x) => { x.dest = (plan.destOv || {})[x.code] || (plan.extra || []).find((e) => e.code === x.code)?.dest || ruleDest(x.cat, x.code); });
   p.cancelledAddr = cAddr;
+  applyMatOv(p, plan);
   return p;
+}
+// ★ 2026-11-04 เปลี่ยนวัสดุ (วัสดุตามแบบไม่มี / หมด → ใช้ตัวอื่น) — เก็บกับแผน · ใบปล่อย / Total / วัสดุของล็อต ใช้ค่าใหม่
+//   plan.matOv[เบอร์พาร์ท]   = { to: INV ใหม่, ml?: ความยาวเส้น, r?: เหตุผล, at, by }   (พาร์ทงานตัด → วัตถุดิบ INV)
+//   plan.matSwap[เบอร์วัสดุ] = { to: เบอร์ใหม่, d?: รายละเอียดใหม่, r?, at, by }        (GLASS / ACCESSORIES / อื่นๆ → ใช้เบอร์อื่นแทน)
+export function applyMatOv(p, plan) {
+  const ov = plan.matOv || {}, sw = plan.matSwap || {};
+  for (const r of p.parts) {
+    const o = ov[r.code]; if (!o || !String(o.to || "").trim()) continue;
+    r.invOrig = r.inv; r.inv = String(o.to).trim().toUpperCase(); r.matNote = o.r || "";
+    // ความยาวเส้น: ที่ใส่เอง > ของพาร์ทอื่นในแบบที่ใช้ INV นี้ > อ่านจากรหัส (stockLen)
+    r.ml = Number(o.ml) > 0 ? Number(o.ml) : mlOfInv(plan, r.inv);
+  }
+  for (const key of ["glass", "hw", "other"]) {
+    const out = new Map();
+    for (const r of p[key] || []) {
+      const o = sw[r.code]; let x = r;
+      if (o && String(o.to || "").trim() && NC(o.to) !== NC(r.code)) x = { ...r, from: r.code, code: String(o.to).trim().toUpperCase(), d: o.d || r.d, matNote: o.r || "" };
+      const k = NC(x.code); const cur = out.get(k);
+      if (cur) { cur.qty += x.qty; cur.froms = [...new Set([...(cur.froms || [cur.from || cur.code]), x.from || x.code])]; } else out.set(k, { ...x });
+    }
+    p[key] = [...out.values()].sort((a, b) => ncmp(a.code, b.code));
+  }
+  return p;
+}
+function mlOfInv(plan, inv) {
+  for (const d of Object.values(plan.bom?.parts || {})) if (NC(d.m || d.binv || "") === NC(inv) && Number(d.ml) > 0) return Number(d.ml);
+  return null;
+}
+// รหัสวัตถุดิบที่รู้จัก (ให้เลือกตอนเปลี่ยนวัสดุ) — จาก library ของแผน + ที่ใช้อยู่
+export function knownInvs(plan, need) {
+  const s = new Set();
+  for (const d of Object.values(plan.bom?.parts || {})) for (const v of [d.m, d.binv, d.bm]) if (v && v !== "-") s.add(String(v).trim().toUpperCase());
+  for (const r of need?.parts || []) { if (r.inv) s.add(r.inv); if (r.invOrig) s.add(r.invOrig); }
+  return [...s].filter(Boolean).sort(ncmp);
 }
 // ══ Modify ══
 //   changes: [{ kind:"part"|"sub", code, type:"qty"|"cancel", qty }] (qty = ยอดต้องใช้ใหม่ทั้งใบ)

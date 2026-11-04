@@ -779,3 +779,12 @@ mark.rl-hl { background: #fde68a; color: inherit; padding: 0 1px; border-radius:
 .rl-kidsbtn { margin-left: 6px; padding: 3px 10px; font-size: 12px; }
 .rl-kpi-link { cursor: pointer; } .rl-kpi-link:hover { box-shadow: 0 0 0 2px #1a9a6c33; }
 .rl-needqty td { background: #fffbe8; }
+
+/* ★ เปลี่ยนวัสดุ */
+.rt-matcur { white-space: nowrap; }
+.rt-matcur .rw-muted.small { white-space: normal; }
+.rt-matbtn { margin-left: 4px; font-size: 13px; opacity: .55; }
+tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
+.rt-matedit { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 260px; }
+.rt-matedit .input { width: 120px; min-width: 0; }
+.rt-matedit .rw-num { width: 92px; }

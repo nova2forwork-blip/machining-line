@@ -899,6 +899,7 @@ const QR_GROUPS = [
 const hwQ = (h) => (h.u === "m." && h.mm ? h.qty / 1000 : h.qty);
 // เศษ ≥ 500 มม.: ความยาวซ้ำรวมกัน → "1,230 ×2 · 640"
 const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.set(x, (m.get(x) || 0) + 1); return [...m].map(([l, n]) => `${nf(l)}${n > 1 ? ` ×${n}` : ""}`).join(" · "); };
+const insteadOf = (x) => { const f = [...new Set([x.from, ...(x.froms || [])].filter((c) => c && c !== x.code))]; return f.length ? <div className="rw-muted small">ใช้แทน {f.join(", ")}</div> : null; };
 export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null }) {
   // ★ ยอดเบิกจริงต่อล็อต (ACTUAL ISSUE) — เก็บใน plan.lotIssue[เลขล็อต][INV] = { n, r } · ว่าง = ใช้ยอดคำนวณ · ใส่ลงใบเบิกด้วย
   const iss = (plan.lotIssue || {})[lot.no] || {};
@@ -918,7 +919,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
           <th className="r" title="ยอดเบิกจริงของล็อตนี้ (เส้น) · ว่าง = ใช้ยอดคำนวณ · ใส่ลงช่อง ACTUAL ISSUE ในใบเบิก">เบิกจริง</th><th>หมายเหตุเบิก</th></tr></thead>
         <tbody>{m.mat.map((x) => (
           <tr key={x.inv || "—"}>
-            <td className="rl-sc-code">{x.inv || <span className="rl-cxq">ไม่มี INV</span>}</td>
+            <td className="rl-sc-code">{x.inv || <span className="rl-cxq">ไม่มี INV</span>}{x.origs && x.origs.length ? <div className="rw-muted small" title={x.note || ""}>เปลี่ยนจากแบบ: {x.origs.join(", ")}</div> : null}</td>
             <td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
             <td className="r rl-sc-q rl-sc-thin">{nf(x.stock)}{x.src === "default" ? <> <Pill tone="warn" title="ไม่รู้ความยาวเส้น — ใช้ค่าเริ่ม">?</Pill></> : null}</td>
             <td className="r rl-sc-q rl-sc-thin" title={x.parts.map((p) => `${p.code} × ${p.qty}`).join("\n")}>{nf(x.parts.length)} เบอร์ · {nf(x.pcs)} ชิ้น{x.noLen ? <> <Pill tone="warn" title="พาร์ทไม่มีความยาวใน BOM — ไม่ได้นับในเส้น">ไม่มียาว {nf(x.noLen)}</Pill></> : null}{x.over ? <> <Pill tone="bad">ยาวกว่าเส้น {nf(x.over)}</Pill></> : null}</td>
@@ -939,7 +940,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
       <div className="rl-sc-tw"><table className="rl-sc-table">
         <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">ขนาด (มม.)</th><th className="r">จำนวน</th></tr></thead>
         <tbody>{m.glass.map((x) => (
-          <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
+          <tr key={x.code}><td className="rl-sc-code">{x.code}{insteadOf(x)}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
             <td className="r rl-sc-q rl-sc-thin">{x.l || x.h ? `${nlen(x.l) || "?"} × ${nlen(x.h) || "?"}` : "—"}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>))}</tbody>
       </table></div>
     </section>);
@@ -950,7 +951,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
       <div className="rl-sc-tw"><table className="rl-sc-table">
         <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>
         <tbody>{m.hw.map((x) => (
-          <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
+          <tr key={x.code}><td className="rl-sc-code">{x.code}{insteadOf(x)}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td>
             <td className="r rl-sc-q">{x.u === "m." || x.u === "mm." ? nlen(Math.round(hwQ(x) * 100) / 100) : nf(hwQ(x))} <small className="rw-muted">{x.u || (x.mm ? "mm." : "pcs.")}</small></td></tr>))}</tbody>
       </table></div>
     </section>);
@@ -959,7 +960,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
       <header className="rl-sc-h"><div className="rl-sc-t"><b>อื่นๆ</b><span>VENT / ENCLOS / ที่ไม่มี QR</span></div><div className="rl-sc-n"><b>{nf(m.other.length)}</b> รายการ</div></header>
       <div className="rl-sc-tw"><table className="rl-sc-table">
         <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>
-        <tbody>{m.other.map((x) => <tr key={x.code}><td className="rl-sc-code">{x.code}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>)}</tbody>
+        <tbody>{m.other.map((x) => <tr key={x.code}><td className="rl-sc-code">{x.code}{insteadOf(x)}</td><td className="rl-sc-desc" title={x.d}>{x.d || <span className="rw-muted">—</span>}</td><td className="r rl-sc-q">{nf(x.qty)}</td></tr>)}</tbody>
       </table></div>
     </section>);
   if (q && !cards.length) return null;   // ค้นหาแล้วไม่เจอในวัสดุ → ซ่อนทั้งส่วน

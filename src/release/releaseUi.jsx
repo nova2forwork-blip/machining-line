@@ -126,3 +126,34 @@ export function SubKids({ lib, code, path, depth, open, setOpen, seen, compact =
   });
 }
 
+
+// ══ ★ 2026-11-04 เปลี่ยนวัสดุ (วัสดุตามแบบไม่มี / หมด → ใช้ตัวอื่น) ══
+//   แสดงค่าปัจจุบัน · ถ้าเปลี่ยนแล้ว = ค่าเดิมขีดฆ่า + ป้าย "เปลี่ยน" · กด ✎ = แก้ในแถว · ↺ = กลับไปใช้ตามแบบ
+//   props: cur · orig (ค่าตามแบบ ถ้าเปลี่ยนแล้ว) · note · list (รหัสให้เลือก) · withDesc/desc (ใบเบิก: รายละเอียดใหม่) · withLen/len (ยาวเส้น)
+//          onSave({ to, d, ml, r }) · onReset() · placeholder
+export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "", withLen = false, len = "", onSave, onReset, placeholder = "INV ใหม่", label = "" }) {
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ to: "", d: "", ml: "", r: "" });
+  const lid = "mat-dl-" + String(label || cur || "x").replace(/[^A-Za-z0-9_-]/g, "");
+  const start = () => { setF({ to: orig ? cur : "", d: orig ? desc : "", ml: orig && len ? String(len) : "", r: note || "" }); setOpen(true); };
+  if (open) return (
+    <span className="rt-matedit" onClick={(e) => e.stopPropagation()}>
+      <input className="input rw-cell rw-mono" autoFocus list={lid} value={f.to} placeholder={placeholder} onChange={(e) => setF({ ...f, to: e.target.value.toUpperCase() })}
+        onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter" && f.to.trim()) { onSave({ ...f, to: f.to.trim() }); setOpen(false); } }} aria-label={`วัสดุใหม่ ${label}`} />
+      <datalist id={lid}>{list.filter((x) => x !== (orig || cur)).map((x) => <option key={x} value={x} />)}</datalist>
+      {withDesc ? <input className="input rw-cell" value={f.d} placeholder="รายละเอียด (ไม่ใส่ = เดิม)" onChange={(e) => setF({ ...f, d: e.target.value })} aria-label={`รายละเอียดวัสดุใหม่ ${label}`} /> : null}
+      {withLen ? <input className="input rw-cell rw-num" type="number" min="0" value={f.ml} placeholder="ยาวเส้น (มม.)" title="ไม่ใส่ = ใช้ความยาวของ INV นี้ในแบบ หรืออ่านจากรหัส" onChange={(e) => setF({ ...f, ml: e.target.value })} aria-label={`ยาวเส้น ${label}`} /> : null}
+      <input className="input rw-cell" value={f.r} placeholder="เหตุผล เช่น ของหมด" onChange={(e) => setF({ ...f, r: e.target.value })} aria-label={`เหตุผล ${label}`} />
+      <button type="button" className="btn btn-accent btn-sm" disabled={!f.to.trim()} onClick={() => { onSave({ ...f, to: f.to.trim() }); setOpen(false); }}>ใช้</button>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>ยกเลิก</button>
+    </span>);
+  return (
+    <span className="rt-matcur">
+      {orig ? <><s className="rl-old rw-mono" title="ตามแบบ">{orig}</s> → </> : null}
+      <b className={`rw-mono ${orig ? "rl-new" : ""}`}>{cur || <span className="rw-muted">—</span>}</b>
+      {orig ? <> <Pill tone="mod" title={note || "เปลี่ยนวัสดุจากแบบ"}>เปลี่ยน</Pill></> : null}
+      {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น)" onClick={start}>✎</button> : null}
+      {orig && onReset ? <button type="button" className="rw-link rt-matbtn" title="กลับไปใช้ตามแบบ" onClick={onReset}>↺</button> : null}
+      {orig && note ? <div className="rw-muted small">{note}</div> : null}
+    </span>);
+}
