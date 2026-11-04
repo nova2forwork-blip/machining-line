@@ -13953,8 +13953,8 @@ function StationModal({ machine, operations, caps, emps = [], onClose, onSaved }
   const [err, setErr] = useState("");
   const T = STYPE[stype];
   // ★ 2026-11-04 ผู้ใช้: "สถานีกับคนงานเป็นอันเดียวกัน — รหัสล็อกอิน CT-065 ก็เป็นของเครื่อง CT-065"
-  const accCode = String(form.code || "").trim().toUpperCase();
-  const acc = accCode ? emps.find((e) => String(e.code || "").trim().toUpperCase() === accCode) || null : null;
+  const accCode = String(form.code || "").trim();   // แสดงตามที่พิมพ์ (บัญชีที่สร้างใช้รหัสนี้ตรง ๆ) · เทียบแบบไม่สนตัวพิมพ์
+  const acc = accCode ? emps.find((e) => String(e.code || "").trim().toUpperCase() === accCode.toUpperCase()) || null : null;
   const accBound = !!(acc && !isNew && acc.machine_id === machine.id);
   const [accOn, setAccOn] = useState(true);       // สร้าง / ผูก บัญชีรหัสเดียวกัน
   const [accPw, setAccPw] = useState("");         // รหัสผ่าน (บัญชีใหม่: ว่าง = ใช้รหัสสถานี · บัญชีเดิม: ว่าง = ไม่เปลี่ยน)
