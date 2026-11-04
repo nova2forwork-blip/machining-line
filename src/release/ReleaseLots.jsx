@@ -577,7 +577,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const relQty = (code) => (rel.byCode.get(NC(code)) || { qty: 0 }).qty;
   const setRow = (kind, code, patch) => setChg((c) => { const k = key(kind, code); const nx = { ...(c[k] || {}), ...patch }; const o = { ...c }; if (!nx.type) delete o[k]; else o[k] = nx; return o; });
   const unitRows = plan.units.filter((u) => match(u.addr, u.unit));
-  const tabCount = (k) => (k === "addr" ? addrs.size : k === "add" ? adds.length : k === "bom" ? edits.length : realChanges.filter((c) => c.kind === k).length);
+  const tabCount = (k) => (k === "addr" ? addrs.size : k === "add" ? adds.length : k === "bom" ? edits.filter((e) => e.scope === "panel").length : realChanges.filter((c) => c.kind === k).length + (k === "sub" ? edits.filter((e) => e.scope === "sub").length : 0));
 
   async function save() {
     if (blockers.length || busy) return;
@@ -614,71 +614,11 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
     } catch (e) { setBusy(""); setErr(e?.message || String(e)); }
   }
 
-  return (
-    <>
-      <div className="rl-back" onClick={() => !busy && onClose()} />
-      <aside className="rl-drawer rm" role="dialog" aria-modal="true" aria-label={`Modify Release ${plan.ro}`}>
-        <div className="rl-dr-head">
-          <div className="rl-dr-title">
-            <h2>Modify Release {plan.ro}</h2>
-            <input className="input rw-mono rl-lotno" value={verRaw} placeholder={modVer(autoNo)} onChange={(e) => setVerRaw(e.target.value.replace(/[^0-9]/g, ""))} aria-label="เลข M (ว่าง = อัตโนมัติ)" title="เลข M — ว่าง = เลขถัดไปอัตโนมัติ" />
-            <input className="input rl-date" type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ของ M ตามเอกสาร" />
-            <input className="input rl-note" value={reason} placeholder="เหตุผล * เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />
-          </div>
-          <button type="button" className="rl-x" onClick={onClose} aria-label="ปิด" disabled={!!busy}>×</button>
-        </div>
-        <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>
-        <div className="rl-tabs" role="tablist">
-          {[["part", "พาร์ท", need.parts.length], ["sub", "ซับ", need.subs.length], ["addr", "ที่อยู่แผง", plan.units.length], ["bom", "BOM ซับ/แผง", null], ["add", "เพิ่มเบอร์ใหม่", null]].map(([k, l, n]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>
-              <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูก" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
-            </button>))}
-        </div>
-        {tab !== "add" && tab !== "bom" ? (
-          <div className="rl-tools">
-            <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />
-            {tab !== "addr" ? <label className="rw-check"><input type="checkbox" checked={onlyChg} onChange={(e) => setOnlyChg(e.target.checked)} /> เฉพาะที่แก้</label> : null}
-          </div>) : null}
-        <div className="table-wrap rw-tw rl-tw">
-          {tab === "part" || tab === "sub" ? (
-            <table className="data-table rw-table">
-              <thead><tr><th>Code</th><th>Description</th><th className="r">ต้องใช้</th><th className="r">ปล่อยแล้ว</th><th>การแก้</th><th className="r">ยอดใหม่</th><th>ผล</th></tr></thead>
-              <tbody>{rows.slice(0, 500).map((r) => {
-                const c = chg[key(tab, r.code)] || {}; const it = itemOf(r.code); const e = errOf(r.code); const done = relQty(r.code);
-                const active = c.type && !(c.type === "qty" && (String(c.qty).trim() === "" || Number(c.qty) === r.qty));
-                return (
-                  <tr key={r.code} className={`${e ? "rl-errrow" : active ? "rl-sel" : ""} ${r.cancelled ? "rl-cancelrow" : ""}`}>
-                    <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled || c.type === "cancel"} added={r.added} /></td>
-                    <td className="rl-desc"><span>{r.d}</span></td>
-                    <td className="r"><ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /></td>
-                    <td className="r">{done ? nf(done) : ""}</td>
-                    <td>{r.cancelled ? <span className="rw-muted small">ยกเลิกแล้ว</span> : (
-                      <select className="select rw-cellsel rl-modsel" value={c.type || ""} onChange={(ev) => setRow(tab, r.code, { type: ev.target.value || undefined, qty: ev.target.value === "qty" ? (c.qty ?? String(r.qty)) : c.qty })} aria-label={`การแก้ ${r.code}`}>
-                        <option value="">—</option><option value="qty">แก้จำนวน</option><option value="cancel">ยกเลิกเบอร์</option>
-                      </select>)}</td>
-                    <td className="r">{c.type === "qty" ? <input className="input rw-cell rl-qty" type="number" min="0" step="1" value={c.qty ?? ""} onChange={(ev) => setRow(tab, r.code, { qty: ev.target.value })} aria-label={`ยอดใหม่ ${r.code}`} /> : c.type === "cancel" ? <b className="rl-errtxt">0</b> : null}</td>
-                    <td className="rl-res">{e ? <span className="rl-errtxt">✗ {e.slice(r.code.length + 1).trim()}</span> : active && it ? (
-                      <>{it.type === "cancel" ? <>ยกเลิก <span className="rl-cxq">{nf(it.before)}</span></> : <><s className="rl-old">{nf(it.before)}</s> → <b className="rl-new">{nf(it.after)}</b></>}
-                        {it.lots.map((l) => <div key={l.lot} className="rw-muted small">{l.lot}: {l.cancel ? <><span className="rl-cxq">{nf(l.before)}</span> ยกเลิก</> : <><s>{nf(l.before)}</s> → {nf(l.after)}</>} (QR −{nf(l.before - l.after)})</div>)}
-                        {it.type === "qty" && it.after > done && done > 0 ? <div className="rw-muted small">เหลือปล่อยเพิ่ม {nf(it.after - done)}</div> : null}</>
-                    ) : null}</td>
-                  </tr>); })}</tbody>
-            </table>
-          ) : tab === "addr" ? (
-            <table className="data-table rw-table">
-              <thead><tr><th style={{ width: 36 }} /><th>Address</th><th>Unit</th><th>สถานะ</th></tr></thead>
-              <tbody>{unitRows.slice(0, 600).map((u) => { const a = addrKey(u.addr); const lot = rel.addrLot.get(a); const cx = need.cancelledAddr[a]; const on = addrs.has(a); return (
-                <tr key={a} className={`${on ? "rl-errrow" : ""} ${cx ? "rl-cancelrow" : ""}`}>
-                  <td><input type="checkbox" checked={on || !!cx} disabled={!!lot || !!cx} onChange={(ev) => setAddrs((s) => { const n = new Set(s); if (ev.target.checked) n.add(a); else n.delete(a); return n; })} aria-label={`ยกเลิก ${a}`} /></td>
-                  <td className="rw-mono"><b className={on || cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : on ? <> <Pill tone="bad">ยกเลิกใน {ver}</Pill></> : null}</td>
-                  <td className="rw-mono">{u.unit}</td>
-                  <td>{lot ? <span className="rw-muted small">ปล่อยแล้วใน {lot} — ยกเลิกแผงที่ปล่อยแล้วทำที่หน้า Release Order {lot} (เลือก QR)</span> : cx ? null : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
-                </tr>); })}</tbody>
-            </table>
-          ) : tab === "bom" ? (
-            <div className="rl-bomedit">
+  // ★ 2026-11-04 ผู้ใช้: "Sub ให้มีที่เดียวพอ" — แก้ลูกของซับอยู่ในแท็บ "ซับ" (ปุ่ม แก้ลูก) · แท็บ BOM เหลือแผงอย่างเดียว
+  const bomEditorEl = (
+    <div className="rl-bomedit">
               <div className="rl-tools">
-                <select className="select" value={bscope} onChange={(e) => { setBscope(e.target.value); setBowner(""); }} aria-label="แก้ BOM ของ"><option value="sub">แก้ลูกในซับ</option><option value="panel">แก้ลูกในแผง</option></select>
+                {bscope === "sub" ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBowner("")}>← รายการซับ</button> : null}
                 <select className="select rw-mono" value={bowner} onChange={(e) => setBowner(e.target.value)} aria-label="เลือกซับ/แผง" style={{ minWidth: 260 }}>
                   <option value="">— เลือก{bscope === "panel" ? "แบบแผง" : "ซับ"} —</option>
                   {(bscope === "panel" ? need.panels.map((x) => ({ code: x.code, d: x.d, n: x.qty })) : need.subs.filter((x) => x.hasBom && !x.cancelled).map((x) => ({ code: x.code, d: x.d, n: x.qty })))
@@ -733,7 +673,70 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
                   {bomFx.adds.map((a) => <div key={a.code} className="small"><span className="rw-mono"><b>{a.code}</b></span> <Pill tone="mod">เพิ่ม {ver}</Pill> {nf(a.qty)}</div>)}
                 </div>) : null}
             </div>
-          ) : (
+  );
+  return (
+    <>
+      <div className="rl-back" onClick={() => !busy && onClose()} />
+      <aside className="rl-drawer rm" role="dialog" aria-modal="true" aria-label={`Modify Release ${plan.ro}`}>
+        <div className="rl-dr-head">
+          <div className="rl-dr-title">
+            <h2>Modify Release {plan.ro}</h2>
+            <input className="input rw-mono rl-lotno" value={verRaw} placeholder={modVer(autoNo)} onChange={(e) => setVerRaw(e.target.value.replace(/[^0-9]/g, ""))} aria-label="เลข M (ว่าง = อัตโนมัติ)" title="เลข M — ว่าง = เลขถัดไปอัตโนมัติ" />
+            <input className="input rl-date" type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ของ M ตามเอกสาร" />
+            <input className="input rl-note" value={reason} placeholder="เหตุผล * เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />
+          </div>
+          <button type="button" className="rl-x" onClick={onClose} aria-label="ปิด" disabled={!!busy}>×</button>
+        </div>
+        <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>
+        <div className="rl-tabs" role="tablist">
+          {[["part", "พาร์ท", need.parts.length], ["sub", "ซับ", need.subs.length], ["addr", "ที่อยู่แผง", plan.units.length], ["bom", "BOM แผง", null], ["add", "เพิ่มเบอร์ใหม่", null]].map(([k, l, n]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => { setTab(k); if (k === "bom") { setBscope("panel"); setBowner(""); } else if (k === "sub") { setBscope("sub"); setBowner(""); } }}>
+              <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
+            </button>))}
+        </div>
+        {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
+          <div className="rl-tools">
+            <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />
+            {tab !== "addr" ? <label className="rw-check"><input type="checkbox" checked={onlyChg} onChange={(e) => setOnlyChg(e.target.checked)} /> เฉพาะที่แก้</label> : null}
+          </div>) : null}
+        <div className="table-wrap rw-tw rl-tw">
+          {tab === "sub" && bowner ? bomEditorEl : tab === "part" || tab === "sub" ? (
+            <table className="data-table rw-table">
+              <thead><tr><th>Code</th><th>Description</th><th className="r">ต้องใช้</th><th className="r">ปล่อยแล้ว</th><th>การแก้</th><th className="r">ยอดใหม่</th><th>ผล</th></tr></thead>
+              <tbody>{rows.slice(0, 500).map((r) => {
+                const c = chg[key(tab, r.code)] || {}; const it = itemOf(r.code); const e = errOf(r.code); const done = relQty(r.code);
+                const active = c.type && !(c.type === "qty" && (String(c.qty).trim() === "" || Number(c.qty) === r.qty));
+                return (
+                  <tr key={r.code} className={`${e ? "rl-errrow" : active ? "rl-sel" : ""} ${r.cancelled ? "rl-cancelrow" : ""}`}>
+                    <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled || c.type === "cancel"} added={r.added} /></td>
+                    <td className="rl-desc"><span>{r.d}</span></td>
+                    <td className="r"><ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /></td>
+                    <td className="r">{done ? nf(done) : ""}</td>
+                    <td>{r.cancelled ? <span className="rw-muted small">ยกเลิกแล้ว</span> : (
+                      <select className="select rw-cellsel rl-modsel" value={c.type || ""} onChange={(ev) => setRow(tab, r.code, { type: ev.target.value || undefined, qty: ev.target.value === "qty" ? (c.qty ?? String(r.qty)) : c.qty })} aria-label={`การแก้ ${r.code}`}>
+                        <option value="">—</option><option value="qty">แก้จำนวน</option><option value="cancel">ยกเลิกเบอร์</option>
+                      </select>)}
+                      {tab === "sub" && r.hasBom && !r.cancelled ? (() => { const nE = edits.filter((x) => x.scope === "sub" && NC(x.owner) === NC(r.code)).length; return <button type="button" className="btn btn-ghost btn-sm rl-kidsbtn" onClick={() => { setBscope("sub"); setBowner(r.code); }} title="แก้เบอร์ลูก / จำนวนลูกในซับนี้">แก้ลูก{nE ? ` (${nE})` : ""}</button>; })() : null}</td>
+                    <td className="r">{c.type === "qty" ? <input className="input rw-cell rl-qty" type="number" min="0" step="1" value={c.qty ?? ""} onChange={(ev) => setRow(tab, r.code, { qty: ev.target.value })} aria-label={`ยอดใหม่ ${r.code}`} /> : c.type === "cancel" ? <b className="rl-errtxt">0</b> : null}</td>
+                    <td className="rl-res">{e ? <span className="rl-errtxt">✗ {e.slice(r.code.length + 1).trim()}</span> : active && it ? (
+                      <>{it.type === "cancel" ? <>ยกเลิก <span className="rl-cxq">{nf(it.before)}</span></> : <><s className="rl-old">{nf(it.before)}</s> → <b className="rl-new">{nf(it.after)}</b></>}
+                        {it.lots.map((l) => <div key={l.lot} className="rw-muted small">{l.lot}: {l.cancel ? <><span className="rl-cxq">{nf(l.before)}</span> ยกเลิก</> : <><s>{nf(l.before)}</s> → {nf(l.after)}</>} (QR −{nf(l.before - l.after)})</div>)}
+                        {it.type === "qty" && it.after > done && done > 0 ? <div className="rw-muted small">เหลือปล่อยเพิ่ม {nf(it.after - done)}</div> : null}</>
+                    ) : null}</td>
+                  </tr>); })}</tbody>
+            </table>
+          ) : tab === "addr" ? (
+            <table className="data-table rw-table">
+              <thead><tr><th style={{ width: 36 }} /><th>Address</th><th>Unit</th><th>สถานะ</th></tr></thead>
+              <tbody>{unitRows.slice(0, 600).map((u) => { const a = addrKey(u.addr); const lot = rel.addrLot.get(a); const cx = need.cancelledAddr[a]; const on = addrs.has(a); return (
+                <tr key={a} className={`${on ? "rl-errrow" : ""} ${cx ? "rl-cancelrow" : ""}`}>
+                  <td><input type="checkbox" checked={on || !!cx} disabled={!!lot || !!cx} onChange={(ev) => setAddrs((s) => { const n = new Set(s); if (ev.target.checked) n.add(a); else n.delete(a); return n; })} aria-label={`ยกเลิก ${a}`} /></td>
+                  <td className="rw-mono"><b className={on || cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : on ? <> <Pill tone="bad">ยกเลิกใน {ver}</Pill></> : null}</td>
+                  <td className="rw-mono">{u.unit}</td>
+                  <td>{lot ? <span className="rw-muted small">ปล่อยแล้วใน {lot} — ยกเลิกแผงที่ปล่อยแล้วทำที่หน้า Release Order {lot} (เลือก QR)</span> : cx ? null : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
+                </tr>); })}</tbody>
+            </table>
+          ) : tab === "bom" ? bomEditorEl : (
             <div className="rl-addbox">
               <div className="rl-addform">
                 <select className="select" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} aria-label="ชนิด"><option value="part">พาร์ท</option><option value="sub">ซับ</option></select>

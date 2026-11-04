@@ -1551,6 +1551,7 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  "BOM แผง": "Panel BOM", "แก้เบอร์/จำนวนลูกในแผง": "Edit panel child code/qty", "← รายการซับ": "← Sub list", "แก้ลูก": "Edit children", "แก้เบอร์ลูก / จำนวนลูกในซับนี้": "Edit child codes / qty in this sub",
   "เปิดหน้าล็อต →": "Open lot →", "เปิดหน้าล็อต (รายละเอียดทุกเบอร์ · ความคืบหน้า · ใบปล่อยที่แก้ได้ · Modify)": "Open the lot page (every code · progress · editable release sheet · Modify)",
   "กดเปิดเพื่อดู Total · BOM · ล็อตที่ปล่อย · ปล่อยล็อตใหม่ (P-xxx.1 / .2 …)": "Open to see Total · BOM · released lots · release a new lot (P-xxx.1 / .2 …)",
   "Release (ใบหลัก)": "Releases (main)",
@@ -1576,6 +1577,7 @@ const FIX_DICT = {
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
 };
 const FIX_TPLS = [
+  ["แก้ลูก ({1})", "Edit children ({1})"],
   ["Release (ใบหลัก) · ยังปล่อยไม่ครบ {1}", "Releases (main) · {1} not fully released"],
   ["แสดงที่ปล่อยครบแล้ว {1} ใบ", "Show {1} fully released"], ["Release ที่ยังปล่อยไม่ครบ ({1})", "Releases not fully released ({1})"],
   ["จำนวน Mockup แถว {1}", "Mock-up quantity row {1}"],

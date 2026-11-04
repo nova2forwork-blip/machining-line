@@ -776,3 +776,4 @@ mark.rl-hl { background: #fde68a; color: inherit; padding: 0 1px; border-radius:
 .rl-inl-meta .c { text-align: center; } .rl-inl-meta .r { text-align: right; }
 .rl-lot-open { border: 1px solid #cfdcd6; background: #fff; border-radius: 999px; padding: 3px 12px; font-size: 12.5px; font-weight: 700; color: #0f7d58; cursor: pointer; white-space: nowrap; }
 .rl-lot-open:hover { border-color: #1a9a6c; background: #ecfaf4; }
+.rl-kidsbtn { margin-left: 6px; padding: 3px 10px; font-size: 12px; }
