@@ -7451,7 +7451,7 @@ const DEPT_TABS = [
 // ชนิด part → แผนก: package=แพ็ก · panel=แผง · subassembly=ซับ · อื่น ๆ=เครื่องจักร
 const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : k === "subassembly" ? "sub" : "machine");
 // ★ 2026-11-04 แท็บ "ทั้งหมด" (หน้าโปรเจค) — ผู้ใช้: ".2 ทำไมไม่มี" (ล็อตแผงอยู่แท็บ Assembly · ล็อตพาร์ทอยู่แท็บ Machine)
-const DEPT_ALL = { value: "all", label: "ทั้งหมด", sub: "ทุกล็อตในโปรเจค", color: "#334155", soft: "rgba(51,65,85,.08)", icon: "folder" };
+const DEPT_ALL = { value: "all", label: "ทั้งหมด", sub: "ทุกใบ · ทุกแผนก", color: "#334155", soft: "rgba(51,65,85,.08)", icon: "folder" };
 function DeptTabs({ value, onChange, counts, withAll = false }) {
   return (
     <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
@@ -7560,6 +7560,13 @@ function ReleasePage({ user, goTo }) {
   }, [recent, deptFilter, projectFilter, fromDate, toDate, orderSearch]);
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
   const planLeftAll = usePlanLeft(plans, recent);
+  // จำนวนใบต่อแผนก (ป้ายตัวเลขบนแท็บ) — นับตามตัวกรองโปรเจค/วันที่/ค้นหาเดียวกับตาราง
+  const relDeptCounts = useMemo(() => {
+    const src = hasFilter ? recent.filter(matchRel) : recent; const c = { all: groupReleases(src).length };
+    DEPT_TABS.forEach((d) => { c[d.value] = groupReleases(src.filter((r) => deptOfKind(r.part_master?.kind) === d.value)).length; });
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recent, projectFilter, fromDate, toDate, orderSearch]);
   const relTree = useMemo(() => buildReleaseTree(groups, plans.filter((p) => !projectFilter || p.projectCode === projectFilter), {
     includeEmpty: deptFilter === "all" && !hasFilter, sort, open: openPlans,
     acc: {
@@ -7644,7 +7651,7 @@ function ReleasePage({ user, goTo }) {
         )}
       </Card>
 
-      <DeptTabs value={deptFilter} onChange={setDeptFilter} withAll />
+      <DeptTabs value={deptFilter} onChange={setDeptFilter} withAll counts={relDeptCounts} />
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <SortControl sort={sort} options={[
