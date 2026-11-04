@@ -34,6 +34,7 @@ function usePlanState(plan, releases) {
 // ══ หน้า Release (แผน) ══
 export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
+  const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
   const [modify, setModify] = useState(false);
@@ -142,12 +143,10 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
 
           <div key={l} className="rl-kpi"><div className="rl-kpi-top"><span>{l}</span><b>{nf(a)}<small> / {nf(b)}</small></b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div><small>{s} · {pct(a, b)}%</small></div>
         ))}
-        <div className="rl-kpi"><div className="rl-kpi-top"><span>ล็อต</span><b>{rel.lots.length}</b></div><small>{lastLot ? `ล่าสุด ${lastLot.no} · ${fmtD(lastLot.date)}` : "ยังไม่ได้ปล่อย"}</small></div>
+        <div className="rl-kpi rl-kpi-link" role="button" tabIndex={0} title="ไปที่ล็อตที่ปล่อยแล้ว" onClick={() => lotsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} onKeyDown={(e) => { if (e.key === "Enter") lotsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><div className="rl-kpi-top"><span>ล็อต</span><b>{rel.lots.length}</b></div><small>{lastLot ? `ล่าสุด ${lastLot.no} · ${fmtD(lastLot.date)}` : "ยังไม่ได้ปล่อย"}</small></div>
       </div>
 
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} />
-
-      <div className="card rw-card">
+      <div className="card rw-card" ref={lotsRef}>
         <div className="rw-sec-head"><div><h2>ล็อตที่ปล่อยแล้ว</h2><p>ล่าสุดอยู่บน · แต่ละล็อตมี QR ของตัวเอง · ใบสั่งผลิตใช้เลขล็อต</p></div></div>
         {rel.lots.length ? (
           <div className="rl-lots">
@@ -230,6 +229,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
       </div>
+
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} />
+
 
       {plan.mods?.length ? (
         <div className="card rw-card">
