@@ -2536,6 +2536,7 @@ const TPLS2 = [
 
 // รอบ 3: ข้อความที่ยังเป็นไทยล้วน (flash/toast บนแท็บเล็ต · หัวคอลัมน์ · เดือนย่อ)
 const DICT3 = {
+ "พับล็อต": "Hide lots", "ดูล็อตในใบนี้": "Show lots",
  "เปิดใบหลัก": "Open main",
  "ทุกล็อตในโปรเจค": "All lots in this project",
  "ใช้ใน / มาจากแผง": "Used in / from panel", "ใช้ใน": "Used in",
