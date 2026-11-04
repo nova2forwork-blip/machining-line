@@ -7241,6 +7241,62 @@ function releaseCreateItems(pick, disabled = false) {
 //   ต้องรัน migration-release-plans.sql · ยังไม่รัน = ไม่มีการ์ดนี้ (ปล่อยงานใหม่จะถามแล้วปล่อยทั้งใบแบบเดิม)
 // เลข P หลักของล็อต (P-241.2 → 241) — เหมือน releaseCore.inPlan แต่ไม่ต้องโหลดโมดูล Release
 const roNumOf = (ro) => { const m = /^P\s*-?\s*0*(\d+)/i.exec(String(ro || "").trim()); return m ? Number(m[1]) : null; };
+// ★ 2026-11-04 ตาราง Release แบบ "ใบหลัก ▸ ล็อต" (หน้าโปรเจค + หน้า Release Production)
+//   groups = ล็อต (groupReleases) · plans = ใบหลัก · จับคู่ด้วยเลข P + โปรเจค · ล็อตไม่มีใบหลัก = แถวปกติ
+function buildReleaseTree(groups, plans, { includeEmpty = false, sort, acc, open }) {
+  if (!groups) return [];
+  const pk = (code, n) => `${code || ""}|${n}`;
+  const planBy = new Map(); for (const p of plans || []) { const n = roNumOf(p.ro); if (n != null) planBy.set(pk(p.projectCode, n), p); }
+  const byPlan = new Map(); const loose = [];
+  for (const g of groups) {
+    const n = roNumOf(g.releaseOrder); const code = g.projectCode || g.releases[0]?.part_master?.projects?.code || "";
+    const p = n != null ? (planBy.get(pk(code, n)) || ((plans || []).length && !code ? null : null)) : null;
+    if (p) { const k = pk(p.projectCode, n); if (!byPlan.has(k)) byPlan.set(k, { p, kids: [] }); byPlan.get(k).kids.push(g); } else loose.push(g);
+  }
+  if (includeEmpty) for (const p of plans || []) { const k = pk(p.projectCode, roNumOf(p.ro)); if (!byPlan.has(k)) byPlan.set(k, { p, kids: [] }); }
+  const planRows = [...byPlan.entries()].map(([k, { p, kids }]) => ({
+    key: "plan:" + k, isPlan: true, plan: p, openKey: k,
+    children: kids.sort((a, b) => String(a.releaseOrder).localeCompare(String(b.releaseOrder), "en", { numeric: true })),
+    releases: kids.flatMap((x) => x.releases), releaseOrder: p.ro, projectCode: p.projectCode,
+    date: p.date || p.createdAt || (kids[0] && kids[0].date),
+    totalQty: kids.reduce((a, x) => a + (x.totalQty || 0), 0), totalWeight: kids.reduce((a, x) => a + (x.totalWeight || 0), 0),
+    notes: new Set(kids.flatMap((x) => [...(x.notes || [])])),
+    projectName: kids[0]?.projectName || "",
+  }));
+  const top = sort.sortRows([...planRows, ...loose], acc);
+  const out = [];
+  for (const t of top) { out.push(t); if (t.isPlan && open.has(t.openKey)) for (const x of t.children) out.push({ ...x, key: "lot:" + x.key, childOf: t.openKey }); }
+  return out;
+}
+// สถานะใบหลัก (เหลือกี่รายการ) — คิดแบบเดียวกับการ์ด "Release ที่ยังปล่อยไม่ครบ" (โหลด releaseCore ตอนใช้)
+function usePlanLeft(plans, releases) {
+  const [core, setCore] = useState(null);
+  useEffect(() => { let a = true; import("./release/releaseCore.js").then((m) => { if (a) setCore(m); }).catch(() => {}); return () => { a = false; }; }, []);
+  return useMemo(() => {
+    const m = new Map(); if (!core || !releases) return m;
+    for (const p of plans || []) {
+      try {
+        const need = core.needOf(p); const rel = core.releasedOf(releases, p);
+        const live = (p.units || []).filter((u) => !need.cancelledAddr[core.addrKey(u.addr)]);
+        const addr = live.filter((u) => rel.addrLot.has(String(u.addr).toUpperCase())).length;
+        const left = need.parts.filter((x) => (rel.byCode.get(core.NC(x.code))?.qty || 0) < x.qty).length + need.subs.filter((x) => (rel.byCode.get(core.NC(x.code))?.qty || 0) < x.qty).length + (live.length - addr);
+        m.set(`${p.projectCode || ""}|${roNumOf(p.ro)}`, { left, addr, units: live.length });
+      } catch { /* แผนเสีย — ไม่โชว์สถานะ */ }
+    }
+    return m;
+  }, [core, plans, releases]);
+}
+function PlanOrderCell({ g, open, onOpen, left, L }) {
+  const st = left.get(g.openKey);
+  return (
+    <span className="prj-plan-cell">
+      <span className="prj-chev">{open ? "▾" : "▸"}</span>
+      <b>{g.plan.ro}</b>
+      <small>{L(`${g.children.length} ล็อต`, `${g.children.length} lot${g.children.length === 1 ? "" : "s"}`)}</small>
+      {st ? (st.left ? <span className="prj-st warn">{L(`เหลือ ${fmtNum(st.left)} รายการ`, `${fmtNum(st.left)} left`)}</span> : <span className="prj-st ok">{L("ปล่อยครบ", "Fully released")}</span>) : null}
+      <button type="button" className="prj-open" onClick={(e) => { e.stopPropagation(); onOpen(); }}>{L("เปิดใบหลัก", "Open main")} →</button>
+    </span>);
+}
 function useReleasePlans(projectId = null) {
   const [plans, setPlans] = useState([]);
   const loadPlans = useCallback(async () => {
@@ -7438,7 +7494,8 @@ function ReleasePage({ user, goTo }) {
   const [toDate, setToDate] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
-  const [deptFilter, setDeptFilter] = useState("machine"); // แยกตามแผนก (เหมือนรายงาน): machine / assembly / packing
+  const [deptFilter, setDeptFilter] = useState("all"); // ★ 2026-11-04 ค่าเริ่ม "ทั้งหมด" (ใบหลัก ▸ ล็อต) · machine / sub / panel / packing
+  const [openPlans, setOpenPlans] = useState(() => new Set());
 
   const [relLoadErr, setRelLoadErr] = useState("");
   const load = useCallback(async () => {
@@ -7468,7 +7525,7 @@ function ReleasePage({ user, goTo }) {
   //   ★ รอบ 11 (A4): เดิมกรองทีละ release ก่อนจัดกลุ่ม → ค้น AN04-001 แล้วกดเข้า P-009 เห็นแค่ 1 เบอร์
   //     (KPI/สถานะ/รายการ Modify ผิด · "แก้หัวเอกสาร" แก้แค่เบอร์ที่เห็น → ใบแตกเป็น 2)
   //     ตอนนี้: ใบที่มีอย่างน้อย 1 เบอร์ตรงเงื่อนไข = แสดงทั้งใบ (ทุกเบอร์ในแผนกนั้น)
-  const deptReleases = deptFilter ? recent.filter((r) => deptOfKind(r.part_master?.kind) === deptFilter) : recent;
+  const deptReleases = deptFilter && deptFilter !== "all" ? recent.filter((r) => deptOfKind(r.part_master?.kind) === deptFilter) : recent;
   const searchQ = orderSearch.trim().toLowerCase();
   // ★ รอบ 13: ค้นได้ทั้ง Release Order / Part / INV (Material) / รหัส-ชื่อโปรเจค / MDF / หมายเหตุ
   //   หลายคำ (เว้นวรรค) = ต้องเจอครบทุกคำ · ไม่สนขีด/เว้นวรรค/ตัวพิมพ์ (INV-6063 = inv 6063 = INV6063)
@@ -7496,6 +7553,16 @@ function ReleasePage({ user, goTo }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recent, deptFilter, projectFilter, fromDate, toDate, orderSearch]);
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
+  const planLeftAll = usePlanLeft(plans, recent);
+  const relTree = useMemo(() => buildReleaseTree(groups, plans.filter((p) => !projectFilter || p.projectCode === projectFilter), {
+    includeEmpty: deptFilter === "all" && !hasFilter, sort, open: openPlans,
+    acc: {
+      date: (g) => new Date(g.date).getTime() || 0, project: (g) => g.projectCode || "",
+      order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
+      parts: (g) => g.releases.length, qty: (g) => g.totalQty || 0, weight: (g) => g.totalWeight || 0,
+      progress: (g) => { const t = g.releases.reduce((s2, r) => s2 + (allUnitStats[r.id]?.total ?? r.qty), 0); return t > 0 ? computeGroupProgress(g.releases, allUnitStats, allOpProg, t).finished / t : 0; },
+    },
+  }), [groups, plans, projectFilter, deptFilter, hasFilter, sort, openPlans, allUnitStats, allOpProg]);
 
   if (viewGroup) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
@@ -7571,13 +7638,7 @@ function ReleasePage({ user, goTo }) {
         )}
       </Card>
 
-      {plans.length ? (
-        <Suspense fallback={null}>
-          <ReleasePlansCardLazy plans={plans.filter((p) => !projectFilter || p.projectCode === projectFilter)} releases={recent} onOpen={(p) => setPlanView({ plan: p, openBuilder: false })} />
-        </Suspense>
-      ) : null}
-
-      <DeptTabs value={deptFilter} onChange={setDeptFilter} />
+      <DeptTabs value={deptFilter} onChange={setDeptFilter} withAll />
 
       <Card title={hasFilter ? `ผลการค้นหา (${groups.length})` : "ประวัติการ Release ล่าสุด"}>
         <SortControl sort={sort} options={[
@@ -7585,32 +7646,19 @@ function ReleasePage({ user, goTo }) {
           { k: "parts", label: "Part No." }, { k: "qty", label: "จำนวน" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
         ]} />
         <DataTable id="release-history" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
-          rows={groups} rowKey={(g) => g.key} sort={sort}
-          sortAccessors={{
-            date: (g) => new Date(g.date).getTime() || 0,
-            project: (g) => g.projectCode || "",
-            order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
-            parts: (g) => g.releases.length,
-            qty: (g) => g.totalQty || 0,
-            weight: (g) => g.totalWeight || 0,
-            progress: (g) => {
-              const t = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
-              const f = computeGroupProgress(g.releases, allUnitStats, allOpProg, t).finished;
-              return t > 0 ? f / t : 0;
-            },
-          }}
+          rows={relTree} rowKey={(g) => g.key} sort={sort}
           rowCtx={(g) => {
             const gTotal = g.releases.reduce((s, r) => s + (allUnitStats[r.id]?.total ?? r.qty), 0);
             const gFinished = computeGroupProgress(g.releases, allUnitStats, allOpProg, gTotal).finished;
             const gPct = gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null;
             return { gTotal, gFinished, gPct, statsReady: statsLoaded || g.releases.every((r) => r.id in allUnitStats) };
           }}
-          rowProps={(g) => ({ className: "release-row", onClick: () => setViewGroup(g) })}
+          rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; }) : setViewGroup(g)) })}
           empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"ปล่อยงานใหม่\" เพื่อเริ่ม")}
           columns={[
             { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
-            { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-") },
+            { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} open={openPlans.has(g.openKey)} onOpen={() => setPlanView({ plan: g.plan, openBuilder: false })} left={planLeftAll} L={(th, en) => (getLang() === "en" ? en : th)} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
             { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => (
                 <>{fmtNum(g.releases.length)} Part{g.matchCount ? <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>ตรงที่ค้น {fmtNum(g.matchCount)}</div> : null}</>
               ) },
@@ -12013,34 +12061,18 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   const curTab = curDept === "all" ? { ...DEPT_ALL, label: "" } : (DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0]);
   // ★ 2026-11-04 ผู้ใช้: "เอาเป็นตารางเดียวกัน ที่เป็นดรอปลงมา เพราะอยู่ใน P หลัก" — ใบหลัก (P-241) 1 แถว กาง ▸ ดูล็อต (P-241.1 / .2) ใต้แถว
   //   ล็อตที่ไม่มีใบหลัก (ปล่อยแบบเดิม) = แถวปกติ · เรียงที่ชั้นบนสุด แล้วล็อตเรียงตามเลขใต้ใบหลัก
-  const togglePlan = (p) => setOpenPlans((o) => { const n = new Set(o); n.has(p.ro) ? n.delete(p.ro) : n.add(p.ro); return n; });
-  const treeRows = useMemo(() => {
-    if (!groups) return [];
-    const byPlan = new Map(); const loose = [];
-    for (const g of groups) {
-      const n = roNumOf(g.releaseOrder); const p = n != null ? plans.find((x) => roNumOf(x.ro) === n) : null;
-      if (p) { if (!byPlan.has(p.ro)) byPlan.set(p.ro, { p, kids: [] }); byPlan.get(p.ro).kids.push(g); } else loose.push(g);
-    }
-    // ใบหลักที่ยังไม่มีล็อตในแท็บนี้ (บันทึกแล้วยังไม่ปล่อย) — โชว์เฉพาะแท็บ "ทั้งหมด"
-    if (curDept === "all") for (const p of plans) if (!byPlan.has(p.ro)) byPlan.set(p.ro, { p, kids: [] });
-    const planRows = [...byPlan.values()].map(({ p, kids }) => {
-      const rel = kids.flatMap((k) => k.releases);
-      return { key: "plan:" + p.ro, isPlan: true, plan: p, children: kids.sort((a, b) => String(a.releaseOrder).localeCompare(String(b.releaseOrder), "en", { numeric: true })),
-        releases: rel, releaseOrder: p.ro, date: p.date || p.createdAt || (kids[0] && kids[0].date),
-        totalQty: kids.reduce((a, k) => a + (k.totalQty || 0), 0), totalWeight: kids.reduce((a, k) => a + (k.totalWeight || 0), 0) };
-    });
-    const acc = {
+  const togglePlan = (g) => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; });
+  const planLeft = usePlanLeft(plans, rels);
+  const treeRows = useMemo(() => buildReleaseTree(groups, plans.map((p) => ({ ...p, projectCode: p.projectCode || project.code })), {
+    includeEmpty: curDept === "all", sort, open: openPlans,
+    acc: {
       date: (g) => new Date(g.date).getTime() || 0,
       order: (g) => g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? ""),
       parts: (g) => g.releases.length, qty: (g) => g.totalQty || 0, weight: (g) => g.totalWeight || 0,
       finished: (g) => computeGroupProgress(g.releases, stats, opProg, g.releases.reduce((s2, r) => s2 + (stats[r.id]?.total ?? r.qty), 0)).finished,
       progress: (g) => { const t = g.releases.reduce((s2, r) => s2 + (stats[r.id]?.total ?? r.qty), 0); return t > 0 ? computeGroupProgress(g.releases, stats, opProg, t).finished / t : 0; },
-    };
-    const top = sort.sortRows([...planRows, ...loose], acc);
-    const out = [];
-    for (const t of top) { out.push(t); if (t.isPlan && openPlans.has(t.plan.ro)) for (const k of t.children) out.push({ ...k, key: "lot:" + k.key, childOf: t.plan.ro }); }
-    return out;
-  }, [groups, plans, curDept, sort, stats, opProg, openPlans]);
+    },
+  }).map((g) => (g.childOf || g.isPlan || g.projectCode ? g : { ...g, projectCode: project.code })), [groups, plans, curDept, sort, stats, opProg, openPlans, project.code]);
 
   // เจาะเข้า Release Order → แสดง Part + รายละเอียด (เหมือนหน้า Release Production)
   if (viewGroup) {
@@ -12129,16 +12161,10 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
               const { finished: gFinished } = computeGroupProgress(g.releases, stats, opProg, gTotal);
               return { gTotal, gFinished, gPct: gTotal > 0 ? Math.round((gFinished / gTotal) * 100) : null };
             }}
-            rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? togglePlan(g.plan) : setViewGroup(g)) })}
+            rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? togglePlan(g) : setViewGroup(g)) })}
             columns={[
               { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
-              { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? (
-                <span className="prj-plan-cell">
-                  <span className="prj-chev">{openPlans.has(g.plan.ro) ? "▾" : "▸"}</span>
-                  <b>{g.plan.ro}</b>
-                  <small>{L(`${g.children.length} ล็อต`, `${g.children.length} lot${g.children.length === 1 ? "" : "s"}`)}</small>
-                  <button type="button" className="prj-open" onClick={(e) => { e.stopPropagation(); setPlanView({ plan: g.plan, openBuilder: false }); }}>{L("เปิดใบหลัก", "Open main")} →</button>
-                </span>) : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
+              { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} open={openPlans.has(g.openKey)} onOpen={() => setPlanView({ plan: g.plan, openBuilder: false })} left={planLeft} L={L} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
               { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
               { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
               { key: "finished", header: "เสร็จแล้ว", sortKey: "finished", align: "right",
