@@ -1551,6 +1551,7 @@ Object.assign(SHEET_DICT, {"SUB พับ": "SUB Bending", "SUB เชื่อ�
 
 // เก็บตก (ไล่ตรวจหน้าจอโหมด EN 2026-10-26)
 const FIX_DICT = {
+  "ปล่อยครบทุกใบแล้ว": "Every release is fully released", "ซ่อนที่ปล่อยครบแล้ว": "Hide fully released",
   "หมวดย่อยวัสดุ": "Material subcategory", "วัตถุดิบงานตัด": "Cutting raw material", "อื่นๆ": "Other",
   "จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)": "How many mock-up panels of this type (released alike from one PDF set · one QR per panel)",
   // ★ 2026-11-03 รุ่น (revision) ของเบอร์
@@ -1572,6 +1573,7 @@ const FIX_DICT = {
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
 };
 const FIX_TPLS = [
+  ["แสดงที่ปล่อยครบแล้ว {1} ใบ", "Show {1} fully released"], ["Release ที่ยังปล่อยไม่ครบ ({1})", "Releases not fully released ({1})"],
   ["จำนวน Mockup แถว {1}", "Mock-up quantity row {1}"],
   ["รุ่นเก่ากว่าในคลัง {1} ไฟล์ ไม่เอาทับ ({2})", "{1} file(s) older than the library revision, not applied ({2})"],
   ["{1} → ใช้ {2}", "{1} → using {2}"], ["{1} → มี {2} แล้ว", "{1} → {2} already exists"],

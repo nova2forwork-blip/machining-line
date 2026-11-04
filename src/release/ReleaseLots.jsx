@@ -781,14 +781,18 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
     const left = need.parts.filter((x) => (rel.byCode.get(NC(x.code))?.qty || 0) < x.qty).length + need.subs.filter((x) => (rel.byCode.get(NC(x.code))?.qty || 0) < x.qty).length + (live.length - addr);
     return { p, need, rel, addr, left };
   }).sort((a, b) => ncmp(b.p.ro, a.p.ro)), [plans, releases]);
+  // ★ 2026-11-04 ผู้ใช้: "ปล่อยครบแล้วไม่ใช่หรอ" — การ์ดนี้แสดงเฉพาะที่ยังเหลือ · ที่ปล่อยครบพับไว้ (กดดูได้ · เปิดจากรายการ Release ปกติได้เหมือนเดิม)
+  const [showDone, setShowDone] = useState(false);
+  const pending = rows.filter((r) => r.left > 0), done = rows.filter((r) => r.left <= 0);
+  const shown = showDone ? rows : pending;
   if (!rows.length) return null;
   return (
     <div className="card rl-planscard">
-      <div className="card-head"><div><div className="card-title">Release ที่ยังปล่อยไม่ครบ</div><div className="card-sub">บันทึกแล้ว · เลือกปล่อยเป็นล็อต P-xxx.1 / .2 … ได้ทีละส่วน</div></div></div>
+      <div className="card-head"><div><div className="card-title">Release ที่ยังปล่อยไม่ครบ{pending.length ? ` (${nf(pending.length)})` : ""}</div><div className="card-sub">บันทึกแล้ว · เลือกปล่อยเป็นล็อต P-xxx.1 / .2 … ได้ทีละส่วน</div></div></div>
       <div className="table-wrap">
         <table className="data-table">
           <thead><tr><th>Release</th><th>โปรเจค</th><th>วันที่</th><th style={{ textAlign: "right" }}>แผงปล่อยแล้ว</th><th style={{ textAlign: "right" }}>ล็อต</th><th>สถานะ</th><th /></tr></thead>
-          <tbody>{rows.map(({ p, rel, addr, left }) => (
+          <tbody>{!shown.length ? <tr><td colSpan={7} className="rw-muted" style={{ padding: 14 }}>ปล่อยครบทุกใบแล้ว</td></tr> : null}{shown.map(({ p, rel, addr, left }) => (
             <tr key={p.id || p.ro} className="release-row" onClick={() => onOpen(p)}>
               <td><b>{p.ro}</b>{p.note ? <span className="rw-muted"> · {p.note}</span> : null}{p.mods?.length ? <> <Pill tone="mod">{p.mods[p.mods.length - 1].ver}</Pill></> : null}</td>
               <td>{p.projectCode}</td><td>{fmtD(p.date)}</td>
@@ -799,6 +803,7 @@ export function ReleasePlansCard({ plans, releases, onOpen }) {
             </tr>))}</tbody>
         </table>
       </div>
+      {done.length ? <div style={{ padding: "8px 2px 0" }}><button type="button" className="rw-link" onClick={() => setShowDone((v) => !v)}>{showDone ? "ซ่อนที่ปล่อยครบแล้ว" : `แสดงที่ปล่อยครบแล้ว ${nf(done.length)} ใบ`}</button></div> : null}
     </div>
   );
 }
