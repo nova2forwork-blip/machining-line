@@ -72,6 +72,14 @@ export function guessKind(row) {
 
 // ══ อ่าน PDF แบบ shop drawing (text PDF — ไม่ใช่สแกน) ด้วยตำแหน่งคำ ══
 //   แผง: ตาราง "UAxxxx BILL OF MATERIALS" · ซับ: หัวกระดาษ + BOM · พาร์ท: หัวกระดาษ PART NO./LENGTH/INV.CODE/DEVELOP
+// นิ้วแบบเศษส่วน → มม. (ปัด 0.1) · ไม่ใช่รูปแบบนิ้ว = null (ตัวเลขธรรมดาถือเป็นมม. ตามเดิม)
+export function inchToMm(v) {
+  const t = String(v ?? "").trim().replace(/[″”]/g, '"'); if (!t) return null;
+  const m = /^(?:(\d+(?:\.\d+)?)(?:\s+|\s*-\s*))?(\d+)\s*\/\s*(\d+)\s*"?$/.exec(t) || (/^(\d+(?:\.\d+)?)\s*"$/.exec(t) ? [null, t.replace(/"/, ""), "0", "1"] : null);
+  if (!m) return null;
+  const whole = m[1] ? parseFloat(m[1]) : 0, num = +m[2], den = +m[3]; if (!den) return null;
+  return Math.round((whole + num / den) * 25.4 * 10) / 10;
+}
 export async function readShopPdf(pdfjsLib, data, fileName) {
   const doc = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
   const page = await doc.getPage(1);
@@ -93,17 +101,36 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
   try { doc.destroy(); } catch { /* ignore */ }
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isNaN(n) ? null : n; };
   const out = { file: fileName, title: {}, bom: [], warn_read: [] };
-  const inv = words.find((w) => w.text === "INV.CODE");
+  // ★ 2026-11-05 หัวกระดาษอีกแบบ (งาน US): "INV. CODE" มีเว้นวรรค → รวมเป็นคำเดียว · "PART NO." / "M.D." แยกคำก็รวมเหมือนกัน
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]; if (!/^INV\.?$/i.test(w.text)) continue;
+    const j = words.findIndex((x) => x !== w && /^CODE:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 >= w.x1 - 1 && x.x0 - w.x1 < 12);
+    if (j >= 0) { words[i] = { ...w, text: "INV.CODE", x1: words[j].x1 }; words.splice(j, 1); if (j < i) i--; }
+  }
+  const inv = words.find((w) => /^INV\.?CODE$/i.test(w.text));
   if (inv) {
     const labs = words.filter((w) => Math.abs(w.top - inv.top) < 2 && w.x0 <= inv.x1 + 1).sort((a, b) => a.x0 - b.x0);
     const cols = [];
     for (const w of labs) { if (w.text === "NO." && cols.length && cols[cols.length - 1][0] === "PART") cols[cols.length - 1] = ["PART NO.", cols[cols.length - 1][1], w.x1]; else cols.push([w.text, w.x0, w.x1]); }
     const vals = words.filter((w) => w.top - inv.top > 8 && w.top - inv.top < 26 && w.x0 <= inv.x1 + 40);
-    for (const [lab, a, b] of cols) {
-      const mid = (a + b) / 2;
-      const nearW = vals.filter((v) => Math.abs((v.x0 + v.x1) / 2 - mid) < 30).sort((p, q) => p.x0 - q.x0);
-      out.title[lab] = nearW.map((v) => v.text).join(" ") || null;
+    // ค่าแต่ละคำ → คอลัมน์ที่ใกล้ที่สุด (เดิม: ทุกคอลัมน์ในระยะ 30 → คอลัมน์แคบที่ติดกันแย่งคำกัน เช่น "2" ของ 2 15/16 ไปโผล่ที่ REV.)
+    const mids = cols.map(([, a, b]) => (a + b) / 2);
+    const pick = cols.map(() => []);
+    for (const v of vals) {
+      const cx = (v.x0 + v.x1) / 2; let bi = -1, bd = 1e9;
+      mids.forEach((m, i) => { const [, a, b] = cols[i]; const d = cx >= a - 3 && cx <= b + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi = i; } });
+      if (bi >= 0 && bd < 30) pick[bi].push(v);
     }
+    // คำที่ต่อกันเป็นค่าเดียว (ช่องว่าง < 6) แต่ถูกแบ่งไปคนละคอลัมน์ → ย้ายไปอยู่คอลัมน์ของคำที่อยู่กลางกว่า
+    for (let i = 0; i + 1 < cols.length; i++) {
+      const L = pick[i], R = pick[i + 1]; if (!L.length || !R.length) continue;
+      const lastL = L.reduce((a, b) => (a.x1 > b.x1 ? a : b)), firstR = R.reduce((a, b) => (a.x0 < b.x0 ? a : b));
+      if (firstR.x0 - lastL.x1 < 6 && L.length === 1 && /^\d+$/.test(lastL.text) && /^\d+\/\d+"?$/.test(firstR.text)) { R.push(lastL); pick[i] = []; }
+    }
+    cols.forEach(([lab], i) => { out.title[lab] = pick[i].sort((p, q) => p.x0 - q.x0).map((v) => v.text).join(" ") || null; });
+    if (out.title["INV. CODE"] != null && out.title["INV.CODE"] == null) out.title["INV.CODE"] = out.title["INV. CODE"];
+    // ความยาว/สูงเป็นนิ้วแบบเศษส่วน (2 15/16 · 3/4" · 2-15/16") → แปลงเป็นมม. (เก็บค่าเดิมไว้ใน *_IN)
+    for (const k of ["LENGTH", "HEIGHT"]) { const mm = inchToMm(out.title[k]); if (mm != null) { out.title[k + "_IN"] = out.title[k]; out.title[k] = String(mm); } }
     const dv = words.find((w) => w.text === "DEVELOP");
     if (dv) out.title.DEVELOP = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
   }
@@ -292,6 +319,8 @@ export function checkPdf(d, { lib, ack }) {
     }
     const md = fnum(t["M.D."]); rows.push({ field: "M.D.", pv: md, sv: null, ok: null, note: "ความยาวตัดเผื่อ" });
     rows.push({ field: "MATERIAL", pv: t.MATERIAL || "", sv: null, ok: null });
+    if (t.NOTE && t.NOTE !== "-") rows.push({ field: "NOTE", pv: t.NOTE, sv: null, ok: null });
+    for (const k of ["LENGTH", "HEIGHT"]) if (t[k + "_IN"]) add("info", `${k} ในแบบเป็นนิ้ว ${t[k + "_IN"]}" → ใช้ ${t[k]} มม.${k === "LENGTH" && t.A && /^[\d.]+$/.test(t.A) ? ` (ช่อง A ในแบบ = ${t.A})` : ""}`, "inch:" + k);
     if (md != null && Ln != null && md < Ln) add("bad", `ในแบบเอง: M.D. ${md} สั้นกว่า LENGTH ${Ln}`, "md");
     if (t.STOCK && !/^(N\/A|-)$/.test(t.STOCK) && inv && inv !== "-" && !inv.startsWith(t.STOCK)) add("warn", `ในแบบเอง: STOCK NO. ${t.STOCK} ไม่ตรงกับ INV.CODE ${inv}`, "stock");
     if (!lp) add("info", `${d.code} ใหม่ — ยังไม่มีใน BOM เดิม ใช้ค่าจาก PDF`, "new");
