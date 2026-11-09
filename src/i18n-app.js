@@ -2651,9 +2651,21 @@ const DICT3 = {
  "ก.ค.": "Jul",
  "ส.ค.": "Aug",
  "ก.ย.": "Sep",
- "ธ.ค.": "Dec"
+ "ธ.ค.": "Dec",
+ "ลบใบหลัก": "Delete main release",
+ "เก็บไว้": "Keep it",
+ "ลบใบนี้": "Delete this release",
+ "ลบใบหลัก Release": "Delete main release"
 };
 const TPLS3 = [
+["ลบใบหลัก {1} ด้วยไหม?", "Delete main release {1} too?"],
+["ใบหลัก {1} ไม่มีล็อตเหลือแล้ว\n\n• ลบใบหลัก = ใช้เลข {2} ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)\n• เก็บไว้ = ปล่อยล็อตใหม่จากใบเดิมได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ทั้งสองแบบ", "Main release {1} has no lots left\n\n• Delete = number {2} can be used again (e.g. wrong codes entered)\n• Keep = new lots can still be released from it\n\nCodes / BOM in the project library stay either way"],
+["ลบใบหลัก {1} แล้ว — ใช้เลขนี้ลงใหม่ได้", "Main release {1} deleted — the number can be reused"],
+["ลบใบ {1}?", "Delete release {1}?"],
+["ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข {1} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่", "No lots released yet — after deleting, number {1} can be used again\n\nCodes / BOM in the project library stay"],
+["ลบใบ {1} แล้ว — ใช้เลขนี้ลงใหม่ได้", "Release {1} deleted — the number can be reused"],
+["ลบใบหลักไม่สำเร็จ: {1}", "Deleting main release failed: {1}"],
+["{1} ยังมีล็อตที่ปล่อยแล้ว — ลบล็อตทั้งหมดก่อน แล้วจึงลบใบหลัก", "{1} still has released lots — delete all lots first, then the main release"],
 [
 "ไป{1}",
 "Go to {1}"

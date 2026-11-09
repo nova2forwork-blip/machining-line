@@ -204,6 +204,17 @@ async function planRpc(projectId, ro, plan, id = null) {
   if (data && data.ok === false) { const e = new Error(data.reason === "duplicate" ? `Release ${ro} มีอยู่แล้ว` : `บันทึกแผนไม่สำเร็จ (${data.reason})`); e.code = data.reason === "duplicate" ? "exists" : data.reason; throw e; }
   return data || {};
 }
+// ★ 2026-11-09 ลบใบหลัก (status = cancelled) — ได้เฉพาะใบที่ไม่มีล็อตเหลือ · ลบแล้วใช้เลขเดิมลงใหม่ได้
+//   (ต้องรัน migration-release-plans.sql รอบใหม่ — ฝั่ง DB เช็คล็อต + ปลดเลขซ้ำ)
+export async function deletePlan(plan) {
+  const { data, error } = await supabase.rpc("release_plan_set_status", { p_token: tok(), p_id: plan.id, p_status: "cancelled" });
+  if (error) { if (missingFn(error)) throw notInstalled(); throw error; }
+  if (data && data.ok === false) {
+    const e = new Error(data.reason === "has_lots" ? `${plan.ro} ยังมีล็อตที่ปล่อยแล้ว — ลบล็อตทั้งหมดก่อน แล้วจึงลบใบหลัก` : `ลบใบ ${plan.ro} ไม่สำเร็จ (${data.reason})`);
+    e.code = data.reason; throw e;
+  }
+  return true;
+}
 // แก้แผน (เช่น office เปลี่ยนงานของซับ / ใบงานพาร์ทตอนปล่อยล็อต)
 export async function updatePlan(plan) { const { id, ...body } = plan; return planRpc(plan.projectId, plan.ro, body, id); }
 
@@ -380,4 +391,4 @@ export async function monthReleases(ym) {
   }
   return all;
 }
-export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, listPlans, releaseLot, lotLimits, modifyRelease };
+export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, releaseLot, lotLimits, modifyRelease };

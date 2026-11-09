@@ -6617,7 +6617,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const next = releases.filter((x) => x.id !== r.id);
       setReleases(next);
       onChanged && onChanged();               // ให้หน้ารายการหลักรีโหลดด้วย
-      if (next.length === 0) { onBack(); return; } // ลบหมดทั้งกลุ่ม → กลับหน้ารายการ
+      if (next.length === 0) { await offerDeleteEmptyPlan(r.part_master?.project_id, r.release_order); onBack(); return; } // ลบหมดทั้งกลุ่ม → (ถามลบใบหลัก) → กลับหน้ารายการ
       loadStats(next);
     } catch (e) {
       mlsToast("ลบไม่สำเร็จ: " + e.message, "error");
@@ -7207,6 +7207,27 @@ function releaseCreateItems(pick, disabled = false) {
 //   ต้องรัน migration-release-plans.sql · ยังไม่รัน = ไม่มีการ์ดนี้ (ปล่อยงานใหม่จะถามแล้วปล่อยทั้งใบแบบเดิม)
 // เลข P หลักของล็อต (P-241.2 → 241) — เหมือน releaseCore.inPlan แต่ไม่ต้องโหลดโมดูล Release
 const roNumOf = (ro) => { const m = /^P\s*-?\s*0*(\d+)/i.exec(String(ro || "").trim()); return m ? Number(m[1]) : null; };
+// ★ 2026-11-09 ลบล็อตจนหมดแล้ว ใบหลัก (แผน Release) ยังค้าง → เลขเดิมลงใหม่ไม่ได้ ("P-002 มีอยู่แล้วในโปรเจคนี้")
+//   หลังลบล็อต: ถ้าเลขนี้ไม่มีล็อตเหลือในโปรเจค แต่ยังมีใบหลัก → ถามว่าจะลบใบหลักด้วยไหม
+async function offerDeleteEmptyPlan(projectId, order) {
+  const n = roNumOf(order); if (!projectId || n == null) return false;
+  try {
+    const { plans } = await realReleaseApi.listPlans(projectId);
+    const plan = (plans || []).find((p) => roNumOf(p.ro) === n); if (!plan) return false;
+    const all = await getReleasesFull();
+    if (all.some((r) => r.part_master?.project_id === projectId && roNumOf(r.release_order) === n)) return false;
+    const ok = await askConfirm({
+      title: `ลบใบหลัก ${plan.ro} ด้วยไหม?`,
+      message: `ใบหลัก ${plan.ro} ไม่มีล็อตเหลือแล้ว\n\n• ลบใบหลัก = ใช้เลข ${plan.ro} ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)\n• เก็บไว้ = ปล่อยล็อตใหม่จากใบเดิมได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ทั้งสองแบบ`,
+      tone: "danger", confirmText: "ลบใบหลัก", cancelText: "เก็บไว้",
+    });
+    if (!ok) return false;
+    await realReleaseApi.deletePlan(plan);
+    auditRecord("delete_release_plan", "release_plan", plan.id, { release_order: plan.ro, project: plan.projectCode });
+    mlsToast(`ลบใบหลัก ${plan.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+    return true;
+  } catch (e) { mlsToast("ลบใบหลักไม่สำเร็จ: " + (e?.message || e), "error"); return false; }
+}
 // ★ 2026-11-04 ตาราง Release แบบ "ใบหลัก ▸ ล็อต" (หน้าโปรเจค + หน้า Release Production)
 //   groups = ล็อต (groupReleases) · plans = ใบหลัก · จับคู่ด้วยเลข P + โปรเจค · ล็อตไม่มีใบหลัก = แถวปกติ
 function buildReleaseTree(groups, plans, { includeEmpty = false, sort, acc, open }) {
@@ -7297,6 +7318,21 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           if (g) onOpenGroup(g); else mlsToast("ไม่พบรายการของล็อตนี้", "error");
         } : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange}
+        onDelete={async () => {
+          // ★ 2026-11-09 ลบใบหลักที่ยังไม่มีล็อต (ปุ่มโชว์เฉพาะตอนไม่มีล็อต · DB เช็คซ้ำ) → เลขนี้ใช้ลงใหม่ได้
+          const p = view.plan;
+          const ok = await askConfirm({ title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
+          if (!ok) return;
+          try {
+            await realReleaseApi.deletePlan(p);
+            auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode });
+            hist.reset();
+            setPlans((ps) => ps.filter((x) => x.id !== p.id));
+            setView(null);
+            mlsToast(`ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+            await onReload();
+          } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); }
+        }}
         onModified={async (np, mod) => {
           hist.reset();
           setView((v) => (v ? { ...v, plan: np } : v));
@@ -12416,7 +12452,10 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
         ? `บัญชีนี้ยังไม่มีสิทธิ์ลบ Release ฝั่งเซิร์ฟเวอร์ (RPC จำกัดเฉพาะแอดมิน) — แจ้งผู้ดูแลให้เปิดสิทธิ์ให้ออฟฟิศ`
         : `ลบไม่ครบ — สำเร็จ ${done} · ไม่สำเร็จ ${failed} · ลองอีกครั้งได้`);
       mlsToast(forbidden ? "ออฟฟิศยังไม่มีสิทธิ์ลบ Release (ต้องปรับ RPC)" : `ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn");
-    } else mlsToast(`ลบ Release Order "${g.order}" แล้ว (${nc(done)} รายการ)`, "success");
+    } else {
+      mlsToast(`ลบ Release Order "${g.order}" แล้ว (${nc(done)} รายการ)`, "success");
+      await offerDeleteEmptyPlan(project.id, g.order);
+    }
   }
 
   async function save() {
@@ -12864,6 +12903,7 @@ const AUDIT_ACTIONS = {
   material_backfill:   { label: "ดึง INV จาก Release", tone: "muted" },
   delete_project:      { label: "ลบโปรเจค", tone: "danger" },
   delete_release:      { label: "ลบ Release", tone: "danger" },
+  delete_release_plan: { label: "ลบใบหลัก Release", tone: "danger" },
   delete_employee:     { label: "ลบพนักงาน", tone: "danger" },
   delete_machine:      { label: "ลบเครื่องจักร", tone: "danger" },
   clear_scans:         { label: "ล้างข้อมูลสแกน", tone: "danger" },

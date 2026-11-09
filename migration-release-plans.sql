@@ -19,9 +19,12 @@ create table if not exists public.release_plans (
   updated_by    uuid references public.employees(id) on delete set null,
   updated_at    timestamptz not null default now()
 );
--- 1 โปรเจค 1 เลข Release (ไม่สนตัวพิมพ์/ช่องว่าง)
-create unique index if not exists release_plans_project_ro_uniq
-  on public.release_plans (project_id, upper(btrim(release_order)));
+-- 1 โปรเจค 1 เลข Release (ไม่สนตัวพิมพ์/ช่องว่าง) — นับเฉพาะใบที่ยังไม่ลบ
+--   ★ 2026-11-09 ลบใบหลัก (status = cancelled) แล้วต้องใช้เลขเดิมลงใหม่ได้ → เปลี่ยนเป็น partial index
+drop index if exists public.release_plans_project_ro_uniq;
+create unique index if not exists release_plans_project_ro_live_uniq
+  on public.release_plans (project_id, upper(btrim(release_order)))
+  where status <> 'cancelled';
 
 alter table public.release_plans enable row level security;
 revoke all on public.release_plans from anon;
@@ -44,7 +47,8 @@ begin
   end if;
   if p_id is null then
     if exists (select 1 from public.release_plans
-               where project_id = p_project_id and upper(btrim(release_order)) = upper(v_ro)) then
+               where project_id = p_project_id and upper(btrim(release_order)) = upper(v_ro)
+                 and status <> 'cancelled') then
       return jsonb_build_object('ok', false, 'reason', 'duplicate');
     end if;
     insert into public.release_plans (project_id, release_order, plan, created_by, updated_by)
@@ -80,17 +84,35 @@ begin
   ), '[]'::jsonb);
 end $$;
 
--- ปิด / ยกเลิกแผน (ไม่ลบล็อตที่ปล่อยไปแล้ว)
+-- ปิด / ยกเลิก (= ลบ) แผน
+--   ★ 2026-11-09 ลบ (cancelled) ได้เฉพาะใบที่ "ไม่มีล็อตเหลือ" ในตาราง releases (P-002 / P-002.1 / … ของโปรเจคเดียวกัน)
+--   ใบที่ลบแล้วไม่โชว์ในรายการ และเลขนี้ใช้ลงใหม่ได้
 create or replace function public.release_plan_set_status(p_token uuid, p_id uuid, p_status text)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare v_emp uuid;
+declare
+  v_emp uuid;
+  v_prj uuid;
+  v_num text;
 begin
   perform public._require(p_token, 'office');
   if p_status not in ('active', 'closed', 'cancelled') then
     return jsonb_build_object('ok', false, 'reason', 'bad_status');
   end if;
   select s.employee_id into v_emp from public.sessions s where s.token = p_token limit 1;
+  if p_status = 'cancelled' then
+    select p.project_id, substring(upper(btrim(p.release_order)) from '^P\s*-?\s*0*([0-9]+)')
+      into v_prj, v_num
+      from public.release_plans p where p.id = p_id;
+    if v_prj is null then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+    if v_num is not null and exists (
+         select 1 from public.releases r
+           join public.part_master pm on pm.id = r.part_master_id
+          where pm.project_id = v_prj
+            and substring(upper(btrim(coalesce(r.release_order, ''))) from '^P\s*-?\s*0*([0-9]+)') = v_num) then
+      return jsonb_build_object('ok', false, 'reason', 'has_lots');
+    end if;
+  end if;
   update public.release_plans set status = p_status, updated_by = v_emp, updated_at = now() where id = p_id;
   if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
   return jsonb_build_object('ok', true);
