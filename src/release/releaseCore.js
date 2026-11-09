@@ -1025,15 +1025,17 @@ export function needOf(plan) {
   const cAddr = plan.cancelAddr || {};
   const units = (plan.units || []).filter((u) => !cAddr[addrKey(u.addr)]);
   const p = planRelease(units, plan.bom, catOf, plan.picks);
+  // ป้าย "เพิ่ม …": จาก Modify = เลข M · จาก "เพิ่มรายการ" (ไม่นับ Modify) = ชื่อแบบที่มา หรือ "ใหม่"
+  const addTag = (x) => x.mod || (x.src ? `จากแบบ ${x.src}` : "ใหม่");
   for (const x of plan.extra || []) {
-    if (x.kind === "sub") { if (!p.subs.some((s) => NC(s.code) === NC(x.code))) p.subs.push({ code: x.code, qty: x.qty, depth: 1, d: x.d || "", l: x.l ?? null, hasBom: false, added: x.mod }); }
+    if (x.kind === "sub") { if (!p.subs.some((s) => NC(s.code) === NC(x.code))) p.subs.push({ code: x.code, qty: x.qty, depth: 1, d: x.d || "", l: x.l ?? null, hasBom: false, added: addTag(x) }); }
     else if (x.kind === "hw") {
       // ★ 2026-11-09 อุปกรณ์เพิ่ม (สกรู/ยาง · ไม่มี QR · ใบเบิก) — เบอร์เดิมมีอยู่แล้ว (จาก BOM แผง) → บวกจำนวนเพิ่ม
       const ex = p.hw.find((h) => NC(h.code) === NC(x.code));
-      if (ex) { ex.qty += Number(x.qty) || 0; ex.added = ex.added || x.mod; ex.extraQty = (ex.extraQty || 0) + (Number(x.qty) || 0); }
-      else p.hw.push({ code: x.code, qty: Number(x.qty) || 0, cat: "FASTENER & GASKET", base: "FASTENER & GASKET", k: "hw", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", ml: null, u: x.u || "pcs.", mm: false, rev: "", added: x.mod });
+      if (ex) { ex.qty += Number(x.qty) || 0; ex.added = ex.added || addTag(x); ex.extraQty = (ex.extraQty || 0) + (Number(x.qty) || 0); }
+      else p.hw.push({ code: x.code, qty: Number(x.qty) || 0, cat: "FASTENER & GASKET", base: "FASTENER & GASKET", k: "hw", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", ml: null, u: x.u || "pcs.", mm: false, rev: "", added: addTag(x) });
     }
-    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: x.mod });
+    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: addTag(x) });
   }
   const adj = plan.adj || {}, cancel = plan.cancel || {};
   // ยอดเดิมก่อน Modify (ก่อนยกเลิกที่อยู่ด้วย) — ใช้โชว์ขีดฆ่า

@@ -38,7 +38,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
-  const [modify, setModify] = useState(false);
+  const [modify, setModify] = useState(false);   // true = Modify (มีเลข M) · "add" = เพิ่มรายการใหม่เฉย ๆ (ไม่นับ Modify)
   // ★ 2026-10-26 ล็อตที่เปิด: เข้ามาครั้งแรก = ล็อตล่าสุดเปิดค้างไว้ · จำที่ผู้ใช้เปิด/ปิดไว้ต่อ Release (localStorage) · ปล่อยล็อตใหม่ = เปิดล็อตใหม่ให้
   const openKey = `mls-lot-open:${plan.id || plan.ro}`;
   const newestNo = rel.lots.length ? rel.lots[rel.lots.length - 1].no : null;
@@ -133,6 +133,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           {onDelete ? (rel.lots.length
             ? <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete(rel.lots)} title="ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ แสดงเป็น Release แบบไม่มีใบหลัก (เช่น สร้างใบหลักซ้ำ)">ลบใบหลัก</button>
             : <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete([])} title="ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบทิ้งแล้วใช้เลขนี้ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)">ลบใบนี้</button>) : null}
+          <button type="button" className="btn btn-ghost" onClick={() => setModify("add")} title="เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ (เช่น จากแบบ mock-up) — ไม่นับเป็น Modify ไม่มีเลข M · ของเดิมไม่เปลี่ยน"><Icon name="plus" size={14} /> เพิ่มรายการ</button>
           <button type="button" className="btn btn-ghost rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ — จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง">✎ Modify</button>
           <button type="button" className="btn btn-accent" onClick={() => { setPreset(null); setBuilder(true); }}><Icon name="plus" size={15} /> ปล่อยล็อตใหม่</button>
         </div>
@@ -267,8 +268,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       ) : null}
 
       {modify ? (
-        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => setModify(false)}
-          onSaved={async (np, mod) => { setModify(false); if (onModified) await onModified(np, mod); }} />
+        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => setModify(false)} addOnly={modify === "add"}
+          onSaved={async (np, mod) => { setModify(false); if (onModified) await onModified(np, mod); }}
+          onAdded={(np, n) => { setModify(false); if (onPlanChange) onPlanChange(np); }} />
       ) : null}
 
       {builder ? (
@@ -547,8 +549,9 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 // ══ Modify Release (แผงด้านขวา) ══
 //   แก้ยอดต้องใช้ / ยกเลิกเบอร์ / ยกเลิกที่อยู่ (แผงที่ยังไม่ปล่อย) / เพิ่มเบอร์ใหม่ — 1 ครั้ง = 1 เลข M (M-001 …)
 //   ของที่ปล่อยไปแล้วเกินยอดใหม่ → ลด/ยกเลิกในล็อตให้เอง (ล็อตล่าสุดก่อน) ผ่าน Modify เดิมของระบบ · จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง
-function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
-  const [tab, setTab] = useState("part");
+function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null }) {
+  // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
+  const [tab, setTab] = useState(addOnly ? "add" : "part");
   const [q, setQ] = useState("");
   const [onlyChg, setOnlyChg] = useState(false);
   const [chg, setChg] = useUndoState({}, { label: "Modify: จำนวน / ยกเลิก" });
@@ -610,7 +613,10 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const needAdmin = ops.lotOps.size > 0 && user && user.role && user.role !== "admin";
   const nChange = realChanges.length + addrs.size + adds.length + edits.length;
   const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
-  const blockers = [
+  const blockers = addOnly ? [
+    !adds.length && "ยังไม่ได้เพิ่มอะไร",
+    adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
+  ].filter(Boolean) : [
     !nChange && "ยังไม่ได้แก้อะไร",
     !reason.trim() && "ใส่เหตุผล (เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B)",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
@@ -631,6 +637,19 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
 
   async function save() {
     if (blockers.length || busy) return;
+    if (addOnly) {
+      const at = new Date().toISOString(); const by = user?.name || "";
+      const extra = adds.map((a) => ({ kind: a.kind, code: a.code.trim().toUpperCase(), qty: Number(a.qty), d: a.d || "", l: a.l === "" || a.l == null ? null : Number(a.l), inv: a.inv || "", dest: a.kind === "hw" ? undefined : a.dest, at, by, ...(a.cat ? { cat: a.cat } : {}), ...(a.kind === "hw" ? { u: a.u || "pcs." } : {}), ...(a.src ? { src: a.src } : {}) }));
+      const np = { ...plan, extra: [...(plan.extra || []), ...extra] };
+      for (const a of adds) if (a.kind === "sub" && a.procs) np.procOv = { ...(np.procOv || {}), [a.code.trim().toUpperCase()]: a.procs };
+      const nQr = extra.filter((x) => x.kind !== "hw").length, nHw = extra.length - nQr;
+      const ok = await askConfirm({ title: `เพิ่ม ${extra.length} รายการใน Release ${plan.ro}?`, message: [nQr && `• พาร์ท/ซับ ${nQr} เบอร์ (มี QR · ปล่อยในล็อตถัดไป)`, nHw && `• อุปกรณ์ ${nHw} รายการ (ไม่มี QR · เบิกที่แท็บ ACCESSORIES ตอนปล่อยล็อต)`, "\nไม่นับเป็น Modify — ไม่มีเลข M · ของเดิมไม่เปลี่ยน"].filter(Boolean).join("\n"), confirmText: "เพิ่มรายการ", cancelText: "กลับไปแก้" });
+      if (!ok) return;
+      setBusy("บันทึก…"); setErr("");
+      try { await api.updatePlan(np); setBusy(""); onAdded && onAdded(np, extra.length); }
+      catch (e) { setBusy(""); setErr(e?.message || String(e)); }
+      return;
+    }
     const mod = {
       no, ver, date, by: user?.name || "", at: new Date().toISOString(), reason: reason.trim(),
       bomEdits: edits,
@@ -733,7 +752,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
     </div>);
   const pdfMsgEl = pdfMsg ? (
     <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
-      {pdfMsg.bad || pdfMsg.info || <>{pdfMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)}<div className="rw-muted small">ตรวจแล้วแก้ต่อได้ · ยังไม่บันทึกจนกว่าจะกด "บันทึก {ver}"</div></>}
+      {pdfMsg.bad || pdfMsg.info || <>{pdfMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)}<div className="rw-muted small">ตรวจแล้วแก้ต่อได้ · ยังไม่บันทึกจนกว่าจะกด "{addOnly ? "เพิ่มรายการ" : `บันทึก ${ver}`}"</div></>}
       {pdfMsg.ok || pdfMsg.bad ? <button type="button" className="rw-link" style={{ marginLeft: 8 }} onClick={() => setPdfMsg(null)}>ปิด</button> : null}
     </div>) : null;
   // ★ 2026-11-04 ผู้ใช้: "Sub ให้มีที่เดียวพอ" — แก้ลูกของซับอยู่ในแท็บ "ซับ" (ปุ่ม แก้ลูก) · แท็บ BOM เหลือแผงอย่างเดียว
@@ -802,20 +821,21 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
       <aside className="rl-drawer rm" role="dialog" aria-modal="true" aria-label={`Modify Release ${plan.ro}`}>
         <div className="rl-dr-head">
           <div className="rl-dr-title">
-            <h2>Modify Release {plan.ro}</h2>
-            <input className="input rw-mono rl-lotno" value={verRaw} placeholder={modVer(autoNo)} onChange={(e) => setVerRaw(e.target.value.replace(/[^0-9]/g, ""))} aria-label="เลข M (ว่าง = อัตโนมัติ)" title="เลข M — ว่าง = เลขถัดไปอัตโนมัติ" />
-            <input className="input rl-date" type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ของ M ตามเอกสาร" />
-            <input className="input rl-note" value={reason} placeholder="เหตุผล * เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />
+            <h2>{addOnly ? `เพิ่มรายการ · Release ${plan.ro}` : `Modify Release ${plan.ro}`}</h2>
+            {addOnly ? null : <input className="input rw-mono rl-lotno" value={verRaw} placeholder={modVer(autoNo)} onChange={(e) => setVerRaw(e.target.value.replace(/[^0-9]/g, ""))} aria-label="เลข M (ว่าง = อัตโนมัติ)" title="เลข M — ว่าง = เลขถัดไปอัตโนมัติ" />}
+            {addOnly ? null : <input className="input rl-date" type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ของ M ตามเอกสาร" />}
+            {addOnly ? null : <input className="input rl-note" value={reason} placeholder="เหตุผล * เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />}
           </div>
           <button type="button" className="rl-x" onClick={onClose} aria-label="ปิด" disabled={!!busy}>×</button>
         </div>
-        <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>
-        <div className="rl-tabs" role="tablist">
+        {addOnly ? <p className="rl-dr-sub">เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบนี้ — วาง PDF แบบ (เช่น แบบ mock-up ที่มี BILL SITE ITEM + FASTENER COMPONENT LIST) หรือพิมพ์เอง · <b>ไม่นับเป็น Modify</b> ไม่มีเลข M · ของเดิมไม่เปลี่ยน · ถ้าต้องแก้จำนวน/ยกเลิกของเดิม ใช้ ✎ Modify</p> : null}
+        {addOnly ? null : <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>}
+        {addOnly ? null : <div className="rl-tabs" role="tablist">
           {[["part", "พาร์ท", need.parts.length], ["sub", "ซับ", need.subs.length], ["bom", "BOM แผง", null], ["add", "เพิ่มเบอร์ใหม่", null], ["addr", "ที่อยู่แผง", plan.units.length]].map(([k, l, n]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={`rl-tab ${tab === k ? "on" : ""}`} onClick={() => { setTab(k); if (k === "bom") { setBscope("panel"); setBowner(""); } else if (k === "sub") { setBscope("sub"); setBowner(""); } }}>
               <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
             </button>))}
-        </div>
+        </div>}
         {tab === "sub" || tab === "bom" || tab === "add" ? <>{pdfDropEl}{pdfMsgEl}</> : null}
         {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
           <div className="rl-tools">
@@ -881,7 +901,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
                   <tbody>{adds.map((a, i) => { const up = (patch) => setAdds((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x))); const noQ = !(Number(a.qty) > 0); return (
                     <tr key={a.code} className={noQ ? "rl-needqty" : ""}>
                       <td>{a.kind === "sub" ? "ซับ" : a.kind === "hw" ? <>อุปกรณ์ <small className="rw-muted">ไม่มี QR</small></> : a.cat === "SITE ITEM" ? <>พาร์ท <small className="rw-muted">SITE ITEM</small></> : "พาร์ท"}</td>
-                      <td className="rw-mono"><b>{a.code}</b> <Pill tone="mod">เพิ่ม {ver}</Pill>{a.fromPdf ? <> <Pill tone="info">PDF</Pill></> : null}{a.note ? <div className="rw-muted small">{a.note}</div> : null}</td>
+                      <td className="rw-mono"><b>{a.code}</b> {addOnly ? <Pill tone="info">เพิ่มใหม่</Pill> : <Pill tone="mod">เพิ่ม {ver}</Pill>}{a.fromPdf ? <> <Pill tone="info">PDF</Pill></> : null}{a.note ? <div className="rw-muted small">{a.note}</div> : null}</td>
                       <td><input className="input rw-cell" value={a.d || ""} onChange={(e) => up({ d: e.target.value })} aria-label={`Description ${a.code}`} /></td>
                       <td className="r"><input className="input rw-cell rl-qty" type="number" min={a.kind === "hw" ? "0.01" : "1"} step={a.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={a.qty} onChange={(e) => up({ qty: e.target.value })} aria-label={`จำนวน ${a.code}`} autoFocus={a.fromPdf && noQ && i === adds.findIndex((x) => !(Number(x.qty) > 0))} /></td>
                       <td className="r">{a.kind !== "hw" ? <input className="input rw-cell rl-qty" type="number" min="0" value={a.l || ""} onChange={(e) => up({ l: e.target.value })} aria-label={`ความยาว ${a.code}`} /> : null}</td>
@@ -900,13 +920,13 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
         {err ? <div className="rw-msg bad">✗ {err}</div> : null}
         <div className="rl-dr-foot">
           <div className="rl-sum">
-            <b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}
+            {addOnly ? <><b>เพิ่มรายการ:</b> พาร์ท/ซับ {adds.filter((a) => a.kind !== "hw").length} เบอร์ · อุปกรณ์ {adds.filter((a) => a.kind === "hw").length} รายการ <small className="rw-muted">· ไม่นับเป็น Modify</small></> : <><b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}</>}
             {lotTouched.length ? <div className="rl-sum-chips">{lotTouched.map((x) => <Pill key={x.lot} tone="bad">{x.lot}: QR −{nf(x.qr)}</Pill>)}</div> : null}
             {blockers.length ? <div className="rw-muted small">{blockers.join(" · ")}</div> : null}
           </div>
           <div className="rl-foot-btns">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={!!busy}>ยกเลิก</button>
-            <button type="button" className="btn btn-accent" onClick={save} disabled={!!blockers.length || !!busy}>{busy || `บันทึก ${ver}`}</button>
+            <button type="button" className="btn btn-accent" onClick={save} disabled={!!blockers.length || !!busy}>{busy || (addOnly ? `เพิ่ม ${adds.length} รายการ` : `บันทึก ${ver}`)}</button>
           </div>
         </div>
       </aside>

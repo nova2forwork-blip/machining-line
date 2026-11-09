@@ -12,7 +12,8 @@ export function ModQty({ orig, cur, ver, cancel, unit = "" }) {
   return <span>{nf(cur)}{unit ? <small className="rw-muted"> {unit}</small> : null}</span>;
 }
 // เบอร์ที่ถูกยกเลิก = เปลี่ยนเป็นสีแดง (ไม่ขีดฆ่า)
-export const Code = ({ code, cancel, added }) => <><b className={cancel ? "rl-cx" : ""} title={cancel ? "ยกเลิกแล้ว" : undefined}>{code}</b>{added ? <> <Pill tone="mod">เพิ่ม {added}</Pill></> : null}</>;
+// added = "M-001" (จาก Modify · ป้ายม่วง) หรือ "จากแบบ …" / "ใหม่" (จาก "เพิ่มรายการ" ไม่นับ Modify · ป้ายฟ้า)
+export const Code = ({ code, cancel, added }) => <><b className={cancel ? "rl-cx" : ""} title={cancel ? "ยกเลิกแล้ว" : undefined}>{code}</b>{added ? <> <Pill tone={/^M-\d/.test(String(added)) ? "mod" : "info"}>เพิ่ม {added}</Pill></> : null}</>;
 
 // ══ แถบหมวดย่อยของพาร์ท: Auto (ตามกติกาเบอร์) / Setting (ตั้งหมวดเอง + ตัวหน้าของเบอร์) ══
 //   ใช้ทั้งหน้า Release (Total Part) และหน้า "ซับ / พาร์ท ของโปรเจค"
