@@ -7236,7 +7236,7 @@ async function planUsingOrder(projectId, ro) {
 async function confirmDeletePlan(p, lots = []) {
   const nQty = lots.reduce((a, L) => a + (Number(L.qty) || 0), 0);
   const ok = await askConfirm(lots.length
-    ? { title: `ลบใบหลัก ${p.ro}?`, message: `ล็อตที่ปล่อยแล้ว ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบหลัก", cancelText: "ยกเลิก" }
+    ? { title: `${p.ro} เป็นใบต้นทางของงานที่ปล่อยแล้ว — ลบจริงไหม?`, message: `ใบนี้คือที่มาของ ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) — ไม่ใช่ใบซ้ำ\n\nลบแล้ว: QR / ประวัติสแกน อยู่ครบ แต่หน้าล็อตจะดู BOM / "ใช้ใน / มาจากแผง" / ใบปล่อย PDF-Excel ไม่ได้ และหายไป: ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nลบเฉพาะเมื่อแน่ใจว่าไม่ต้องใช้ข้อมูลใบนี้แล้ว`, tone: "danger", confirmText: "ลบใบต้นทาง", cancelText: "ไม่ลบ" }
     : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
   if (!ok) return false;
   try {
@@ -12643,7 +12643,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
                 columns={[
                   { key: "date", header: "วันที่", cell: (g) => fmtD(g.date) },
                   { key: "order", header: "Release Order", cell: (g) => g.order },
-                  { key: "parts", header: "Part No.", align: "right", cell: (g) => (g.planOnly ? <span style={{ color: "var(--muted)" }}>ยังไม่มี QR</span> : `${nc(g.parts)} Part`) },
+                  { key: "parts", header: "Part No.", align: "right", cell: (g) => { if (!g.planOnly) return `${nc(g.parts)} Part`; const ls = planLots(g.plan); return ls.length ? <span style={{ color: "var(--muted)" }}>ใบต้นทาง · ปล่อยแล้ว {ls.map((L) => L.no).join(", ")}</span> : <span style={{ color: "var(--muted)" }}>ยังไม่มี QR</span>; } },
                   { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => (g.planOnly ? "-" : `${fmtNum(g.qty)} ชิ้น`) },
                   ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
                     cell: (g) => delKey === g.key

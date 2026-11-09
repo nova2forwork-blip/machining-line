@@ -2663,6 +2663,8 @@ const DICT3 = {
  "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ": "Delete only the main release — released lots (QR) are not deleted",
  "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้": "Delete this release — the number can be reused",
  "ยังไม่มี QR": "No QR yet",
+ "ลบใบต้นทาง": "Delete source release",
+ "ไม่ลบ": "Keep",
  "ลบใบนี้ (ไม่มี QR — งานที่ปล่อยแล้ว / QR ไม่ถูกลบ)": "Delete this release (no QR — released work / QR are not deleted)",
  "ลบ Release Order นี้ทั้งชุด (รวม QR)": "Delete this whole release order (including QR)",
  "ลบเฉพาะข้อมูลใบ (QR อยู่ครบ)": "Delete sheet data only (QR kept)",
@@ -2671,6 +2673,9 @@ const DICT3 = {
 const TPLS3 = [
 ["ลบใบหลัก {1} ด้วยไหม?", "Delete main release {1} too?"],
 ["ลบใบหลัก {1}?", "Delete main release {1}?"],
+["{1} เป็นใบต้นทางของงานที่ปล่อยแล้ว — ลบจริงไหม?", "{1} is the source of released work — really delete?"],
+["ใบนี้คือที่มาของ {1} ({2} ชิ้น) — ไม่ใช่ใบซ้ำ\n\nลบแล้ว: QR / ประวัติสแกน อยู่ครบ แต่หน้าล็อตจะดู BOM / \"ใช้ใน / มาจากแผง\" / ใบปล่อย PDF-Excel ไม่ได้ และหายไป: ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nลบเฉพาะเมื่อแน่ใจว่าไม่ต้องใช้ข้อมูลใบนี้แล้ว", "This release is the source of {1} ({2} pcs) — not a duplicate\n\nAfter deleting: QR / scan history stay, but the lot page loses BOM / \"Used in / from panel\" / release sheet PDF-Excel, and panel addresses / edited sheets / Modify history are gone\n\nDelete only if you no longer need this release's data"],
+["ใบต้นทาง · ปล่อยแล้ว {1}", "Source release · released {1}"],
 ["ใบหลัก (Release แบบใหม่) ในโปรเจคนี้ ({1})", "Main releases (new style) in this project ({1})"],
 ["ลบไม่สำเร็จ: {1}", "Delete failed: {1}"],
 ["ลบ {1}", "Delete {1}"],
