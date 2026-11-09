@@ -2660,6 +2660,8 @@ const DICT3 = {
 const TPLS3 = [
 ["ลบใบหลัก {1} ด้วยไหม?", "Delete main release {1} too?"],
 ["ลบใบหลัก {1}?", "Delete main release {1}?"],
+["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่น หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number, or open the main release and release lots"],
+["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่นในไฟล์ หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number in the file, or open the main release and release lots"],
 ["ล็อตที่ปล่อยแล้ว {1} ({2} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่", "Released lots {1} ({2} pcs) are NOT deleted — QR and scan history stay, shown as a release without a main sheet\n\nLost: the main release data — BOM / panel addresses / edited release sheets / Modify history\n\nCodes / BOM in the project library stay"],
 ["ลบใบหลัก {1} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ", "Main release {1} deleted — released lots kept"],
 ["ใบหลัก {1} ไม่มีล็อตเหลือแล้ว\n\n• ลบใบหลัก = ใช้เลข {2} ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)\n• เก็บไว้ = ปล่อยล็อตใหม่จากใบเดิมได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ทั้งสองแบบ", "Main release {1} has no lots left\n\n• Delete = number {2} can be used again (e.g. wrong codes entered)\n• Keep = new lots can still be released from it\n\nCodes / BOM in the project library stay either way"],

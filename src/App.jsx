@@ -2635,6 +2635,12 @@ function AddReleaseModal({ user, projects, parts, onClose, onSaved, onNeedProjec
         setRoTaken(ro); goFirst([{ go: () => flashFocus(roRef.current) }]);
         setBusy(false); setProgress(""); return;
       }
+      const usedByPlan = await planUsingOrder(projectId, ro);
+      if (usedByPlan) {
+        setErr(`Release Order "${ro}" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ (${usedByPlan.ro}) — ใช้เลขอื่น หรือเปิดใบหลักแล้วปล่อยล็อต`);
+        setRoTaken(ro); goFirst([{ go: () => flashFocus(roRef.current) }]);
+        setBusy(false); setProgress(""); return;
+      }
       const res = await createReleaseBatch({
         projectId, releaseOrder: ro, releaseDate: dateToIso(date),
         releasedBy: user.id, makeQr, rows,
@@ -3004,6 +3010,11 @@ function ImportReleaseModal({ user, projects, parts, onClose, onImported, initia
       // ★ กัน Release ซ้ำตอน retry: ถ้า (โปรเจค+เลข Order) นี้มีแล้ว อย่านำเข้าซ้ำ
       if (await releaseOrderExists(projectId, roN)) {
         setErr(`Release Order "${roN}" มีอยู่แล้วในโปรเจคนี้ — อาจนำเข้าไปแล้ว · ตรวจในรายการ Release ก่อนนำเข้าซ้ำ`);
+        setBusy(false); setProgress(""); return;
+      }
+      const usedByPlanN = await planUsingOrder(projectId, roN);
+      if (usedByPlanN) {
+        setErr(`Release Order "${roN}" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ (${usedByPlanN.ro}) — ใช้เลขอื่นในไฟล์ หรือเปิดใบหลักแล้วปล่อยล็อต`);
         setBusy(false); setProgress(""); return;
       }
       const res = await createReleaseBatch({
@@ -7209,6 +7220,14 @@ function releaseCreateItems(pick, disabled = false) {
 const roNumOf = (ro) => { const m = /^P\s*-?\s*0*(\d+)/i.exec(String(ro || "").trim()); return m ? Number(m[1]) : null; };
 // ★ 2026-11-09 ลบล็อตจนหมดแล้ว ใบหลัก (แผน Release) ยังค้าง → เลขเดิมลงใหม่ไม่ได้ ("P-002 มีอยู่แล้วในโปรเจคนี้")
 //   หลังลบล็อต: ถ้าเลขนี้ไม่มีล็อตเหลือในโปรเจค แต่ยังมีใบหลัก → ถามว่าจะลบใบหลักด้วยไหม
+// ★ 2026-11-09 ช่องทางเดิม (สร้าง Release ตรง / นำเข้า Excel / แก้หัวใบ) เช็คเลขซ้ำแค่ในตาราง releases
+//   ใบหลักที่บันทึกแล้วแต่ยังไม่ปล่อยล็อต (release_plans) ไม่อยู่ในนั้น → ลง P เดียวกันซ้ำได้ (P-241 สองใบ)
+//   คืนใบหลักที่ใช้เลขนี้ (เฉพาะเลขหลัก — "P-241.3" = ล็อต ไม่นับ) · เช็คไม่ได้ = โยน error (หยุด ไม่ปล่อยผ่าน)
+async function planUsingOrder(projectId, ro) {
+  const n = roNumOf(ro); if (!projectId || n == null || /^P\s*-?\s*\d+\.\d+/i.test(String(ro || "").trim())) return null;
+  const r = await realReleaseApi.listPlans(projectId);
+  return (r.plans || []).find((p) => roNumOf(p.ro) === n) || null;
+}
 async function offerDeleteEmptyPlan(projectId, order) {
   const n = roNumOf(order); if (!projectId || n == null) return false;
   try {
@@ -8537,7 +8556,7 @@ function ReleaseHeaderEditModal({ group, releases, projectId, modLocked = false,
       if (roChanged && ro && projectId) {
         let exists = false;
         // ★ 2026-10-10 ตรวจรอบ 3: ตรวจไม่ได้ (เน็ตสะดุด) = หยุด — เดิมถือว่า "ไม่มี" แล้วรวมสองใบเข้ากันโดยไม่ถาม
-        try { exists = await releaseOrderExists(projectId, ro); }
+        try { exists = (await releaseOrderExists(projectId, ro)) || !!(await planUsingOrder(projectId, ro)); }   // ★ 2026-11-09 รวมใบหลักที่ยังไม่ปล่อยล็อตด้วย
         catch (e) { setErr("ตรวจเลข Release Order ซ้ำไม่สำเร็จ (เน็ตสะดุด) — ลองบันทึกอีกครั้ง: " + (e?.message || e)); setBusy(false); return; }
         if (exists) {
           const ok = await askConfirm({
