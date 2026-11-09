@@ -10,7 +10,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -159,18 +159,18 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
               const lotVers = [...new Set([...[...mm.values()].map((x) => x.ver), ...L.rows.map((r) => r.mod_version).filter(Boolean)])].sort();
               return (
                 <div key={L.no} className={`rl-lot ${open === L.no ? "open" : ""}`}>
-                  <button type="button" className="rl-lot-h" onClick={() => (onOpenLot ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))} aria-expanded={onOpenLot ? undefined : open === L.no}>
+                  <button type="button" className="rl-lot-h" onClick={() => (onOpenLot && !L.hwOnly ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))} aria-expanded={onOpenLot && !L.hwOnly ? undefined : open === L.no}>
                     <b className="rw-mono">{L.no}</b>
                     <span className="rw-muted">{fmtD(L.date)}</span>
                     {lotVers.length ? <Pill tone="mod">Modify {lotVers.join(", ")}</Pill> : null}
-                    <span>{[L.panels && `แผง ${nf(L.panels)}`, L.subs && `ซับ ${nf(L.subs)} เบอร์`, L.parts && `พาร์ท ${nf(L.parts)} เบอร์`].filter(Boolean).join(" · ")}</span>
+                    <span>{[L.panels && `แผง ${nf(L.panels)}`, L.subs && `ซับ ${nf(L.subs)} เบอร์`, L.parts && `พาร์ท ${nf(L.parts)} เบอร์`, L.hw && L.hw.length && `อุปกรณ์ ${nf(L.hw.length)} รายการ`].filter(Boolean).join(" · ")}{L.hwOnly ? <> <Pill tone="muted">ใบเบิก · ไม่มี QR</Pill></> : null}</span>
                     {(() => { const pg = lotProg(L); if (!pg || !pg.t) return null;
                       const tip = [["พาร์ท", "part"], ["ซับ", "sub"], ["แผง", "panel"]].filter(([, k]) => pg.g[k][1]).map(([n, k]) => `${n} ${nf(pg.g[k][0])}/${nf(pg.g[k][1])}`).join(" · ");
                       return <span className={`rl-lot-prog ${pg.pct >= 100 ? "full" : pg.d ? "" : "zero"}`} title={`ทำแล้ว (ชิ้น) · ${tip}`}><i><b style={{ width: `${pg.pct}%` }} /></i>{pg.pct >= 100 ? "เสร็จครบ" : `ทำแล้ว ${pg.pct}%`}</span>; })()}
-                    <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}</span>
-                    {onOpenLot ? <span className="rl-caret" aria-hidden="true">›</span> : <span className="rl-caret" aria-hidden="true">▾</span>}
+                    <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}{L.hw && L.hw.length ? <Pill tone="muted">ACCESSORIES {L.hw.length}</Pill> : null}</span>
+                    {onOpenLot && !L.hwOnly ? <span className="rl-caret" aria-hidden="true">›</span> : <span className="rl-caret" aria-hidden="true">▾</span>}
                   </button>
-                  {open === L.no && !onOpenLot ? (
+                  {open === L.no && (!onOpenLot || L.hwOnly) ? (
                     <div className="rl-lot-body">
                       <div className="rl-lot-bar">
                         <div className="rl-lot-bar-txt"><b>ใบปล่อย / QR ของล็อต {L.no}</b><span>ใบปล่อย: ดูหน้ากระดาษก่อน แล้วโหลดเป็น PDF หรือ Excel{onPrintQr ? " · QR: เปิดหน้าพิมพ์ป้ายพร้อมเลือกเบอร์ของล็อตนี้ให้" : ""}</span></div>
@@ -257,7 +257,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                       {it.type === "qty" ? <>ต้องใช้ <s className="rl-old">{nf(it.before)}</s> → <b className="rl-new">{nf(it.after)}</b></>
                         : it.type === "cancel" ? <>ยกเลิกเบอร์ (เดิม <span className="rl-cxq">{nf(it.before)}</span>)</>
                         : it.type === "addr" ? <>ยกเลิกที่อยู่ (แผง {it.unit || ""})</>
-                        : <>เพิ่มใหม่ {nf(it.after)} {it.kind === "sub" ? "SET" : "ชิ้น"}</>}
+                        : <>เพิ่มใหม่ {it.kind === "hw" ? nlen(it.after) : nf(it.after)} {it.kind === "sub" ? "SET" : it.kind === "hw" ? (it.u || "pcs.") + " · อุปกรณ์ ไม่มี QR" : "ชิ้น"}{it.src ? <span className="rw-muted"> · จากแบบ {it.src}</span> : null}</>}
                       {(it.lots || []).map((l) => <span key={l.lot} className="rl-mod-lot"> · {l.lot}: {l.cancel ? <><span className="rl-cxq">{nf(l.before)}</span> ยกเลิก</> : <><s className="rl-old">{nf(l.before)}</s> → <b>{nf(l.after)}</b></>}</span>)}
                     </li>))}
                 </ul>
@@ -291,7 +291,17 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
   const [note, setNote] = useState("");
   const [q, setQ] = useState("");
   const [pull, setPull] = useState(true);
-  const [sel, setSel] = useUndoState(() => ({ addrs: new Set(), subs: new Map(), parts: new Map() }), { label: "เลือกของที่จะปล่อย" });
+  const [sel, setSel] = useUndoState(() => ({ addrs: new Set(), subs: new Map(), parts: new Map(), hw: new Map() }), { label: "เลือกของที่จะปล่อย" });
+  // ★ 2026-11-09 อุปกรณ์ (สกรู/ยาง · ไม่มี QR) เบิกเป็นล็อตได้ — เช่น Site Item + อุปกรณ์จากแบบ mock-up ที่เพิ่มหลังปล่อยแผงไปแล้ว
+  //   ยอดที่เบิกแล้ว = ติดแผง/ซับที่ปล่อยไปแล้ว (ใบเบิกของล็อตนั้น) + ที่เลือกเบิกเองในล็อตก่อน ๆ
+  const hwDone = useMemo(() => hwIssuedOf(plan, need, rel), [plan, need, rel]);
+  const hwDoneOf = (code) => (hwDone.get(NC(code)) || { qty: 0 }).qty;
+  const hwLeft = (h) => Math.max(0, Math.round((h.qty - hwDoneOf(h.code)) * 1000) / 1000);
+  const hwQ = (h, q = h.qty) => (h.u === "m." && h.mm ? q / 1000 : q);     // แสดง: เก็บเป็นมม. → โชว์เป็นเมตร
+  const hwRaw = (h, q) => (h.u === "m." && h.mm ? q * 1000 : q);
+  const hwList = need.hw.filter((h) => !h.cancelled);
+  const selHw = sel.hw || new Map();
+  const setHw = (h, v) => setSel((s0) => { const s = { ...s0, addrs: new Set(s0.addrs), subs: new Map(s0.subs), parts: new Map(s0.parts), hw: new Map(s0.hw || []) }; const nx = Math.max(0, Math.min(hwLeft(h), hwRaw(h, Number(v) || 0))); if (nx > 0) s.hw.set(h.code, nx); else s.hw.delete(h.code); return s; });
   useEffect(() => pushUndoGate(), []);   // ★ Ctrl+Z ในหน้าต่างนี้ไม่ย้อนหน้าหลัง
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState([]);
@@ -305,13 +315,15 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
   const leftAddr = plan.units.filter((u) => !rel.addrLot.has(String(u.addr).toUpperCase()) && !need.cancelledAddr[addrKey(u.addr)]);
   const tabStat = (k) => {
     if (k === "panel") return { left: leftAddr.length, sel: sel.addrs.size };
+    if (k === "__hw") return { left: hwList.filter((h) => hwLeft(h) > 0).length, sel: hwList.filter((h) => selHw.get(h.code) > 0).length };
     const items = isPartSheet(k) ? partsOf(k) : subsOf(k);
     const m = isPartSheet(k) ? sel.parts : sel.subs;
     return { left: items.filter((x) => leftOf(x.code, x.qty) > 0).length, sel: items.filter((x) => m.get(x.code) > 0).length };
   };
   const ql = q.trim().toUpperCase();
   const match = (...xs) => !ql || xs.some((x) => String(x || "").toUpperCase().includes(ql));
-  const rows = sheet.kind === "panel" ? plan.units.filter((u) => match(u.addr, u.unit))
+  const rows = tab === "__hw" ? hwList.filter((h) => match(h.code, h.d))
+    : sheet.kind === "panel" ? plan.units.filter((u) => match(u.addr, u.unit))
     : sheet.kind === "part" ? partsOf(tab).filter((p) => match(p.code, p.d)) : (tab === "__none" ? noProc : subsOf(tab)).filter((s) => match(s.code, s.d));
 
   // ── เลือก / ดึงลูก ──
@@ -340,6 +352,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     return s;
   });
   const selectAllVisible = (on) => {
+    if (tab === "__hw") { for (const h of rows) setHw(h, on ? hwQ(h, hwLeft(h)) : 0); return; }
     if (sheet.kind === "panel") return toggleAddr(rows.map((u) => String(u.addr).toUpperCase()), on);
     for (const r of rows) setQty(sheet.kind === "sub" ? "sub" : "part", r.code, r.qty, on ? leftOf(r.code, r.qty) : 0, true);
   };
@@ -347,6 +360,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     addrs: new Set(leftAddr.map((u) => String(u.addr).toUpperCase())),
     subs: new Map(need.subs.filter((s) => leftOf(s.code, s.qty) > 0).map((s) => [s.code, leftOf(s.code, s.qty)])),
     parts: new Map(need.parts.filter((p) => leftOf(p.code, p.qty) > 0).map((p) => [p.code, leftOf(p.code, p.qty)])),
+    hw: new Map(selHw),   // อุปกรณ์เลือกเองที่แท็บ ACCESSORIES (ติดแผงจะไปกับใบเบิกของแผงอยู่แล้ว)
   });
   const setProc = (code, p, on) => {
     const cur = procList((plan.procOv || {})[code] ?? need.subs.find((s) => s.code === code)?.procs.join(", "));
@@ -366,7 +380,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 
   // ── สรุป + เตือน ──
   const lr = useMemo(() => lotRows(plan, need, sel, note), [plan, need, sel, note]);
-  const nPanel = sel.addrs.size, nSub = sel.subs.size, nPart = sel.parts.size;
+  const nPanel = sel.addrs.size, nSub = sel.subs.size, nPart = sel.parts.size, nHw = selHw.size;
   const subSets = [...sel.subs.values()].reduce((a, b) => a + b, 0), partPcs = [...sel.parts.values()].reduce((a, b) => a + b, 0);
   const bySheetSel = SHEETS.map((s) => [s, s.kind === "panel" ? nPanel : s.kind === "part" ? need.parts.filter((p) => p.dest === s.k && sel.parts.get(p.code) > 0).length : need.subs.filter((x) => x.procs.includes(s.k) && sel.subs.get(x.code) > 0).length]).filter(([, n]) => n);
   const warns = useMemo(() => {
@@ -387,17 +401,29 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     else if (roKey(lotNo).split(".")[0] !== roKey(plan.ro).split(".")[0]) w.push(["block", `เลขล็อตต้องขึ้นต้นด้วย ${plan.ro}`]);
     return w;
   }, [need, sel, nPanel, plan, doneOf, rel.lots, lotNo]);
-  const blocked = warns.some((w) => w[0] === "block") || !lr.length;
+  const blocked = warns.some((w) => w[0] === "block") || (!lr.length && !nHw);
 
   async function save() {
     if (blocked || busy) return;
     const soft = warns.filter((w) => w[0] === "warn");
     if (soft.length && !(await askConfirm({ title: "ปล่อยล็อตทั้งที่มีเรื่องควรดู?", message: soft.map((w) => "• " + w[1]).join("\n"), tone: "warn", confirmText: `ปล่อย ${lotNo}`, cancelText: "กลับไปแก้" }))) return;
     setBusy("เริ่มบันทึก…"); setErr([]);
+    const no = lotNo.trim().toUpperCase();
     try {
-      const res = await api.releaseLot({ plan, lotNo: lotNo.trim().toUpperCase(), date: dateToIso(date), userId: user?.id || null, rows: lr }, (m) => setBusy(m));
+      let res = null;
+      if (lr.length) res = await api.releaseLot({ plan, lotNo: no, date: dateToIso(date), userId: user?.id || null, rows: lr }, (m) => setBusy(m));
+      // ★ 2026-11-09 อุปกรณ์ที่เลือกเบิก (ไม่มี QR) → เก็บกับแผน plan.lotHw[ล็อต] (ใบเบิก ACCESSORIES ของล็อตนี้ · หักยอดคงเหลือ)
+      let np = plan;
+      if (nHw) {
+        const items = hwList.filter((h) => selHw.get(h.code) > 0).map((h) => ({ code: h.code, qty: selHw.get(h.code), u: h.u || "pcs.", d: h.d || "" }));
+        np = { ...plan, lotHw: { ...(plan.lotHw || {}), [no]: { date: dateToIso(date), by: user?.name || "", note: note.trim(), items } } };
+        setBusy(`บันทึกรายการอุปกรณ์ของ ${no}…`);
+        try { await api.updatePlan(np); }
+        catch (e) { setBusy(""); setErr([`${lr.length ? `ปล่อย ${no} แล้ว แต่` : ""}บันทึกรายการอุปกรณ์ไม่สำเร็จ: ${e?.message || e}${lr.length ? " — รายการอุปกรณ์ยังไม่ถูกหัก ลองเบิกอุปกรณ์ใหม่อีกครั้ง (เลขล็อตใหม่)" : ""}`]); if (!lr.length) return; }
+        if (onPlanChange) onPlanChange(np);
+      }
       setBusy("");
-      await onSaved({ lotNo: lotNo.trim().toUpperCase(), rows: lr, res });
+      await onSaved({ lotNo: no, rows: lr, res, hw: nHw, plan: np });
     } catch (e) { setBusy(""); setErr([e?.message || String(e)]); }
   }
 
@@ -419,7 +445,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
         <p className="rl-dr-sub">เลือกสิ่งที่จะปล่อยรอบนี้ แยกตามใบงานที่ส่งไปทำ · ซับ 1 เบอร์ไปได้หลายใบ (ติ๊กงานในแถว) · พาร์ทเลือกได้ว่าไป MACHINING PART / BENDING / STEEL · ระบบหักของที่ปล่อยแล้ว ไม่ให้เกิน</p>
         <div className="rl-tabs grouped" role="tablist">
           {/* แท็บจัดกลุ่มตามหัว Total ใน Excel: Total Part (MACHINING PART · BENDING · STEEL) · Total Sub-Assembly (SUB A'ssy …) · แผง */}
-          {[[TOTALS[0].label, "part"], [TOTALS[1].label, "sub"], ["แผง", "panel"]].filter(([, kind]) => kind !== "panel" || plan.units.length > 0).map(([lab, kind]) => (
+          {[[TOTALS[0].label, "part"], [TOTALS[1].label, "sub"], ["แผง", "panel"], ["อุปกรณ์ · ไม่มี QR", "hw"]].filter(([, kind]) => (kind !== "panel" || plan.units.length > 0) && (kind !== "hw" || hwList.length > 0)).map(([lab, kind]) => (
             <div key={kind} className={`rl-tabgrp ${kind}`}>
               <span className="rl-tabgrp-lab">{lab}</span>
               <div className="rl-tabgrp-row">
@@ -428,6 +454,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
                     <b>{s.tab}</b><small>เหลือ {nf(st.left)}{st.sel ? <em>เลือก {nf(st.sel)}</em> : null}</small>
                   </button>); })}
                 {kind === "sub" && noProc.length ? <button type="button" role="tab" aria-selected={tab === "__none"} className={`rl-tab warn ${tab === "__none" ? "on" : ""}`} onClick={() => setTab("__none")}><b>ซับยังไม่เลือกงาน</b><small>{noProc.length} เบอร์</small></button> : null}
+                {kind === "hw" ? (() => { const st = tabStat("__hw"); return <button type="button" role="tab" aria-selected={tab === "__hw"} className={`rl-tab ${tab === "__hw" ? "on" : ""}`} onClick={() => setTab("__hw")} title="FASTENER, GASKET & SILICONE — เบิกเป็นล็อต ไม่สร้าง QR · ออกในใบเบิก ACCESSORIES ของล็อตนี้"><b>ACCESSORIES</b><small>เหลือ {nf(st.left)}{st.sel ? <em>เลือก {nf(st.sel)}</em> : null}</small></button>; })() : null}
               </div>
             </div>))}
         </div>
@@ -438,10 +465,26 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
           <button type="button" className="btn btn-ghost btn-sm" onClick={selectEverything}>ปล่อยที่เหลือทั้งหมด (ทุกใบ)</button>
           <label className="rw-check" title="ติ๊กแผง/ซับแล้วเลือกซับ/พาร์ทที่อยู่ข้างในให้ด้วย (เท่าที่ยังเหลือ)"><input type="checkbox" checked={pull} onChange={(e) => setPull(e.target.checked)} /> เลือกแผง/ซับแล้วดึงลูกมาด้วย</label>
         </div>
-        <div className="rl-sheetnote"><b>{tab === "__none" ? "ซับยังไม่เลือกงาน" : sheet.label}</b> <span className="rw-muted">— {tab === "__none" ? "ติ๊กงานอย่างน้อย 1 อย่าง ซับถึงจะอยู่ในใบงาน" : sheet.th}</span></div>
+        <div className="rl-sheetnote"><b>{tab === "__none" ? "ซับยังไม่เลือกงาน" : tab === "__hw" ? "ACCESSORIES (อุปกรณ์ · ไม่มี QR)" : sheet.label}</b> <span className="rw-muted">— {tab === "__none" ? "ติ๊กงานอย่างน้อย 1 อย่าง ซับถึงจะอยู่ในใบงาน" : tab === "__hw" ? "สกรู / ยาง / ซิลิโคน เบิกเป็นล็อต (ไม่สร้าง QR) · ที่ติดแผง/ซับที่ปล่อยไปแล้วหักให้แล้ว · ออกในใบเบิก ACCESSORIES ของล็อตนี้" : sheet.th}</span></div>
         <div className="table-wrap rw-tw rl-tw">
           <table className="data-table rw-table">
-            {sheet.kind === "panel" && tab !== "__none" ? (
+            {tab === "__hw" ? (
+              <>
+                <thead><tr><th style={{ width: 36 }} /><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">TOTAL QTY</th><th>UOM</th><th>เบิกแล้ว</th><th className="r">เหลือ</th><th className="r">เบิกรอบนี้</th></tr></thead>
+                <tbody>{rows.slice(0, 600).map((h, ri) => { const left = hwLeft(h); const cur = selHw.get(h.code) || 0; const on = cur > 0; const dn = hwDone.get(NC(h.code)); const step = h.u === "m." || h.u === "mm." ? "0.01" : "1"; return (
+                  <tr key={h.code} className={`${on ? "rl-sel" : ""} ${left <= 0 ? "rl-done" : ""}`}>
+                    <td><input type="checkbox" checked={on} disabled={left <= 0} onChange={(e) => setHw(h, e.target.checked ? hwQ(h, left) : 0)} aria-label={`เลือก ${h.code}`} /></td>
+                    <td className="r rw-muted">{ri + 1}</td>
+                    <td className="rw-mono"><Code code={h.code} added={h.added} /></td>
+                    <td className="rl-desc"><span>{h.d}</span></td>
+                    <td className="r"><b>{nlen(Math.round(hwQ(h) * 100) / 100)}</b></td>
+                    <td className="rw-muted small">{h.u || (h.mm ? "mm." : "pcs.")}</td>
+                    <td className="rl-donecell">{dn && dn.qty ? <><b>{nlen(Math.round(hwQ(h, dn.qty) * 100) / 100)}</b> {dn.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>)}</> : ""}</td>
+                    <td className="r"><b>{left > 0 ? nlen(Math.round(hwQ(h, left) * 100) / 100) : "✓"}</b></td>
+                    <td className="r">{left > 0 ? <input className="input rw-cell rl-qty" type="number" min="0" max={hwQ(h, left)} step={step} value={on ? hwQ(h, cur) : ""} placeholder={nlen(Math.round(hwQ(h, left) * 100) / 100)} onChange={(e) => setHw(h, e.target.value)} aria-label={`จำนวนเบิก ${h.code}`} /> : null}</td>
+                  </tr>); })}</tbody>
+              </>
+            ) : sheet.kind === "panel" && tab !== "__none" ? (
               <>
                 <thead><tr><th style={{ width: 36 }} /><th>Address</th><th>Unit</th><th>BOM</th><th>สถานะ</th></tr></thead>
                 <tbody>{rows.slice(0, 600).map((u) => { const a = String(u.addr).toUpperCase(); const done = rel.addrLot.get(a); const cx = need.cancelledAddr[a]; const on = sel.addrs.has(a); return (
@@ -462,7 +505,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
                     <tr key={r.code} className={`${on ? "rl-sel" : ""} ${left <= 0 ? "rl-done" : ""} ${r.cancelled ? "rl-cancelrow" : ""}`}>
                       <td><input type="checkbox" checked={on} disabled={left <= 0} onChange={(e) => setQty(kind, r.code, r.qty, e.target.checked ? left : 0, true)} aria-label={`เลือก ${r.code}`} /></td>
                       <td className="r rw-muted">{ri + 1}</td>
-                      <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : null}</td>
+                      <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.cat === "SITE ITEM" ? <> <Pill tone="warn">SITE ITEM</Pill></> : null}</td>
                       <td className="rl-desc"><span>{r.d}</span></td>
                       <td className="r rw-num">{r.l ? nlen(r.l) : ""}</td>
                       <td className="r"><ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /></td>
@@ -488,12 +531,12 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
         {err.length ? <div className="rw-msg bad">✗ บันทึกไม่สำเร็จ — {err.join(" · ")}</div> : null}
         <div className="rl-dr-foot">
           <div className="rl-sum">
-            <b>ล็อต {lotNo}:</b> แผง {nf(nPanel)} · ซับ {nf(nSub)} เบอร์ ({nf(subSets)} SET) · พาร์ท {nf(nPart)} เบอร์ ({nf(partPcs)} ชิ้น)
-            {bySheetSel.length ? <div className="rl-sum-chips">{bySheetSel.map(([s, n]) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.label} {n}</Pill>)}</div> : <div className="rw-muted small">ยังไม่ได้เลือกอะไร</div>}
+            <b>ล็อต {lotNo}:</b> แผง {nf(nPanel)} · ซับ {nf(nSub)} เบอร์ ({nf(subSets)} SET) · พาร์ท {nf(nPart)} เบอร์ ({nf(partPcs)} ชิ้น){nHw ? <> · อุปกรณ์ {nf(nHw)} รายการ <small className="rw-muted">(ไม่มี QR)</small></> : null}
+            {bySheetSel.length || nHw ? <div className="rl-sum-chips">{bySheetSel.map(([s, n]) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.label} {n}</Pill>)}{nHw ? <Pill tone="muted">ACCESSORIES {nHw}</Pill> : null}</div> : <div className="rw-muted small">ยังไม่ได้เลือกอะไร</div>}
           </div>
           <div className="rl-foot-btns">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={!!busy}>ยกเลิก</button>
-            <button type="button" className="btn btn-accent" onClick={save} disabled={blocked || !!busy}>{busy || (lr.length ? `ปล่อย ${lotNo} + สร้าง QR` : "เลือกรายการที่จะปล่อยก่อน")}</button>
+            <button type="button" className="btn btn-accent" onClick={save} disabled={blocked || !!busy}>{busy || (lr.length ? `ปล่อย ${lotNo} + สร้าง QR${nHw ? " + ใบเบิก" : ""}` : nHw ? `เบิกอุปกรณ์ ${lotNo} (ไม่มี QR)` : "เลือกรายการที่จะปล่อยก่อน")}</button>
           </div>
         </div>
       </aside>
@@ -517,7 +560,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const [bchg, setBchg] = useUndoState({}, { label: "Modify: BOM ลูก", coalesceMs: 800 });                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
   const [badds, setBadds] = useUndoState([], { label: "Modify: เพิ่มลูกใน BOM", coalesceMs: 800 });               // ลูกที่เพิ่มเข้า BOM ซับ/แผง
   const [bform, setBform] = useState({ kind: "part", code: "", qty: "", d: "" });
-  const blankForm = { kind: "part", code: "", d: "", qty: "", l: "", inv: "", dest: "CUTTING", procs: "ยิง" };
+  const blankForm = { kind: "part", code: "", d: "", qty: "", l: "", inv: "", dest: "CUTTING", procs: "ยิง", u: "pcs." };
   const [form, setForm] = useState(blankForm);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(todayYmd());
@@ -566,7 +609,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
   const lotTouched = [...ops.lotOps.entries()].map(([lot, list]) => ({ lot, n: list.length, qr: list.reduce((s, o) => s + (o.type === "cancel" ? o.before - o.after : o.n), 0) }));
   const needAdmin = ops.lotOps.size > 0 && user && user.role && user.role !== "admin";
   const nChange = realChanges.length + addrs.size + adds.length + edits.length;
-  const formErr = !form.code.trim() ? "" : need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code)) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
+  const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
   const blockers = [
     !nChange && "ยังไม่ได้แก้อะไร",
     !reason.trim() && "ใส่เหตุผล (เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B)",
@@ -595,7 +638,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
         ...ops.items.filter((it) => !(it.type === "qty" && it.before === it.after)).map((it) => (derivedSet.has(NC(it.code)) ? { ...it, derived: true } : it)),
         ...bomFx.adds.filter((a) => !manualCodes.has(NC(a.code))).map((a) => ({ kind: a.kind, type: "add", code: a.code, d: a.d, l: a.l, inv: a.inv, dest: a.kind === "part" ? ruleDest(ruleCat(a.code, "part"), a.code) : undefined, before: 0, after: a.qty, derived: true })),
         ...[...addrs].map((a) => ({ kind: "panel", type: "addr", code: a, unit: plan.units.find((u) => addrKey(u.addr) === a)?.unit || "", before: 1, after: 0 })),
-        ...adds.map((a) => ({ kind: a.kind, type: "add", code: a.code.trim().toUpperCase(), d: a.d, l: a.l === "" ? null : Number(a.l), inv: a.inv, dest: a.dest, procs: a.procs, before: 0, after: Number(a.qty) })),
+        ...adds.map((a) => ({ kind: a.kind, type: "add", code: a.code.trim().toUpperCase(), d: a.d, l: a.l === "" ? null : Number(a.l), inv: a.inv, dest: a.kind === "hw" ? undefined : a.dest, procs: a.procs, before: 0, after: Number(a.qty), ...(a.cat ? { cat: a.cat } : {}), ...(a.kind === "hw" ? { u: a.u || "pcs." } : {}), ...(a.src ? { src: a.src } : {}) })),
       ],
     };
     const qrOut = lotTouched.reduce((s, x) => s + x.qr, 0);
@@ -647,6 +690,24 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
         for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { bAdds.push({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; }
         notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${[nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน"}`);
         if (nq || nc || na) jump = jump || { scope, owner: ok };
+      } else if (d.kind === "loose") {
+        // ★ 2026-11-09 แบบ Site Item + อุปกรณ์ (เช่น MTG01-001 mock-up): BILL SITE ITEM → พาร์ทหมวด SITE ITEM (มี QR · ใบงานตามรหัสเบอร์)
+        //   FASTENER COMPONENT LIST → อุปกรณ์ (ไม่มี QR · เบิกที่แท็บ ACCESSORIES ตอนปล่อยล็อต) · จำนวนตามตาราง (ไม่คูณแผง)
+        let ns = 0, nh = 0, skip = 0;
+        for (const r of d.site || []) {
+          const code = String(r.code).trim().toUpperCase();
+          if (exists(code)) { skip++; continue; }
+          newAdds.push({ kind: "part", code, d: r.desc || "", qty: r.qty != null ? String(r.qty) : "", l: r.len != null ? String(r.len) : "", inv: "", dest: ruleDest(ruleCat(code, "part"), code), procs: "ยิง", cat: "SITE ITEM", fromPdf: true, src: d.code, note: `Site Item จากแบบ ${d.code}` }); ns++;
+        }
+        for (const r of d.hw || []) {
+          const code = String(r.code).trim().toUpperCase();
+          if (adds.some((a) => NC(a.code) === NC(code)) || newAdds.some((a) => NC(a.code) === NC(code))) { skip++; continue; }
+          const have = need.hw.find((x) => NC(x.code) === NC(code));
+          const q = r.qty > 0 ? r.qty : r.len > 0 ? r.len : "";
+          newAdds.push({ kind: "hw", code, d: r.desc || "", qty: q === "" ? "" : String(q), l: "", inv: "", u: r.u || "pcs.", fromPdf: true, src: d.code,
+            note: [have ? `มีในใบแล้ว ${nlen(have.qty)} ${have.u || "pcs."} (จาก BOM แผง) — จำนวนนี้บวกเพิ่ม` : "", r.qty > 0 ? "" : r.len > 0 ? `ตารางไม่มี TOTAL — ใส่ ${r.len} ${r.u} จากช่อง DIM.A ให้ (แก้ได้)` : "ตารางไม่มีจำนวน", r.remark || ""].filter(Boolean).join(" · ") }); nh++;
+        }
+        notes.push(`${d.code} (${d.title?.DESC || "แบบ Site Item + อุปกรณ์"}): Site Item ${ns} เบอร์ · อุปกรณ์ ${nh} รายการ${skip ? ` · ข้าม ${skip} (มีแล้ว)` : ""}${(d.units || []).length ? ` · แผงในแบบ: ${d.units.map((u) => `${u.code} ×${u.qty}`).join(", ")}` : ""}`);
       } else if (d.kind === "part" || d.kind === "sub") {
         if (exists(d.code)) { notes.push(`${d.code}: มีในใบแล้ว — แก้จำนวนที่แท็บ${d.kind === "sub" ? "ซับ" : "พาร์ท"}`); continue; }
         const t = d.title || {}; const L = parseFloat(t.LENGTH); const inv = String(t["INV.CODE"] || "").trim();
@@ -667,7 +728,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
       onDragOver={(e) => { e.preventDefault(); setPdfDrag(true); }} onDragLeave={() => setPdfDrag(false)}
       onDrop={(e) => { e.preventDefault(); setPdfDrag(false); onModPdfs(e.dataTransfer.files); }}>
       <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
-      <div><b>ลาก PDF แบบใหม่มาวาง (ซับ / แผง / พาร์ท)</b><span>ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · พาร์ท/ซับที่ยังไม่มี = เพิ่มเบอร์ใหม่ ลงข้อมูลให้ ใส่แค่จำนวน</span></div>
+      <div><b>ลาก PDF แบบใหม่มาวาง (ซับ / แผง / พาร์ท / แบบ Site Item + อุปกรณ์)</b><span>ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · พาร์ท/ซับที่ยังไม่มี = เพิ่มเบอร์ใหม่ ลงข้อมูลให้ ใส่แค่จำนวน · แบบที่มี BILL SITE ITEM / FASTENER COMPONENT LIST = เพิ่ม Site Item (มี QR) + อุปกรณ์ (ไม่มี QR) ตามจำนวนในตาราง</span></div>
       <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
     </div>);
   const pdfMsgEl = pdfMsg ? (
@@ -801,32 +862,34 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved }) {
           ) : tab === "bom" ? bomEditorEl : (
             <div className="rl-addbox">
               <div className="rl-addform">
-                <select className="select" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} aria-label="ชนิด"><option value="part">พาร์ท</option><option value="sub">ซับ</option></select>
+                <select className="select" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} aria-label="ชนิด"><option value="part">พาร์ท</option><option value="sub">ซับ</option><option value="hw">อุปกรณ์ (ไม่มี QR)</option></select>
                 <input className="input rw-mono" placeholder="Code *" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} aria-label="Code" />
                 <input className="input" placeholder="Description" value={form.d} onChange={(e) => setForm({ ...form, d: e.target.value })} aria-label="Description" />
-                <input className="input" type="number" min="1" placeholder="จำนวน *" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} aria-label="จำนวน" />
-                <input className="input" type="number" min="0" placeholder="ยาว (มม.)" value={form.l} onChange={(e) => setForm({ ...form, l: e.target.value })} aria-label="ความยาว" />
+                <input className="input" type="number" min={form.kind === "hw" ? "0.01" : "1"} step={form.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน *" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} aria-label="จำนวน" />
+                {form.kind !== "hw" ? <input className="input" type="number" min="0" placeholder="ยาว (มม.)" value={form.l} onChange={(e) => setForm({ ...form, l: e.target.value })} aria-label="ความยาว" /> : null}
                 {form.kind === "part" ? <input className="input rw-mono" placeholder="INV" value={form.inv} onChange={(e) => setForm({ ...form, inv: e.target.value.toUpperCase() })} aria-label="INV" /> : null}
                 {form.kind === "part"
                   ? <select className="select" value={form.dest} onChange={(e) => setForm({ ...form, dest: e.target.value })} aria-label="ใบงาน">{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select>
-                  : <select className="select" value={form.procs} onChange={(e) => setForm({ ...form, procs: e.target.value })} aria-label="งานซับ">{PROCS.map((p) => <option key={p} value={p}>SUB {SUB_SHORT[p]}</option>)}</select>}
+                  : form.kind === "sub" ? <select className="select" value={form.procs} onChange={(e) => setForm({ ...form, procs: e.target.value })} aria-label="งานซับ">{PROCS.map((p) => <option key={p} value={p}>SUB {SUB_SHORT[p]}</option>)}</select>
+                  : <select className="select" value={form.u} onChange={(e) => setForm({ ...form, u: e.target.value })} aria-label="หน่วย"><option value="pcs.">pcs.</option><option value="m.">m.</option></select>}
                 <button type="button" className="btn btn-accent btn-sm" disabled={!form.code.trim() || !!formErr} onClick={() => { setAdds((a) => [...a, { ...form, code: form.code.trim().toUpperCase() }]); setForm(blankForm); }}><Icon name="plus" size={13} /> เพิ่ม</button>
               </div>
               {formErr ? <div className="rw-msg warn">{formErr}</div> : null}
               {adds.length ? (
                 <table className="data-table rw-table">
-                  <thead><tr><th>ชนิด</th><th>Code</th><th>Description</th><th className="r">จำนวน *</th><th className="r">ยาว (มม.)</th><th>INV</th><th>ใบงาน</th><th /></tr></thead>
+                  <thead><tr><th>ชนิด</th><th>Code</th><th>Description</th><th className="r">จำนวน *</th><th className="r">ยาว (มม.)</th><th>INV</th><th>ใบงาน / หน่วย</th><th /></tr></thead>
                   <tbody>{adds.map((a, i) => { const up = (patch) => setAdds((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x))); const noQ = !(Number(a.qty) > 0); return (
                     <tr key={a.code} className={noQ ? "rl-needqty" : ""}>
-                      <td>{a.kind === "sub" ? "ซับ" : "พาร์ท"}</td>
+                      <td>{a.kind === "sub" ? "ซับ" : a.kind === "hw" ? <>อุปกรณ์ <small className="rw-muted">ไม่มี QR</small></> : a.cat === "SITE ITEM" ? <>พาร์ท <small className="rw-muted">SITE ITEM</small></> : "พาร์ท"}</td>
                       <td className="rw-mono"><b>{a.code}</b> <Pill tone="mod">เพิ่ม {ver}</Pill>{a.fromPdf ? <> <Pill tone="info">PDF</Pill></> : null}{a.note ? <div className="rw-muted small">{a.note}</div> : null}</td>
                       <td><input className="input rw-cell" value={a.d || ""} onChange={(e) => up({ d: e.target.value })} aria-label={`Description ${a.code}`} /></td>
-                      <td className="r"><input className="input rw-cell rl-qty" type="number" min="1" step="1" placeholder="จำนวน" value={a.qty} onChange={(e) => up({ qty: e.target.value })} aria-label={`จำนวน ${a.code}`} autoFocus={a.fromPdf && noQ && i === adds.findIndex((x) => !(Number(x.qty) > 0))} /></td>
-                      <td className="r"><input className="input rw-cell rl-qty" type="number" min="0" value={a.l || ""} onChange={(e) => up({ l: e.target.value })} aria-label={`ความยาว ${a.code}`} /></td>
+                      <td className="r"><input className="input rw-cell rl-qty" type="number" min={a.kind === "hw" ? "0.01" : "1"} step={a.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={a.qty} onChange={(e) => up({ qty: e.target.value })} aria-label={`จำนวน ${a.code}`} autoFocus={a.fromPdf && noQ && i === adds.findIndex((x) => !(Number(x.qty) > 0))} /></td>
+                      <td className="r">{a.kind !== "hw" ? <input className="input rw-cell rl-qty" type="number" min="0" value={a.l || ""} onChange={(e) => up({ l: e.target.value })} aria-label={`ความยาว ${a.code}`} /> : null}</td>
                       <td>{a.kind === "part" ? <input className="input rw-cell rw-mono" value={a.inv || ""} onChange={(e) => up({ inv: e.target.value.toUpperCase() })} aria-label={`INV ${a.code}`} /> : null}</td>
                       <td>{a.kind === "part"
                         ? <select className="select rw-cellsel" value={a.dest} onChange={(e) => up({ dest: e.target.value })} aria-label={`ใบงาน ${a.code}`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select>
-                        : <select className="select rw-cellsel" value={a.procs} onChange={(e) => up({ procs: e.target.value })} aria-label={`งานซับ ${a.code}`}>{PROCS.map((p) => <option key={p} value={p}>SUB {SUB_SHORT[p]}</option>)}</select>}</td>
+                        : a.kind === "sub" ? <select className="select rw-cellsel" value={a.procs} onChange={(e) => up({ procs: e.target.value })} aria-label={`งานซับ ${a.code}`}>{PROCS.map((p) => <option key={p} value={p}>SUB {SUB_SHORT[p]}</option>)}</select>
+                        : <select className="select rw-cellsel" value={a.u || "pcs."} onChange={(e) => up({ u: e.target.value })} aria-label={`หน่วย ${a.code}`}><option value="pcs.">pcs.</option><option value="m.">m.</option></select>}</td>
                       <td><button type="button" className="rl-x" onClick={() => setAdds((xs) => xs.filter((_, j) => j !== i))} aria-label={`เอา ${a.code} ออก`}>×</button></td>
                     </tr>); })}</tbody>
                 </table>
@@ -911,7 +974,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
   const iss = (plan.lotIssue || {})[lot.no] || {};
   const setIss = (key, patch) => onPlanChange && onPlanChange({ ...plan, lotIssue: { ...(plan.lotIssue || {}), [lot.no]: { ...iss, [key]: { ...(iss[key] || {}), ...patch } } } });
   const issued = (x) => { const v = iss[x.inv || "—"]?.n; return v === "" || v == null ? null : Number(v); };
-  const m0 = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const m0 = useMemo(() => lotMaterials(plan, need, lot.rows, sheetsOf, lot.no), [plan, need, lot]);   // eslint-disable-line react-hooks/exhaustive-deps
   // ค้นหา: รหัส / INV / รายละเอียด / เบอร์พาร์ทที่ใช้วัตถุดิบนั้น
   const has = (...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
   const m = q ? { mat: m0.mat.filter((x) => has(x.inv, x.d, ...x.parts.map((p) => p.code))), glass: m0.glass.filter((x) => has(x.code, x.d)), hw: m0.hw.filter((x) => has(x.code, x.d)), other: m0.other.filter((x) => has(x.code, x.d)) } : m0;
@@ -952,7 +1015,7 @@ export function LotMats({ plan, need, lot, sheetsOf, q = "", onPlanChange = null
     </section>);
   if (m.hw.length) cards.push(
     <section key="hw" className="rl-sc mat">
-      <header className="rl-sc-h"><div className="rl-sc-t"><b>ACCESSORIES</b><span>FASTENER, GASKET &amp; SILICONE · จาก BOM แผง/ซับในล็อต</span></div>
+      <header className="rl-sc-h"><div className="rl-sc-t"><b>ACCESSORIES</b><span>FASTENER, GASKET &amp; SILICONE · จาก BOM แผง/ซับในล็อต{m.hw.some((x) => x.picked) ? " + ที่เลือกเบิกในล็อตนี้" : ""}</span></div>
         <div className="rl-sc-n"><b>{nf(m.hw.length)}</b> รายการ</div></header>
       <div className="rl-sc-tw"><table className="rl-sc-table">
         <thead><tr><th>เบอร์ (CODE)</th><th>รายละเอียด</th><th className="r">จำนวน</th></tr></thead>

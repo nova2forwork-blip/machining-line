@@ -7,7 +7,7 @@ import "./i18n-release.js";
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useMemo, useState } from "react";
-import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST } from "./releaseCore.js";
+import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
@@ -57,6 +57,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   const subs = useMemo(() => [...need.subs].sort((a, b) => ncmp(a.code, b.code)), [need]);
   const mats = useMemo(() => cutMaterials(need.parts), [need]);
   const glass = need.glass || [], hw = need.hw || [], other = need.other || [];
+  // ★ 2026-11-09 อุปกรณ์ (ไม่มี QR) ที่เบิกไปแล้ว: ติดแผง/ซับที่ปล่อย + ที่เลือกเบิกเองในล็อต (plan.lotHw)
+  const hwDone = useMemo(() => hwIssuedOf(plan, need, rel), [plan, need, rel]);
   const inSheet = (g, k) => (x) => k === "ALL" || (g === "part" ? x.cat === k : (x.procs || []).includes(k));
   const stat = (list) => {
     const live = list.filter((x) => !x.cancelled);
@@ -196,7 +198,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         <tbody>{vis.flatMap((r, i) => {
           const rows = [];
           if (r.cat !== lastCat) { lastCat = r.cat; rows.push(<tr key={"g" + r.cat} className="rt-grp"><td colSpan={12}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr>); }
-          const left = r.qr ? leftOf(r.code, r.qty) : 0; const done = doneOf(r.code); const o = otherOf(rel, r.code);
+          const hd = !r.qr ? hwDone.get(NC(r.code)) : null; const hdQ = hd ? (r.u === "m." && r.mm ? hd.qty / 1000 : hd.qty) : 0;
+          const left = r.qr ? leftOf(r.code, r.qty) : Math.max(0, Math.round((r.qty - hdQ) * 100) / 100); const done = r.qr ? doneOf(r.code) : hdQ; const o = otherOf(rel, r.code);
           rows.push(
             <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""}>
               <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td>
@@ -212,8 +215,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
                   : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
-              <td className="rl-donecell">{done ? <b>{nf(done)}</b> : null} {lotsOf(r.code)}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}</td>
-              <td className="r"><b>{!r.qr || r.cancelled ? "" : left > 0 ? nf(left) : "✓"}</b></td>
+              <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}</td>
+              <td className="r"><b>{r.cancelled ? "" : r.qr ? (left > 0 ? nf(left) : "✓") : done ? (left > 0 ? nlen(left) : "✓") : ""}</b></td>
               <td className="rt-rem">{[r.f, r.rev ? `Rev ${r.rev}` : ""].filter(Boolean).join(" · ")}</td>
             </tr>);
           return rows;

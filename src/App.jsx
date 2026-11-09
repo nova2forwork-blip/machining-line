@@ -7371,10 +7371,10 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
           await onReload();
         }}
-        onReleased={async ({ lotNo, rows }) => {
+        onReleased={async ({ lotNo, rows, hw = 0 }) => {
           hist.reset();
           const q = rows.reduce((a, r) => a + r.qty, 0);
-          mlsToast(`ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง`, "success");
+          mlsToast(rows.length ? `ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง${hw ? ` · เบิกอุปกรณ์ ${nc(hw)} รายการ (ใบเบิก)` : ""}` : `บันทึกใบเบิกอุปกรณ์ ${lotNo} แล้ว — ${nc(hw)} รายการ (ไม่มี QR)`, "success");
           await onReload();
         }} />
     </Suspense>

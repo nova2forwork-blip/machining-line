@@ -195,6 +195,82 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
       out.bom.push(row); last = row;
     }
   }
+  // ★ 2026-11-09 แบบ "Site Item + อุปกรณ์" ของ Release (เช่น MTG01-001 แบบ mock-up): ไม่มี BILL OF MATERIALS แต่มี
+  //   "BILL SITE ITEM" (ITEM / UNIT_NAME / LENGTH / HEIGHT / COUNT) = พาร์ทส่งไซต์ (มี QR) ·
+  //   "FASTENER COMPONENT LIST" (PART No. / DESCRIPTION / DIM.A / QTY / TOTAL QTY. / REMARK) = สกรู/ยาง (ไม่มี QR · ใบเบิก) ·
+  //   "BILL OF UNITS" (ITEM / UNIT_NAME / WIDTH / HEIGHT / COUNT) = แผงที่แบบนี้คลุม (ดูเฉย ๆ)
+  //   → kind "loose" · วางใน Modify ของ Release แล้วเพิ่มเป็นเบอร์ของใบ (จำนวนตามตาราง ไม่คูณแผง)
+  const lineOf = (w, dy = 2) => words.filter((x) => Math.abs(x.top - w.top) < dy);
+  const readCountTable = (hdrRe) => {
+    const cands = words.filter((w) => /^UNIT_NAME$/i.test(w.text) && lineOf(w).some((x) => /^COUNT$/i.test(x.text)));
+    for (const uh of cands) {
+      const above = words.filter((w) => w.top < uh.top && uh.top - w.top < 22 && Math.abs((w.x0 + w.x1) / 2 - (uh.x0 + uh.x1) / 2) < 120).map((w) => w.text.toUpperCase()).join(" ");
+      if (!hdrRe.test(above)) continue;
+      const hl = lineOf(uh).sort((a, b) => a.x0 - b.x0); const cx = {}; for (const w of hl) cx[w.text.toUpperCase()] = [w.x0, w.x1];
+      const itemCol = cx.ITEM; const numCols = ["LENGTH", "WIDTH", "HEIGHT", "COUNT"].filter((k) => cx[k]); if (!itemCol || !cx.COUNT) continue;
+      const x0 = itemCol[0] - 6, x1 = cx.COUNT[1] + 12; const rows = [];
+      const cells = words.filter((w) => w.top > uh.top + 3 && w.x0 >= x0 && w.x0 < x1 && Math.abs(w.size - uh.size) < 0.6);
+      for (const { ws } of rowsByY(cells)) {
+        if (ws.some((w) => /^TOTAL$/i.test(w.text))) break;
+        const inItem = Math.abs((ws[0].x0 + ws[0].x1) / 2 - (itemCol[0] + itemCol[1]) / 2) < 10;
+        if (!/^\d+$/.test(ws[0].text) || !inItem) continue;
+        const r = { item: +ws[0].text }; const txt = [];
+        for (const w of ws.slice(1)) {
+          const c = (w.x0 + w.x1) / 2; let best = null;
+          for (const k of numCols) { const [a, b] = cx[k]; const d = a - 4 <= c && c <= b + 4 ? 0 : Math.min(Math.abs(c - a), Math.abs(c - b)); if (d < 14 && (!best || d < best[0])) best = [d, k]; }
+          if (best && /^[\d.,]+$/.test(w.text)) r[best[1]] = num(w.text); else txt.push(w.text);
+        }
+        let code = txt[0] || ""; let rest = txt.slice(1);
+        if (rest.length && /^[A-Z]{1,2}\*?$/.test(rest[0])) { code += " " + rest[0]; rest = rest.slice(1); }
+        if (!code) continue;
+        rows.push({ item: r.item, code, desc: rest.join(" "), qty: r.COUNT ?? null, len: r.LENGTH ?? null, w: r.WIDTH ?? null, ht: r.HEIGHT ?? null });
+      }
+      return rows;
+    }
+    return null;
+  };
+  const site = readCountTable(/BILL\s+SITE\s+ITEM/);
+  const unitsT = readCountTable(/BILL\s+OF\s+UNITS/);
+  let hwList = null;
+  {
+    const dh = words.find((w) => /^DESCRIPTION$/i.test(w.text) && lineOf(w, 3).some((x) => /^DIM\.?A$/i.test(x.text)) && lineOf(w, 3).some((x) => /^PART$/i.test(x.text)));
+    if (dh) {
+      const hl = lineOf(dh, 3); const dim = hl.find((x) => /^DIM\.?A$/i.test(x.text)); const part = hl.find((x) => /^PART$/i.test(x.text));
+      const near = words.filter((w) => w.top < dh.top && dh.top - w.top < 12);
+      const qtyH = near.find((w) => /^QTY\.?$/i.test(w.text) && w.x0 > dim.x1) || hl.find((w) => /^L\.\d$/i.test(w.text));
+      const totH = near.find((w) => /^TOTAL$/i.test(w.text)); const remH = near.find((w) => /^REMARK$/i.test(w.text));
+      const col = [["QTY", qtyH], ["TOTAL", totH], ["REMARK", remH]].filter(([, w]) => w).map(([k, w]) => [k, w.x0, w.x1]);
+      const x0 = part.x0 - 12, x1 = (remH ? remH.x1 : (totH || qtyH || dim).x1) + 40;
+      const cells = words.filter((w) => w.top > dh.top + 3 && w.x0 >= x0 && w.x0 < x1 && Math.abs(w.size - dh.size) < 0.6);
+      hwList = [];
+      for (const { ws } of rowsByY(cells)) {
+        const first = ws[0]; if (first.x0 > dim.x0 - 8 || !/[A-Za-z]/.test(first.text)) continue;
+        let code = first.text; let rest = ws.slice(1);
+        if (rest.length && /^[A-Z]{1,2}\*?$/.test(rest[0].text) && rest.length > 1) { code += " " + rest[0].text; rest = rest.slice(1); }
+        const desc = [], dimA = [], r = {};
+        for (const w of rest) {
+          if (w.x0 < dim.x0 - 8) { desc.push(w.text); continue; }
+          const c = (w.x0 + w.x1) / 2;
+          if (c <= dim.x1 + 6 && w.x0 < (col[0] ? col[0][1] - 3 : 1e9)) { dimA.push(w.text); continue; }
+          let best = null; for (const [k, a, b] of col) { const d = a - 4 <= c && c <= b + 4 ? 0 : Math.min(Math.abs(c - a), Math.abs(c - b)); if (!best || d < best[0]) best = [d, k]; }
+          if (best) (r[best[1]] = r[best[1]] || []).push(w.text);
+        }
+        const q1 = r.QTY ? num(r.QTY[0]) : null, qt = r.TOTAL ? num(r.TOTAL[0]) : null;
+        const dim_ = dimA.join(" ").trim(); const mm = /(\d+(?:\.\d+)?)\s*(mm|m)\.?$/i.exec(dim_);
+        hwList.push({ code, desc: desc.join(" "), dimA: dim_ === "-" ? "" : dim_, qty: qt != null ? qt : q1, qty1: q1, remark: (r.REMARK || []).join(" "), u: mm ? (mm[2].toLowerCase() === "mm" ? "mm." : "m.") : "pcs.", len: mm ? num(mm[1]) : null });
+      }
+    }
+  }
+  if (!out.bom.length && ((site && site.length) || (hwList && hwList.length))) {
+    out.kind = "loose"; out.site = site || []; out.hw = hwList || []; out.units = unitsT || [];
+    const dw = words.find((w) => /^DWG$/i.test(w.text) && lineOf(w).some((x) => /^NO\.?:?$/i.test(x.text)));
+    const dwgNo = dw ? (words.filter((w) => w.top > dw.top + 3 && w.top < dw.top + 24 && w.x0 >= dw.x0 - 10 && w.x0 < dw.x0 + 120).sort((a, b) => a.x0 - b.x0)[0] || {}).text : "";
+    out.code = (dwgNo || out.title.BOM_OF || String(fileName).replace(/\.pdf$/i, "")).trim();
+    const tt = words.find((w) => /^DRAWING$/i.test(w.text) && lineOf(w).some((x) => /^TITLE:?$/i.test(x.text)));
+    out.title.DESC = tt ? words.filter((w) => w.top > tt.top + 3 && w.top < tt.top + 30 && w.x0 >= tt.x0 - 10 && w.x0 < tt.x0 + 120).sort((a, b) => a.top - b.top || a.x0 - b.x0).map((w) => w.text).join(" ") : "";
+    for (const r of out.site) if (r.qty == null) out.warn_read.push(`Site Item ${r.code}: ไม่มี COUNT`);
+    return out;
+  }
   out.kind = /^UA\d/i.test(out.title.BOM_OF || "") || (!inv && out.bom.length) ? "panel" : out.bom.length ? "sub" : inv ? "part" : "unknown";
   out.code = (out.title["PART NO."] || out.title.BOM_OF || String(fileName).replace(/^.*?_?([A-Z]{2,}[\w-]*)\.pdf$/i, "$1")).trim();
   if (out.kind === "panel" && out.title.BOM_OF) out.code = out.title.BOM_OF;
@@ -303,6 +379,7 @@ export function checkPdf(d, { lib, ack }) {
   const t = d.title || {};
   for (const w of d.warn_read || []) add("bad", "อ่านแบบ: " + w, "read:" + w);
   if (d.kind === "unknown") { add("bad", "ไม่พบตาราง BILL OF MATERIALS หรือหัวกระดาษ PART NO. — อาจเป็น PDF สแกน (รูปภาพ) หรือไม่ใช่แบบแผง/ซับ/พาร์ท", "unk"); return { issues, rows }; }
+  if (d.kind === "loose") { add("info", `แบบ Site Item + อุปกรณ์ (${(d.site || []).length} Site Item · ${(d.hw || []).length} อุปกรณ์) — ใช้ที่หน้า Release → ✎ Modify → วาง PDF เพื่อเพิ่มเป็นเบอร์ของใบ`, "loose"); return { issues, rows }; }
   if (d.kind === "part") {
     const lp = libPart(d.code);
     const Ln = fnum(t.LENGTH), H = fnum(t.HEIGHT), inv = (t["INV.CODE"] || "").trim(), fin = (t.FINISH || "").trim();
@@ -788,7 +865,7 @@ export function cutMaterials(parts) {
 //   GLASS / FIXING / OTHER = ลูกตรงใน BOM ของ "แผง" และ "ซับ" ที่ปล่อยในล็อต × จำนวนที่ปล่อย
 //     (ลูกตรงเท่านั้น — ซับลูก/ซับหลานถูกปล่อยเป็นแถวของมันเอง จึงไม่นับซ้ำ)
 //   sheetsOf(row) = ใบงานของแถว (เหมือนหน้าล็อต) · แถวที่ยกเลิก (mod_cancelled_at) ไม่นับ
-export function lotMaterials(plan, need, rows, sheetsOf) {
+export function lotMaterials(plan, need, rows, sheetsOf, lotNo = null) {
   const bom = plan.bom || {};
   const live = (rows || []).filter((r) => !r.mod_cancelled_at && Number(r.qty) > 0);
   const pOf = new Map(need.parts.map((p) => [NC(p.code), p]));
@@ -827,6 +904,12 @@ export function lotMaterials(plan, need, rows, sheetsOf) {
     if (r.kind === "panel") { const pk = findKey(bom.panels, r.code); if (pk) add(bom.panels[pk].items, Number(r.qty)); }
     else if (r.kind === "subassembly") { const sk = findKey(bom.subs, r.code); if (sk) add(subLines(bom.subs[sk]), Number(r.qty)); }
   }
+  // ★ 2026-11-09 อุปกรณ์ที่เลือกเบิกในล็อตนี้เอง (ไม่มี QR · plan.lotHw[ล็อต].items) — เช่น สกรู/ยางของ Site Item จากแบบ mock-up
+  for (const it of lotHwItems(plan, lotNo)) {
+    const base = pick.FIXING.get(NC(it.code)); const code = base ? base.code : String(it.code).trim().toUpperCase();
+    const cur = acc.FIXING.get(code) || { ...(base || { code, d: it.d || "", l: null, h: null, f: "", u: it.u || "pcs.", mm: false }), qty: 0 };
+    cur.qty += Number(it.qty) || 0; cur.picked = true; acc.FIXING.set(code, cur);
+  }
   const list = (m) => [...m.values()].sort((a, b) => ncmp(a.code, b.code));
   return { mat: cutMaterials(cut), glass: list(acc.GLASS), hw: list(acc.FIXING), other: list(acc.OTHER) };
 }
@@ -840,6 +923,19 @@ export function nextLotNo(planRo, lots) {
   return `${base}.${n}`;
 }
 // ของที่ปล่อยไปแล้วของแผนนี้ (จากรายการ releases) → ยอดต่อเบอร์ · ที่อยู่แผงที่ปล่อยแล้ว · รายการล็อต
+// ★ 2026-11-09 อุปกรณ์ (ไม่มี QR) ที่เบิกเป็นล็อต — plan.lotHw = { [เลขล็อต]: { date, by, items: [{ code, qty, u?, d? }] } }
+//   ล็อตที่มีแต่อุปกรณ์ (ไม่มีแถวใน releases) ก็เป็นล็อตได้ (เลขล็อตถูกจอง · มีใบเบิก ACCESSORIES ของตัวเอง)
+const lotHwKey = (plan, lotNo) => Object.keys(plan.lotHw || {}).find((k) => roKey(k) === roKey(lotNo));
+export function lotHwItems(plan, lotNo) { if (!lotNo) return []; const k = lotHwKey(plan, lotNo); return (k && plan.lotHw[k] && plan.lotHw[k].items) || []; }
+// ยอดอุปกรณ์ที่เบิกไปแล้วทั้ง Release (ติดแผง/ซับที่ปล่อย + ที่เลือกเบิกเอง) → Map(NC(code) → { qty, lots: [เลขล็อต] })
+export function hwIssuedOf(plan, need, rel) {
+  const m = new Map();
+  for (const L of rel.lots) {
+    const lm = lotMaterials(plan, need, L.rows, () => [], L.no);
+    for (const x of lm.hw) { const k = NC(x.code); const e = m.get(k) || { qty: 0, lots: [] }; e.qty += Number(x.qty) || 0; if (!e.lots.includes(L.no)) e.lots.push(L.no); m.set(k, e); }
+  }
+  return m;
+}
 export function releasedOf(releases, plan) {
   const lots = new Map(); const byCode = new Map(); const addrLot = new Map(); const other = new Map();
   for (const r of releases || []) {
@@ -866,6 +962,12 @@ export function releasedOf(releases, plan) {
     L.qty += Number(r.qty) || 0;
     if (String(r.release_date) < String(L.date)) L.date = r.release_date;
     lots.set(no, L);
+  }
+  for (const [no, h] of Object.entries(plan.lotHw || {})) {
+    const items = (h && h.items) || []; if (!items.length) continue;
+    const key = [...lots.keys()].find((k) => roKey(k) === roKey(no));
+    if (key) { lots.get(key).hw = items; continue; }
+    lots.set(no, { no, date: h.date || h.at || plan.date, rows: [], panels: 0, subs: 0, parts: 0, qty: 0, hw: items, hwOnly: true, by: h.by || "" });
   }
   return { lots: [...lots.values()].sort((a, b) => lotOf(a.no) - lotOf(b.no)), byCode, addrLot, other };
 }
@@ -925,7 +1027,13 @@ export function needOf(plan) {
   const p = planRelease(units, plan.bom, catOf, plan.picks);
   for (const x of plan.extra || []) {
     if (x.kind === "sub") { if (!p.subs.some((s) => NC(s.code) === NC(x.code))) p.subs.push({ code: x.code, qty: x.qty, depth: 1, d: x.d || "", l: x.l ?? null, hasBom: false, added: x.mod }); }
-    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: x.mod });
+    else if (x.kind === "hw") {
+      // ★ 2026-11-09 อุปกรณ์เพิ่ม (สกรู/ยาง · ไม่มี QR · ใบเบิก) — เบอร์เดิมมีอยู่แล้ว (จาก BOM แผง) → บวกจำนวนเพิ่ม
+      const ex = p.hw.find((h) => NC(h.code) === NC(x.code));
+      if (ex) { ex.qty += Number(x.qty) || 0; ex.added = ex.added || x.mod; ex.extraQty = (ex.extraQty || 0) + (Number(x.qty) || 0); }
+      else p.hw.push({ code: x.code, qty: Number(x.qty) || 0, cat: "FASTENER & GASKET", base: "FASTENER & GASKET", k: "hw", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", ml: null, u: x.u || "pcs.", mm: false, rev: "", added: x.mod });
+    }
+    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: x.mod });
   }
   const adj = plan.adj || {}, cancel = plan.cancel || {};
   // ยอดเดิมก่อน Modify (ก่อนยกเลิกที่อยู่ด้วย) — ใช้โชว์ขีดฆ่า
@@ -1031,7 +1139,7 @@ export function applyModToPlan(plan, mod) {
     if (it.derived) continue;   // ผลจากการแก้ BOM ลูก — ยอดมาจาก BOM ที่แก้แล้ว ไม่ต้องซ้ำใน adj/cancel/extra
     if (it.type === "cancel") p.cancel[it.code] = mod.ver;
     else if (it.type === "qty") p.adj[it.code] = { qty: it.after, ver: mod.ver };
-    else if (it.type === "add") p.extra.push({ kind: it.kind, code: it.code, qty: it.after, d: it.d || "", l: it.l ?? null, inv: it.inv || "", dest: it.dest, mod: mod.ver });
+    else if (it.type === "add") p.extra.push({ kind: it.kind, code: it.code, qty: it.after, d: it.d || "", l: it.l ?? null, inv: it.inv || "", dest: it.dest, mod: mod.ver, ...(it.cat ? { cat: it.cat } : {}), ...(it.u ? { u: it.u } : {}), ...(it.src ? { src: it.src } : {}) });
     else if (it.type === "addr") p.cancelAddr[addrKey(it.code)] = mod.ver;
     if (it.type === "add" && it.kind === "sub" && it.procs) p.procOv = { ...(p.procOv || {}), [it.code]: it.procs };
   }

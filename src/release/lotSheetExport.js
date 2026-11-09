@@ -206,7 +206,7 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     ...(unknown.length ? [{ sheet: { k: "OTHER", kind: "part", label: "OTHER", tab: T("อื่นๆ", "OTHER"), th: T("ใบงานอื่น", "Other sheets") }, rows: unknown.flatMap((k) => by.get(k)) }] : []),
   ];
   // ใบเบิกวัสดุ (ทั้ง Release) — ใส่ท้ายถ้ามีรายการ
-  const lm = lotMaterials(plan, need, lot.rows, (r) => lotRowSheets(r, need));
+  const lm = lotMaterials(plan, need, lot.rows, (r) => lotRowSheets(r, need), lot.no);
   if (lm.mat.length) list.push({ sheet: { k: "MAT", kind: "mat", tab: T("วัตถุดิบงานตัด", "CUTTING MATERIAL") }, mat: true });
   if (lm.glass.length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
   if (lm.hw.length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
