@@ -2662,9 +2662,9 @@ const DICT3 = {
  "· ลบใบหลัก = ล็อต/QR ข้างบนไม่ถูกลบ": "· deleting a main release does not delete the lots/QR above",
  "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ": "Delete only the main release — released lots (QR) are not deleted",
  "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้": "Delete this release — the number can be reused",
- "ปล่อยเป็นล็อต": "Released as lots",
- "ยังไม่ปล่อย": "Not released",
- "ลบ (ไม่มี QR — ล็อต .1 / .2 ไม่ถูกลบ)": "Delete (no QR — lots .1 / .2 are not deleted)",
+ "ยังไม่มี QR": "No QR yet",
+ "ลบใบนี้ (ไม่มี QR — งานที่ปล่อยแล้ว / QR ไม่ถูกลบ)": "Delete this release (no QR — released work / QR are not deleted)",
+ "ลบ Release Order นี้ทั้งชุด (รวม QR)": "Delete this whole release order (including QR)",
  "ลบเฉพาะข้อมูลใบ (QR อยู่ครบ)": "Delete sheet data only (QR kept)",
  "ลบงานที่ปล่อย + QR": "Delete released work + QR"
 };
