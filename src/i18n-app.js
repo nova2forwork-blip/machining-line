@@ -2596,7 +2596,7 @@ const DICT3 = {
  "สถานะเครื่อง": "Machine status",
  "Mat. Length (มม.)": "Mat. Length (mm)",
  "ยังไม่มีเครื่องเริ่ม": "No machine started yet",
- "ล็อตนี้ไม่มี Release แบบใหม่ (ปล่อยด้วยวิธีเก่า) — ไม่มีข้อมูลใบงานให้สร้างใบปล่อย": "This lot wasn't released with the new Release (old method) — no sheet data to build a release sheet",
+ "ไม่พบใบที่บันทึกไว้ (Release แบบใหม่) ของเลขนี้ในโปรเจคนี้ — ปล่อยด้วยวิธีเก่า หรือใบถูกลบไปแล้ว · ไม่มีข้อมูลใบงานให้สร้างใบปล่อย": "No saved release (new style) with this number in this project — released the old way, or the release was deleted · no sheet data to build a release sheet",
  "ไม่พบรายการของล็อตนี้": "No items found for this lot",
  "ต้องมีเลขที่ Release Order ก่อน": "A Release Order number is required first",
  "เก็บเป็นหลักฐาน": "kept as record",

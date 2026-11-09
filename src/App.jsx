@@ -6795,7 +6795,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const core = await import("./release/releaseCore.js");
       const { plans } = await realReleaseApi.listPlans(projectId);
       const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
-      if (!plan) { mlsToast("ล็อตนี้ไม่มี Release แบบใหม่ (ปล่อยด้วยวิธีเก่า) — ไม่มีข้อมูลใบงานให้สร้างใบปล่อย", "error"); return; }
+      if (!plan) { mlsToast("ไม่พบใบที่บันทึกไว้ (Release แบบใหม่) ของเลขนี้ในโปรเจคนี้ — ปล่อยด้วยวิธีเก่า หรือใบถูกลบไปแล้ว · ไม่มีข้อมูลใบงานให้สร้างใบปล่อย", "error"); return; }
       const rel = core.releasedOf(releases, plan);
       const lot = rel.lots.find((l) => core.roKey(l.no) === core.roKey(hdr.ro));
       if (!lot) { mlsToast("ไม่พบรายการของล็อตนี้", "error"); return; }
