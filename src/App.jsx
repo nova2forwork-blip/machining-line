@@ -1214,6 +1214,7 @@ function Shell({ user, onLogout }) {
   const [labelsPreselect, setLabelsPreselect] = useState(""); // release id ที่ส่งมาจากหน้ารายละเอียด Release เพื่อเปิดหน้าพิมพ์ QR แบบเลือกล็อตให้อัตโนมัติ
   const [verifyPreselect, setVerifyPreselect] = useState(""); // parent QR ส่งมาจากรายงานประกอบ/แพ็ก → เปิดหน้าตรวจเบอร์นั้นอัตโนมัติ
   const [verifyNonce, setVerifyNonce] = useState(0); // บั๊มพ์ทุกครั้งที่เข้าหน้าตรวจ → remount หน้าใหม่ (กดเมนูซ้ำ = เคลียร์ผลเดิม)
+  const [homeNonce, setHomeNonce] = useState(0);     // ★ 2026-11-09 กดเมนูที่เปิดอยู่ซ้ำ (โปรเจค / ปล่อยงาน) = กลับหน้าแรกของเมนูนั้น (เดิมค้างอยู่ในหน้าโปรเจค/ล็อต กดแล้วไม่มีอะไรเกิดขึ้น)
   useEffect(() => { loadColPrefs(); }, [user?.id]);   // โหลดลำดับคอลัมน์ (ค่ากลาง company + ของฉัน user) จาก DB ตอนเข้าระบบ
 
   const menu = menuForUser(user); // เมนูตามสิทธิ์ของ user คนนี้
@@ -1221,6 +1222,7 @@ function Shell({ user, onLogout }) {
 
   function go(key, opts) {
     if (!canOpenTab(user, key)) return; // กันเปิดแท็บที่ไม่มีสิทธิ์ (เช่น ยิงจากปุ่มลึกๆ)
+    if (key === tab && (key === "projects" || key === "release")) setHomeNonce((n) => n + 1);
     setTab(key);
     setDrawerOpen(false);
     if (opts?.releaseId) setLabelsPreselect(opts.releaseId);
@@ -1320,14 +1322,14 @@ function Shell({ user, onLogout }) {
       {/* ── Page content ── */}
       <div className="content">
         <div className="content-inner">
-          {tab === "release" && <ReleasePage user={user} goTo={go} />}
+          {tab === "release" && <ReleasePage key={"rel" + homeNonce} user={user} goTo={go} />}
           {tab === "labels" && <QrLabelsPage initialReleaseId={labelsPreselect} onConsumeInitial={() => setLabelsPreselect("")} />}
           {tab === "report" && <ReportPage goTo={go} />}
           {tab === "verify" && <AssemblyVerifyPage key={"vf" + verifyNonce} initialQr={verifyPreselect} onConsumeInitial={() => setVerifyPreselect("")} />}
           {tab === "daily" && <DailyReportPage />}
           {tab === "machines" && <MachinesSummaryPage />}
           {tab === "machinereports" && canManage(user) && <MachineReportsPage />}
-          {tab === "projects" && <ProjectsPage user={user} goTo={go} />}
+          {tab === "projects" && <ProjectsPage key={"prj" + homeNonce} user={user} goTo={go} />}
           {tab === "materials" && <MaterialsPage user={user} />}
           {tab === "parts" && <PartsSummaryPage />}
           {tab === "setup" && isAdmin(user) && <SetupPage />}
