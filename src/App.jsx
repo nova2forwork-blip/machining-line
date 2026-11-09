@@ -12465,6 +12465,32 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
     if (delKey) return;
     if (await confirmDeletePlan(p, planLots(p))) setProjPlans((ps) => (ps || []).filter((x) => x.id !== p.id));
   }
+  // ลบแถวในตาราง: ไม่มี QR (ใบหลักอย่างเดียว) → ลบข้อมูลใบ · มี QR และเป็นเลขของใบหลักด้วย → ถามว่าลบอะไร
+  async function deleteRow(g) {
+    if (delKey) return;
+    if (g.planOnly) return deleteProjPlan(g.plan);
+    if (g.plan) {
+      const v = await askChoice({
+        title: `ลบ ${g.order}`,
+        message: `${g.order} มีทั้งงานที่ปล่อยแล้ว (${nc(g.parts)} Part · ${fmtNum(g.qty)} ชิ้น · มี QR) และข้อมูลใบ (BOM / ใบปล่อย / Modify)\n\nจะลบอะไร?`,
+        choices: [
+          { value: "plan", label: "ลบเฉพาะข้อมูลใบ (QR อยู่ครบ)" },
+          { value: "qr", label: "ลบงานที่ปล่อย + QR", tone: "danger" },
+        ],
+      });
+      if (v === "plan") {
+        try {
+          await realReleaseApi.deletePlan(g.plan, { keepLots: true });
+          auditRecord("delete_release_plan", "release_plan", g.plan.id, { release_order: g.plan.ro, project: project.code, kept_lots: planLots(g.plan).map((L) => L.no) });
+          setProjPlans((ps) => (ps || []).filter((x) => x.id !== g.plan.id));
+          mlsToast(`ลบข้อมูลใบ ${g.plan.ro} แล้ว — งานที่ปล่อยแล้ว / QR อยู่ครบ`, "success");
+        } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); }
+        return;
+      }
+      if (v !== "qr") return;
+    }
+    return deleteOrder(g);
+  }
 
   // ลบ Release Order ทั้งชุด (ทุก Part ในเลขที่นั้น) — ใช้ deleteReleaseCascade ต่อ release (ลบ QR+ประวัติสแกนด้วย) แบบขนานจำกัด
   async function deleteOrder(g) {
@@ -12613,7 +12639,19 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
             if (new Date(r.release_date) > new Date(g.date)) g.date = r.release_date;
             map.set(key, g);
           }
-          orders = Array.from(map.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+          orders = Array.from(map.values());
+          // ★ 2026-11-09 ตารางเดียว: รวมใบหลัก (P-241) กับล็อต (P-241.1 / .2) — ใบหลักที่ยังไม่มีแถวของตัวเอง (ยังไม่ปล่อย/ปล่อยเป็นล็อต) = แถวที่ไม่มี QR
+          //   แถวที่เลขตรงกับใบหลัก → g.plan (ลบ = ถามว่าลบ QR หรือเฉพาะข้อมูลใบหลัก)
+          if (projPlans) {
+            const rk = (x) => String(x || "").trim().toUpperCase().replace(/\s+/g, "");
+            for (const pl of projPlans) {
+              const g = orders.find((o) => rk(o.order) === rk(pl.ro));
+              if (g) g.plan = pl;
+              else orders.push({ order: pl.ro, date: pl.date || pl.createdAt, parts: 0, qty: 0, ids: [], key: "plan:" + pl.id, plan: pl, planOnly: true });
+            }
+          }
+          const lotN = (o) => { const m = /\.0*(\d+)/.exec(String(o || "")); return m ? +m[1] : 0; };
+          orders.sort((a, b) => ((roNumOf(b.order) ?? -1) - (roNumOf(a.order) ?? -1)) || (lotN(a.order) - lotN(b.order)) || (new Date(b.date) - new Date(a.date)));
         }
         return (
           <div style={{ marginBottom: 12 }}>
@@ -12630,36 +12668,17 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
                 columns={[
                   { key: "date", header: "วันที่", cell: (g) => fmtD(g.date) },
                   { key: "order", header: "Release Order", cell: (g) => g.order },
-                  { key: "parts", header: "Part No.", align: "right", cell: (g) => `${nc(g.parts)} Part` },
-                  { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => `${fmtNum(g.qty)} ชิ้น` },
+                  { key: "parts", header: "Part No.", align: "right", cell: (g) => (g.planOnly ? <span style={{ color: "var(--muted)" }}>{planLots(g.plan).length ? "ปล่อยเป็นล็อต" : "ยังไม่ปล่อย"}</span> : `${nc(g.parts)} Part`) },
+                  { key: "qty", header: "จำนวนรวม", align: "right", cell: (g) => (g.planOnly ? "-" : `${fmtNum(g.qty)} ชิ้น`) },
                   ...(canDelRelease ? [{ key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
                     cell: (g) => delKey === g.key
                       ? <span style={{ fontSize: 12, color: "var(--muted)" }}>กำลังลบ {nc(delProg)}/{nc(g.ids.length)}…</span>
-                      : <button type="button" className="row-act danger" onClick={() => deleteOrder(g)} disabled={!!delKey} title="ลบ Release Order นี้ทั้งชุด">ลบ</button> }] : []),
+                      : <button type="button" className="row-act danger" onClick={() => deleteRow(g)} disabled={!!delKey || (g.plan && rels === null)} title={g.planOnly ? "ลบ (ไม่มี QR — ล็อต .1 / .2 ไม่ถูกลบ)" : "ลบ Release Order นี้ทั้งชุด"}>ลบ</button> }] : []),
                 ]} />
             )}
           </div>
         );
       })()}
-      {/* ★ 2026-11-09 ใบหลักในโปรเจคนี้ — ลบใบหลักแยกจากล็อต (ลบใบหลัก ≠ ลบ QR) */}
-      {projPlans && projPlans.length ? (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
-            ใบหลัก (Release แบบใหม่) ในโปรเจคนี้ ({projPlans.length}) <span style={{ fontWeight: 400 }}>· ลบใบหลัก = ล็อต/QR ข้างบนไม่ถูกลบ</span>
-          </div>
-          <DataTable id="project-plans" wrapClass="table-wrap" wrapStyle={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}
-            tableClass="data-table" tableStyle={{ fontSize: 12.5 }} rows={projPlans} rowKey={(p) => p.id}
-            columns={[
-              { key: "date", header: "วันที่", cell: (p) => fmtD(p.date || p.createdAt) },
-              { key: "ro", header: "ใบหลัก", cell: (p) => p.ro },
-              { key: "by", header: "จัดทำโดย", cell: (p) => p.by || "-" },
-              { key: "lots", header: "ล็อตที่ปล่อย", align: "right", cell: (p) => { const ls = planLots(p); return rels === null ? "…" : ls.length ? ls.map((L) => L.no).join(", ") : <span style={{ color: "var(--muted)" }}>ยังไม่มี</span>; } },
-              { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
-                cell: (p) => <button type="button" className="row-act danger" onClick={() => deleteProjPlan(p)} disabled={!!delKey || rels === null}
-                  title={planLots(p).length ? "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ" : "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้"}>{planLots(p).length ? "ลบใบหลัก" : "ลบใบนี้"}</button> },
-            ]} />
-        </div>
-      ) : null}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         {admin ? (

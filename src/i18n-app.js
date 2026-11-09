@@ -2661,13 +2661,21 @@ const DICT3 = {
  "ยังไม่มี": "None yet",
  "· ลบใบหลัก = ล็อต/QR ข้างบนไม่ถูกลบ": "· deleting a main release does not delete the lots/QR above",
  "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ": "Delete only the main release — released lots (QR) are not deleted",
- "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้": "Delete this release — the number can be reused"
+ "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้": "Delete this release — the number can be reused",
+ "ปล่อยเป็นล็อต": "Released as lots",
+ "ยังไม่ปล่อย": "Not released",
+ "ลบ (ไม่มี QR — ล็อต .1 / .2 ไม่ถูกลบ)": "Delete (no QR — lots .1 / .2 are not deleted)",
+ "ลบเฉพาะข้อมูลใบ (QR อยู่ครบ)": "Delete sheet data only (QR kept)",
+ "ลบงานที่ปล่อย + QR": "Delete released work + QR"
 };
 const TPLS3 = [
 ["ลบใบหลัก {1} ด้วยไหม?", "Delete main release {1} too?"],
 ["ลบใบหลัก {1}?", "Delete main release {1}?"],
 ["ใบหลัก (Release แบบใหม่) ในโปรเจคนี้ ({1})", "Main releases (new style) in this project ({1})"],
 ["ลบไม่สำเร็จ: {1}", "Delete failed: {1}"],
+["ลบ {1}", "Delete {1}"],
+["{1} มีทั้งงานที่ปล่อยแล้ว ({2} Part · {3} ชิ้น · มี QR) และข้อมูลใบ (BOM / ใบปล่อย / Modify)\n\nจะลบอะไร?", "{1} has both released work ({2} parts · {3} pcs · with QR) and sheet data (BOM / release sheets / Modify)\n\nWhat do you want to delete?"],
+["ลบข้อมูลใบ {1} แล้ว — งานที่ปล่อยแล้ว / QR อยู่ครบ", "Sheet data of {1} deleted — released work / QR kept"],
 ["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่น หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number, or open the main release and release lots"],
 ["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่นในไฟล์ หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number in the file, or open the main release and release lots"],
 ["ล็อตที่ปล่อยแล้ว {1} ({2} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่", "Released lots {1} ({2} pcs) are NOT deleted — QR and scan history stay, shown as a release without a main sheet\n\nLost: the main release data — BOM / panel addresses / edited release sheets / Modify history\n\nCodes / BOM in the project library stay"],
