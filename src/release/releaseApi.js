@@ -327,10 +327,13 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
 }
 
 // ปล่อย 1 ล็อต: rows จาก lotRows() → create_release_batch (release_order = เลขล็อต · QR ทุกชิ้น) + Modify + INV ใหม่
-export async function releaseLot({ plan, lotNo, date, userId, rows }, onProgress = () => {}) {
+//   append = เพิ่มเข้าล็อตที่ปล่อยแล้ว (เลขล็อตเดิม · แถวใหม่ + QR ใหม่ต่อท้ายในใบปล่อยเดียวกัน) — ผู้ใช้ยืนยันแล้ว
+export async function releaseLot({ plan, lotNo, date, userId, rows, append = false }, onProgress = () => {}) {
   if (!rows || !rows.length) throw new Error("ยังไม่ได้เลือกอะไร");
   onProgress(`ตรวจเลขล็อต ${lotNo}…`);
-  if (await releaseOrderExists(plan.projectId, lotNo)) { const e = new Error(`เลขล็อต ${lotNo} ถูกใช้แล้ว (อาจมีคนปล่อยไปก่อน) — รีเฟรชแล้วเลือกใหม่`); e.code = "exists"; throw e; }
+  const used = await releaseOrderExists(plan.projectId, lotNo);
+  if (used && !append) { const e = new Error(`เลขล็อต ${lotNo} ถูกใช้แล้ว (อาจมีคนปล่อยไปก่อน) — รีเฟรชแล้วเลือกใหม่`); e.code = "exists"; throw e; }
+  if (!used && append) { const e = new Error(`ไม่พบล็อต ${lotNo} ที่จะเพิ่มเข้า — รีเฟรชแล้วลองใหม่`); e.code = "not_found"; throw e; }
   let wOf = () => 0;
   try { wOf = await weightIndex(plan.projectId); } catch (_) { /* ไม่มีบันทึก Material = น้ำหนัก 0 */ }
   onProgress(`สร้างล็อต ${lotNo} + QR (${rows.length} เบอร์)…`);

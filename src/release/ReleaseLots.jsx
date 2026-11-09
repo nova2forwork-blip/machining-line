@@ -322,6 +322,8 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     const m = isPartSheet(k) ? sel.parts : sel.subs;
     return { left: items.filter((x) => leftOf(x.code, x.qty) > 0).length, sel: items.filter((x) => m.get(x.code) > 0).length };
   };
+  // ★ 2026-11-09 ปล่อยเข้า "ล็อตเดิม" ได้ (เช่น Site Item/อุปกรณ์ที่เพิ่มทีหลัง ให้อยู่ในใบปล่อย P-241 เดียวกัน) — ใส่เลขล็อตที่ปล่อยแล้ว หรือเลือกจากรายการ
+  const intoLot = rel.lots.find((L) => roKey(L.no) === roKey(lotNo)) || null;
   const ql = q.trim().toUpperCase();
   const match = (...xs) => !ql || xs.some((x) => String(x || "").toUpperCase().includes(ql));
   const rows = tab === "__hw" ? hwList.filter((h) => match(h.code, h.d))
@@ -398,11 +400,11 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
         + [...ex.parts].filter(([c, qn]) => { const n = need.parts.find((x) => NC(x.code) === NC(c)); return n && doneOf(n.code) + (otherOf(rel, n.code)?.qty || 0) + (sel.parts.get(n.code) || 0) < qn - 1e-9; }).length;
       if (short) w.push(["warn", `แผงที่เลือกใช้ซับ/พาร์ท ${short} เบอร์ที่ยังไม่ปล่อย (ทั้งในล็อตนี้และก่อนหน้า) — ประกอบได้เมื่อของมาครบ`]);
     }
-    if (rel.lots.some((L) => roKey(L.no) === roKey(lotNo))) w.push(["block", `เลขล็อต ${lotNo} ใช้แล้ว — ใช้ ${nextLotNo(plan.ro, rel.lots)}`]);
+    if (intoLot) w.push(["warn", `เพิ่มเข้าล็อตเดิม ${intoLot.no} (${fmtD(intoLot.date)} · ${[intoLot.panels && `แผง ${nf(intoLot.panels)}`, intoLot.subs && `ซับ ${nf(intoLot.subs)} เบอร์`, intoLot.parts && `พาร์ท ${nf(intoLot.parts)} เบอร์`, intoLot.hw?.length && `อุปกรณ์ ${nf(intoLot.hw.length)}`].filter(Boolean).join(" · ") || "ว่าง"}) — ของใหม่จะอยู่ในใบปล่อย/ใบเบิกเดียวกัน QR ใหม่ต่อท้าย · ถ้าต้องการแยกล็อต ใช้ ${nextLotNo(plan.ro, rel.lots)}`]);
     if (!/^P-\d+(\.\d+)?$/i.test(lotNo.trim())) w.push(["block", `เลขล็อตต้องเป็น ${plan.ro}.ตัวเลข หรือ ${plan.ro}`]);
     else if (roKey(lotNo).split(".")[0] !== roKey(plan.ro).split(".")[0]) w.push(["block", `เลขล็อตต้องขึ้นต้นด้วย ${plan.ro}`]);
     return w;
-  }, [need, sel, nPanel, plan, doneOf, rel.lots, lotNo]);
+  }, [need, sel, nPanel, plan, doneOf, rel.lots, lotNo, intoLot]);
   const blocked = warns.some((w) => w[0] === "block") || (!lr.length && !nHw);
 
   async function save() {
@@ -413,12 +415,15 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     const no = lotNo.trim().toUpperCase();
     try {
       let res = null;
-      if (lr.length) res = await api.releaseLot({ plan, lotNo: no, date: dateToIso(date), userId: user?.id || null, rows: lr }, (m) => setBusy(m));
+      if (lr.length) res = await api.releaseLot({ plan, lotNo: no, date: dateToIso(date), userId: user?.id || null, rows: lr, append: !!intoLot }, (m) => setBusy(m));
       // ★ 2026-11-09 อุปกรณ์ที่เลือกเบิก (ไม่มี QR) → เก็บกับแผน plan.lotHw[ล็อต] (ใบเบิก ACCESSORIES ของล็อตนี้ · หักยอดคงเหลือ)
       let np = plan;
       if (nHw) {
-        const items = hwList.filter((h) => selHw.get(h.code) > 0).map((h) => ({ code: h.code, qty: selHw.get(h.code), u: h.u || "pcs.", d: h.d || "" }));
-        np = { ...plan, lotHw: { ...(plan.lotHw || {}), [no]: { date: dateToIso(date), by: user?.name || "", note: note.trim(), items } } };
+        let items = hwList.filter((h) => selHw.get(h.code) > 0).map((h) => ({ code: h.code, qty: selHw.get(h.code), u: h.u || "pcs.", d: h.d || "" }));
+        const hwKey = Object.keys(plan.lotHw || {}).find((k) => roKey(k) === roKey(no)) || (intoLot ? intoLot.no : no);
+        const prev = (plan.lotHw || {})[hwKey];
+        if (prev && prev.items) { const merged = [...prev.items.map((x) => ({ ...x }))]; for (const it of items) { const ex = merged.find((x) => NC(x.code) === NC(it.code)); if (ex) ex.qty = Math.round((Number(ex.qty) + Number(it.qty)) * 1000) / 1000; else merged.push(it); } items = merged; }
+        np = { ...plan, lotHw: { ...(plan.lotHw || {}), [hwKey]: { ...(prev || {}), date: prev?.date || dateToIso(date), by: prev?.by || user?.name || "", note: [prev?.note, note.trim()].filter(Boolean).join(" · "), items } } };
         setBusy(`บันทึกรายการอุปกรณ์ของ ${no}…`);
         try { await api.updatePlan(np); }
         catch (e) { setBusy(""); setErr([`${lr.length ? `ปล่อย ${no} แล้ว แต่` : ""}บันทึกรายการอุปกรณ์ไม่สำเร็จ: ${e?.message || e}${lr.length ? " — รายการอุปกรณ์ยังไม่ถูกหัก ลองเบิกอุปกรณ์ใหม่อีกครั้ง (เลขล็อตใหม่)" : ""}`]); if (!lr.length) return; }
@@ -439,6 +444,10 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
             <h2>ปล่อยล็อตใหม่</h2>
             <input className="input rw-mono rl-lotno" value={lotNo} onChange={(e) => setLotNo(e.target.value.toUpperCase())} aria-label="เลขล็อต" />
             {!rel.lots.some((L) => lotOf(L.no) === 0) ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLotNo(plan.ro)} title="ปล่อยในเลข Release หลักเลย">ใช้เลข {plan.ro}</button> : null}
+            {rel.lots.length ? <select className="select rw-mono" style={{ width: "auto" }} value={intoLot ? intoLot.no : ""} onChange={(e) => setLotNo(e.target.value || nextLotNo(plan.ro, rel.lots))} aria-label="เพิ่มเข้าล็อตเดิม" title="เพิ่มของใหม่เข้าล็อตที่ปล่อยแล้ว (ใบปล่อยเดียวกัน · QR ใหม่ต่อท้าย)">
+              <option value="">ล็อตใหม่ {nextLotNo(plan.ro, rel.lots)}</option>
+              {rel.lots.map((L) => <option key={L.no} value={L.no}>เพิ่มเข้าล็อตเดิม {L.no}</option>)}
+            </select> : null}
             <input className="input rl-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ล็อต" />
             <input className="input rl-note" value={note} placeholder="หมายเหตุ เช่น ปล่อยพาร์ทก่อน / ชั้น 25 ฝั่ง E" onChange={(e) => setNote(e.target.value)} aria-label="หมายเหตุล็อต" />
           </div>
@@ -538,7 +547,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
           </div>
           <div className="rl-foot-btns">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={!!busy}>ยกเลิก</button>
-            <button type="button" className="btn btn-accent" onClick={save} disabled={blocked || !!busy}>{busy || (lr.length ? `ปล่อย ${lotNo} + สร้าง QR${nHw ? " + ใบเบิก" : ""}` : nHw ? `เบิกอุปกรณ์ ${lotNo} (ไม่มี QR)` : "เลือกรายการที่จะปล่อยก่อน")}</button>
+            <button type="button" className="btn btn-accent" onClick={save} disabled={blocked || !!busy}>{busy || (lr.length ? `${intoLot ? "เพิ่มเข้า" : "ปล่อย"} ${lotNo} + สร้าง QR${nHw ? " + ใบเบิก" : ""}` : nHw ? `เบิกอุปกรณ์ ${intoLot ? "เพิ่มเข้า " : ""}${lotNo} (ไม่มี QR)` : "เลือกรายการที่จะปล่อยก่อน")}</button>
           </div>
         </div>
       </aside>

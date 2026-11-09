@@ -1580,6 +1580,8 @@ const FIX_DICT = {
   "ลบใบนี้": "Delete this release",
   "อุปกรณ์ · ไม่มี QR": "Accessories · no QR",
   "เพิ่มรายการ": "Add items",
+  "เพิ่มเข้าล็อตเดิม": "Add to existing lot",
+  "เพิ่มของใหม่เข้าล็อตที่ปล่อยแล้ว (ใบปล่อยเดียวกัน · QR ใหม่ต่อท้าย)": "Add new items to a lot already released (same release sheet · new QR appended)",
   "เพิ่มใหม่": "New",
   "กลับไปแก้": "Back",
   "เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ (เช่น จากแบบ mock-up) — ไม่นับเป็น Modify ไม่มีเลข M · ของเดิมไม่เปลี่ยน": "Add codes / site items / accessories not yet in this release (e.g. from a mock-up drawing) — not a Modify, no M number · existing items unchanged",
