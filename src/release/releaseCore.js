@@ -1027,6 +1027,7 @@ export function needOf(plan) {
   const p = planRelease(units, plan.bom, catOf, plan.picks);
   // ป้าย "เพิ่ม …": จาก Modify = เลข M · จาก "เพิ่มรายการ" (ไม่นับ Modify) = ชื่อแบบที่มา หรือ "ใหม่"
   const addTag = (x) => x.mod || (x.src ? `จากแบบ ${x.src}` : "ใหม่");
+  const partMerge = [];
   for (const x of plan.extra || []) {
     if (x.kind === "sub") { if (!p.subs.some((s) => NC(s.code) === NC(x.code))) p.subs.push({ code: x.code, qty: x.qty, depth: 1, d: x.d || "", l: x.l ?? null, hasBom: false, added: addTag(x) }); }
     else if (x.kind === "hw") {
@@ -1036,6 +1037,7 @@ export function needOf(plan) {
       else p.hw.push({ code: x.code, qty: Number(x.qty) || 0, cat: "FASTENER & GASKET", base: "FASTENER & GASKET", k: "hw", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", ml: null, u: x.u || "pcs.", mm: false, rev: "", added: addTag(x) });
     }
     else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: addTag(x) });
+    else partMerge.push(x);   // ★ 2026-11-09 เบอร์มีอยู่แล้ว (เช่น อยู่ใน BOM แผง) → บวกจำนวนเพิ่ม (เช่น Site Item ส่งไซต์เพิ่มจากแบบ mock-up) — ใส่หลังปรับ adj/cancel
   }
   const adj = plan.adj || {}, cancel = plan.cancel || {};
   // ยอดเดิมก่อน Modify (ก่อนยกเลิกที่อยู่ด้วย) — ใช้โชว์ขีดฆ่า
@@ -1052,6 +1054,12 @@ export function needOf(plan) {
     r.orig = base && baseQty.has(NC(r.code)) ? baseQty.get(NC(r.code)) : r.qty;
     const a = adj[r.code]; if (a) { r.qty = a.qty; r.modVer = a.ver; }
     if (cancel[r.code]) { r.cancelled = cancel[r.code]; r.modVer = cancel[r.code]; r.qty = 0; }
+  }
+  for (const x of partMerge) {
+    const r = p.parts.find((s) => NC(s.code) === NC(x.code)); if (!r || r.cancelled) continue;
+    const q = Number(x.qty) || 0; r.qty += q; r.orig = (r.orig ?? 0) + q;   // orig ขยับตาม = ไม่ขึ้นขีดฆ่า (ไม่ใช่การแก้จำนวน)
+    r.extraQty = (r.extraQty || 0) + q; r.added = r.added || addTag(x);
+    if (x.cat === "SITE ITEM") r.siteQty = (r.siteQty || 0) + q;
   }
   p.panels.forEach((x) => { x.orig = (plan.units || []).filter((u) => u.unit === x.code).length; });
   p.subs.forEach((s) => { s.procs = procList((plan.procOv || {})[s.code] ?? ruleProc(s.code)); });

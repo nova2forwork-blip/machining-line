@@ -507,7 +507,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
                     <tr key={r.code} className={`${on ? "rl-sel" : ""} ${left <= 0 ? "rl-done" : ""} ${r.cancelled ? "rl-cancelrow" : ""}`}>
                       <td><input type="checkbox" checked={on} disabled={left <= 0} onChange={(e) => setQty(kind, r.code, r.qty, e.target.checked ? left : 0, true)} aria-label={`เลือก ${r.code}`} /></td>
                       <td className="r rw-muted">{ri + 1}</td>
-                      <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.cat === "SITE ITEM" ? <> <Pill tone="warn">SITE ITEM</Pill></> : null}</td>
+                      <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.cat === "SITE ITEM" ? <> <Pill tone="warn">SITE ITEM</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ (เพิ่มจากแบบ)`}>SITE ITEM +{nf(r.siteQty)}</Pill></> : null}</td>
                       <td className="rl-desc"><span>{r.d}</span></td>
                       <td className="r rw-num">{r.l ? nlen(r.l) : ""}</td>
                       <td className="r"><ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /></td>
@@ -715,8 +715,10 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         let ns = 0, nh = 0, skip = 0;
         for (const r of d.site || []) {
           const code = String(r.code).trim().toUpperCase();
-          if (exists(code)) { skip++; continue; }
-          newAdds.push({ kind: "part", code, d: r.desc || "", qty: r.qty != null ? String(r.qty) : "", l: r.len != null ? String(r.len) : "", inv: "", dest: ruleDest(ruleCat(code, "part"), code), procs: "ยิง", cat: "SITE ITEM", fromPdf: true, src: d.code, note: `Site Item จากแบบ ${d.code}` }); ns++;
+          if (adds.some((a) => NC(a.code) === NC(code)) || newAdds.some((a) => NC(a.code) === NC(code))) { skip++; continue; }
+          const have = need.parts.find((x) => NC(x.code) === NC(code));   // มีในใบแล้ว (เช่น อยู่ใน BOM แผง) → จำนวนนี้บวกเพิ่มเป็นของส่งไซต์
+          newAdds.push({ kind: "part", code, d: r.desc || have?.d || "", qty: r.qty != null ? String(r.qty) : "", l: r.len != null ? String(r.len) : have?.l != null ? String(have.l) : "", inv: have?.inv || "", dest: have?.dest || ruleDest(ruleCat(code, "part"), code), procs: "ยิง", cat: "SITE ITEM", fromPdf: true, src: d.code,
+            note: have ? `มีในใบแล้ว ${nf(have.qty)} ชิ้น (จาก BOM แผง) — จำนวนนี้บวกเพิ่ม เป็น Site Item ส่งไซต์` : `Site Item จากแบบ ${d.code}` }); ns++;
         }
         for (const r of d.hw || []) {
           const code = String(r.code).trim().toUpperCase();
