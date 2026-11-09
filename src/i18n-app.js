@@ -2655,11 +2655,19 @@ const DICT3 = {
  "ลบใบหลัก": "Delete main release",
  "เก็บไว้": "Keep it",
  "ลบใบนี้": "Delete this release",
- "ลบใบหลัก Release": "Delete main release"
+ "ลบใบหลัก Release": "Delete main release",
+ "ใบหลัก": "Main release",
+ "ล็อตที่ปล่อย": "Released lots",
+ "ยังไม่มี": "None yet",
+ "· ลบใบหลัก = ล็อต/QR ข้างบนไม่ถูกลบ": "· deleting a main release does not delete the lots/QR above",
+ "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ": "Delete only the main release — released lots (QR) are not deleted",
+ "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้": "Delete this release — the number can be reused"
 };
 const TPLS3 = [
 ["ลบใบหลัก {1} ด้วยไหม?", "Delete main release {1} too?"],
 ["ลบใบหลัก {1}?", "Delete main release {1}?"],
+["ใบหลัก (Release แบบใหม่) ในโปรเจคนี้ ({1})", "Main releases (new style) in this project ({1})"],
+["ลบไม่สำเร็จ: {1}", "Delete failed: {1}"],
 ["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่น หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number, or open the main release and release lots"],
 ["Release Order \"{1}\" เป็นใบหลักที่บันทึกไว้แล้วในโปรเจคนี้ ({2}) — ใช้เลขอื่นในไฟล์ หรือเปิดใบหลักแล้วปล่อยล็อต", "Release Order \"{1}\" is already a saved main release in this project ({2}) — use another number in the file, or open the main release and release lots"],
 ["ล็อตที่ปล่อยแล้ว {1} ({2} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่", "Released lots {1} ({2} pcs) are NOT deleted — QR and scan history stay, shown as a release without a main sheet\n\nLost: the main release data — BOM / panel addresses / edited release sheets / Modify history\n\nCodes / BOM in the project library stay"],

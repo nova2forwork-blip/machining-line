@@ -7228,6 +7228,22 @@ async function planUsingOrder(projectId, ro) {
   const r = await realReleaseApi.listPlans(projectId);
   return (r.plans || []).find((p) => roNumOf(p.ro) === n) || null;
 }
+// ★ 2026-11-09 ยืนยัน + ลบใบหลัก (ใช้ทั้งหน้าใบหลัก และหน้าต่างแก้ไขโปรเจค)
+//   lots = [{ no, qty }] ล็อตของเลขนี้ที่ปล่อยแล้ว · มีล็อต = ลบเฉพาะใบหลัก (ล็อต/QR อยู่ครบ) · ไม่มี = เลขนี้ใช้ลงใหม่ได้
+//   คืน true เมื่อลบแล้ว
+async function confirmDeletePlan(p, lots = []) {
+  const nQty = lots.reduce((a, L) => a + (Number(L.qty) || 0), 0);
+  const ok = await askConfirm(lots.length
+    ? { title: `ลบใบหลัก ${p.ro}?`, message: `ล็อตที่ปล่อยแล้ว ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบหลัก", cancelText: "ยกเลิก" }
+    : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
+  if (!ok) return false;
+  try {
+    await realReleaseApi.deletePlan(p, { keepLots: lots.length > 0 });
+    auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode, kept_lots: lots.map((L) => L.no) });
+    mlsToast(lots.length ? `ลบใบหลัก ${p.ro} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ` : `ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+    return true;
+  } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); return false; }
+}
 async function offerDeleteEmptyPlan(projectId, order) {
   const n = roNumOf(order); if (!projectId || n == null) return false;
   try {
@@ -7340,20 +7356,11 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
         onDelete={async (lots = []) => {
           // ★ 2026-11-09 ลบใบหลัก: ไม่มีล็อต → เลขนี้ใช้ลงใหม่ได้ · มีล็อต (เช่น สร้างใบหลักซ้ำ) → ลบเฉพาะใบหลัก ล็อต/QR อยู่ครบ
           const p = view.plan;
-          const nQty = lots.reduce((a, L) => a + (L.qty || 0), 0);
-          const ok = await askConfirm(lots.length
-            ? { title: `ลบใบหลัก ${p.ro}?`, message: `ล็อตที่ปล่อยแล้ว ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบหลัก", cancelText: "ยกเลิก" }
-            : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
-          if (!ok) return;
-          try {
-            await realReleaseApi.deletePlan(p, { keepLots: lots.length > 0 });
-            auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode, kept_lots: lots.map((L) => L.no) });
-            hist.reset();
-            setPlans((ps) => ps.filter((x) => x.id !== p.id));
-            setView(null);
-            mlsToast(lots.length ? `ลบใบหลัก ${p.ro} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ` : `ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
-            await onReload();
-          } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); }
+          if (!(await confirmDeletePlan(p, lots))) return;
+          hist.reset();
+          setPlans((ps) => ps.filter((x) => x.id !== p.id));
+          setView(null);
+          await onReload();
         }}
         onModified={async (np, mod) => {
           hist.reset();
@@ -12445,6 +12452,19 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
     getReleasesFull().then((all) => setRels(all.filter((r) => r.part_master?.project_id === project.id)))
       .catch((e) => { setErr("โหลดรายการ Release ไม่สำเร็จ: " + (e?.message || e)); setRels([]); });
   }, [project.id]);
+  // ★ 2026-11-09 ใบหลัก (Release แบบใหม่ · release_plans) — ไม่อยู่ในตาราง releases ถ้ายังไม่ปล่อยล็อต จึงต้องโหลดแยก
+  const [projPlans, setProjPlans] = useState(null);
+  const loadProjPlans = useCallback(() => realReleaseApi.listPlans(project.id).then((r) => setProjPlans(r.plans || [])).catch(() => setProjPlans([])), [project.id]);
+  useEffect(() => { loadProjPlans(); }, [loadProjPlans]);
+  const planLots = (p) => {
+    const n = roNumOf(p.ro); const m = new Map();
+    for (const r of rels || []) if (roNumOf(r.release_order) === n) { const no = String(r.release_order).trim(); m.set(no, (m.get(no) || 0) + (Number(r.qty) || 0)); }
+    return [...m.entries()].map(([no, qty]) => ({ no, qty }));
+  };
+  async function deleteProjPlan(p) {
+    if (delKey) return;
+    if (await confirmDeletePlan(p, planLots(p))) setProjPlans((ps) => (ps || []).filter((x) => x.id !== p.id));
+  }
 
   // ลบ Release Order ทั้งชุด (ทุก Part ในเลขที่นั้น) — ใช้ deleteReleaseCascade ต่อ release (ลบ QR+ประวัติสแกนด้วย) แบบขนานจำกัด
   async function deleteOrder(g) {
@@ -12476,7 +12496,7 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
       mlsToast(forbidden ? "ออฟฟิศยังไม่มีสิทธิ์ลบ Release (ต้องปรับ RPC)" : `ลบ ${g.order}: สำเร็จ ${done} · พลาด ${failed}`, "warn");
     } else {
       mlsToast(`ลบ Release Order "${g.order}" แล้ว (${nc(done)} รายการ)`, "success");
-      await offerDeleteEmptyPlan(project.id, g.order);
+      if (await offerDeleteEmptyPlan(project.id, g.order)) loadProjPlans();
     }
   }
 
@@ -12621,6 +12641,25 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
           </div>
         );
       })()}
+      {/* ★ 2026-11-09 ใบหลักในโปรเจคนี้ — ลบใบหลักแยกจากล็อต (ลบใบหลัก ≠ ลบ QR) */}
+      {projPlans && projPlans.length ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
+            ใบหลัก (Release แบบใหม่) ในโปรเจคนี้ ({projPlans.length}) <span style={{ fontWeight: 400 }}>· ลบใบหลัก = ล็อต/QR ข้างบนไม่ถูกลบ</span>
+          </div>
+          <DataTable id="project-plans" wrapClass="table-wrap" wrapStyle={{ maxHeight: 190, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}
+            tableClass="data-table" tableStyle={{ fontSize: 12.5 }} rows={projPlans} rowKey={(p) => p.id}
+            columns={[
+              { key: "date", header: "วันที่", cell: (p) => fmtD(p.date || p.createdAt) },
+              { key: "ro", header: "ใบหลัก", cell: (p) => p.ro },
+              { key: "by", header: "จัดทำโดย", cell: (p) => p.by || "-" },
+              { key: "lots", header: "ล็อตที่ปล่อย", align: "right", cell: (p) => { const ls = planLots(p); return rels === null ? "…" : ls.length ? ls.map((L) => L.no).join(", ") : <span style={{ color: "var(--muted)" }}>ยังไม่มี</span>; } },
+              { key: "manage", header: "", dataLabel: "", tdStyle: { whiteSpace: "nowrap", textAlign: "right" },
+                cell: (p) => <button type="button" className="row-act danger" onClick={() => deleteProjPlan(p)} disabled={!!delKey || rels === null}
+                  title={planLots(p).length ? "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ" : "ลบใบนี้ — เลขนี้ใช้ลงใหม่ได้"}>{planLots(p).length ? "ลบใบหลัก" : "ลบใบนี้"}</button> },
+            ]} />
+        </div>
+      ) : null}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       <div className="modal-actions" style={{ justifyContent: "space-between" }}>
         {admin ? (
