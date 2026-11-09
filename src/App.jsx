@@ -7318,18 +7318,21 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           if (g) onOpenGroup(g); else mlsToast("ไม่พบรายการของล็อตนี้", "error");
         } : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange}
-        onDelete={async () => {
-          // ★ 2026-11-09 ลบใบหลักที่ยังไม่มีล็อต (ปุ่มโชว์เฉพาะตอนไม่มีล็อต · DB เช็คซ้ำ) → เลขนี้ใช้ลงใหม่ได้
+        onDelete={async (lots = []) => {
+          // ★ 2026-11-09 ลบใบหลัก: ไม่มีล็อต → เลขนี้ใช้ลงใหม่ได้ · มีล็อต (เช่น สร้างใบหลักซ้ำ) → ลบเฉพาะใบหลัก ล็อต/QR อยู่ครบ
           const p = view.plan;
-          const ok = await askConfirm({ title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
+          const nQty = lots.reduce((a, L) => a + (L.qty || 0), 0);
+          const ok = await askConfirm(lots.length
+            ? { title: `ลบใบหลัก ${p.ro}?`, message: `ล็อตที่ปล่อยแล้ว ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) จะไม่ถูกลบ — QR และประวัติสแกนอยู่ครบ แสดงเป็น Release แบบไม่มีใบหลัก\n\nที่หายไปคือข้อมูลของใบหลัก: BOM / ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบหลัก", cancelText: "ยกเลิก" }
+            : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
           if (!ok) return;
           try {
-            await realReleaseApi.deletePlan(p);
-            auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode });
+            await realReleaseApi.deletePlan(p, { keepLots: lots.length > 0 });
+            auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode, kept_lots: lots.map((L) => L.no) });
             hist.reset();
             setPlans((ps) => ps.filter((x) => x.id !== p.id));
             setView(null);
-            mlsToast(`ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+            mlsToast(lots.length ? `ลบใบหลัก ${p.ro} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ` : `ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
             await onReload();
           } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); }
         }}

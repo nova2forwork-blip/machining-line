@@ -87,9 +87,11 @@ begin
 end $$;
 
 -- ปิด / ยกเลิก (= ลบ) แผน
---   ★ 2026-11-09 ลบ (cancelled) ได้เฉพาะใบที่ "ไม่มีล็อตเหลือ" ในตาราง releases (P-002 / P-002.1 / … ของโปรเจคเดียวกัน)
---   ใบที่ลบแล้วไม่โชว์ในรายการ และเลขนี้ใช้ลงใหม่ได้
-create or replace function public.release_plan_set_status(p_token uuid, p_id uuid, p_status text)
+--   ★ 2026-11-09 ลบ (cancelled): ถ้ายังมีล็อตของเลขนี้ในตาราง releases (P-002 / P-002.1 / … โปรเจคเดียวกัน)
+--   ต้องส่ง p_keep_lots = true (ผู้ใช้ยืนยันแล้วว่าเก็บล็อตไว้ — ล็อต/QR ไม่ถูกลบ แสดงเป็น Release แบบไม่มีใบหลัก)
+--   ใบที่ลบแล้วไม่โชว์ในรายการ · ไม่มีล็อตเหลือ = เลขนี้ใช้ลงใหม่ได้
+drop function if exists public.release_plan_set_status(uuid, uuid, text);
+create or replace function public.release_plan_set_status(p_token uuid, p_id uuid, p_status text, p_keep_lots boolean default false)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -107,7 +109,7 @@ begin
       into v_prj, v_num
       from public.release_plans p where p.id = p_id;
     if v_prj is null then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
-    if v_num is not null and exists (
+    if not coalesce(p_keep_lots, false) and v_num is not null and exists (
          select 1 from public.releases r
            join public.part_master pm on pm.id = r.part_master_id
           where pm.project_id = v_prj
@@ -122,7 +124,7 @@ end $$;
 
 grant execute on function public.release_plan_save(uuid, uuid, text, jsonb, uuid) to anon, authenticated;
 grant execute on function public.release_plan_list(uuid, uuid) to anon, authenticated;
-grant execute on function public.release_plan_set_status(uuid, uuid, text) to anon, authenticated;
+grant execute on function public.release_plan_set_status(uuid, uuid, text, boolean) to anon, authenticated;
 
 -- ตรวจหลังรัน:
 --   select count(*) from public.release_plans;                       -- 0 (ตารางพร้อม)

@@ -1578,6 +1578,8 @@ const FIX_DICT = {
   "ลง Address & Unit + อัพ PDF แบบแผง → ระบบแตกเป็นซับ / พาร์ท ให้เอง": "Enter Address & Unit + upload panel drawing PDFs → the system breaks them down into subs / parts",
   "ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว / ประวัติ Modify / QR · ใบปล่อยและใบเบิกจะใช้ข้อมูลใหม่": "Released qty / Modify history / QR stay unchanged · release and issue sheets will use the new data",
   "ลบใบนี้": "Delete this release",
+  "ลบใบหลัก": "Delete main release",
+  "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ แสดงเป็น Release แบบไม่มีใบหลัก (เช่น สร้างใบหลักซ้ำ)": "Delete only the main release — released lots (QR) are not deleted and show as a release without a main sheet (e.g. duplicate main release)",
   "ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบทิ้งแล้วใช้เลขนี้ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)": "No lots released from this sheet yet — delete it to reuse the number (e.g. wrong codes entered)",
 };
 const FIX_TPLS = [

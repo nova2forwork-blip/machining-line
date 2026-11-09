@@ -130,7 +130,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         <div className="rw-head-right">
           <button type="button" className="btn btn-ghost" onClick={onBack}><Icon name="arrowLeft" size={14} /> กลับ</button>
           {api?.loadBomLibrary && onPlanChange ? <button type="button" className="btn btn-ghost" onClick={syncFromLib} disabled={!!libSync?.busy} title="ดึงข้อมูลล่าสุดจาก “ซับ / พาร์ท ของโปรเจค” มาเติม: รายการครบจาก PDF ของซับ (สกรู/ยาง/กระจก) และรายละเอียด/หน่วยที่ขาด — ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว"><Icon name="refresh" size={14} /> {libSync?.busy ? "กำลังอ่านคลัง…" : "อัปเดต BOM จากคลัง"}</button> : null}
-          {onDelete && !rel.lots.length ? <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={onDelete} title="ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบทิ้งแล้วใช้เลขนี้ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)">ลบใบนี้</button> : null}
+          {onDelete ? (rel.lots.length
+            ? <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete(rel.lots)} title="ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ แสดงเป็น Release แบบไม่มีใบหลัก (เช่น สร้างใบหลักซ้ำ)">ลบใบหลัก</button>
+            : <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete([])} title="ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบทิ้งแล้วใช้เลขนี้ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)">ลบใบนี้</button>) : null}
           <button type="button" className="btn btn-ghost rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ — จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง">✎ Modify</button>
           <button type="button" className="btn btn-accent" onClick={() => { setPreset(null); setBuilder(true); }}><Icon name="plus" size={15} /> ปล่อยล็อตใหม่</button>
         </div>
