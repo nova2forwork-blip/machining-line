@@ -194,7 +194,8 @@ function notInstalled() { const e = new Error("ยังไม่ได้รั
 export async function listPlans(projectId = null) {
   const { data, error } = await supabase.rpc("release_plan_list", { p_token: tok(), p_project_id: projectId || null });
   if (error) { if (missingFn(error)) return { ok: false, reason: "not_installed", plans: [] }; throw error; }
-  const all = (data || []).map((r) => ({ ...(r.plan || {}), id: r.id, projectId: r.project_id, ro: r.release_order, status: r.status, by: (r.plan && r.plan.by) || r.created_by_name || "" }));
+  // ★ 2026-11-09 projectCode = รหัสโปรเจคปัจจุบันจาก DB (ในแผนเป็นรหัสตอนสร้าง — เปลี่ยนรหัสโปรเจคแล้วล็อตไม่เข้าใบหลัก เห็นเลขเดียวกันสองแถว)
+  const all = (data || []).map((r) => ({ ...(r.plan || {}), id: r.id, projectId: r.project_id, ro: r.release_order, status: r.status, by: (r.plan && r.plan.by) || r.created_by_name || "", ...(r.project_code ? { projectCode: r.project_code } : {}) }));
   // แถว LIB = คลังซับ/พาร์ทของโปรเจค (ไม่ใช่ Release) → แยกออก
   return { ok: true, plans: all.filter((p) => p.kind !== "lib" && String(p.ro).toUpperCase() !== "LIB"), lib: all.find((p) => p.kind === "lib" || String(p.ro).toUpperCase() === "LIB") || null };
 }

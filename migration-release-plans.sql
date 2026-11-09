@@ -75,10 +75,12 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'id', p.id, 'project_id', p.project_id, 'release_order', p.release_order, 'status', p.status,
-             'plan', p.plan, 'created_at', p.created_at, 'updated_at', p.updated_at, 'created_by_name', e.name)
+             'plan', p.plan, 'created_at', p.created_at, 'updated_at', p.updated_at, 'created_by_name', e.name,
+             'project_code', pr.code)   -- ★ 2026-11-09 รหัสโปรเจคปัจจุบัน (ในแผนเก็บรหัสตอนสร้าง — เปลี่ยนรหัสโปรเจคแล้วล็อตหลุดจากใบหลัก)
            order by p.created_at desc)
       from public.release_plans p
       left join public.employees e on e.id = p.created_by
+      left join public.projects pr on pr.id = p.project_id
      where (p_project_id is null or p.project_id = p_project_id)
        and p.status <> 'cancelled'
   ), '[]'::jsonb);
