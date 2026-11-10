@@ -19,7 +19,7 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 const hwQty = (p) => (p.u === "m." && p.mm ? p.qty / 1000 : p.qty);
 
-export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null }) {
+export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null }) {
   const [grp, setGrp] = useState("part");
   const [sub, setSub] = useState({ part: "ALL", sub: "ALL", mat: "MAT", panel: "ALL", bom: "" });
   const [q, setQ] = useState("");
@@ -51,7 +51,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   const swapCell = (x, list) => { const f = fromsOf(x); return <MatEdit cur={x.code} orig={f.join(", ")} note={x.matNote} desc={x.d} withDesc list={list} label={x.code} placeholder="เบอร์ที่ใช้แทน"
     onSave={setSwap ? (v) => setSwap(f.length ? f : [x.code], v) : null} onReset={resetSwap ? () => resetSwap(f) : null} />; };
   const cur = sub[grp];
-  const pick = (g, s) => { setGrp(g); if (s) setSub((x) => ({ ...x, [g]: s })); setLimit(PAGE); setOpenMat(null); };
+  const pick = (g, s) => { setGrp(g); if (onTab) onTab(g); if (s) setSub((x) => ({ ...x, [g]: s })); setLimit(PAGE); setOpenMat(null); };
 
   const parts = useMemo(() => [...need.parts].sort((a, b) => ncmp(a.code, b.code)), [need]);
   const subs = useMemo(() => [...need.subs].sort((a, b) => ncmp(a.code, b.code)), [need]);

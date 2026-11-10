@@ -66,7 +66,12 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
   const [modsOpen, setModsOpen] = useState(false);   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
-  const [lotsAll, setLotsAll] = useState(false);   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
+  const [lotsAll, setLotsAll] = useState(false);
+  // ★ 2026-11-10 แถบขวาพับได้: "auto" = พับเองตอนดูแท็บ BOM (ตารางกว้าง) · "show" / "hide" = ผู้ใช้เลือก (จำไว้)
+  const [side, setSideRaw] = useState(() => { try { return localStorage.getItem("rl-side") || "auto"; } catch { return "auto"; } });
+  const [tab, setTab] = useState("part");
+  const setSide = (v) => { setSideRaw(v); try { localStorage.setItem("rl-side", v); } catch { /* ignore */ } };
+  const sideHidden = side === "hide" || (side === "auto" && tab === "bom");   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -178,7 +183,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       {gaps.panels.length || gaps.subs.length ? <div className="rw-msg warn">⚠ ยังไม่มี BOM: {[gaps.panels.length && `แผง ${gaps.panels.length} แบบ`, gaps.subs.length && `ซับ ${gaps.subs.length} เบอร์`].filter(Boolean).join(" · ")} — ปล่อยได้ก่อน พอ Release อื่นมี BOM ของเบอร์เหล่านี้ ระบบดึงมาให้เอง{plans.length > 1 ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => { if (!pullNow()) setPulled([]); }}>ดึงตอนนี้</button></> : null}</div> : null}
 
 
-      <div className="rl-split">
+      <div className={`rl-split ${sideHidden ? "side-off" : ""}`}>
         <div className="rl-main">
       {open && rel.lots.some((L) => L.no === open) ? <div className="card rw-card" ref={lotsRef}>
         <div className="rw-sec-head"><div><h2>ล็อต {open}</h2><p>ใบปล่อย / QR / วัสดุของล็อตนี้</p></div><button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(null)}>✕ ปิด</button></div>
@@ -264,11 +269,18 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
       </div> : null}
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} />
         </div>
+      {sideHidden ? (
+      <aside className="rl-side rl-side-mini">
+        <button type="button" className="rl-side-open" onClick={() => setSide(tab === "bom" ? "show" : "auto")} title="แสดงแถบสถานะ / ล็อต / Modify">‹<span>สถานะ · ล็อต · Modify</span></button>
+        <div className="rl-side-mini-n" title="พาร์ทปล่อยครบ"><b>{nf(partDone)}</b><small>/{nf(liveParts.length)}</small></div>
+        <div className="rl-side-mini-n" title="ล็อต"><b>{rel.lots.length}</b><small>ล็อต</small></div>
+      </aside>
+      ) : (
       <aside className="rl-side">
         <div className="rl-sbox">
-          <div className="rl-sbox-h"><b>สถานะใบนี้</b></div>
+          <div className="rl-sbox-h"><b>สถานะใบนี้</b><button type="button" className="rl-side-hide" onClick={() => setSide("hide")} title="ซ่อนแถบนี้ — ให้ตารางกว้างเต็มจอ">ซ่อน ›</button></div>
           {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([, , b]) => b > 0).map(([l, a, b, s2]) => (
             <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
@@ -309,6 +321,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           {onDelete ? <> · <button type="button" className="rw-link rl-danger" onClick={() => onDelete(rel.lots.length ? rel.lots : [])} title={rel.lots.length ? "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ" : "ใบนี้ยังไม่มีล็อต — ลบแล้วใช้เลขนี้ลงใหม่ได้"}>{rel.lots.length ? "ลบใบหลัก" : "ลบใบนี้"}</button></> : null}
         </div>
       </aside>
+      )}
       </div>
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
