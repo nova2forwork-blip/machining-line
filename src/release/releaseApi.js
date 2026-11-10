@@ -196,8 +196,33 @@ export async function listPlans(projectId = null) {
   if (error) { if (missingFn(error)) return { ok: false, reason: "not_installed", plans: [] }; throw error; }
   // ★ 2026-11-09 projectCode = รหัสโปรเจคปัจจุบันจาก DB (ในแผนเป็นรหัสตอนสร้าง — เปลี่ยนรหัสโปรเจคแล้วล็อตไม่เข้าใบหลัก เห็นเลขเดียวกันสองแถว)
   const all = (data || []).map((r) => ({ ...(r.plan || {}), id: r.id, projectId: r.project_id, ro: r.release_order, status: r.status, by: (r.plan && r.plan.by) || r.created_by_name || "", ...(r.project_code ? { projectCode: r.project_code } : {}) }));
-  // แถว LIB = คลังซับ/พาร์ทของโปรเจค (ไม่ใช่ Release) → แยกออก
-  return { ok: true, plans: all.filter((p) => p.kind !== "lib" && String(p.ro).toUpperCase() !== "LIB"), lib: all.find((p) => p.kind === "lib" || String(p.ro).toUpperCase() === "LIB") || null };
+  // แถว LIB = คลังซับ/พาร์ทของโปรเจค (ไม่ใช่ Release) → แยกออก · แถว DRAFT = ร่าง "ปล่อยงานใหม่" ของผู้ใช้ (★ 2026-11-10) → แยกออก
+  const isDraft = (p) => p.kind === "draft" || /^DRAFT:/i.test(String(p.ro));
+  return { ok: true, plans: all.filter((p) => p.kind !== "lib" && String(p.ro).toUpperCase() !== "LIB" && !isDraft(p)), lib: all.find((p) => p.kind === "lib" || String(p.ro).toUpperCase() === "LIB") || null, drafts: all.filter(isDraft) };
+}
+// ★ 2026-11-10 ร่าง "ปล่อยงานใหม่" เก็บบนเซิร์ฟเวอร์ด้วย (แถว release_plans · ro = "DRAFT:<employee id>" ต่อโปรเจค · plan.kind = "draft")
+//   → เปิดจากเครื่องอื่นแล้วกด "ทำต่อ" ได้ (เดิมอยู่แค่ localStorage ของเครื่องที่พิมพ์) · เก็บได้เมื่อเลือกโปรเจคแล้ว (แถวต้องมี project_id)
+const draftRo = (userId) => `DRAFT:${userId}`;
+export async function listDrafts(userId) {
+  if (!userId) return [];
+  const r = await listPlans(null); if (!r.ok) return [];
+  return (r.drafts || []).filter((d) => String(d.ro).toUpperCase() === draftRo(userId).toUpperCase() && d.status !== "cancelled").map((d) => ({ ...d.draft, serverId: d.id, projectId: d.projectId }));
+}
+export async function saveDraft({ projectId, userId, draft, id = null }) {
+  if (!projectId || !userId) return null;
+  const body = { kind: "draft", by: draft.by || "", at: draft.at, draft };
+  try { const r = await planRpc(projectId, draftRo(userId), body, id); return r.id || id; }
+  catch (e) {
+    if (e.code !== "exists") throw e;
+    const cur = (await listDrafts(userId)).find((d) => d.projectId === projectId); if (!cur) throw e;
+    const r = await planRpc(projectId, draftRo(userId), body, cur.serverId); return r.id || cur.serverId;
+  }
+}
+export async function dropDraft(id) {
+  if (!id) return;
+  const { data, error } = await supabase.rpc("release_plan_set_status", { p_token: tok(), p_id: id, p_status: "cancelled", p_keep_lots: true });
+  if (error) { if (missingFn(error)) return; throw error; }
+  return data;
 }
 async function planRpc(projectId, ro, plan, id = null) {
   const { data, error } = await supabase.rpc("release_plan_save", { p_token: tok(), p_project_id: projectId, p_release_order: ro, p_plan: plan, p_id: id });
@@ -396,4 +421,4 @@ export async function monthReleases(ym) {
   }
   return all;
 }
-export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, releaseLot, lotLimits, modifyRelease };
+export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };

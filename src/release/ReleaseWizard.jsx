@@ -81,7 +81,22 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const [partCfg, setPartCfg] = useState({ partMode: "auto", partGroups: [] });   // หมวดย่อยพาร์ท (Auto/Setting) จากคลังของโปรเจค
   const [afterSave, setAfterSave] = useState("lots");    // "lots" = บันทึกแล้วเลือกปล่อยเป็นล็อต · "all" = ปล่อยทั้งหมดเป็นเลข Release หลัก
   const [draftAt, setDraftAt] = useState(null);
-  const [draftOffer, setDraftOffer] = useState(() => { const d = loadDraft(); return d && (d.units?.length || d.pdfs?.length || d.hdr?.ro) ? d : null; });
+  // ร่างที่คุ้มจะเสนอ "ทำต่อ": มีแผง / PDF / รายการที่เลือก หรืออย่างน้อยใส่เลขและเลือกโปรเจคแล้ว (แค่พิมพ์เลข P อย่างเดียว = ไม่เสนอ · กดทำต่อแล้วเหมือนไม่มีอะไรเกิดขึ้น)
+  const draftWorth = (d) => !!d && !!(d.units?.length || d.pdfs?.length || d.picks?.length || (d.hdr?.ro && d.hdr?.projectId));
+  const [draftOffer, setDraftOffer] = useState(() => { const d = loadDraft(); return draftWorth(d) ? d : null; });
+  const [draftSrv, setDraftSrv] = useState({ id: null, at: 0 });   // ★ 2026-11-10 ร่างบนเซิร์ฟเวอร์ (ทำต่อจากเครื่องอื่นได้) · id = แถว release_plans
+  // เปิดหน้ามา → ดูร่างบนเซิร์ฟเวอร์ของผู้ใช้คนนี้ ถ้าใหม่กว่าร่างในเครื่อง (หรือเครื่องนี้ไม่มี) → เสนออันนั้น
+  useEffect(() => {
+    if (!api?.listDrafts || !user?.id) return undefined;
+    let alive = true;
+    api.listDrafts(user.id).then((list) => {
+      if (!alive || !list.length) return;
+      const best = list.filter(draftWorth).sort((a, b) => (b.at || 0) - (a.at || 0))[0]; if (!best) return;
+      setDraftOffer((cur) => { if (cur && (cur.at || 0) >= (best.at || 0)) return cur; return { ...best, fromServer: true }; });
+      setDraftSrv((v) => (v.id ? v : { id: best.serverId, at: best.at || 0 }));
+    }).catch(() => { /* ยังไม่รัน SQL / ออฟไลน์ — ใช้ร่างในเครื่องอย่างเดียว */ });
+    return () => { alive = false; };
+  }, [api, user?.id]);
   const [saving, setSaving] = useState({ busy: false, msg: "", err: "", errors: [], resume: null, done: null });
   const [roTouched, setRoTouched] = useState(false);
   const topRef = useRef(null);
@@ -154,15 +169,24 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const t = setTimeout(() => {
       try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, by: userName })); setDraftAt(new Date()); } catch { /* เต็ม/ปิดไว้ = ข้าม */ }
     }, 600);
-    return () => clearTimeout(t);
-  }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, draftOffer, saving.done, userName]);
+    // ★ 2026-11-10 ร่างบนเซิร์ฟเวอร์ (หน่วง 3 วิ · ต้องเลือกโปรเจคแล้ว) — ไม่สำเร็จ = เงียบ ยังมีร่างในเครื่อง
+    const t2 = setTimeout(() => {
+      if (!api?.saveDraft || !user?.id || !hdr.projectId) return;
+      const draft = { v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw.map(({ _file, ...d }) => d), ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, by: userName };
+      api.saveDraft({ projectId: hdr.projectId, userId: user.id, draft, id: draftSrv.id }).then((id) => { if (id) setDraftSrv({ id, at: draft.at }); }).catch(() => {});
+    }, 3000);
+    return () => { clearTimeout(t); clearTimeout(t2); };
+  }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, draftOffer, saving.done, userName]);   // eslint-disable-line react-hooks/exhaustive-deps
   function resumeDraft() {
     const d = draftOffer; if (!d) return;
     setHdr({ ...hdr, ...d.hdr }); setUnits(d.units || []); setPdfs(d.pdfs || []); setAck(d.ack || {}); setAckMeta(d.ackMeta || {});
     setMode(d.mode === "items" ? "items" : "panel"); setPicks(d.picks || []);
     setUseLib(true); setCatOv(d.catOv || {}); setProcOv(d.procOv || {}); setDestOv(d.destOv || {}); setAfterSave(d.afterSave || "lots");
     setStep(Math.min(3, d.step === 2 && d.mode === "items" ? 1 : d.step || 0)); setDraftOffer(null);
+    if (d.serverId) setDraftSrv({ id: d.serverId, at: d.at || 0 });
   }
+  // ลบร่างบนเซิร์ฟเวอร์ (บันทึกใบสำเร็จ / กดเริ่มใหม่)
+  const dropSrvDraft = (id) => { const k = id || draftSrv.id; if (k && api?.dropDraft) api.dropDraft(k).catch(() => {}); setDraftSrv({ id: null, at: 0 }); };
   // ── ★ ย้อนกลับ / ทำซ้ำ (Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y) — เก็บภาพสถานะข้อมูลทั้งใบ (หัวใบ · Address · PDF · การตัดสิน · หมวด/งาน/ปลายทาง) ──
   //   รวมการพิมพ์ติด ๆ กันเป็นก้าวเดียว (หน่วง 350ms) · เก็บย้อนหลังสูงสุด 60 ก้าว · ไม่นับการเปลี่ยนขั้น
   const HKEYS = ["hdr", "units", "pdfs", "ack", "ackMeta", "catOv", "procOv", "destOv", "afterSave", "mode", "picks"];
@@ -210,7 +234,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  function dropDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } setDraftOffer(null); }
+  function dropDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } dropSrvDraft(draftOffer?.serverId || null); setDraftOffer(null); }
 
   // ── สถานะแต่ละขั้น (โชว์ในแถบขั้น) ──
   const saveChecks = useMemo(() => {
@@ -288,6 +312,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         lotNo = roNorm;
       }
       try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+      dropSrvDraft();
       setSaving({ busy: false, msg: "", err: "", errors: [], resume: null, done: st });
       onSaved && onSaved({ plan: saved, lotNo, releaseOrder: roNorm, projectId: hdr.projectId, projectCode: project?.code });
     } catch (e) {
@@ -300,6 +325,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
           const make = { panels: true, subs: true, parts: true };
           const st = await api.saveRelease({ projectId: hdr.projectId, releaseOrder: roNorm, releaseDate: dateToIso(hdr.date), userId: user?.id || null, modNo: hdr.mod, note: hdr.note, plan, bomSave, make }, say, null);
           try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+          dropSrvDraft();
           setSaving({ busy: false, msg: "", err: "", errors: st.errors || [], resume: null, done: st });
           onSaved && onSaved({ legacy: true, releaseOrder: roNorm, projectId: hdr.projectId, projectCode: project?.code, make, plan });
         } catch (e2) { setSaving({ busy: false, msg: "", err: "บันทึกไม่สำเร็จ: " + (e2?.message || e2), errors: [], resume: null, done: null }); }
@@ -329,7 +355,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       {draftOffer ? (
         <div className="rw-banner info">
           <Icon name="clock" size={18} />
-          <div><b>มีร่างค้างไว้</b> — {draftOffer.hdr?.ro || "(ยังไม่ใส่เลข)"} · ขั้น {Math.min(4, (draftOffer.step || 0) + 1)} · {nf(draftOffer.units?.length || 0)} แผง · {draftOffer.pdfs?.length || 0} PDF · {new Date(draftOffer.at).toLocaleString("th-TH")}</div>
+          <div><b>มีร่างค้างไว้</b>{draftOffer.fromServer ? <> <span className="rw-muted">(จากเครื่องอื่น · {draftOffer.by || user?.name || ""})</span></> : null} — {draftOffer.hdr?.ro || "(ยังไม่ใส่เลข)"} · ขั้น {Math.min(4, (draftOffer.step || 0) + 1)} · {draftOffer.mode === "items" ? `${nf(draftOffer.picks?.length || 0)} รายการ` : `${nf(draftOffer.units?.length || 0)} แผง`} · {draftOffer.pdfs?.length || 0} PDF · {new Date(draftOffer.at).toLocaleString("th-TH")}{draftOffer.pdfs?.length ? <span className="rw-muted"> · ข้อมูลที่อ่านจาก PDF อยู่ครบ (ตัวไฟล์ต้องวางใหม่ถ้าจะเก็บเข้าคลัง)</span> : null}</div>
           <div className="rw-banner-act"><button type="button" className="btn btn-accent btn-sm" onClick={resumeDraft}>ทำต่อ</button><button type="button" className="btn btn-ghost btn-sm" onClick={dropDraft}>เริ่มใหม่</button></div>
         </div>
       ) : null}

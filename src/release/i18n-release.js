@@ -1580,6 +1580,8 @@ const FIX_DICT = {
   "ลบใบนี้": "Delete this release",
   "อุปกรณ์ · ไม่มี QR": "Accessories · no QR",
   "เพิ่มรายการ": "Add items",
+  "(จากเครื่องอื่น ·": "(from another device ·",
+  "· ข้อมูลที่อ่านจาก PDF อยู่ครบ (ตัวไฟล์ต้องวางใหม่ถ้าจะเก็บเข้าคลัง)": "· data read from the PDFs is kept (drop the files again to store them in the library)",
   "เพิ่มเข้าล็อตเดิม": "Add to existing lot",
   "เพิ่มของใหม่เข้าล็อตที่ปล่อยแล้ว (ใบปล่อยเดียวกัน · QR ใหม่ต่อท้าย)": "Add new items to a lot already released (same release sheet · new QR appended)",
   "เพิ่มใหม่": "New",
