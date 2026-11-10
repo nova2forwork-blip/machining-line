@@ -336,7 +336,24 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     if (saving.busy) return;
     const blocks = saveChecks.filter((x) => x.s === "block");
     if (blocks.length) { setSaving((s) => ({ ...s, err: "บันทึกไม่ได้ — " + blocks.map((b) => `${b.label}: ${b.v}`).join(" · ") })); return; }
-    const warns = saveChecks.filter((x) => x.s === "warn");
+    // ★ 2026-11-10 แบบยังมาไม่ครบตามใบปะหน้า → ถามยืนยันก่อน (บันทึกได้ · เพิ่มทีหลังที่หน้า Release → "เพิ่มรายการ")
+    if (order && !saving.resume) {
+      const miss = orderCmp.filter((x) => x.status === "missing" && !orderHw.some((h) => NC(h) === NC(x.code)));
+      const diff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
+      if (miss.length || diff.length) {
+        const ok = await askConfirm({
+          title: `แบบยังมาไม่ครบตามใบปะหน้า ${order.roRaw || order.ro || ""} — บันทึกเลยไหม?`,
+          message: [
+            miss.length && `ยังไม่อยู่ในใบ ${miss.length} เบอร์ (ไม่มีแบบ / ไม่มีในคลัง):\n${miss.map((x) => `  • ${x.code} ×${nlen(x.qty)}${x.unit ? " " + x.unit : ""}${x.d ? " — " + x.d : ""}`).join("\n")}`,
+            diff.length && `จำนวนไม่ตรง ${diff.length} เบอร์:\n${diff.map((x) => `  • ${x.code} ใบปะหน้า ${nlen(x.qty)} / ใบนี้ ${nlen(x.have)}`).join("\n")}`,
+            `\nบันทึกได้ก่อน — พอแบบมาเพิ่ม เปิดหน้า Release ${roNorm} → ปุ่ม "เพิ่มรายการ" แล้ววาง PDF (หน้านั้นจะเตือนรายการที่ยังขาดให้)\nถ้าเป็นสกรู / น็อต / ยาง ให้ติ๊ก "ไม่มี QR" ในตารางตามใบปะหน้าแทน`,
+          ].filter(Boolean).join("\n\n"),
+          tone: "warn", confirmText: "บันทึก · เพิ่มทีหลัง", cancelText: "กลับไปวางแบบ",
+        });
+        if (!ok) return;
+      }
+    }
+    const warns = saveChecks.filter((x) => x.s === "warn" && x.k !== "order");
     if (warns.length && !saving.resume) {
       const ok = await askConfirm({ title: `บันทึกทั้งที่ยังมี ${warns.length} เรื่องควรดู?`, message: warns.map((w) => `• ${w.label}: ${w.v}`).join("\n"), tone: "warn", confirmText: "บันทึก Release", cancelText: "กลับไปแก้" });
       if (!ok) return;

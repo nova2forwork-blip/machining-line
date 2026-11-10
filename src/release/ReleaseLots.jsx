@@ -14,6 +14,7 @@ import {
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
+import { compareOrder } from "./orderSheet.js";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
@@ -35,6 +36,9 @@ function usePlanState(plan, releases) {
 // ══ หน้า Release (แผน) ══
 export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
+  // ★ 2026-11-10 ใบปะหน้า (plan.order) — เทียบกับของในใบ: แบบยังมาไม่ครบ → เตือน + ปุ่มเพิ่มรายการ
+  const orderCmp = useMemo(() => (plan.order ? compareOrder(plan.order, need) : []), [plan.order, need]);
+  const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -139,6 +143,10 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         </div>
       </div>
 
+      {plan.order && (orderMiss.length || orderDiff.length) ? (
+        <div className="rw-msg warn" role="status">⚠ ตามใบปะหน้า {plan.order.roRaw || plan.order.ro || plan.order.file}: {[orderMiss.length && `ยังไม่อยู่ในใบ ${orderMiss.length} เบอร์ — ${orderMiss.slice(0, 6).map((x) => `${x.code} ×${nlen(x.qty)}`).join(", ")}${orderMiss.length > 6 ? " …" : ""}`, orderDiff.length && `จำนวนไม่ตรง ${orderDiff.length} — ${orderDiff.slice(0, 4).map((x) => `${x.code} ${nlen(x.qty)}/${nlen(x.have)}`).join(", ")}`].filter(Boolean).join(" · ")}
+          {onPlanChange ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setModify("add")}>+ เพิ่มรายการ (วาง PDF แบบที่มาเพิ่ม)</button></> : null}</div>
+      ) : plan.order ? <div className="rw-msg ok" role="status">✓ ครบตามใบปะหน้า {plan.order.roRaw || plan.order.ro || plan.order.file} — {plan.order.items.length} รายการ</div> : null}
       {libSync && !libSync.busy ? <div className={`rw-msg ${libSync.err ? "bad" : "ok"}`} role="status">{libSync.err ? "✗ " + libSync.err : "✓ " + libSync.text} <button type="button" className="rw-link" onClick={() => setLibSync(null)}>ปิด</button></div> : null}
       {pulled.length ? <div className="rw-msg ok">✓ ดึง BOM จาก Release อื่นให้อัตโนมัติ {pulled.length} เบอร์: {pulled.slice(0, 6).map((f) => `${f.code} (จาก ${f.from})`).join(", ")}{pulled.length > 6 ? " …" : ""}</div> : null}
       {gaps.panels.length || gaps.subs.length ? <div className="rw-msg warn">⚠ ยังไม่มี BOM: {[gaps.panels.length && `แผง ${gaps.panels.length} แบบ`, gaps.subs.length && `ซับ ${gaps.subs.length} เบอร์`].filter(Boolean).join(" · ")} — ปล่อยได้ก่อน พอ Release อื่นมี BOM ของเบอร์เหล่านี้ ระบบดึงมาให้เอง{plans.length > 1 ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => { if (!pullNow()) setPulled([]); }}>ดึงตอนนี้</button></> : null}</div> : null}
