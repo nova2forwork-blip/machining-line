@@ -296,7 +296,34 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     }
     return null;
   };
-  const site = readCountTable(/BILL\s+SITE\s+ITEM/);
+  let site = readCountTable(/BILL\s+SITE\s+ITEM/);
+  // ★ 2026-11-10 แบบ US (MTG01-5001): ตาราง "<เบอร์แบบ> BILL OF EXTRUSION" = PART NUMBER | QTY | LENGTH (ฟุต-นิ้ว หรือ PCS) | DESCRIPTION | REMARK (SHIP LOOSE)
+  //   แถวที่มีความยาว = Site Item (มี QR · ซับ/พาร์ท) · แถว PCS / M = อุปกรณ์ (สกรู · ไม่มี QR)
+  let extHw = null;
+  {
+    const ex = words.find((w) => /^EXTRUSION$/i.test(w.text) && lineOf(w).some((x) => /^BILL$/i.test(x.text)));
+    const hdrs = ex ? words.filter((w) => w.top > ex.top + 4 && w.top - ex.top < 40) : [];
+    const H = (re) => hdrs.find((w) => re.test(w.text));
+    const pN = H(/^PART$/i), qH = H(/^QTY\.?$/i), lH = H(/^LENGTH$/i), dH = H(/^DESCRIPTION$/i), rH = H(/^REMARKS?$/i);
+    if (ex && pN && qH && lH && dH) {
+      const x0 = pN.x0 - 40, xq = qH.x0 - 6, xl = lH.x0 - 4, xd = Math.min(dH.x0 - 20, lH.x1 + 14), xr = rH ? rH.x0 - 20 : 1e9, x1 = rH ? rH.x1 + 120 : dH.x1 + 300;
+      const cells = words.filter((w) => w.top > qH.top + 6 && w.x0 >= x0 && w.x0 < x1 && Math.abs(w.size - qH.size) < 1);
+      const siteX = [], hwX = []; let prev = qH.top;
+      for (const { y, ws } of rowsByY(cells)) {
+        if (y - prev > 34) break;
+        const codeW = ws.filter((w) => w.x0 < xq), qW = ws.filter((w) => w.x0 >= xq && w.x0 < xl), lW = ws.filter((w) => w.x0 >= xl && w.x0 < xd), dW = ws.filter((w) => w.x0 >= xd && w.x0 < xr), rW = ws.filter((w) => w.x0 >= xr);
+        const code = codeW.map((w) => w.text).join(" ").trim();
+        if (!code || !/[A-Za-z]/.test(code)) { if (siteX.length || hwX.length) break; continue; }
+        prev = y;
+        const qty = qW.length ? num(qW[0].text) : null; const lt = lW.map((w) => w.text).join(" ").trim();
+        const row = { code: code.toUpperCase(), desc: dW.map((w) => w.text).join(" "), qty, note: rW.map((w) => w.text).join(" ") || "" };
+        if (/^(PCS?|M|MM|EA|SET)\.?$/i.test(lt) || !lt) hwX.push({ ...row, u: /^M\.?$/i.test(lt) ? "m." : "pcs.", len: null });
+        else { const mm = inchToMm(lt); siteX.push({ ...row, len: mm != null ? mm : num(lt), len_in: lt }); }
+      }
+      if (siteX.length) site = [...(site || []), ...siteX];
+      if (hwX.length) extHw = hwX;
+    }
+  }
   const unitsT = readCountTable(/BILL\s+OF\s+UNITS/);
   let hwList = null;
   {
@@ -328,13 +355,14 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
       }
     }
   }
+  if (extHw) hwList = [...(hwList || []), ...extHw];
   if (!out.bom.length && ((site && site.length) || (hwList && hwList.length))) {
     out.kind = "loose"; out.site = site || []; out.hw = hwList || []; out.units = unitsT || [];
     const dw = words.find((w) => /^DWG$/i.test(w.text) && lineOf(w).some((x) => /^NO\.?:?$/i.test(x.text)));
     const dwgNo = dw ? (words.filter((w) => w.top > dw.top + 3 && w.top < dw.top + 24 && w.x0 >= dw.x0 - 10 && w.x0 < dw.x0 + 120).sort((a, b) => a.x0 - b.x0)[0] || {}).text : "";
     out.code = (dwgNo || out.title.BOM_OF || String(fileName).replace(/\.pdf$/i, "")).trim();
     const tt = words.find((w) => /^DRAWING$/i.test(w.text) && lineOf(w).some((x) => /^TITLE:?$/i.test(x.text)));
-    out.title.DESC = tt ? words.filter((w) => w.top > tt.top + 3 && w.top < tt.top + 30 && w.x0 >= tt.x0 - 10 && w.x0 < tt.x0 + 120).sort((a, b) => a.top - b.top || a.x0 - b.x0).map((w) => w.text).join(" ") : "";
+    out.title.DESC = tt ? words.filter((w) => w.top > tt.top + 3 && w.top < tt.top + 52 && w.x0 >= tt.x0 - 45 && w.x0 < tt.x0 + 120).sort((a, b) => a.top - b.top || a.x0 - b.x0).map((w) => w.text).join(" ") : "";
     for (const r of out.site) if (r.qty == null) out.warn_read.push(`Site Item ${r.code}: ไม่มี COUNT`);
     return out;
   }

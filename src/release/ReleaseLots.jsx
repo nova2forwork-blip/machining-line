@@ -887,8 +887,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         for (const r of d.site || []) {
           const code = String(r.code).trim().toUpperCase();
           if (adds.some((a) => NC(a.code) === NC(code)) || newAdds.some((a) => NC(a.code) === NC(code))) { skip++; continue; }
-          const have = need.parts.find((x) => NC(x.code) === NC(code));   // มีในใบแล้ว (เช่น อยู่ใน BOM แผง) → จำนวนนี้บวกเพิ่มเป็นของส่งไซต์
-          newAdds.push({ kind: "part", code, d: r.desc || have?.d || "", qty: r.qty != null ? String(r.qty) : "", l: r.len != null ? String(r.len) : have?.l != null ? String(have.l) : "", inv: have?.inv || "", dest: have?.dest || ruleDest(ruleCat(code, "part"), code), procs: "ยิง", cat: "SITE ITEM", fromPdf: true, src: d.code,
+          const isSub = need.subs.some((x) => NC(x.code) === NC(code)) || !!findKey(plan.bom.subs, code) || /^(SA|MSA)/i.test(code);   // ★ ซับส่งไซต์ (เช่น MSAAT550-5001 ในแบบ US)
+          const have = (isSub ? need.subs : need.parts).find((x) => NC(x.code) === NC(code));   // มีในใบแล้ว (เช่น อยู่ใน BOM แผง) → จำนวนนี้บวกเพิ่มเป็นของส่งไซต์
+          newAdds.push({ kind: isSub ? "sub" : "part", code, d: r.desc || have?.d || "", qty: r.qty != null ? String(r.qty) : "", l: r.len != null ? String(r.len) : have?.l != null ? String(have.l) : "", inv: have?.inv || "", dest: have?.dest || ruleDest(ruleCat(code, "part"), code), procs: "ยิง", cat: "SITE ITEM", fromPdf: true, src: d.code,
             note: have ? `มีในใบแล้ว ${nf(have.qty)} ชิ้น (จาก BOM แผง) — จำนวนนี้บวกเพิ่ม เป็น Site Item ส่งไซต์` : `Site Item จากแบบ ${d.code}` }); ns++;
           foundL.push({ code, what: "Site Item เพิ่ม", from: have ? nf(have.qty) : "—", to: r.qty != null ? `+${nf(r.qty)}` : "ใส่จำนวน", where: `แบบ ${d.code}`, tone: "new" });
         }
@@ -900,6 +901,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           newAdds.push({ kind: "hw", code, d: r.desc || "", qty: q === "" ? "" : String(q), l: "", inv: "", u: r.u || "pcs.", fromPdf: true, src: d.code,
             note: [have ? `มีในใบแล้ว ${nlen(have.qty)} ${have.u || "pcs."} (จาก BOM แผง) — จำนวนนี้บวกเพิ่ม` : "", r.qty > 0 ? "" : r.len > 0 ? `ตารางไม่มี TOTAL — ใส่ ${r.len} ${r.u} จากช่อง DIM.A ให้ (แก้ได้)` : "ตารางไม่มีจำนวน", r.remark || ""].filter(Boolean).join(" · ") }); nh++;
         }
+        drops[NC(d.code)] = `Site Item ${ns} · อุปกรณ์ ${nh}`;
         notes.push(`${d.code} (${d.title?.DESC || "แบบ Site Item + อุปกรณ์"}): Site Item ${ns} เบอร์ · อุปกรณ์ ${nh} รายการ${skip ? ` · ข้าม ${skip} (มีแล้ว)` : ""}${(d.units || []).length ? ` · แผงในแบบ: ${d.units.map((u) => `${u.code} ×${u.qty}`).join(", ")}` : ""}`);
       } else if (d.kind === "part" || d.kind === "sub") {
         if (exists(d.code)) {
