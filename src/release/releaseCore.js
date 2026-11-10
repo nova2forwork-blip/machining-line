@@ -297,31 +297,56 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     return null;
   };
   let site = readCountTable(/BILL\s+SITE\s+ITEM/);
-  // ★ 2026-11-10 แบบ US (MTG01-5001): ตาราง "<เบอร์แบบ> BILL OF EXTRUSION" = PART NUMBER | QTY | LENGTH (ฟุต-นิ้ว หรือ PCS) | DESCRIPTION | REMARK (SHIP LOOSE)
-  //   แถวที่มีความยาว = Site Item (มี QR · ซับ/พาร์ท) · แถว PCS / M = อุปกรณ์ (สกรู · ไม่มี QR)
+  // ★ 2026-11-10 ตาราง Site Item แบบอื่น ๆ (เช่น MTG01-5001 "BILL OF EXTRUSION") — ไม่ผูกชื่อตาราง / คำหัวคอลัมน์ / ลำดับคอลัมน์:
+  //   หาแถวหัวที่มี [เบอร์] + [จำนวน] และ [ความยาว] หรือ [รายละเอียด] · คำที่รับ (ไม่สนตัวพิมพ์ · มี/ไม่มีจุด):
+  //   เบอร์ = PART NUMBER / PART NO. / PART # / ITEM NO. / ITEM CODE / MARK NO. / CODE / P/N / PART · จำนวน = QTY / QUANTITY / Q'TY / COUNT / PCS / TOTAL QTY
+  //   ความยาว = LENGTH / CUT LENGTH / LEN / LG · รายละเอียด = DESCRIPTION / DESC / DETAIL(S) / NAME / ITEM NAME · หมายเหตุ = REMARK(S) / NOTE(S) / COMMENT
+  //   แถวที่ความยาวเป็นตัวเลข/ฟุต-นิ้ว = Site Item (มี QR) · PCS / M / ว่าง = อุปกรณ์ (ไม่มี QR) · ใช้เมื่อแบบไม่มี BOM และไม่ใช่หัวกระดาษพาร์ท
   let extHw = null;
-  {
-    const ex = words.find((w) => /^EXTRUSION$/i.test(w.text) && lineOf(w).some((x) => /^BILL$/i.test(x.text)));
-    const hdrs = ex ? words.filter((w) => w.top > ex.top + 4 && w.top - ex.top < 40) : [];
-    const H = (re) => hdrs.find((w) => re.test(w.text));
-    const pN = H(/^PART$/i), qH = H(/^QTY\.?$/i), lH = H(/^LENGTH$/i), dH = H(/^DESCRIPTION$/i), rH = H(/^REMARKS?$/i);
-    if (ex && pN && qH && lH && dH) {
-      const x0 = pN.x0 - 40, xq = qH.x0 - 6, xl = lH.x0 - 4, xd = Math.min(dH.x0 - 20, lH.x1 + 14), xr = rH ? rH.x0 - 20 : 1e9, x1 = rH ? rH.x1 + 120 : dH.x1 + 300;
-      const cells = words.filter((w) => w.top > qH.top + 6 && w.x0 >= x0 && w.x0 < x1 && Math.abs(w.size - qH.size) < 1);
-      const siteX = [], hwX = []; let prev = qH.top;
+  if (!out.bom.length && !inv && !usHdr && !(site && site.length)) {
+    const U = (w) => String(w.text).toUpperCase().replace(/[.:]+$/, "");
+    const lines = rowsByY(words);
+    const pick = (ws) => {   // คำในบรรทัด → หัวคอลัมน์ [{k, x0, x1}]
+      const out2 = []; let i = 0;
+      while (i < ws.length) {
+        const a1 = U(ws[i]), a2 = ws[i + 1] ? U(ws[i + 1]) : "", near = ws[i + 1] && ws[i + 1].x0 - ws[i].x1 < 14;
+        const two = near ? `${a1} ${a2}` : "";
+        let k = null, n = 1;
+        if (/^(PART|ITEM|MARK|PIECE) (NUMBER|NO|#|CODE|MARK)$/.test(two)) { k = "code"; n = 2; }
+        else if (/^(TOTAL|ORDER) (QTY|QUANTITY)$/.test(two)) { k = "qty"; n = 2; }
+        else if (/^(CUT|TOTAL) (LENGTH|LEN)$/.test(two)) { k = "len"; n = 2; }
+        else if (/^ITEM NAME$/.test(two)) { k = "desc"; n = 2; }
+        else if (/^(CODE|P\/N|PART#|PARTNO|MARK)$/.test(a1) || (a1 === "PART" && !k)) k = "code";
+        else if (/^(QTY|QUANTITY|Q'TY|COUNT|PCS|QNTY)$/.test(a1)) k = "qty";
+        else if (/^(LENGTH|LEN|LG)$/.test(a1)) k = "len";
+        else if (/^(DESCRIPTION|DESC|DETAILS?|NAME)$/.test(a1)) k = "desc";
+        else if (/^(REMARKS?|NOTES?|COMMENTS?)$/.test(a1)) k = "rem";
+        if (k && !out2.some((c) => c.k === k)) out2.push({ k, x0: ws[i].x0, x1: ws[i + n - 1].x1, top: ws[i].top, size: ws[i].size });
+        i += n;
+      }
+      return out2;
+    };
+    for (const ln of lines) {
+      const hs = pick(ln.ws);
+      if (!hs.some((c) => c.k === "code") || !hs.some((c) => c.k === "qty") || !hs.some((c) => c.k === "len" || c.k === "desc")) continue;
+      const cols = hs.sort((p1, p2) => p1.x0 - p2.x0); const isNum = (c) => c.k === "qty" || c.k === "len";
+      cols.forEach((c, i) => { const pv = cols[i - 1]; c.start = !pv ? c.x0 - 60 : isNum(c) ? c.x0 - (isNum(pv) ? 4 : 6) : (isNum(pv) ? Math.min(c.x0 - 20, pv.x1 + 14) : c.x0 - 20); });
+      const xEnd = cols[cols.length - 1].x1 + 260, hTop = cols[0].top, hSize = cols.find((c) => c.k === "qty").size;
+      const cells = words.filter((w) => w.top > hTop + 5 && w.x0 >= cols[0].start && w.x0 < xEnd && Math.abs(w.size - hSize) < 1.2);
+      const siteX = [], hwX = []; let prev = hTop;
       for (const { y, ws } of rowsByY(cells)) {
         if (y - prev > 34) break;
-        const codeW = ws.filter((w) => w.x0 < xq), qW = ws.filter((w) => w.x0 >= xq && w.x0 < xl), lW = ws.filter((w) => w.x0 >= xl && w.x0 < xd), dW = ws.filter((w) => w.x0 >= xd && w.x0 < xr), rW = ws.filter((w) => w.x0 >= xr);
-        const code = codeW.map((w) => w.text).join(" ").trim();
-        if (!code || !/[A-Za-z]/.test(code)) { if (siteX.length || hwX.length) break; continue; }
+        if (ws.some((w) => /^TOTALS?:?$/i.test(w.text))) break;
+        const by = {}; for (const w of ws) { let c = null; for (const cc of cols) if (w.x0 >= cc.start) c = cc; if (c) (by[c.k] = by[c.k] || []).push(w.text); }
+        const code = (by.code || []).join(" ").trim();
+        if (!code || !/[A-Za-z]/.test(code) || !/\d/.test(code)) { if (siteX.length || hwX.length) break; continue; }
         prev = y;
-        const qty = qW.length ? num(qW[0].text) : null; const lt = lW.map((w) => w.text).join(" ").trim();
-        const row = { code: code.toUpperCase(), desc: dW.map((w) => w.text).join(" "), qty, note: rW.map((w) => w.text).join(" ") || "" };
-        if (/^(PCS?|M|MM|EA|SET)\.?$/i.test(lt) || !lt) hwX.push({ ...row, u: /^M\.?$/i.test(lt) ? "m." : "pcs.", len: null });
+        const qty = by.qty ? num(by.qty[0]) : null; const lt = (by.len || []).join(" ").trim();
+        const row = { code: code.toUpperCase(), desc: (by.desc || []).join(" "), qty, note: (by.rem || []).join(" ") };
+        if (!lt || /^(PCS?|M|MM|EA|SET|NOS?)\.?$/i.test(lt)) { if (cols.some((c) => c.k === "len")) hwX.push({ ...row, u: /^M\.?$/i.test(lt) ? "m." : "pcs.", len: null }); else siteX.push({ ...row, len: null }); }
         else { const mm = inchToMm(lt); siteX.push({ ...row, len: mm != null ? mm : num(lt), len_in: lt }); }
       }
-      if (siteX.length) site = [...(site || []), ...siteX];
-      if (hwX.length) extHw = hwX;
+      if (siteX.length || hwX.length) { if (siteX.length) site = [...(site || []), ...siteX]; if (hwX.length) extHw = hwX; break; }
     }
   }
   const unitsT = readCountTable(/BILL\s+OF\s+UNITS/);
