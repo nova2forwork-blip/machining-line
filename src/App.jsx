@@ -4038,6 +4038,33 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
     });
     if (pj) setProjectId(pj.id);
   }
+  // ★ 2026-11-10 ผู้ใช้: ยูนิตในฟอร์มต้องมีอยู่ในโปรเจคที่เลือกแล้วเท่านั้น — ไม่สร้างเบอร์ใหม่ให้ · ไม่มี = แจ้งเบอร์ที่ขาดและไม่ให้บันทึก
+  //   (กันเลือกโปรเจคผิด แล้วยูนิตทั้งไฟล์ไปโผล่เป็นเบอร์ใหม่ในโปรเจคผิด) · เช็คทันทีที่เลือกโปรเจค/อ่านไฟล์ + เช็คซ้ำตอนบันทึก
+  const [unitChk, setUnitChk] = useState(null);   // { s: "loading"|"ok"|"err", total, missing: [เบอร์], hint: [{ code, name, n }] }
+  const unitNos = useMemo(() => [...new Set(bunks.flatMap((b) => b.units.map((u) => String(u.unit_no || "").trim()).filter(Boolean)))], [bunks]);
+  useEffect(() => {
+    if (!projectId || !unitNos.length) { setUnitChk(null); return undefined; }
+    let alive = true; setUnitChk({ s: "loading" });
+    (async () => {
+      try {
+        const pms = await listRows("part_master", { filters: { project_id: projectId }, strict: true });
+        const have = new Set(pms.map((p) => String(p.part_no || "").trim().toLowerCase()));
+        const missing = unitNos.filter((u) => !have.has(u.toLowerCase()));
+        let hint = [];
+        if (missing.length) {   // ยูนิตพวกนี้อยู่โปรเจคไหน (ช่วยชี้ว่าเลือกผิดโปรเจค)
+          try {
+            const all = await listRows("part_master", { strict: true });
+            const cnt = new Map(); const want = new Set(unitNos.map((u) => u.toLowerCase()));
+            for (const p of all) { if (p.project_id === projectId) continue; if (want.has(String(p.part_no || "").trim().toLowerCase())) cnt.set(p.project_id, (cnt.get(p.project_id) || 0) + 1); }
+            hint = [...cnt.entries()].map(([id, n]) => { const pj = projects.find((x) => x.id === id); return { code: pj?.code || "?", name: pj?.name || "", n }; }).sort((a, b) => b.n - a.n).slice(0, 3);
+          } catch { /* ไม่มีสิทธิ์ดูทั้งหมด = ไม่ชี้ */ }
+        }
+        if (alive) setUnitChk({ s: "ok", total: unitNos.length, missing, hint });
+      } catch (e) { if (alive) setUnitChk({ s: "err", msg: String(e?.message || e) }); }
+    })();
+    return () => { alive = false; };
+  }, [projectId, unitNos]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const unitsBlocked = !!(unitChk && (unitChk.s !== "ok" || unitChk.missing.length));
   function applyBunks(parsed, src) {
     const list = (parsed?.bunks || []).filter((b) => b && b.units && b.units.length);
     if (!list.length) { setErr("ไม่พบข้อมูลบั้งในไฟล์/ข้อความ — ตรวจว่ามีหัว 'BUNK NO.' + ตาราง Unit No/Weight"); return; }
@@ -4134,21 +4161,13 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
       if (!key) continue;
       byNo.set(key, (byNo.get(key) || 0) + (Number(u.qty) > 0 ? Number(u.qty) : 1));
     }
-    const components = []; const createdUnits = [];
+    const components = []; const createdUnits = []; const missing = [];
     for (const [unitNo, qty] of byNo) {
-      let pm = (await findPartByNo(projectId, unitNo));
-      if (!pm) {
-        const sample = bunk.units.find((u) => String(u.unit_no).trim() === unitNo) || {};
-        const created = await insertRow("part_master", {
-          project_id: projectId, part_no: unitNo, part_name: sample.description || unitNo,
-          material: null, unit_weight: toKg(sample.weight), default_length_mm: null, routing: [], kind: "part",
-        });
-        pm = created && created.id ? created : (await findPartByNo(projectId, unitNo));
-        createdUnits.push(unitNo);
-      }
-      if (!pm?.id) throw new Error(`สร้าง/หายูนิต ${unitNo} ไม่สำเร็จ`);
+      const pm = (await findPartByNo(projectId, unitNo));
+      if (!pm?.id) { missing.push(unitNo); continue; }   // ★ 2026-11-10 ไม่สร้างยูนิตใหม่ — ต้องมีในโปรเจคอยู่แล้ว
       components.push({ child_pm_id: pm.id, qty });
     }
+    if (missing.length) throw new Error(`ไม่มีเบอร์ ${missing.join(", ")} ในโปรเจคนี้ — ปล่อยงานแผงเหล่านี้ก่อน หรือตรวจว่าเลือกโปรเจคถูก`);
     // ★ 2026-10-10 ตรวจรอบ 3: RPC ตอบ ok:false (ไม่ throw) → เดิมขึ้น "สำเร็จ" ทั้งที่ BOM/รายการบั้งไม่ถูกตั้ง
     if (components.length) {
       const rb = await setBom(parentPm.id, components);
@@ -4175,6 +4194,8 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
     if (!bunks.length) { setErr("ยังไม่มีบั้ง — นำเข้าไฟล์ หรือวางฟอร์มบั้งก่อน"); return; }
     const bad = bunks.find((b) => !String(b.meta?.bunk_no || "").trim());
     if (bad) { setErr("มีบั้งที่ไม่มีเลข BUNK NO. — ตรวจไฟล์อีกครั้ง"); return; }
+    if (unitChk?.s === "loading") { setErr("กำลังตรวจยูนิตกับโปรเจค — รอสักครู่แล้วกดอีกครั้ง"); return; }
+    if (unitChk?.missing?.length) { setErr(`บันทึกไม่ได้ — ไม่มีเบอร์ ${unitChk.missing.length} เบอร์ในโปรเจคนี้: ${unitChk.missing.slice(0, 15).join(", ")}${unitChk.missing.length > 15 ? ` … (+${unitChk.missing.length - 15})` : ""}`); return; }
     // ★ 2026-10-10 ตรวจรอบ 3: BUNK NO. ซ้ำในการนำเข้าเดียว → บั้งหลังทับรายการบั้งแรก (ยูนิตบั้งแรกหาย)
     {
       const seen = new Set(); const dup = new Set();
@@ -4260,6 +4281,19 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
           border: "2px dashed #2b8cff", background: "var(--surface-2, #f4f8f6)", fontSize: 13, fontFamily: "inherit", color: "var(--muted)" }} />
 
       {sheetNote ? <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{sheetNote} <button type="button" className="rw-link" onClick={() => setSheetNote("")}>ปิด</button></div> : null}
+      {unitChk ? (
+        <div style={{ fontSize: 12.5, marginBottom: 10, padding: "8px 10px", borderRadius: 8, lineHeight: 1.55,
+          background: unitChk.s === "loading" ? "var(--surface-2, #f3f6f4)" : unitChk.s === "ok" && !unitChk.missing.length ? "#eef9f2" : "#fdf0f0",
+          border: `1px solid ${unitChk.s === "loading" ? "var(--border)" : unitChk.s === "ok" && !unitChk.missing.length ? "#bfe5cc" : "#f3b4b4"}`,
+          color: unitChk.s === "ok" && !unitChk.missing.length ? "#146c3a" : unitChk.s === "loading" ? "var(--muted)" : "#8f1d1d" }}>
+          {unitChk.s === "loading" ? `กำลังตรวจยูนิต ${nc(unitNos.length)} เบอร์กับโปรเจคที่เลือก…`
+            : unitChk.s === "err" ? `ตรวจยูนิตกับโปรเจคไม่สำเร็จ: ${unitChk.msg} — ลองเลือกโปรเจคใหม่`
+            : !unitChk.missing.length ? `✓ ยูนิตทั้ง ${nc(unitChk.total)} เบอร์ในฟอร์มมีอยู่ในโปรเจคนี้แล้ว`
+            : <>
+              <b>✗ บันทึกไม่ได้ — ไม่มีเบอร์ {nc(unitChk.missing.length)} จาก {nc(unitChk.total)} เบอร์ในโปรเจค {projects.find((p) => p.id === projectId)?.code || ""}:</b> {unitChk.missing.slice(0, 30).join(", ")}{unitChk.missing.length > 30 ? ` … (+${unitChk.missing.length - 30})` : ""}
+              <div style={{ marginTop: 4 }}>{unitChk.hint?.length ? <>เบอร์เหล่านี้อยู่ในโปรเจค: {unitChk.hint.map((h) => `${h.code}${h.name ? ` (${h.name})` : ""} ${nc(h.n)} เบอร์`).join(" · ")} — เลือกโปรเจคถูกไหม?</> : "ระบบไม่สร้างเบอร์ใหม่จากฟอร์มบั้ง — ต้องปล่อยงานแผงเหล่านี้ในโปรเจคก่อน หรือตรวจว่าเลือกโปรเจคถูก"}</div>
+            </>}
+        </div>) : null}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
       {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
 
@@ -4319,7 +4353,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
 
       <div className="modal-actions" style={{ marginTop: 14 }}>
         <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ยกเลิก</Btn>
-        <Btn type="button" variant="accent" onClick={doSave} disabled={busy || !bunks.length}>
+        <Btn type="button" variant="accent" onClick={doSave} disabled={busy || !bunks.length || unitsBlocked} title={unitsBlocked ? "มีเบอร์ที่ไม่อยู่ในโปรเจคนี้ — ดูรายการด้านบน" : ""}>
           {busy ? "กำลังบันทึก..." : `บันทึก ${bunks.length ? fmtNum(bunks.length) + " บั้ง" : ""} + ปล่อยงาน`}
         </Btn>
       </div>
