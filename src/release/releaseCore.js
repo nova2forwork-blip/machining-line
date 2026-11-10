@@ -110,7 +110,9 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const j = words.findIndex((x) => x !== w && /^CODE:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 >= w.x1 - 1 && x.x0 - w.x1 < 12);
     if (j >= 0) { words[i] = { ...w, text: "INV.CODE", x1: words[j].x1 }; words.splice(j, 1); if (j < i) i--; }
   }
-  const inv = words.find((w) => /^INV\.?CODE$/i.test(w.text));
+  // ★ 2026-11-10 แบบ "ตารางเบอร์หลายตัวในแผ่นเดียว" (CA01-001 A…AP) มีหัว PART NO./INV.CODE 3 ชุดเรียงกัน → ยึดชุดซ้ายสุด-บนสุดเป็นหลัก
+  const invAll = words.filter((w) => /^INV\.?CODE$/i.test(w.text)).sort((a, b) => (Math.abs(a.top - b.top) < 2 ? a.x0 - b.x0 : a.top - b.top));
+  const inv = invAll[0] || null;
   // ★ 2026-11-10 หัวกระดาษแบบซับ US (ไม่มี INV. CODE): "PART NO. | REV. | LENGTH | HEIGHT | NOTE | A | M.D." มุมบนซ้าย — A = ความยาวเป็นมม. (LENGTH เป็นฟุต-นิ้ว)
   const usHdr = !inv ? (() => { const a = words.find((w) => w.text === "A" && w.top < vp.height * 0.2 && words.some((x) => /^M\.D\.$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x1) && words.some((x) => x.text === "LENGTH" && Math.abs(x.top - w.top) < 2 && x.x1 < w.x0)); return a || null; })() : null;
   const anchor = inv || usHdr;
@@ -143,9 +145,38 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     cols.forEach(([lab], i) => { out.title[lab] = pick[i].sort((p, q) => p.x0 - q.x0).map((v) => v.text).join(" ") || null; });
     if (out.title["INV. CODE"] != null && out.title["INV.CODE"] == null) out.title["INV.CODE"] = out.title["INV. CODE"];
     // ความยาว/สูงเป็นนิ้วแบบเศษส่วน (2 15/16 · 3/4" · 2-15/16") → แปลงเป็นมม. (เก็บค่าเดิมไว้ใน *_IN)
-    for (const k of ["LENGTH", "HEIGHT"]) { const mm = inchToMm(out.title[k]); if (mm != null) { out.title[k + "_IN"] = out.title[k]; out.title[k] = String(mm); } }
-    // ช่อง "A" = ความยาวตัดเป็นมม. (ตรงกับ LENGTH ที่แปลงจากนิ้ว เช่น 16'-2" = 4927.6) → ใช้ค่านี้เป็นหลักเมื่อมี
-    { const a = num(out.title.A); if (a != null && a > 0 && out.title.LENGTH_IN) { out.title.LENGTH = String(a); } }
+    const normTitle = (t) => {
+      for (const k of ["LENGTH", "HEIGHT", "M.D."]) { const mm = inchToMm(t[k]); if (mm != null) { t[k + "_IN"] = t[k]; t[k] = String(mm); } }
+      // ช่อง "A" = ความยาวตัดเป็นมม. (ตรงกับ LENGTH ที่แปลงจากนิ้ว เช่น 16'-2" = 4927.6) → ใช้ค่านี้เป็นหลักเมื่อมี
+      { const a = num(t.A); if (a != null && a > 0 && t.LENGTH_IN) { t.LENGTH = String(a); } }
+      return t;
+    };
+    normTitle(out.title);
+    // ★ 2026-11-10 ตารางเบอร์หลายตัวในแผ่นเดียว: ใต้หัว PART NO./REV./LENGTH/…/INV.CODE มีหลายแถว (และอาจมีหัวซ้ำ 2-3 ชุดเรียงข้างกัน)
+    //   เช่น CA01-001_A.pdf = CA01-001 A, B, C … AP คนละความยาว → out.family = [title ของแต่ละเบอร์] (readPdfFiles แตกเป็นคนละรายการ)
+    if (inv && !usHdr) {
+      const fam = [];
+      const blocks = invAll.filter((a) => Math.abs(a.top - inv.top) < 2);
+      blocks.forEach((a, bi) => {
+        const xmin = bi ? blocks[bi - 1].x1 + 1 : -1e9;
+        const bl = words.filter((w) => Math.abs(w.top - a.top) < 2 && w.x0 > xmin && w.x0 <= a.x1 + 1 && !/BILL/i.test(w.text)).sort((p, q) => p.x0 - q.x0);
+        const bc = []; for (const w of bl) { if (w.text === "NO." && bc.length && bc[bc.length - 1][0] === "PART") bc[bc.length - 1] = ["PART NO.", bc[bc.length - 1][1], w.x1]; else bc.push([w.text, w.x0, w.x1]); }
+        if (!bc.some((c) => c[0] === "PART NO.")) return;
+        const bx0 = bc[0][1] - 15, bx1 = a.x1 + 40;
+        const below = words.filter((w) => w.top - a.top > 8 && w.top - a.top < 400 && w.x0 >= bx0 && w.x0 <= bx1 && Math.abs(w.size - a.size) < 1.5);
+        const rows = []; for (const w of below.sort((p, q) => p.top - q.top || p.x0 - q.x0)) { const r = rows[rows.length - 1]; if (r && Math.abs(r.top - w.top) < 3) r.w.push(w); else rows.push({ top: w.top, w: [w] }); }
+        let prevTop = a.top;
+        for (const r of rows) {
+          if (r.top - prevTop > 30) break;
+          const t = {}; const mids = bc.map(([, p, q]) => (p + q) / 2);
+          for (const v of r.w) { const cx = (v.x0 + v.x1) / 2; let bi2 = -1, bd = 1e9; mids.forEach((m, i) => { const [, p, q] = bc[i]; const d = cx >= p - 3 && cx <= q + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi2 = i; } }); if (bi2 >= 0 && bd < 30) t[bc[bi2][0]] = (t[bc[bi2][0]] ? t[bc[bi2][0]] + " " : "") + v.text; }
+          if (!/[A-Z]{1,}\d+-?\d*/i.test(t["PART NO."] || "")) break;
+          bc.forEach(([lab]) => { if (t[lab] == null) t[lab] = null; });
+          fam.push(normTitle(t)); prevTop = r.top;
+        }
+      });
+      if (fam.length > 1) out.family = fam;
+    }
     const dv = words.find((w) => w.text === "DEVELOP");
     if (dv) out.title.DEVELOP = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
   }
@@ -164,7 +195,7 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
   }
   const rightOf = (lab, stop) => {
     const w = words.find((x) => x.text === lab); if (!w) return null;
-    const line = words.filter((x) => Math.abs(x.top - w.top) < 3 && x.x0 > w.x1 - 1).sort((a, b) => a.x0 - b.x0);
+    const line = words.filter((x) => Math.abs(x.top - w.top) < 3 && x.x0 > w.x1 - 1 && Math.abs(x.size - w.size) < 2.5).sort((a, b) => a.x0 - b.x0);   // ตัดตัวอักษรใหญ่ (สามเหลี่ยม REV "A" ข้างบรรทัด MATERIAL) ออก
     const res = [];
     for (const x of line) { if (stop.includes(x.text) || x.x0 - (res.length ? res[res.length - 1].x1 : w.x1) > 60) break; res.push(x); }
     return res.map((x) => x.text).join(" ") || null;
@@ -335,7 +366,11 @@ export async function readPdfFiles(files, onEach) {
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
       const d = await readShopPdf(pdfjsLib, buf, f.name);
-      out.push({ ...d, src: "upload", size: f.size, _file: f });
+      if (d.kind === "part" && d.family && d.family.length > 1) {
+        // แผ่นเดียวมีหลายเบอร์ (CA01-001 A…AP) → แตกเป็นคนละรายการ ใช้ไฟล์เดียวกัน (family = เบอร์ของแผ่น ใช้ตั้งชื่อไฟล์ตอนเก็บ)
+        const famCode = (d.title["PART NO."] || d.code || "").replace(/\s+[A-Z]{1,2}$/, "") || d.code;
+        d.family.forEach((t, i) => out.push({ ...d, family: undefined, famOf: famCode, famN: d.family.length, famI: i, code: String(t["PART NO."]).trim(), file: `${f.name} › ${String(t["PART NO."]).trim()}`, title: { ...d.title, ...t }, src: "upload", size: f.size, _file: f }));
+      } else out.push({ ...d, src: "upload", size: f.size, _file: f });
     } catch (e) {
       out.push({ file: f.name, kind: "unknown", code: f.name.replace(/\.pdf$/i, ""), title: {}, bom: [], warn_read: [`เปิดไฟล์ไม่ได้: ${e?.message || e}`], src: "upload" });
     }

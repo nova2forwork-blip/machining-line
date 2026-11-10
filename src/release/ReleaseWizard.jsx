@@ -983,7 +983,7 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
       setReading({ msg: "บันทึกลงคลังของโปรเจค…" });
       const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
         newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
-        pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: userName || "" }, (m) => setReading({ msg: m }));
+        pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (m) => setReading({ msg: m }));
       // เลือกเบอร์ที่เพิ่งวางให้เลย ×1 (แก้จำนวนได้) — เบอร์ที่เลือกอยู่แล้วคงจำนวนเดิม
       // เลือกรุ่นล่าสุดของเบอร์นั้นให้ (ไฟล์ที่วางเป็นรุ่นใหม่กว่าอยู่แล้ว · ถ้าเคยเลือกรุ่นเก่าไว้ → เปลี่ยนเป็นรุ่นใหม่)
       setPicks((old) => {

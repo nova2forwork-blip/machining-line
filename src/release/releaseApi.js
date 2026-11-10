@@ -66,8 +66,9 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
 //   path = <projectId>/<sub|part>/<เบอร์>.pdf · อัพซ้ำเบอร์เดิม = ทับไฟล์เดิม
 const PDF_BUCKET = "release-pdfs";
 const safeSeg = (x) => String(x || "").trim().replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "x";
+const libPdfPath = (projectKey, d) => `${safeSeg(projectKey)}/${d.kind === "part" ? "part" : "sub"}/${safeSeg(d.famOf || d.code)}.pdf`;   // แผ่นหลายเบอร์ (famOf) เก็บไฟล์เดียวในชื่อเบอร์ของแผ่น
 async function uploadLibPdf(projectKey, d) {
-  const path = `${safeSeg(projectKey)}/${d.kind === "part" ? "part" : "sub"}/${safeSeg(d.code)}.pdf`;
+  const path = libPdfPath(projectKey, d);
   const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, d._file, { contentType: "application/pdf", upsert: true });
   if (error) throw error;
   return path;
@@ -341,7 +342,9 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   // เก็บตัวไฟล์ PDF ที่อัพรอบนี้ (ไม่สำเร็จ = เตือน แต่ข้อมูลที่อ่านได้ยังบันทึกตามปกติ)
   const pdfsOut = [];
   const upErrs = [];
-  await pool((pdfs || []).filter((d) => d._file), 4, async (d) => { d.path = await uploadLibPdf(projectCode || projectId, d); }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
+  // ไฟล์เดียวกันที่แตกเป็นหลายเบอร์ (famOf) อัพครั้งเดียว
+  const upOnce = new Map(); for (const d of (pdfs || []).filter((x) => x._file)) { const k = libPdfPath(projectCode || projectId, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
+  await pool([...upOnce.values()], 4, async (ds) => { const path = await uploadLibPdf(projectCode || projectId, ds[0]); for (const d of ds) d.path = path; }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
   for (const d of pdfs || []) pdfsOut.push({ file: d.file, kind: d.kind, code: d.code, ...(d.path ? { path: d.path } : {}) });
   if (upErrs.length) { const m = String(upErrs[0].e?.message || upErrs[0].e || ""); st.errors.push(/bucket|not found|404/i.test(m) ? "ยังไม่ได้รัน migration-release-pdfs.sql — ไม่ได้เก็บตัวไฟล์ PDF (ข้อมูลที่อ่านได้บันทึกแล้ว)" : `เก็บไฟล์ PDF ไม่สำเร็จ ${upErrs.length} ไฟล์ (${m.slice(0, 80)})`); }
   const subItems = { ...(old?.subItems || {}) };

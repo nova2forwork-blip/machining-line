@@ -55,7 +55,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     setReading({ n: 0, of: list.length });
     try {
       const files = []; let n = 0;
-      for (const e of list) { files.push(await api.downloadLibPdf(e.path, e.file || (e.code + ".pdf"))); setReading({ n: ++n, of: list.length }); }
+      for (const e of list) { files.push(await api.downloadLibPdf(e.path, (e.file || (e.code + ".pdf")).replace(/ › .*$/, ""))); setReading({ n: ++n, of: list.length }); }
       const got = (await readPdfFiles(files)).filter((d) => d.kind === "sub" || d.kind === "part");
       setPdfs((old) => { const names = new Set(got.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...got]; });
       setReading({ warn: `อ่านซ้ำจากไฟล์ที่เก็บไว้ ${got.length} ไฟล์แล้ว — ตรวจแล้วกด "บันทึก" เพื่ออัปเดตข้อมูล` });
@@ -99,7 +99,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     if (!(await askConfirm({ title: "บันทึกซับ / พาร์ท ของโปรเจค?", message: [`ซับ ${nf(subs.length)} เบอร์ · พาร์ท ${nf(parts.length)} เบอร์`, nNew ? `PDF ใหม่ ${nNew} ไฟล์ → สร้าง/อัปเดตเบอร์ + BOM ซับในระบบ` : "ไม่มี PDF ใหม่ — บันทึกเฉพาะหมวด / งานซับ / ใบงาน", "Release ที่สร้างใหม่จะดึงจากคลังนี้ · Release เดิมที่ยังไม่มี BOM จะดึงให้เมื่อเปิด"].join("\n"), tone: "warn", confirmText: "บันทึก", cancelText: "กลับ" }))) return;
     setSaving({ busy: true, msg: "เริ่มบันทึก…", err: "", done: null });
     try {
-      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
+      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
       setSaving({ busy: false, msg: "", err: "", done: true, errors: r?.errors || [] });
       setPdfs([]);
       let reloadErr = "";

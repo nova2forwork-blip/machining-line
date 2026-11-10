@@ -13,6 +13,7 @@ import { Pill } from "./releaseUi.jsx";
 import "./release-wizard.css";
 import "./i18n-release.js";
 
+const keyOf = (x) => x.key || (x.file && x.file.name) || "";
 const isSheetFile = (f) => /\.(xlsx?|xlsm)$/i.test(f.name);
 // แบบนี้ใช้ใน Release ไหนบ้าง (แผง/ซับใน BOM · พาร์ทในคลังของใบ · แบบ loose = แผงในแบบตรงกับแผงของใบ)
 function plansUsing(d, plans) {
@@ -65,7 +66,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       setLibMsg((m) => ({ ...m, [j.k]: { busy: "บันทึกลงคลัง…" } }));
       const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
         newCodes: new Set(use.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
-        pdfs: use.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: userName || "" }, (msg) => setLibMsg((m) => ({ ...m, [j.k]: { busy: msg } })));
+        pdfs: use.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (msg) => setLibMsg((m) => ({ ...m, [j.k]: { busy: msg } })));
       const gs = use.filter((d) => d.kind === "sub").length, gp = use.length - gs; const errs = (r && r.errors) || [];
       setLibMsg((m) => ({ ...m, [j.k]: { ok: `เก็บเข้าคลัง ${project.code} แล้ว — ซับ ${gs} · พาร์ท ${gp} เบอร์${older.length ? ` · ข้ามรุ่นเก่า ${older.length}` : ""}${errs.length ? " · " + errs.join(" · ") : ""}` } }));
       onLibrarySaved && onLibrarySaved(project, use);
@@ -96,10 +97,10 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       for (const d of all) {
         if (d.kind === "unknown" && d._file) { try { const o = await readOrderPdf(d._file); if (o.items.length) { out.push({ file: d._file, type: o.kind === "modify" ? "modify" : "order", data: o }); continue; } } catch { /* ไม่ใช่ใบปะหน้า */ } }
         if (d.kind === "unknown") out.push({ file: d._file || { name: d.file }, type: "bad", note: "อ่านไม่ออก — ไม่ใช่แบบแผง/ซับ/พาร์ท และไม่ใช่ใบปะหน้า (ไฟล์สแกนยังไม่รองรับ)" });
-        else out.push({ file: d._file || { name: d.file }, type: "drawing", data: d });
+        else out.push({ file: d._file || { name: d.file }, key: d.file, type: "drawing", data: d });   // key = ชื่อไฟล์ (+ › เบอร์ เมื่อแผ่นเดียวมีหลายเบอร์)
       }
     }
-    setDocs((old) => { const names = new Set(out.map((x) => x.file.name)); return [...old.filter((x) => !names.has(x.file.name)), ...out]; });
+    setDocs((old) => { const names = new Set(out.map((x) => keyOf(x))); return [...old.filter((x) => !names.has(keyOf(x))), ...out]; });
     setBusy("");
   }
   // ── จัดกลุ่มเป็น "งาน" ──
@@ -109,18 +110,18 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
     for (const s of docs.filter((x) => x.type === "modify")) {
       const o = s.data; const plan = o.refRo ? byRo(o.refRo) : null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
-      const mine = drawings.filter((d) => codes.has(NC(d.data.code))); mine.forEach((d) => used.add(d.file.name));
+      const mine = drawings.filter((d) => codes.has(NC(d.data.code))); mine.forEach((d) => used.add(keyOf(d)));
       const missing = o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code)));
       list.push({ k: "modify:" + s.file.name, sheet: s, plan, drawings: mine, missing, refRo: o.refRo });
     }
     for (const s of docs.filter((x) => x.type === "order")) {
       const o = s.data; const plan = o.ro ? byRo(o.ro) : null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
-      const mine = drawings.filter((d) => !used.has(d.file.name) && (codes.has(NC(d.data.code)) || (d.data.kind === "loose" && (d.data.site || []).some((r) => codes.has(NC(r.code)))))); mine.forEach((d) => used.add(d.file.name));
+      const mine = drawings.filter((d) => !used.has(keyOf(d)) && (codes.has(NC(d.data.code)) || (d.data.kind === "loose" && (d.data.site || []).some((r) => codes.has(NC(r.code)))))); mine.forEach((d) => used.add(keyOf(d)));
       const pc = NC(o.projectCode || ""); const prj = projects.find((p) => NC(p.code) === NC(o.projectFull || "") || NC(p.code) === pc || (pc && NC(p.code).startsWith(pc)));
       list.push({ k: "order:" + s.file.name, sheet: s, plan, project: prj, drawings: mine, missing: o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code))) });
     }
-    const loose = drawings.filter((d) => !used.has(d.file.name));
+    const loose = drawings.filter((d) => !used.has(keyOf(d)));
     if (loose.length) {
       // แบบที่ไม่มีใบกำกับ → จัดตาม Release ที่ใช้
       const by = new Map(); const none = [];
@@ -133,9 +134,9 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
   }, [docs, plans, projects]);   // eslint-disable-line react-hooks/exhaustive-deps
   const bad = docs.filter((x) => x.type === "bad");
   const bunkDocs = docs.filter((x) => x.type === "bunk");
-  const filesOf = (j) => [...(j.sheet ? [j.sheet.file] : []), ...j.drawings.map((d) => d.file)].filter((f) => f instanceof File);
+  const filesOf = (j) => [...new Set([...(j.sheet ? [j.sheet.file] : []), ...j.drawings.map((d) => d.file)].filter((f) => f instanceof File))];   // ไฟล์เดียวที่แตกหลายเบอร์ → ส่งไฟล์ครั้งเดียว
   const clear = () => { setDocs([]); setOpen(false); };
-  const removeJob = (j) => { const names = new Set([...(j.sheet ? [j.sheet.file.name] : []), ...j.drawings.map((d) => d.file.name)]); setDocs((old) => old.filter((x) => !names.has(x.file.name))); };
+  const removeJob = (j) => { const names = new Set([...(j.sheet ? [keyOf(j.sheet)] : []), ...j.drawings.map((d) => keyOf(d))]); setDocs((old) => old.filter((x) => !names.has(keyOf(x)))); };
 
   return (
     <div className="card rw-card rw-inbox">
@@ -150,7 +151,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       {busy ? <div className="rw-msg info">{busy}</div> : null}
       {open && docs.length ? (
         <div className="rw-inbox-jobs">
-          <div className="rw-order-h"><b>พบ {docs.length} ไฟล์ → {jobs.length} งาน</b><button type="button" className="rw-link" onClick={clear}>ล้างทั้งหมด</button></div>
+          <div className="rw-order-h"><b>พบ {new Set(docs.map((x) => x.file.name)).size} ไฟล์ → {jobs.length} งาน</b><button type="button" className="rw-link" onClick={clear}>ล้างทั้งหมด</button></div>
           {jobs.map((j) => {
             const o = j.sheet?.data;
             if (j.sheet?.type === "modify") return (
@@ -182,7 +183,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
             return (
               <div key={j.k} className={`rw-inbox-job ${j.none ? "bad" : ""}`}>
                 <div className="rw-inbox-job-h"><Pill tone="muted">แบบ (ไม่มีใบกำกับ)</Pill> {j.plan ? <><b>ใช้ใน Release {planLabel(j.plan)}</b></> : <b>{j.project ? `โปรเจค ${j.project.code} — ${j.project.name}` : "ยังไม่รู้โปรเจค"}</b>}{!j.plan ? <span className="rw-muted">· ยังไม่มี Release ที่ใช้แบบนี้</span> : null}</div>
-                <div className="rw-inbox-job-b">{j.drawings.map((d) => <Pill key={d.file.name} tone="ok">{d.data.code} <small>{d.data.kind === "panel" ? "แผง" : d.data.kind === "sub" ? "ซับ" : d.data.kind === "loose" ? "Site Item+อุปกรณ์" : "พาร์ท"}{d.how ? ` · ${d.how}` : ""}</small></Pill>)}</div>
+                <div className="rw-inbox-job-b">{j.drawings.map((d) => <Pill key={keyOf(d)} tone="ok">{d.data.code} <small>{d.data.kind === "panel" ? "แผง" : d.data.kind === "sub" ? "ซับ" : d.data.kind === "loose" ? "Site Item+อุปกรณ์" : "พาร์ท"}{d.how ? ` · ${d.how}` : ""}</small></Pill>)}</div>
                 <div className="rw-inbox-job-a">
                   {j.plan ? <>
                     <button type="button" className="btn btn-accent btn-sm" onClick={() => onOpenModify(j.plan, filesOf(j))}>✎ Modify {j.plan.ro} ด้วยแบบนี้ (แบบ Rev ใหม่)</button>
