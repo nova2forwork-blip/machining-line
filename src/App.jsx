@@ -35,6 +35,7 @@ const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
 const ReleaseWizard = lazy(() => import("./release/ReleaseWizard.jsx"));
 const ProjectLibLazy = lazy(() => import("./release/ProjectLib.jsx"));
 const ReleasePlanViewLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlanView })));
+const ReleaseInboxLazy = lazy(() => import("./release/ReleaseInbox.jsx"));   // ★ 2026-11-10 กล่องรับเอกสาร (ใบ Modify / ใบปะหน้า / แบบ) หน้าปล่อยงาน
 const LotSheetInlineLazy = lazy(() => import("./release/LotSheetInline.jsx"));
 const ReleasePlansCardLazy = lazy(() => import("./release/ReleaseLots.jsx").then((m) => ({ default: m.ReleasePlansCard })));
 
@@ -7346,7 +7347,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
-      <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder}
+      <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
         onOpenLot={onOpenGroup ? (lotNo) => {
           // ★ 2026-11-04 เปิดหน้าล็อต (ReleaseGroupDetail) จากหน้าใบหลัก — กด "กลับ" แล้วกลับมาที่ใบหลัก
@@ -7381,10 +7382,10 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   );
 }
 // หน้าปล่อยงานใหม่ (เต็มหน้า แทนรายการ) — ใช้ทั้งหน้า "ปล่อยงาน" และหน้าโปรเจค
-function ReleaseWizardView({ user, projects, releases, plans = [], initialProjectId = "", onClose, onNeedProject, onSaved }) {
+function ReleaseWizardView({ user, projects, releases, plans = [], initialProjectId = "", onClose, onNeedProject, onSaved, initialFiles = null }) {
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิดหน้าปล่อยงานใหม่…</div>}>
-      <ReleaseWizard user={user} projects={projects} releases={releases} plans={plans} initialProjectId={initialProjectId} api={realReleaseApi}
+      <ReleaseWizard user={user} projects={projects} releases={releases} plans={plans} initialProjectId={initialProjectId} api={realReleaseApi} initialFiles={initialFiles}
         onCancel={onClose} onNeedProject={onNeedProject}
         onSaved={async (r) => {
           if (!r.legacy) {
@@ -7529,7 +7530,10 @@ function ReleasePage({ user, goTo }) {
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const { plans, setPlans, loadPlans } = useReleasePlans(null);   // ★ 2026-10-13: Release แบบใหม่ที่ยังปล่อยล็อตไม่ครบ
-  const [planView, setPlanView] = useState(null);                  // { plan, openBuilder }
+  const [planView, setPlanView] = useState(null);                  // { plan, openBuilder, inbox? }
+  const [wizardFiles, setWizardFiles] = useState(null);             // ★ 2026-11-10 ไฟล์จากกล่องรับเอกสาร → เปิด "ปล่อยงานใหม่" พร้อมใบปะหน้า/แบบ
+  const [wizardProject, setWizardProject] = useState("");
+  const [inboxDocs, setInboxDocs] = useState([]);                   // เอกสารในกล่องรับ — คงอยู่ตอนเปิดใบไปทำแล้วกลับมา
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
@@ -7627,10 +7631,10 @@ function ReleasePage({ user, goTo }) {
   if (createOpen === "wizard") {
     return (
       <>
-        <ReleaseWizardView user={user} projects={projects} releases={recent} plans={plans} initialProjectId={projectFilter ? (projects.find((p) => p.code === projectFilter)?.id || "") : ""}
-          onClose={() => setCreateOpen(null)} onNeedProject={() => setShowNewProject(true)}
+        <ReleaseWizardView user={user} projects={projects} releases={recent} plans={plans} initialProjectId={wizardProject || (projectFilter ? (projects.find((p) => p.code === projectFilter)?.id || "") : "")} initialFiles={wizardFiles}
+          onClose={() => { setCreateOpen(null); setWizardFiles(null); setWizardProject(""); }} onNeedProject={() => setShowNewProject(true)}
           onSaved={async (r) => {
-            setCreateOpen(null);
+            setCreateOpen(null); setWizardFiles(null); setWizardProject("");
             if (r.legacy) { clearFilters(); setOrderSearch(r.releaseOrder); setDeptFilter("panel"); await load(); return; }
             await Promise.all([load(), loadPlans()]);
             setPlanView({ plan: r.plan, openBuilder: !r.lotNo });
@@ -7653,6 +7657,13 @@ function ReleasePage({ user, goTo }) {
         <PageActions menuLabel="+ เพิ่ม / นำเข้า" items={releaseCreateItems(setCreateOpen)} />
       </div>
       {relLoadErr && <LoadStateBanner state={{ error: relLoadErr }} onRetry={load} />}
+      <Suspense fallback={null}>
+        <ReleaseInboxLazy plans={plans} projects={projects} docs={inboxDocs} setDocs={setInboxDocs}
+          onOpenModify={(plan, files) => setPlanView({ plan, inbox: { mode: "modify", files } })}
+          onAddItems={(plan, files) => setPlanView({ plan, inbox: { mode: "add", files } })}
+          onNewRelease={(files, projectId) => { setWizardFiles(files); setWizardProject(projectId || ""); setCreateOpen("wizard"); }}
+          onOpenPlan={(plan) => setPlanView({ plan })} />
+      </Suspense>
 
       <Card title="ค้นหา Release">
         {(() => {

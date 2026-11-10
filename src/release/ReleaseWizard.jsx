@@ -58,7 +58,7 @@ function Chips({ list, max = 14 }) {
   );
 }
 
-export default function ReleaseWizard({ user, projects = [], releases = [], plans = [], initialProjectId = "", api, onCancel, onSaved, onNeedProject, demoTools = null }) {
+export default function ReleaseWizard({ user, projects = [], releases = [], plans = [], initialProjectId = "", api, onCancel, onSaved, onNeedProject, demoTools = null, initialFiles = null }) {
   const userName = user?.name || "—";
   // ── state ──
   const [step, setStep] = useState(0);
@@ -272,6 +272,22 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   }
   const [orderDrag, setOrderDrag] = useState(false);
   const orderRef = useRef(null);
+  // ★ 2026-11-10 มาจากกล่องรับเอกสาร: ใบปะหน้า → อ่านเติมหัวใบ · แบบ PDF → ใส่ขั้นอัพ PDF ให้ (แผง/แบบ Site Item) · ซับ/พาร์ท → เก็บไว้วางที่ขั้นเลือกซับ/พาร์ท
+  const initRef = useRef(false);
+  const [pendingPdfs, setPendingPdfs] = useState([]);   // แบบซับ/พาร์ทจาก inbox ที่รอวางในขั้น "เลือกซับ / พาร์ท"
+  useEffect(() => {
+    if (!initialFiles || !initialFiles.length || initRef.current) return; initRef.current = true;
+    (async () => {
+      const sheets = initialFiles.filter((f) => /\.(xlsx?|xlsm)$/i.test(f.name)); const pdfs = initialFiles.filter((f) => /\.pdf$/i.test(f.name));
+      let all = []; try { all = pdfs.length ? await readPdfFiles(pdfs) : []; } catch { /* ignore */ }
+      const drawings = []; const sheetPdfs = [];
+      for (const d of all) { if (d.kind === "unknown" && d._file) sheetPdfs.push(d._file); else drawings.push(d); }
+      const first = sheets[0] || sheetPdfs[0]; if (first) await onOrderFile([first]);
+      const panelish = drawings.filter((d) => d.kind === "panel" || d.kind === "loose"); const subpart = drawings.filter((d) => d.kind === "sub" || d.kind === "part");
+      if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
+      if (subpart.length) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!panelish.length) setMode("items"); }
+    })();
+  }, [initialFiles]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── สถานะแต่ละขั้น (โชว์ในแถบขั้น) ──
   const saveChecks = useMemo(() => {
@@ -495,7 +511,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       )}
 
       {step === 1 && !itemsMode && <UnitsStep units={unitsRaw} total={units.length} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
-      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} />}
+      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} pendingPdfs={pendingPdfs} onPendingDone={() => setPendingPdfs([])} />}
 
       {step === 2 && !itemsMode && (
         <PdfStep onReloadLib={() => setLibTick((t) => t + 1)} pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
@@ -898,7 +914,7 @@ function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint })
     </div>);
 }
 // ── ขั้น ② โหมด "เฉพาะซับ / พาร์ท": เลือกเบอร์จากคลังของโปรเจค + จำนวน (ไม่มีแผง · ไม่ต้องอัพ PDF) ──
-function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onReloadLib, api, userName, order = null, orderCmp = [], orderHw = [], setOrderHw = () => {} }) {
+function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onReloadLib, api, userName, order = null, orderCmp = [], orderHw = [], setOrderHw = () => {}, pendingPdfs = [], onPendingDone = () => {} }) {
   const [tab, setTab] = useState("sub");
   // ★ 2026-11-03: วาง PDF แบบซับ/พาร์ทได้ที่นี่เลย (เหมือนขั้นอัพ PDF แผง) — อ่าน → บันทึกลงคลังของโปรเจคทันที → เลือกให้ ×1
   const [reading, setReading] = useState(null);
@@ -932,6 +948,9 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
     if (add.length) setPicks((old) => { const have = new Map(old.map((p) => [key(p.kind, p.code), p])); for (const a of add) have.set(key(a.kind, a.code), { ...(have.get(key(a.kind, a.code)) || {}), ...a }); return [...have.values()]; });
     if (hw.length) setOrderHw((xs) => [...xs.filter((x) => !hw.some((h) => NC(h) === NC(x))), ...hw]);
   };
+  // แบบซับ/พาร์ทที่มาจากกล่องรับเอกสาร → วางให้เองเมื่อคลังโหลดแล้ว
+  const pendRef = useRef(false);
+  useEffect(() => { if (!pendingPdfs.length || libState.s !== "ok" || pendRef.current) return; pendRef.current = true; addFiles(pendingPdfs).finally(onPendingDone); }, [pendingPdfs, libState.s]);   // eslint-disable-line react-hooks/exhaustive-deps
   const autoRef = useRef("");
   useEffect(() => { if (!order || libState.s !== "ok" || picks.length) return; const k = order.file + "|" + libState.key; if (autoRef.current === k) return; autoRef.current = k; applyOrder(); }, [order, libState.s, libState.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   async function addFiles(list) {
