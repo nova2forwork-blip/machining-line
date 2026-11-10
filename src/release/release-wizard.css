@@ -932,3 +932,4 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-cmp-same td { color: var(--muted); }
 .rl-dr-top { flex: 0 1 auto; max-height: 46vh; overflow: auto; min-height: 0; padding: 0 22px; }
 .rl-dr-top > .rl-2step, .rl-dr-top > .rw-order-check, .rl-dr-top > .rl-found, .rl-dr-top > .rw-msg { margin-left: 0 !important; margin-right: 0 !important; }
+.bm-xls { margin-left: auto; white-space: nowrap; }

@@ -133,6 +133,32 @@ export function BomView({ plan, need }) {
     <>{r.cut.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${r.cut.reuse} ชิ้น — ตัวอย่างต้นทาง: ${r.cut.src}`}>เศษ ×{nf(r.cut.reuse)}</Pill> : null}{r.cut.fresh ? <Pill tone="muted" title={`เปิดเส้นใหม่ ${nf(r.cut.stock)} มม.`}>เส้นใหม่ ×{nf(r.cut.fresh)}</Pill> : null}{r.cut.over ? <Pill tone="warn">ยาวกว่าเส้น</Pill> : null}</>
   ) : r.cut ? <Pill tone="muted" title={`เปิดเส้นใหม่ ${nf(r.cut.stock)} มม.`}>เส้นใหม่ ×{nf(r.cut.fresh)}</Pill> : null);
 
+  // ★ 2026-11-10 ดาวน์โหลด BOM เป็น Excel — ขอบเขต = แบบแผงที่เลือก (หรือทุกแบบ) · ทุกแถว (ไม่ตามคำค้นหา / ไม่ตัดตามหน้า)
+  const [xlsBusy, setXlsBusy] = useState(false);
+  async function exportXlsx() {
+    setXlsBusy(true);
+    try {
+      const { downloadSheets } = await import("../excelExport.js");
+      const num = (x) => (x == null || x === "" ? "" : Number(x));
+      const full = flat.map((r) => ({
+        PANEL: r.unit, "จำนวนแผง": r.n, "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
+        "PART NO.": r.code, "ประเภท": r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: r.d || "", LENGTH: num(r.l), FINISH: r.f || "",
+        MATERIAL: r.kind === "sub" ? "" : r.m || "", WAST: r.cut?.reuse ? "wast" : "", "MAT. LENGTH": r.cut?.reuse ? wasteLens(r.cut) : r.cut ? num(r.cut.stock) : num(r.ml),
+        "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.sum * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."),
+        "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": r.cx ? (r.to ? `แทนด้วย ${r.to} ${r.ver || ""}` : `ยกเลิก ${r.ver || ""}`).trim() : r.add ? `เพิ่ม ${r.ver || ""}`.trim() : r.q0 != null ? `เดิม ${r.q0} (${r.ver || "Modify"})` : "",
+      }));
+      const sum = [...merged].sort((a, b) => (a.kind === b.kind ? ncmp(a.code, b.code) : a.kind === "sub" ? -1 : 1)).map((e) => ({
+        "PART NO.": e.code, "ประเภท": e.kind === "sub" ? "ซับ" : e.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: e.d || "", LENGTH: num(e.l), MATERIAL: e.m || "",
+        "รวมทั้งใบ": Math.round(e.total * 1000) / 1000, "หน่วย": e.uom, "ใช้ใน (ซับ/แผง × จำนวน)": [...e.uses.entries()].map(([p, u]) => `${p} ×${nlen(u.q)}`).join(", "),
+        "ตัดจากเศษ": e.reuse || "", "เส้นใหม่": e.fresh || "",
+      }));
+      const tree = scope.flatMap((T) => T.rows.map((r) => ({ "แบบแผง": T.unit, "จำนวนแผง": T.n, "ชั้น": r.depth + 1, "โครงสร้าง": `${"    ".repeat(r.depth)}${r.kind === "sub" ? "▸ " : ""}${r.code}`, DESCRIPTION: r.d || "", LENGTH: num(r.l), MATERIAL: r.kind === "sub" ? "" : r.m || "", "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.per * T.n * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "หมายเหตุ": r.cx ? "ยกเลิก" : r.add ? "เพิ่ม" : "" })));
+      const tag = ALL ? "ALL" : cur?.unit || "BOM";
+      await downloadSheets(`BOM_${plan.ro}_${tag}.xlsx`.replace(/[\\/:*?"<>|\s]+/g, "_"), [{ name: "ตารางเต็ม", rows: full }, { name: "รวมเบอร์", rows: sum }, { name: "โครงสร้าง", rows: tree }]);
+    } catch (e) { alert("สร้างไฟล์ Excel ไม่สำเร็จ: " + (e?.message || e)); }
+    setXlsBusy(false);
+  }
+
   // ── มุมมอง ──
   let body = null, count = 0, shown = 0;
   if (v === "tree" && cur) {
@@ -246,6 +272,7 @@ export function BomView({ plan, need }) {
               <input className="input rw-search" style={{ marginTop: 0 }} placeholder="ค้นหาเบอร์ / รายละเอียด / MATERIAL" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} aria-label="ค้นหาใน BOM" />
               {v === "tree" ? <><button type="button" className="btn btn-ghost btn-sm" onClick={() => setClosed(new Set(cur.rows.filter((r) => r.kind === "sub").map((r) => `${cur.unit}|${[...r.path, r.code].join(">")}`)))}>พับทั้งหมด</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setClosed(new Set())}>ขยายทั้งหมด</button></> : null}
               <span className="rw-muted small">{v === "tree" ? `${nf(shown)} / ${nf(count)} บรรทัด` : `แสดง ${nf(shown)} จาก ${nf(count)}`}</span>
+              <button type="button" className="btn btn-ghost btn-sm bm-xls" onClick={exportXlsx} disabled={xlsBusy} title={`ดาวน์โหลด BOM ${ALL ? "ทุกแบบแผง" : cur?.unit || ""} เป็น Excel — ชีต: ตารางเต็ม · รวมเบอร์ · โครงสร้าง (ทุกแถว ไม่ตามคำค้นหา)`}>{xlsBusy ? "กำลังสร้าง…" : "⬇ Excel"}</button>
             </div>
             {v === "tree" ? <div className="bm-cols"><span>เบอร์ / รายละเอียด / ส่งไปใบ</span><span className="r">ยาว</span><span>MATERIAL · เศษ</span><span className="r">ต่อชุด</span><span className="r">รวม (× {nf(cur.n)} แผง)</span></div> : null}
             {body}
