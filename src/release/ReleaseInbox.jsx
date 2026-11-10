@@ -30,7 +30,7 @@ function plansUsing(d, plans) {
 const planLabel = (p) => `${p.ro}${p.projectCode ? ` (${p.projectCode})` : ""}`;
 
 // docs/setDocs เก็บที่หน้าแม่ (ReleasePage) — เปิดใบไปทำแล้วกดกลับมา งานที่เหลือยังอยู่
-export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, onAddItems, onNewRelease, onOpenPlan, docs: docsIn, setDocs: setDocsIn }) {
+export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, onAddItems, onNewRelease, onOpenPlan, onBunk = null, docs: docsIn, setDocs: setDocsIn }) {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState("");
   const [docsLocal, setDocsLocal] = useState([]);     // { file, type: "modify"|"order"|"drawing"|"bad", data, note }
@@ -44,8 +44,18 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
     setOpen(true); setBusy(`กำลังอ่าน ${files.length} ไฟล์…`);
     const out = [];
     for (const f of files.filter(isSheetFile)) {
-      try { const o = await readOrderFile(f); out.push(o.items.length ? { file: f, type: o.kind === "modify" ? "modify" : "order", data: o } : { file: f, type: "bad", note: "ไม่พบตาราง Item / Part No. / Qty" }); }
-      catch (e) { out.push({ file: f, type: "bad", note: String(e?.message || e) }); }
+      try {
+        const o = await readOrderFile(f);
+        if (o.items.length) { out.push({ file: f, type: o.kind === "modify" ? "modify" : "order", data: o }); continue; }
+      } catch { /* ไม่ใช่ใบปะหน้า → ลองฟอร์มบั้ง */ }
+      // ★ ฟอร์มบั้ง (Pack_Unit_*.xlsx · หัว BUNK NO. + ตาราง Unit No) — อ่านทุกชีต Ship
+      try {
+        const mod = await import("../excelImport.js");
+        const b = await mod.parseBunkExcel(f);
+        const n = (b.bunks || []).length, nU = (b.bunks || []).reduce((a, x) => a + x.units.length, 0);
+        if (n) { out.push({ file: f, type: "bunk", data: { n, nU, sheets: b.sheets || [], warn: b.warn || [], project: b.bunks[0]?.meta?.project || "", first: b.bunks[0]?.meta?.bunk_no || "", last: b.bunks[n - 1]?.meta?.bunk_no || "" } }); continue; }
+      } catch { /* ไม่ใช่ฟอร์มบั้ง */ }
+      out.push({ file: f, type: "bad", note: "ไม่ใช่ใบปะหน้า (ไม่มีตาราง Item / Part No. / Qty) และไม่ใช่ฟอร์มบั้ง (ไม่มีหัว BUNK NO.)" });
     }
     const pdfs = files.filter((f) => !isSheetFile(f));
     if (pdfs.length) {
@@ -88,6 +98,7 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
     return list;
   }, [docs, plans, projects]);   // eslint-disable-line react-hooks/exhaustive-deps
   const bad = docs.filter((x) => x.type === "bad");
+  const bunkDocs = docs.filter((x) => x.type === "bunk");
   const filesOf = (j) => [...(j.sheet ? [j.sheet.file] : []), ...j.drawings.map((d) => d.file)].filter((f) => f instanceof File);
   const clear = () => { setDocs([]); setOpen(false); };
   const removeJob = (j) => { const names = new Set([...(j.sheet ? [j.sheet.file.name] : []), ...j.drawings.map((d) => d.file.name)]); setDocs((old) => old.filter((x) => !names.has(x.file.name))); };
@@ -99,7 +110,7 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}>
         <div className="rw-drop-ic"><Icon name="plus" size={20} /></div>
-        <div><b>📥 วางเอกสารที่นี่ — ใบ Modify · ใบปะหน้า Release · แบบ PDF (กี่ไฟล์ก็ได้ · Excel หรือ PDF)</b><span>ระบบอ่านเองว่าเป็นอะไร แล้วบอกว่าต้องไปทำที่ Release ไหน: ใบ Modify → เปิด Modify ของใบที่อ้างถึงพร้อมแบบ · ใบปะหน้า → เพิ่มรายการ / สร้าง Release ใหม่ · แบบอย่างเดียว → ใบที่ใช้แบบนั้น</span></div>
+        <div><b>📥 วางเอกสารที่นี่ — ใบ Modify · ใบปะหน้า Release · แบบ PDF · ฟอร์มบั้ง (กี่ไฟล์ก็ได้ · Excel หรือ PDF)</b><span>ระบบอ่านเองว่าเป็นอะไร แล้วบอกว่าต้องไปทำที่ไหน: ใบ Modify → เปิด Modify ของใบที่อ้างถึงพร้อมแบบ · ใบปะหน้า → เพิ่มรายการ / สร้าง Release ใหม่ · แบบอย่างเดียว → ใบที่ใช้แบบนั้น · ฟอร์มบั้ง (Pack_Unit) → นำเข้าฟอร์มบั้ง ทุกชีต Ship ในไฟล์</span></div>
         <input ref={ref} type="file" multiple hidden accept=".pdf,.xls,.xlsx,.xlsm" data-testid="inbox-input" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
       </div>
       {busy ? <div className="rw-msg info">{busy}</div> : null}
@@ -147,6 +158,16 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
                 </div>
               </div>);
           })}
+          {bunkDocs.length ? (
+            <div className="rw-inbox-job">
+              <div className="rw-inbox-job-h"><Pill tone="panel">ฟอร์มบั้ง (แพ็ก)</Pill> <b>{bunkDocs.length} ไฟล์ · {nf(bunkDocs.reduce((a, x) => a + x.data.n, 0))} บั้ง · {nf(bunkDocs.reduce((a, x) => a + x.data.nU, 0))} ยูนิต</b> <span className="rw-muted">{bunkDocs[0].data.project ? `โปรเจค ${bunkDocs[0].data.project}` : ""}</span></div>
+              <div className="rw-inbox-job-b">{bunkDocs.map((x) => <Pill key={x.file.name} tone="muted" title={x.data.sheets.filter((s) => s.used).map((s) => `${s.name}: ${s.used} บั้ง`).join("\n")}>{x.file.name.replace(/\.xlsx?$/i, "")} <small>{x.data.n} บั้ง · {x.data.sheets.filter((s) => s.used).length} ชีต{x.data.first ? ` · ${x.data.first}${x.data.last && x.data.last !== x.data.first ? " → " + x.data.last : ""}` : ""}</small></Pill>)}</div>
+              {bunkDocs.some((x) => x.data.warn.length) ? <div className="rw-muted small">⚠ {bunkDocs.flatMap((x) => x.data.warn.map((w) => `${x.file.name}: ${w}`)).join(" · ")}</div> : null}
+              <div className="rw-inbox-job-a">
+                {onBunk ? <button type="button" className="btn btn-accent btn-sm" onClick={() => onBunk(bunkDocs.map((x) => x.file))}>📦 นำเข้าฟอร์มบั้ง {bunkDocs.length} ไฟล์ (เลือกโปรเจค / เลข Release แล้วบันทึก)</button> : null}
+                <button type="button" className="rw-link" onClick={() => setDocs((old) => old.filter((x) => x.type !== "bunk"))}>เอาออก</button>
+              </div>
+            </div>) : null}
           {bad.length ? <div className="rw-msg bad">✗ อ่านไม่ได้ {bad.length} ไฟล์: {bad.map((x) => `${x.file.name} (${x.note})`).join(" · ")}</div> : null}
         </div>
       ) : null}

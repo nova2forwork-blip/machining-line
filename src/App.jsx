@@ -4008,7 +4008,7 @@ function AssemblyReleaseModal({ user, projects, onClose, onSaved, onNeedProject,
 //   1 บั้ง = 1 package (kind=package + QR) · ยูนิตในบั้ง = BOM (จับคู่ part_no) · ฟอร์มเต็ม = pkg_manifest
 //   หน้าแพ็กที่สเตชันจะโชว์ manifest นี้ (ตำแหน่ง/ขนาด/น้ำหนัก) แล้วสแกนยูนิตเข้าเพื่อติดตามแพ็ก
 // ══════════════════════════════════════════════════════════════════════════
-function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, initialProjectId = "" }) {
+function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, initialProjectId = "", initialFiles = null }) {
   const [releaseOrder, setReleaseOrder] = useState("");
   const [date, setDate] = useState(() => todayStr());
   const [projectId, setProjectId] = useState(initialProjectId || (projects.length === 1 ? projects[0].id : ""));   // ★ รอบ 12: ไม่เลือกโปรเจคแรกให้เอง
@@ -4059,13 +4059,25 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
     const nUnits = merged.reduce((s, b) => s + b.units.length, 0);
     mlsToast(`${src} ${list.length} บั้ง${replaced ? ` (ซ้ำ ${replaced} บั้ง — แทนที่ของเดิม)` : ""} · รวมทั้งหมด ${merged.length} บั้ง ${nUnits} ยูนิต — ตรวจแล้วกดบันทึก`, "success");
   }
-  async function onPickFile(e) {
-    const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setErr("");
+  // ★ 2026-11-10 อ่านได้หลายไฟล์ (จากกล่องรับเอกสาร หรือเลือกหลายไฟล์) · ไฟล์ Pack_Unit อ่านทุกชีต Ship → สรุปชีตที่ใช้/ข้าม + เลขบั้งซ้ำ
+  const [sheetNote, setSheetNote] = useState("");
+  async function readFiles(files) {
+    const list = [...(files || [])].filter((f) => /\.(xlsx?|xlsm)$/i.test(f.name)); if (!list.length) return; setErr("");
+    const notes = [];
     try {
       const mod = await import("./excelImport.js");
-      applyBunks(await mod.parseBunkExcel(file), "อ่านไฟล์ได้");
+      for (const file of list) {
+        const r = await mod.parseBunkExcel(file);
+        applyBunks(r, `${file.name}: อ่านได้`);
+        const used = (r.sheets || []).filter((x) => x.used), skipped = (r.sheets || []).filter((x) => x.skipped);
+        if (used.length || skipped.length) notes.push(`${file.name}: ใช้ ${used.length} ชีต (${used.map((x) => `${x.name} ${x.used}`).join(", ")})${skipped.length ? ` · ข้าม ${skipped.length} ชีต (${skipped.slice(0, 4).map((x) => x.name.trim()).join(", ")}${skipped.length > 4 ? " …" : ""})` : ""}${(r.warn || []).length ? ` · ⚠ ${r.warn.join(" · ")}` : ""}`);
+      }
     } catch (e2) { setErr("อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2)); }
+    if (notes.length) setSheetNote((o) => [o, ...notes].filter(Boolean).join("\n"));
   }
+  async function onPickFile(e) { const files = e.target.files; await readFiles(files); e.target.value = ""; }
+  const initRef = useRef(false);
+  useEffect(() => { if (initialFiles && initialFiles.length && !initRef.current) { initRef.current = true; readFiles(initialFiles); } }, [initialFiles]);   // eslint-disable-line react-hooks/exhaustive-deps
   async function handlePastedText(text) {
     if (!text || (!text.includes("\t") && !text.includes("\n"))) {
       setErr("ยังไม่ใช่ตาราง — ก็อปจาก Excel ทั้งฟอร์มบั้ง (รวมหัว BUNK NO. + ตาราง Unit No) ก่อน"); return;
@@ -4236,7 +4248,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
       </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={onPickFile} />
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display: "none" }} onChange={onPickFile} />
         <Btn type="button" variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
           <Icon name="folder" size={14} /> นำเข้าจากไฟล์ Excel
         </Btn>
@@ -4247,6 +4259,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
         style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: "11px 12px", borderRadius: 8, marginBottom: 10,
           border: "2px dashed #2b8cff", background: "var(--surface-2, #f4f8f6)", fontSize: 13, fontFamily: "inherit", color: "var(--muted)" }} />
 
+      {sheetNote ? <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{sheetNote} <button type="button" className="rw-link" onClick={() => setSheetNote("")}>ปิด</button></div> : null}
       {err && <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>{err}</div>}
       {progress && <div style={{ color: "var(--accent-dk)", fontSize: 12.5, marginBottom: 10 }}>{progress}</div>}
 
@@ -7404,7 +7417,7 @@ function ReleaseWizardView({ user, projects, releases, plans = [], initialProjec
   );
 }
 // onDone(dept) — หลังบันทึกสำเร็จ: dept = แผนกของงานที่สร้าง (machine / sub / panel / packing) ให้หน้าโปรเจคสลับแท็บไปให้เห็น
-function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProjectId = "", onNeedProject, onDone }) {
+function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProjectId = "", onNeedProject, onDone, bunkFiles = null }) {
   if (!open) return null;
   const done = async (dept) => { if (onDone) await onDone(dept); };
   if (open === "add") {
@@ -7463,7 +7476,7 @@ function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProj
   if (open === "bunk") {
     return (
       <BunkImportModal
-        user={user} projects={projects} initialProjectId={initialProjectId}
+        user={user} projects={projects} initialProjectId={initialProjectId} initialFiles={bunkFiles}
         onClose={onClose}
         onNeedProject={onNeedProject}
         onSaved={async ({ releaseOrder, bunks, createdUnits, existing = [] }) => {
@@ -7534,6 +7547,7 @@ function ReleasePage({ user, goTo }) {
   const [wizardFiles, setWizardFiles] = useState(null);             // ★ 2026-11-10 ไฟล์จากกล่องรับเอกสาร → เปิด "ปล่อยงานใหม่" พร้อมใบปะหน้า/แบบ
   const [wizardProject, setWizardProject] = useState("");
   const [inboxDocs, setInboxDocs] = useState([]);                   // เอกสารในกล่องรับ — คงอยู่ตอนเปิดใบไปทำแล้วกลับมา
+  const [bunkFiles, setBunkFiles] = useState(null);                 // ฟอร์มบั้งจากกล่องรับเอกสาร → เปิด "นำเข้าฟอร์มบั้ง" พร้อมไฟล์
   const sort = useTableSort();   // เรียงตารางประวัติ Release ตามหัวข้อ
   // สถิติความคืบหน้า (finished / total) ของแต่ละ release — โหลดหลังได้รายการ
   const [allUnitStats, setAllUnitStats] = useState({});
@@ -7662,6 +7676,7 @@ function ReleasePage({ user, goTo }) {
           onOpenModify={(plan, files) => setPlanView({ plan, inbox: { mode: "modify", files } })}
           onAddItems={(plan, files) => setPlanView({ plan, inbox: { mode: "add", files } })}
           onNewRelease={(files, projectId) => { setWizardFiles(files); setWizardProject(projectId || ""); setCreateOpen("wizard"); }}
+          onBunk={(files) => { setBunkFiles(files); setCreateOpen("bunk"); }}
           onOpenPlan={(plan) => setPlanView({ plan })} />
       </Suspense>
 
@@ -7735,7 +7750,7 @@ function ReleasePage({ user, goTo }) {
           ]} />
       </Card>
 
-      <ReleaseCreateModals open={createOpen} onClose={() => setCreateOpen(null)} user={user} projects={projects} parts={parts}
+      <ReleaseCreateModals open={createOpen} onClose={() => { setCreateOpen(null); setBunkFiles(null); }} user={user} projects={projects} parts={parts} bunkFiles={bunkFiles}
         onNeedProject={() => setShowNewProject(true)} onDone={(dept) => { if (dept) setDeptFilter(dept); return load(); }} />
 
       {showNewProject && (

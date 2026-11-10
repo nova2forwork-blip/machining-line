@@ -378,12 +378,39 @@ function parsePanelReleaseRows(rows) {
 // ตาราง: No | Unit No | Bunk Position | Address Sequence | Description | Width | Height | Sqm | Quantity | Weight
 // คืน { meta:{bunk_no,elevation,level,project,total_qty,total_sqm,total_weight},
 //        units:[{no,unit_no,position,address_seq,description,width,height,sqm,qty,weight}] }
+// ★ 2026-11-10 ไฟล์ Pack_Unit จริงมีหลายชีต: ชีตสรุปชั้น (L5, L6 … ไม่มี BUNK NO.) · ชีตบั้งจริง "L5 Ship#BB08" (30 บั้ง) · ชีต Dim / Data / OLD / (2)
+//   เดิมอ่านแค่ชีตแรก = ชีตสรุป → ได้บั้งเดียวผิด ๆ · ตอนนี้อ่านทุกชีตที่มีหัว "BUNK NO." · ข้ามชีตชื่อ Dim/Data/OLD/Sheet · บั้งเลขซ้ำข้ามชีต (เช่น "(2)") เก็บชีตแรกไว้
+//   คืน { bunks, sheets: [{ name, n, used, skipped?, dup? }], warn }
 export async function parseBunkExcel(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const sheet = firstVisibleSheet(wb);
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
-  return parseBunkSheet(rows);
+  const meta = wb.Workbook && Array.isArray(wb.Workbook.Sheets) ? wb.Workbook.Sheets : null;
+  const bunks = []; const sheets = []; const warn = []; const seen = new Map();
+  const skipRe = /^(dim\b|data\b|sheet\d*\b|new\b)|\bold\b|\(\d+\)\s*$/i;
+  wb.SheetNames.forEach((name, i) => {
+    if (meta && meta[i] && meta[i].Hidden) { sheets.push({ name, n: 0, used: 0, skipped: "ซ่อนอยู่" }); return; }
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "", raw: true });
+    const hasBunk = rows.some((r) => /^BUNK\s*NO/i.test(String((r || [])[0] == null ? "" : r[0]).trim()));
+    if (!hasBunk) { sheets.push({ name, n: 0, used: 0, skipped: "ไม่มีหัว BUNK NO. (ชีตสรุป / Dim)" }); return; }
+    if (skipRe.test(name.trim())) { sheets.push({ name, n: 0, used: 0, skipped: "ชีตสำเนา/เก่า (ชื่อ OLD · (2) · Dim)" }); return; }
+    let list = [];
+    try { list = parseBunkSheet(rows).bunks; } catch (e) { sheets.push({ name, n: 0, used: 0, skipped: String(e?.message || e) }); return; }
+    let used = 0, dup = 0;
+    for (const b of list) {
+      const k = String(b.meta?.bunk_no || "").trim().toUpperCase();
+      if (k && seen.has(k)) { dup++; continue; }
+      if (k) seen.set(k, name);
+      b.meta.sheet = name; bunks.push(b); used++;
+    }
+    if (dup) warn.push(`ชีต "${name}": เลขบั้งซ้ำกับชีตก่อนหน้า ${dup} บั้ง (ใช้ของชีตแรก)`);
+    sheets.push({ name, n: list.length, used, dup });
+  });
+  if (!bunks.length) {
+    // ไม่มีชีตที่มี BUNK NO. เลย → ลองชีตแรกที่มองเห็นแบบเดิม (ฟอร์มบั้งเดียวไม่มีหัว)
+    const rows = XLSX.utils.sheet_to_json(firstVisibleSheet(wb), { header: 1, defval: "", raw: true });
+    const one = parseBunkSheet(rows); return { ...one, sheets, warn };
+  }
+  return { bunks, sheets, warn };
 }
 export function parseBunkText(text) {
   return parseBunkSheet(tsvToRows(text));
@@ -413,15 +440,23 @@ function parseOneBunk(rows) {
   const norm = (s) => String(s == null ? "" : s).trim();
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isFinite(n) ? n : null; };
   const lastCell = (r) => { for (let i = r.length - 1; i >= 0; i--) { if (norm(r[i]) !== "") return norm(r[i]); } return ""; };
+  // ★ 2026-11-10 ค่าของป้าย = เซลล์แรกที่ไม่ว่างถัดจากป้าย (เดิมเอาเซลล์ขวาสุด → ฟอร์ม LOB มีตัวเลขค้างท้ายแถว ได้ "3200.4" แทนเลขบั้ง)
+  //   ฟอร์ม Mock-up: "BUNK NO. | BUNK ID:" แล้วเลขบั้งอยู่แถวถัดไป → ค่าเป็นป้ายลงท้าย ":" = ไปเอาแถวถัดไป
+  const valueOf = (r, re, next) => {
+    const li = r.findIndex((c) => re.test(norm(c).toUpperCase())); if (li < 0) return lastCell(r);
+    let v = ""; for (let j = li + 1; j < r.length; j++) { if (norm(r[j]) !== "") { v = norm(r[j]); break; } }
+    if (!v || /:$/.test(v) || /BUNK\s*ID/i.test(v)) { const inline = /:\s*(\S.*)$/.exec(norm(r[li])); if (inline && !/^(BUNK\s*NO\.?|BUNK\s*ID)$/i.test(inline[1])) return inline[1]; const n = next || []; for (let j = 0; j < n.length; j++) if (norm(n[j]) !== "") return norm(n[j]); }
+    return v;
+  };
   const meta = { bunk_no: "", elevation: "", level: "", project: "" };
   let hIdx = -1; const cols = {};
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i] || [];
     const U = r.map(norm).join(" ").toUpperCase();
-    if (!meta.bunk_no && /BUNK\s*NO/.test(U)) meta.bunk_no = lastCell(r);
-    if (!meta.elevation && /ELEVATION/.test(U)) meta.elevation = lastCell(r);
-    if (!meta.level && /(^|[^A-Z])LEVEL([^A-Z]|$)/.test(U) && !/UNIT/.test(U)) meta.level = lastCell(r);
-    if (!meta.project && /PROJECT/.test(U)) meta.project = lastCell(r);
+    if (!meta.bunk_no && /BUNK\s*NO/.test(U)) meta.bunk_no = valueOf(r, /BUNK\s*NO/, rows[i + 1]);
+    if (!meta.elevation && /ELEVATION/.test(U)) meta.elevation = valueOf(r, /ELEVATION/, rows[i + 1]);
+    if (!meta.level && /(^|[^A-Z])LEVEL([^A-Z]|$)/.test(U) && !/UNIT/.test(U)) meta.level = valueOf(r, /LEVEL/, rows[i + 1]);
+    if (!meta.project && /PROJECT/.test(U)) meta.project = valueOf(r, /PROJECT/, rows[i + 1]);
     if (hIdx < 0 && /UNIT\s*NO/.test(U) && /(POSITION|WEIGHT|WIDTH|DESCRIPTION)/.test(U)) {
       hIdx = i;
       r.forEach((c, ci) => {
