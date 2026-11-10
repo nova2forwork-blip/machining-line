@@ -7210,10 +7210,10 @@ function releaseCreateItems(pick, disabled = false) {
   // ★ 2026-10-13: "ปล่อยงานใหม่" (4 ขั้น: ที่อยู่ + PDF แบบ → BOM) แทน "เพิ่ม Release" + "เบอร์ประกอบ / แผง" เดิม
   //   "เพิ่ม Release" เดิมยังอยู่ (ชื่อ "เพิ่มพาร์ทเสริม") — ใช้ปล่อยพาร์ทเสริม/ซ่อมที่ไม่อยู่ใน BOM
   //   ฟอร์ม "เบอร์ประกอบ / แผง" เดิมยังอยู่ในโค้ด (open = "subasm") แต่เอาออกจากเมนูแล้ว
+  // ★ 2026-11-10 ผู้ใช้: เอา "เพิ่มพาร์ทเสริม" (เพิ่ม Release แบบเดิม) และ "นำเข้า Release จาก Excel" ออก — ซ้ำกับ ปล่อยงานใหม่ + "เพิ่มรายการ" ที่ใบหลัก
+  //   (ฟอร์มยังอยู่ในโค้ด: open = "add" / "import" — เปิดได้จากโค้ดเท่านั้น)
   return [
     { key: "wizard", variant: "accent", primary: true, icon: <Icon name="plus" size={15} />, label: "ปล่อยงานใหม่", onClick: () => pick("wizard"), disabled },
-    { key: "add", variant: "ghost", icon: <Icon name="plus" size={15} />, label: "เพิ่มพาร์ทเสริม", title: "เพิ่ม Release แบบเดิม — พาร์ทเสริม/ซ่อมที่ไม่อยู่ใน BOM", onClick: () => pick("add"), disabled },
-    { key: "import", variant: "ghost", icon: <Icon name="folder" size={15} />, label: "นำเข้า Release จาก Excel", onClick: () => pick("import"), disabled },
     { key: "bunk", variant: "ghost", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
   ];
 }
