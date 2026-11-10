@@ -2728,3 +2728,33 @@ const TPLS3 = [
 
 registerI18n({ dict: { ...DICT, ...DICT2, ...DICT3 }, tpls: [...FIX_TPLS, ...TPLS3, ...TPLS, ...TPLS2] });
 export default true;
+
+// ★ 2026-11-10 หน้าล็อต: เลือกแถว → ย้ายใบ / ยกเลิกการปล่อย
+registerI18n({
+  dict: {
+    "เลือกทุกแถว": "Select all rows",
+    "✕ ล้างที่เลือก": "✕ Clear selection",
+    "ย้ายแถวที่เลือกไปใบ": "Move selected rows to sheet",
+    "— เลือกใบ —": "— choose sheet —",
+    "ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้": "Delete the selected rows with their unscanned QR → qty returns to \"remaining\" on the main sheet and can be released again",
+    "ยกเลิกการปล่อย = แอดมิน": "Undo release = admin only",
+    "ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด": "Move sheet: select only parts or only subs at a time",
+    "กำลังย้าย…": "Moving…",
+    "กำลังยกเลิก…": "Undoing…",
+    "กำลังตรวจประวัติสแกน…": "Checking scan history…",
+    "แถวที่เลือกอยู่ในใบนี้อยู่แล้ว": "The selected rows are already on this sheet",
+    "ยกเลิกการปล่อยไม่ได้": "Cannot undo release",
+    "เลือก": "Selected",
+    "แถว": "rows",
+  },
+  tpls: [
+    ["ใบ: {1}", "Sheet: {1}"],
+    ["เลือก {1} แถว", "{1} rows selected"],
+    ["ย้ายไปใบ", "Move to sheet"],
+    ["ยกเลิกการปล่อย {1} แถว", "Undo release of {1} rows"],
+    ["ย้าย {1} แถว → ใบ {2}?", "Move {1} rows → sheet {2}?"],
+    ["ยกเลิกการปล่อย {1} แถวของ {2}?", "Undo release of {1} rows of {2}?"],
+    ["ย้าย {1} แถวไปใบ {2} แล้ว", "Moved {1} rows to sheet {2}"],
+    ["ยกเลิกการปล่อย {1} แถวแล้ว — ปล่อยใหม่ได้ที่ใบหลัก {2}", "Undid release of {1} rows — release again from main sheet {2}"],
+  ],
+});

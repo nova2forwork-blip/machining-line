@@ -933,3 +933,9 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-dr-top { flex: 0 1 auto; max-height: 46vh; overflow: auto; min-height: 0; padding: 0 22px; }
 .rl-dr-top > .rl-2step, .rl-dr-top > .rw-order-check, .rl-dr-top > .rl-found, .rl-dr-top > .rw-msg { margin-left: 0 !important; margin-right: 0 !important; }
 .bm-xls { margin-left: auto; white-space: nowrap; }
+/* ★ 2026-11-10 ผู้ใช้: ให้เห็นชัดว่าแถวแยกกันตรงไหน — เส้นคั่นแถวเข้มขึ้น + สลับสีแถวจาง ๆ (หน้า Release / BOM / ล็อต) */
+.rw .data-table.rw-table tbody td, .rl-sc-table tbody td, .rl-cmp-t tbody td { border-bottom: 1px solid #d5e0db; }
+:where(.rw .data-table.rw-table, .rl-sc-table) tbody tr:where(:nth-child(even)) { background: #f6faf8; }   /* :where = ไม่ทับสีแถวที่เลือก/ยกเลิก */
+:where(.rw .data-table.rw-table, .rl-sc-table) tbody tr:where(:hover) { background: #eaf4ef; }
+.rw .data-table.rw-table tbody tr.rt-subrow td { border-top: 2px solid #c3d2cb; }
+.bm-row { border-bottom: 1px solid #dfe8e4; }
