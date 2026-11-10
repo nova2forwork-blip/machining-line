@@ -54,6 +54,9 @@ export function BomView({ plan, need }) {
   const [view, setView] = useState("tree");
   const [q, setQ] = useState("");
   const [lq, setLq] = useState("");
+  // ★ 2026-11-10 รายการแบบแผงด้านซ้าย: แคบ บรรทัดเดียว · พับได้ (พับ = เลือกแบบแผงจาก dropdown เหนือตาราง) — จำไว้
+  const [listOff, setListOffRaw] = useState(() => { try { return localStorage.getItem("bm-list-off") === "1"; } catch { return false; } });
+  const setListOff = (v) => { setListOffRaw(v); try { localStorage.setItem("bm-list-off", v ? "1" : ""); } catch { /* ignore */ } };
   const [lsort, setLsort] = useState({ k: "unit", d: 1 });
   const [sort, setSort] = useState({ k: "", d: 1 });
   const [closed, setClosed] = useState(() => new Set());
@@ -126,7 +129,6 @@ export function BomView({ plan, need }) {
     return [...rows].sort((a, b) => { const x = f(a), y = f(b); const c = typeof x === "number" && typeof y === "number" ? x - y : ncmp(String(x ?? ""), String(y ?? "")); return c * sort.d || 0; });
   };
   const Th = ({ k, children, r }) => <th className={r ? "r" : ""} aria-sort={sort.k === k ? (sort.d > 0 ? "ascending" : "descending") : "none"}><button type="button" className={`bm-th ${sort.k === k ? "on" : ""}`} onClick={() => setSort((s) => (s.k === k ? { k, d: -s.d } : { k, d: 1 }))}>{children}<i>{sort.k === k ? (sort.d > 0 ? "▲" : "▼") : "↕"}</i></button></th>;
-  const Lsort = ({ k, children }) => <button type="button" className={`bm-ls ${lsort.k === k ? "on" : ""}`} onClick={() => setLsort((s) => (s.k === k ? { k, d: -s.d } : { k, d: 1 }))}>{children}{lsort.k === k ? (lsort.d > 0 ? " ▲" : " ▼") : ""}</button>;
   const cutChip = (r) => (r.cut && (r.cut.reuse || r.cut.over) ? (
     <>{r.cut.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${r.cut.reuse} ชิ้น — ตัวอย่างต้นทาง: ${r.cut.src}`}>เศษ ×{nf(r.cut.reuse)}</Pill> : null}{r.cut.fresh ? <Pill tone="muted" title={`เปิดเส้นใหม่ ${nf(r.cut.stock)} มม.`}>เส้นใหม่ ×{nf(r.cut.fresh)}</Pill> : null}{r.cut.over ? <Pill tone="warn">ยาวกว่าเส้น</Pill> : null}</>
   ) : r.cut ? <Pill tone="muted" title={`เปิดเส้นใหม่ ${nf(r.cut.stock)} มม.`}>เส้นใหม่ ×{nf(r.cut.fresh)}</Pill> : null);
@@ -209,20 +211,25 @@ export function BomView({ plan, need }) {
     : cur ? { n: cur.n, subs: cur.subs, parts: cur.parts, hw: cur.hw, pcs: cur.pcs, off: cur.off, fresh: cur.fresh } : null;
 
   return (
-    <div className="bm">
-      <aside className="bm-side" aria-label="แบบแผง">
-        <input className="input rw-search" style={{ marginTop: 0, maxWidth: "none" }} placeholder="ค้นหาแบบแผง" value={lq} onChange={(e) => setLq(e.target.value)} aria-label="ค้นหาแบบแผง" />
-        <div className="bm-lsort"><span>เรียง</span><Lsort k="unit">ชื่อ</Lsort><Lsort k="n">จำนวนแผง</Lsort><Lsort k="rows">จำนวนรายการ</Lsort><Lsort k="off">ใช้เศษ</Lsort></div>
+    <div className={`bm ${listOff ? "list-off" : ""}`}>
+      {listOff ? null : <aside className="bm-side" aria-label="แบบแผง">
+        <div className="bm-side-top"><input className="input rw-search" style={{ marginTop: 0, maxWidth: "none" }} placeholder="ค้นหาแบบแผง" value={lq} onChange={(e) => setLq(e.target.value)} aria-label="ค้นหาแบบแผง" /><button type="button" className="bm-fold" onClick={() => setListOff(true)} title="พับรายการแบบแผง — ตารางกว้างขึ้น (เลือกแบบแผงจาก dropdown เหนือตาราง)" aria-label="พับรายการแบบแผง">‹</button></div>
+        <label className="bm-lsort2"><span>เรียง</span><select className="select" value={lsort.k + ":" + lsort.d} onChange={(e) => { const [k, d] = e.target.value.split(":"); setLsort({ k, d: Number(d) }); }} aria-label="เรียงแบบแผง">
+          <option value="unit:1">ชื่อ A→Z</option><option value="unit:-1">ชื่อ Z→A</option><option value="n:-1">จำนวนแผง มาก→น้อย</option><option value="rows:-1">จำนวนรายการ มาก→น้อย</option><option value="off:-1">ใช้เศษ มาก→น้อย</option></select></label>
         <div className="bm-list" role="listbox">
           <button type="button" role="option" aria-selected={ALL} className={`bm-li all ${ALL ? "on" : ""}`} onClick={() => { setSel("__ALL__"); setLimit(PAGE); }}><b>ทุกแบบแผง</b><small>{nf(model.types.size)} แบบ · {nf(model.total)} แผง</small></button>
           {list.map((t) => (
             <button key={t.unit} type="button" role="option" aria-selected={!ALL && cur?.unit === t.unit} className={`bm-li ${!ALL && cur?.unit === t.unit ? "on" : ""}`} onClick={() => { setSel(t.unit); setLimit(PAGE); }}>
-              <b className="rw-mono">{t.unit}</b><span className="bm-li-n">{nf(t.n)} แผง</span>
+              <b className="rw-mono">{t.unit}</b><span className="bm-li-n">{nf(t.n)}</span>
               <small>{t.has ? `${nf(t.subs)} ซับ · ${nf(t.parts)} พาร์ท${t.off ? ` · เศษ ${nf(t.off)}` : ""}` : "ไม่มี BOM"}</small>
             </button>))}
         </div>
-      </aside>
+      </aside>}
       <section className="bm-main-pane">
+        {listOff ? <div className="bm-pick"><button type="button" className="bm-fold open" onClick={() => setListOff(false)} title="แสดงรายการแบบแผงด้านซ้าย" aria-label="แสดงรายการแบบแผง">›</button>
+          <label><span>แบบแผง</span> <select className="select" value={ALL ? "__ALL__" : cur?.unit || ""} onChange={(e) => { setSel(e.target.value); setLimit(PAGE); }} aria-label="เลือกแบบแผง">
+            <option value="__ALL__">ทุกแบบแผง ({nf(model.types.size)} แบบ · {nf(model.total)} แผง)</option>
+            {list.map((t) => <option key={t.unit} value={t.unit}>{t.unit} · {nf(t.n)} แผง{t.has ? "" : " · ไม่มี BOM"}</option>)}</select></label></div> : null}
         {stat ? (
           <>
             <div className="bm-head">
