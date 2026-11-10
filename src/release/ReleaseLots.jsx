@@ -14,7 +14,7 @@ import {
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
-import { compareOrder } from "./orderSheet.js";
+import { compareOrder, readOrderFile, readOrderPdf } from "./orderSheet.js";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
@@ -669,6 +669,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     }
     const mod = {
       no, ver, date, by: user?.name || "", at: new Date().toISOString(), reason: reason.trim(),
+      ...(sheet && sheet.kind === "modify" ? { sheet: { file: sheet.file, roRaw: sheet.roRaw, mVer: sheet.mVer, refRo: sheet.refRo, zone: sheet.zone, issuedBy: sheet.issuedBy, date: sheet.date, items: sheet.items } } : {}),
       bomEdits: edits,
       items: [
         ...ops.items.filter((it) => !(it.type === "qty" && it.before === it.after)).map((it) => (derivedSet.has(NC(it.code)) ? { ...it, derived: true } : it)),
@@ -704,11 +705,50 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const [pdfMsg, setPdfMsg] = useState(null);
   const [pdfDrag, setPdfDrag] = useState(false);
   const pdfRef = useRef(null);
+  // ★ 2026-11-10 ใบปะหน้าของรอบนี้: ใบ Modify (FM(DE)-00 "Release for Modification" · M-060 อ้างถึง P-089 · รายการแบบที่แก้ UA2007 REV.A …)
+  //   หรือใบปะหน้า Release (FM(DE)-03) ตอน "เพิ่มรายการ" — วางได้ในช่องเดียวกับแบบ (xls/xlsx/pdf) → เติมเลข M / วันที่ / เหตุผล + เช็กลิสต์ว่าแบบที่แก้มาครบไหม
+  const [sheet, setSheet] = useState(null);
+  const [dropped, setDropped] = useState({});   // NC(code) → ข้อความสรุปจากแบบที่วาง (เช่น "จำนวนเปลี่ยน 2 · ลูกใหม่ 1")
+  const sheetCmp = useMemo(() => {
+    if (!sheet) return [];
+    if (sheet.kind === "modify") return sheet.items.map((it) => { const k = NC(it.code); const inPlan = findKey(plan.bom.panels, it.code) ? "panel" : findKey(plan.bom.subs, it.code) ? "sub" : need.parts.some((x) => NC(x.code) === k) ? "part" : ""; return { ...it, inPlan, drop: dropped[k] || "" }; });
+    return compareOrder(sheet, need).map((x) => ({ ...x, drop: dropped[NC(x.code)] || "" }));
+  }, [sheet, dropped, plan.bom, need]);
   async function onModPdfs(list) {
-    const files = [...list].filter((f) => /\.pdf$/i.test(f.name)); if (!files.length) return;
-    setPdfMsg({ info: `กำลังอ่าน PDF ${files.length} ไฟล์…` });
-    let all; try { all = await readPdfFiles(files); } catch (e) { setPdfMsg({ bad: "อ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
-    const notes = []; let jump = null; const newAdds = []; const bAdds = []; const bChg = {};
+    const files = [...list].filter((f) => /\.(pdf|xlsx?|xlsm)$/i.test(f.name)); if (!files.length) return;
+    setPdfMsg({ info: `กำลังอ่าน ${files.length} ไฟล์…` });
+    const notes = []; let jump = null; const newAdds = []; const bAdds = []; const bChg = {}; const drops = {};
+    // ใบปะหน้า Excel → อ่านเป็นใบปะหน้าเลย · PDF ที่ไม่ใช่แบบ (อ่านไม่ออก) → ลองอ่านเป็นใบปะหน้า
+    const applySheet = (o) => {
+      setSheet(o);
+      if (o.kind === "modify") {
+        if (!addOnly) {
+          if (o.mNo && !verRaw) setVerRaw(String(o.mNo));
+          if (o.date) setDate(o.date);
+          if (!reason.trim()) setReason(`ตามใบ Modify ${o.roRaw || o.mVer}${o.items.length ? " — " + o.items.map((x) => x.code + (x.rev ? " REV." + x.rev : "")).join(", ") : ""}${o.note ? " · " + o.note : ""}`);
+        }
+        notes.push(`ใบ Modify ${o.roRaw || o.mVer}${o.refRo ? ` (อ้างถึง ${o.refRo})` : ""}: แบบที่แก้ ${o.items.length} รายการ — ${o.items.map((x) => x.code + (x.rev ? " REV." + x.rev : "")).join(", ")}${o.issuedBy ? ` · โดย ${o.issuedBy}` : ""}`);
+        if (o.refRo && roKey(o.refRo) !== roKey(plan.ro)) notes.push(`⚠ ใบ Modify นี้อ้างถึง ${o.refRo} แต่กำลังแก้ Release ${plan.ro} — ตรวจว่าเปิดใบถูก`);
+        if (addOnly) notes.push(`นี่คือใบ Modify — ถ้าจะแก้ของเดิม (จำนวน/ยกเลิก/แบบ Rev ใหม่) ให้ใช้ ✎ Modify · หน้านี้ใช้เพิ่มรายการใหม่เท่านั้น`);
+      } else {
+        notes.push(`ใบปะหน้า ${o.roRaw || o.ro || o.file}: ${o.items.length} รายการ${o.zone ? ` · Zone ${o.zone}` : ""}`);
+        if (o.ro && roKey(o.ro) !== roKey(plan.ro)) notes.push(`⚠ ใบปะหน้านี้เป็น ${o.ro} แต่กำลังแก้ Release ${plan.ro} — ตรวจว่าเปิดใบถูก`);
+      }
+    };
+    let all = [];
+    try {
+      for (const f of files) {
+        if (/\.(xlsx?|xlsm)$/i.test(f.name)) { try { applySheet(await readOrderFile(f)); } catch (e) { notes.push(`อ่าน ${f.name} ไม่ได้: ${e?.message || e}`); } }
+      }
+      const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
+      if (pdfs.length) all = await readPdfFiles(pdfs);
+      const rest = [];
+      for (const d of all) {
+        if (d.kind === "unknown" && d._file) { try { const o = await readOrderPdf(d._file); if (o.items.length) { applySheet(o); continue; } } catch { /* ไม่ใช่ใบปะหน้า */ } }
+        rest.push(d);
+      }
+      all = rest;
+    } catch (e) { setPdfMsg({ bad: "อ่านไฟล์ไม่ได้: " + (e?.message || e) }); return; }
     const exists = (c) => need.parts.concat(need.subs).some((x) => NC(x.code) === NC(c)) || adds.some((a) => NC(a.code) === NC(c));
     for (const d of all) {
       const scope = d.kind === "panel" ? "panel" : d.kind === "sub" ? "sub" : null;
@@ -724,7 +764,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           else if (Math.abs(e.qty - Number(it[2])) > 1e-9) { bChg[k] = { type: "qty", qty: String(e.qty) }; nq++; }
         });
         for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { bAdds.push({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; }
-        notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${[nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน"}`);
+        const sum = [nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน";
+        drops[NC(ok)] = sum;
+        notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${sum}`);
         if (nq || nc || na) jump = jump || { scope, owner: ok };
       } else if (d.kind === "loose") {
         // ★ 2026-11-09 แบบ Site Item + อุปกรณ์ (เช่น MTG01-001 mock-up): BILL SITE ITEM → พาร์ทหมวด SITE ITEM (มี QR · ใบงานตามรหัสเบอร์)
@@ -750,10 +792,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         if (exists(d.code)) { notes.push(`${d.code}: มีในใบแล้ว — แก้จำนวนที่แท็บ${d.kind === "sub" ? "ซับ" : "พาร์ท"}`); continue; }
         const t = d.title || {}; const L = parseFloat(t.LENGTH); const inv = String(t["INV.CODE"] || "").trim();
         const old = d.kind === "part" ? need.parts.find((x) => baseOf(x.code) === baseOf(d.code) && NC(x.code) !== NC(d.code)) : null;
+        drops[NC(d.code)] = "เพิ่มเป็นเบอร์ใหม่";
         newAdds.push({ kind: d.kind, code: String(d.code).trim().toUpperCase(), d: t.DESC || "", qty: "", l: Number.isFinite(L) ? String(L) : "", inv: inv && inv !== "-" ? inv : "", dest: ruleDest(d.code), procs: "ยิง", fromPdf: true, note: old ? `รุ่นใหม่ของ ${old.code} — ถ้าใช้แทนกัน ให้ยกเลิก ${old.code} ที่แท็บพาร์ท` : (d.kind === "sub" ? "ซับใหม่: สร้าง QR ซับ · ลูกของซับตั้งที่หน้า ซับ / พาร์ท ของโปรเจค" : "") });
-      } else if (scope && !ok) notes.push(`${d.code}: ${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`);
+      } else if (scope && !ok) { drops[NC(d.code)] = `${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`; notes.push(`${d.code}: ${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`); }
       else notes.push(`อ่านไม่ออก: ${d.file}`);
     }
+    if (Object.keys(drops).length) setDropped((o) => ({ ...o, ...drops }));
     if (Object.keys(bChg).length) setBchg((o) => ({ ...o, ...bChg }));
     if (bAdds.length) setBadds((a) => [...a.filter((x) => !bAdds.some((y) => y.scope === x.scope && NC(y.owner) === NC(x.owner) && NC(y.code) === NC(x.code))), ...bAdds]);
     if (newAdds.length) { setAdds((a) => [...a, ...newAdds]); setTab("add"); notes.push(`เพิ่มเบอร์ใหม่ ${newAdds.length} เบอร์ — ใส่จำนวนในตาราง (ข้อมูลอื่นแก้ได้)`); }
@@ -766,9 +810,27 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       onDragOver={(e) => { e.preventDefault(); setPdfDrag(true); }} onDragLeave={() => setPdfDrag(false)}
       onDrop={(e) => { e.preventDefault(); setPdfDrag(false); onModPdfs(e.dataTransfer.files); }}>
       <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
-      <div><b>ลาก PDF แบบใหม่มาวาง (ซับ / แผง / พาร์ท / แบบ Site Item + อุปกรณ์)</b><span>ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · พาร์ท/ซับที่ยังไม่มี = เพิ่มเบอร์ใหม่ ลงข้อมูลให้ ใส่แค่จำนวน · แบบที่มี BILL SITE ITEM / FASTENER COMPONENT LIST = เพิ่ม Site Item (มี QR) + อุปกรณ์ (ไม่มี QR) ตามจำนวนในตาราง</span></div>
-      <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
+      <div><b>ลากใบ{addOnly ? "ปะหน้า Release" : " Modify (FM(DE)-00)"} + PDF แบบที่แก้มาวาง (ซับ / แผง / พาร์ท / แบบ Site Item + อุปกรณ์) — PDF หรือ Excel</b><span>{addOnly ? "ใบปะหน้า = รายการที่ต้องเพิ่ม → เช็กลิสต์ว่าวางแบบครบไหม · " : "ใบ Modify = เติมเลข M / วันที่ / เหตุผล ให้ + เช็กลิสต์ว่าแบบที่แก้ (REV ใหม่) วางครบไหม · "}ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · พาร์ท/ซับที่ยังไม่มี = เพิ่มเบอร์ใหม่ ลงข้อมูลให้ ใส่แค่จำนวน · แบบที่มี BILL SITE ITEM / FASTENER COMPONENT LIST = เพิ่ม Site Item (มี QR) + อุปกรณ์ (ไม่มี QR) ตามจำนวนในตาราง</span></div>
+      <input ref={pdfRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
     </div>);
+  const sheetEl = sheet ? (
+    <div className={`rw-order-check ${sheetCmp.some((x) => (sheet.kind === "modify" ? !x.drop : x.status === "missing")) ? "warn" : "ok"}`} style={{ marginBottom: 10 }}>
+      <div className="rw-order-h">
+        <b>{sheet.kind === "modify" ? `ใบ Modify ${sheet.roRaw || sheet.mVer}` : `ใบปะหน้า ${sheet.roRaw || sheet.ro || sheet.file}`}</b>
+        <span className="rw-muted">{[sheet.refRo && `อ้างถึง ${sheet.refRo}`, sheet.zone && `Zone ${sheet.zone}`, sheet.issuedBy && `โดย ${sheet.issuedBy}`, sheet.date].filter(Boolean).join(" · ")} · {sheet.items.length} รายการ{sheet.kind === "modify" ? ` · วางแบบแล้ว ${sheetCmp.filter((x) => x.drop).length}/${sheet.items.length}` : ""}</span>
+        <button type="button" className="rw-link" onClick={() => { setSheet(null); }}>เอาออก</button>
+      </div>
+      <table className="data-table rw-table rw-order-tbl">
+        <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th>{sheet.kind === "modify" ? "Remarks" : "จำนวน"}</th><th>ในใบ {plan.ro}</th><th>แบบที่วางรอบนี้</th></tr></thead>
+        <tbody>{sheetCmp.map((x) => (
+          <tr key={x.code} className={(sheet.kind === "modify" ? !x.drop : x.status === "missing") ? "rl-errrow" : ""}>
+            <td className="r rw-muted">{x.item ?? ""}</td><td className="rw-mono"><b>{x.code}</b></td><td className="rw-desc">{x.d}</td>
+            <td>{sheet.kind === "modify" ? (x.remark || (x.rev ? "REV." + x.rev : "")) : <>{nlen(x.qty)}{x.unit ? <small className="rw-muted"> {x.unit}</small> : null}</>}</td>
+            <td>{sheet.kind === "modify" ? (x.inPlan ? <Pill tone="ok">{x.inPlan === "panel" ? "แผง" : x.inPlan === "sub" ? "ซับ" : "พาร์ท"}</Pill> : <Pill tone="bad">ไม่อยู่ในใบ</Pill>) : (x.status === "missing" ? <Pill tone="bad">ยังไม่อยู่ในใบ</Pill> : x.status === "ok" ? <Pill tone="ok">มี {nlen(x.have)}</Pill> : <Pill tone="warn">มี {nlen(x.have)}</Pill>)}</td>
+            <td>{x.drop ? <span className="rw-ok small">✓ {x.drop}</span> : <span className="rl-errtxt small">ยังไม่ได้วางแบบ</span>}</td>
+          </tr>))}</tbody>
+      </table>
+    </div>) : null;
   const pdfMsgEl = pdfMsg ? (
     <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
       {pdfMsg.bad || pdfMsg.info || <>{pdfMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)}<div className="rw-muted small">ตรวจแล้วแก้ต่อได้ · ยังไม่บันทึกจนกว่าจะกด "{addOnly ? "เพิ่มรายการ" : `บันทึก ${ver}`}"</div></>}
@@ -855,7 +917,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
               <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
             </button>))}
         </div>}
-        {tab === "sub" || tab === "bom" || tab === "add" ? <>{pdfDropEl}{pdfMsgEl}</> : null}
+        {tab === "sub" || tab === "bom" || tab === "add" || tab === "part" ? <>{pdfDropEl}{pdfMsgEl}{sheetEl}</> : null}
         {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
           <div className="rl-tools">
             <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />

@@ -11,12 +11,14 @@ const S = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
 const num = (v) => { const m = /-?\d+(?:[.,]\d+)?/.exec(String(v ?? "").replace(/,/g, "")); return m ? parseFloat(m[0]) : null; };
 // "1 set" / "4" / "2 pcs" → { qty, unit }
 const qtyOf = (v) => { const t = S(v); const q = num(t); const u = t.replace(/[-\d.,\s]+/, "").trim().toLowerCase(); return { qty: q, unit: u || "" }; };
-// "A10035- P-069" / "A10035-P-069" / "P-069" → { project: "A10035", ro: "P-069" }
+// "A10035- P-069" / "A10035-P-069" / "P-069" → { project: "A10035", ro: "P-069" } · ใบ Modify: "A10035 - M-060" → { project, mNo: 60, mVer: "M-060" }
 export function splitRelease(raw) {
   const t = S(raw).toUpperCase();
-  const m = /^(?:([A-Z0-9]+(?:-[A-Z]{2})?)\s*-\s*)?(P\s*-?\s*\d+.*)$/i.exec(t);
+  const m = /^(?:([A-Z0-9]+(?:-[A-Z]{2})?)\s*-\s*)?([PM])\s*-?\s*0*(\d+)(.*)$/i.exec(t);
   if (!m) return { project: "", ro: "" };
-  return { project: (m[1] || "").replace(/-[A-Z]{2}$/, "").trim(), ro: normalizeRO(m[2]) };
+  const project = (m[1] || "").replace(/-[A-Z]{2}$/, "").trim();
+  if (m[2].toUpperCase() === "M") return { project, ro: "", mNo: +m[3], mVer: `M-${String(m[3]).padStart(3, "0")}` };
+  return { project, ro: normalizeRO(`P-${m[3]}${m[4] || ""}`) };
 }
 // "Barrington Plaza - (A10035-US)" → { name, code: "A10035-US" }
 const splitTitle = (raw) => { const t = S(raw); const m = /^(.*?)\s*-?\s*\(([A-Z0-9-]+)\)\s*$/i.exec(t); return m ? { name: m[1].trim(), code: m[2].toUpperCase() } : { name: t, code: "" }; };
@@ -40,7 +42,10 @@ function fromGrid(grid, fileName) {
   const rel = findLabel(/RELEASE\s*:/i);
   let roRaw = "";
   if (rel) { const cell = S(rel.r[rel.i]); const m = /RELEASE\s*:\s*(\S.*)$/i.exec(cell); roRaw = m ? m[1] : ""; if (!roRaw) for (let j = rel.i + 1; j < rel.r.length; j++) { const v = S(rel.r[j]); if (v) { roRaw = v; break; } } }
-  if (roRaw) { const sp = splitRelease(roRaw); out.roRaw = roRaw; out.ro = sp.ro; out.projectCode = sp.project; }
+  if (roRaw) { const sp = splitRelease(roRaw); out.roRaw = roRaw; out.ro = sp.ro; out.projectCode = sp.project; if (sp.mNo) { out.kind = "modify"; out.mNo = sp.mNo; out.mVer = sp.mVer; } }
+  // ใบ Modify (FM(DE)-00 "Release for Modification"): อ้างถึงใบปล่อยเดิม "In Reference to the Production Release No. | P-089"
+  if (rows.some((r) => r.some((c) => /Release for Modification/i.test(S(c))))) out.kind = "modify";
+  { const f = findLabel(/In Reference to the Production Release/i); if (f) { for (let j = f.i + 1; j < f.r.length; j++) { const v = S(f.r[j]); if (v) { out.refRo = normalizeRO(v) || v; break; } } if (!out.refRo) { const m = /Release No\.?\s*:?\s*(P\s*-?\s*\d+)/i.exec(S(f.r[f.i])); if (m) out.refRo = normalizeRO(m[1]); } } }
   for (const r of rows.slice(0, 12)) { const t = r.map(S).filter(Boolean).join(" "); const m = splitTitle(t); if (m.code && /^[A-Z]\d{4,}/.test(m.code)) { out.title = t; out.projectName = m.name; if (!out.projectCode) out.projectCode = m.code.replace(/-[A-Z]{2}$/, ""); out.projectFull = m.code; break; } }
   out.zone = valueAfter(/^Location\s*\/?\s*Zone\s*:?$/i);
   out.attention = valueAfter(/^Attention\s*:?$/i);
@@ -59,8 +64,9 @@ function fromGrid(grid, fileName) {
     const code = S(r[cCode]); const item = num(r[cItem]);
     if (!code) { if (item == null) continue; out.warn.push(`แถว Item ${item}: ไม่มี Part No.`); continue; }
     const q = qtyOf(r[cQty]);
-    out.items.push({ item, code: code.toUpperCase(), d: cDesc >= 0 ? S(r[cDesc]) : "", qty: q.qty, unit: q.unit, remark: cRem >= 0 ? S(r[cRem]) : "" });
-    if (q.qty == null) out.warn.push(`${code}: ไม่มีจำนวน`);
+    const remark = cRem >= 0 ? S(r[cRem]) : ""; const rv = /REV\.?\s*([A-Z0-9]+)/i.exec(remark);
+    out.items.push({ item, code: code.toUpperCase(), d: cDesc >= 0 ? S(r[cDesc]) : "", qty: q.qty, unit: q.unit, remark, ...(rv ? { rev: rv[1].toUpperCase() } : {}) });
+    if (q.qty == null && out.kind !== "modify") out.warn.push(`${code}: ไม่มีจำนวน`);
   }
   return out;
 }
@@ -96,7 +102,7 @@ export async function readOrderPdfWith(pdfjsLib, file) {
     const cells = []; let cur = null;
     for (const w of L.w) { if (cur && w.x0 - cur.x1 < 14) { cur.s += " " + w.s; cur.x1 = w.x1; } else { cur = { s: w.s, x1: w.x1 }; cells.push(cur); } }
     // "Attention : SATANEE" → แยกป้ายกับค่า
-    return cells.flatMap((c) => { const m = /^([A-Za-z /]+?\s*:)\s*(.*)$/.exec(c.s); return m && m[2] ? [m[1], m[2]] : [c.s]; });
+    return cells.flatMap((c) => { const m = /^([A-Za-z /]+?\s*:)\s*(.*)$/.exec(c.s) || /^(In Reference to the Production Release No\.?)\s+(\S.*)$/i.exec(c.s); return m && m[2] ? [m[1], m[2]] : [c.s]; });
   });
   return fromGrid(grid, file.name);
 }
