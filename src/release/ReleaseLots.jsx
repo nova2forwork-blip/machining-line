@@ -342,7 +342,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
               <div key={m.ver} className="rl-mod">
                 <div className="rl-mod-h"><button type="button" className={`rl-mlink big ${cmpOpen.has(m.ver) ? "on" : ""}`} onClick={() => setCmpOpen((o) => { const n = new Set(o); if (n.has(m.ver)) n.delete(m.ver); else n.add(m.ver); return n; })} aria-expanded={cmpOpen.has(m.ver)} title="กดเพื่อดู / ซ่อน ตารางก่อน → หลัง">{m.ver} {cmpOpen.has(m.ver) ? "▾" : "▸"}</button> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ{m.edited?.length ? ` · แก้ไขแล้ว ${m.edited.length} ครั้ง (ล่าสุด ${m.edited[m.edited.length - 1].by})` : ""}</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}
                   {onPlanChange ? <button type="button" className="btn btn-ghost btn-sm rl-mod-editbtn" onClick={() => setModEdit(modEdit === m.ver ? null : m.ver)}>{modEdit === m.ver ? "ปิดการแก้" : `✎ แก้ ${m.ver}`}</button> : null}</div>
-                {modEdit === m.ver ? <ModEditor m={m} need={need} onCancel={() => setModEdit(null)} onSave={async (nm) => {
+                {modEdit === m.ver ? <ModEditor m={m} need={need} doneOf={doneOf} onCancel={() => setModEdit(null)} onSave={async (nm) => {
                   const nmods = plan.mods.map((x) => (x.ver === m.ver ? nm : x));
                   const ok = await askConfirm({ title: `บันทึกการแก้ ${m.ver}?`, message: `ยอดต้องใช้ / ของที่เพิ่ม / วัสดุ / ความยาว ในใบจะคำนวณใหม่ตาม ${m.ver} ที่แก้\nล็อตที่ปล่อยแล้วไม่เปลี่ยน · ประวัติการแก้เก็บไว้ใน ${m.ver}`, tone: "warn", confirmText: "บันทึกการแก้", cancelText: "กลับ" });
                   if (!ok) return;
@@ -1307,7 +1307,7 @@ function ModCompare({ m, need }) {
 
 // ★ 2026-11-10 แก้ Modify ที่บันทึกไปแล้ว — วันที่ / เหตุผล / ค่าของแต่ละรายการ / เอารายการออก
 //   ล็อก: รายการที่ไปลด/ยกเลิก QR ในล็อตแล้ว (it.lots) · ผลจากแก้ BOM ลูก (derived) · แก้ BOM ลูก (bomEdits) → ต้องทำ Modify ใหม่
-function ModEditor({ m, need, onCancel, onSave }) {
+function ModEditor({ m, need, doneOf = () => 0, onCancel, onSave }) {
   const [date, setDate] = useState(m.date || "");
   const [reason, setReason] = useState(m.reason || "");
   const [items, setItems] = useState(() => m.items.map((it, i) => ({ ...it, _i: i, _del: false })));
@@ -1315,11 +1315,29 @@ function ModEditor({ m, need, onCancel, onSave }) {
   const locked = (it) => (it.lots || []).length ? `แก้ QR ในล็อต ${(it.lots || []).map((l) => l.lot).join(", ")} แล้ว` : it.derived ? "ผลจากแก้ BOM ลูก" : "";
   const editable = (it) => ["add", "qty", "mat", "len"].includes(it.type);
   const up = (i, patch) => setItems((a) => a.map((x) => (x._i === i ? { ...x, ...patch } : x)));
-  const changed = date !== (m.date || "") || reason !== (m.reason || "") || items.some((x, i) => x._del || String(x.after) !== String(m.items[i].after));
+  // ★ 2026-11-10 เพิ่มรายการที่ M นี้ลืม (เช่น เปลี่ยน INV.CODE ของเบอร์อื่นด้วย) — เบอร์ในใบ: วัสดุ / ความยาว / จำนวนต้องใช้ · หรือเบอร์ใหม่
+  const blankAdd = { code: "", field: "mat", val: "", d: "", l: "", inv: "" };
+  const [nw, setNw] = useState(blankAdd);
+  const codeList = [...need.parts.map((x) => ({ ...x, kind: "part" })), ...need.subs.map((x) => ({ ...x, kind: "sub" }))].filter((x) => !x.cancelled);
+  const hit = codeList.find((x) => NC(x.code) === NC(nw.code));
+  const curOf = (x, f) => (f === "mat" ? x.inv || "" : f === "len" ? x.l ?? "" : x.qty);
+  const nwErr = !nw.code.trim() ? "" : nw.field === "new" ? (hit ? "เบอร์นี้มีในใบแล้ว — เลือกวัสดุ / ความยาว / จำนวน แทน" : !(Number(nw.val) > 0) ? "ใส่จำนวน" : "")
+    : !hit ? "ไม่มีเบอร์นี้ในใบ (ถ้าเป็นเบอร์ใหม่ เลือก \"เบอร์ใหม่\")" : hit.kind === "sub" && nw.field === "mat" ? "ซับไม่มีวัสดุ" : nw.field === "mat" ? (!nw.val.trim() ? "ใส่ INV ใหม่" : "") : nw.field === "len" ? (!(Number(nw.val) > 0) ? "ใส่ความยาว" : "") : !(String(nw.val).trim() !== "" && Number(nw.val) >= 0) ? "ใส่จำนวน" : Number(nw.val) < doneOf(hit.code) ? `ปล่อยไปแล้ว ${nf(doneOf(hit.code))} — ลดต่ำกว่านี้ต้องทำ Modify ใหม่` : "";
+  const dup = nw.code.trim() && items.some((x) => !x._del && NC(x.code) === NC(nw.code) && (nw.field === "new" ? x.type === "add" : x.type === nw.field));
+  function addItem() {
+    if (!nw.code.trim() || nwErr || dup) return;
+    const i = Math.max(-1, ...items.map((x) => x._i)) + 1;
+    const it = nw.field === "new"
+      ? { kind: "part", type: "add", code: nw.code.trim().toUpperCase(), d: nw.d, l: nw.l === "" ? null : Number(nw.l), inv: nw.inv.trim().toUpperCase(), before: 0, after: nw.val, dest: undefined }
+      : { kind: hit.kind, type: nw.field, code: hit.code, before: curOf(hit, nw.field), after: nw.val };
+    setItems((a) => [...a, { ...it, _i: i, _del: false, _new: true }]); setNw(blankAdd);
+  }
+  const changed = date !== (m.date || "") || reason !== (m.reason || "") || items.some((x) => x._new || x._del || String(x.after) !== String(m.items[x._i]?.after));
   const bad = items.some((x) => !x._del && (x.type === "add" || x.type === "qty") && !(Number(x.after) >= 0 && String(x.after).trim() !== "")) || items.some((x) => !x._del && x.type === "len" && !(Number(x.after) > 0)) || !reason.trim();
   function save() {
-    const kept = items.filter((x) => !x._del).map(({ _i, _del, ...x }) => ({ ...x, after: x.type === "mat" ? String(x.after).trim().toUpperCase() : Number(x.after) }));
-    const diff = items.filter((x, i) => x._del || String(x.after) !== String(m.items[i].after)).map((x) => (x._del ? `เอา ${x.code} (${x.type}) ออก` : `${x.code}: ${m.items[x._i].after} → ${x.after}`));
+    const kept = items.filter((x) => !x._del).map(({ _i, _del, _new, ...x }) => ({ ...x, after: x.type === "mat" ? String(x.after).trim().toUpperCase() : Number(x.after) }));
+    const kept2 = items.filter((x) => !(x._new && x._del));
+    const diff = kept2.filter((x) => x._new || x._del || String(x.after) !== String(m.items[x._i]?.after)).map((x) => (x._new ? `เพิ่ม ${x.code} (${x.type}) ${x.before ?? ""} → ${x.after}` : x._del ? `เอา ${x.code} (${x.type}) ออก` : `${x.code}: ${m.items[x._i].after} → ${x.after}`));
     if (date !== (m.date || "")) diff.push(`วันที่ ${m.date} → ${date}`);
     if (reason !== (m.reason || "")) diff.push("แก้เหตุผล");
     onSave({ ...m, date, reason: reason.trim(), items: kept, edited: [...(m.edited || []), { at: new Date().toISOString(), by: getSession()?.name || "", what: diff }] });
@@ -1333,8 +1351,8 @@ function ModEditor({ m, need, onCancel, onSave }) {
       <table className="rl-sc-table rl-cmp-t">
         <thead><tr><th>เบอร์</th><th>รายละเอียด</th><th>รายการ</th><th className="r">เดิม</th><th>ค่าใน {m.ver}</th><th /></tr></thead>
         <tbody>{items.map((it) => { const lk = locked(it); return (
-          <tr key={it._i} className={it._del ? "rl-cancelrow" : ""}>
-            <td className="rw-mono"><b className={it._del ? "rl-cx" : ""}>{it.code}</b></td>
+          <tr key={it._i} className={it._del ? "rl-cancelrow" : it._new ? "rl-medit-new" : ""}>
+            <td className="rw-mono"><b className={it._del ? "rl-cx" : ""}>{it.code}</b>{it._new ? <> <span className="rl-newtag">ใหม่</span></> : null}</td>
             <td className="rl-desc"><span>{descOf(it.code)}</span></td>
             <td className="small"><b>{it.type === "add" ? "เพิ่มเบอร์ใหม่" : it.type === "qty" ? "จำนวนต้องใช้" : it.type === "cancel" ? "ยกเลิกเบอร์" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? "วัสดุ (INV)" : it.type === "len" ? "ความยาว" : it.type}</b></td>
             <td className="r rw-mono rw-muted">{it.type === "add" ? "—" : String(it.before ?? "—")}</td>
@@ -1345,6 +1363,22 @@ function ModEditor({ m, need, onCancel, onSave }) {
               : <button type="button" className="rw-link small rl-danger" onClick={() => up(it._i, { _del: true })}>เอาออก</button>}</td>
           </tr>); })}</tbody>
       </table>
+      <div className="rl-medit-add">
+        <b>+ เพิ่มรายการใน {m.ver}</b>
+        <input className="input rw-mono" list={`medit-codes-${m.ver}`} placeholder="เบอร์ (พิมพ์ / เลือก)" value={nw.code} onChange={(e) => setNw({ ...nw, code: e.target.value.toUpperCase() })} aria-label="เบอร์ที่จะเพิ่มใน M" style={{ width: 170 }} />
+        <datalist id={`medit-codes-${m.ver}`}>{codeList.map((x) => <option key={x.code} value={x.code}>{x.d}</option>)}</datalist>
+        <select className="select" value={nw.field} onChange={(e) => setNw({ ...nw, field: e.target.value, val: "" })} aria-label="เปลี่ยนอะไร">
+          <option value="mat">วัสดุ (INV)</option><option value="len">ความยาว</option><option value="qty">จำนวนต้องใช้</option><option value="new">เบอร์ใหม่ (ไม่มีในใบ)</option></select>
+        {hit && nw.field !== "new" ? <span className="rw-muted small">ตอนนี้ <b className="rw-mono">{String(curOf(hit, nw.field) || "—")}</b> →</span> : null}
+        <input className="input rw-mono" type={nw.field === "mat" ? "text" : "number"} placeholder={nw.field === "mat" ? "INV ใหม่" : nw.field === "len" ? "ความยาวใหม่" : "จำนวน"} value={nw.val} onChange={(e) => setNw({ ...nw, val: nw.field === "mat" ? e.target.value.toUpperCase() : e.target.value })} aria-label="ค่าใหม่" style={{ width: 140 }} />
+        {nw.field === "new" ? <>
+          <input className="input" placeholder="รายละเอียด" value={nw.d} onChange={(e) => setNw({ ...nw, d: e.target.value })} aria-label="รายละเอียดเบอร์ใหม่" style={{ width: 180 }} />
+          <input className="input rw-mono" type="number" placeholder="ยาว (มม.)" value={nw.l} onChange={(e) => setNw({ ...nw, l: e.target.value })} aria-label="ความยาวเบอร์ใหม่" style={{ width: 100 }} />
+          <input className="input rw-mono" placeholder="INV" value={nw.inv} onChange={(e) => setNw({ ...nw, inv: e.target.value.toUpperCase() })} aria-label="INV เบอร์ใหม่" style={{ width: 130 }} />
+        </> : null}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={addItem} disabled={!nw.code.trim() || !!nwErr || dup}>เพิ่ม</button>
+        {nw.code.trim() && (nwErr || dup) ? <span className="rl-errtxt small">{dup ? "มีรายการนี้ใน M แล้ว — แก้ค่าในตารางด้านบน" : nwErr}</span> : null}
+      </div>
       {(m.bomEdits || []).length ? <div className="rw-muted small">🔒 แก้ BOM ลูก {m.bomEdits.length} จุดใน {m.ver} แก้ที่นี่ไม่ได้ — ทำ Modify ใหม่เพื่อแก้กลับ</div> : null}
       <div className="rl-medit-row">
         <span className="rw-muted small">{bad ? (!reason.trim() ? "ใส่เหตุผล" : "ใส่ค่าให้ครบ (จำนวน ≥ 0 · ความยาว > 0)") : changed ? "ล็อตที่ปล่อยแล้วไม่เปลี่ยน · ยอดในใบคำนวณใหม่" : "ยังไม่ได้แก้อะไร"}</span>

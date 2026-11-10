@@ -949,3 +949,8 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-medit-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .rl-medit-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .rl-medit-row label { white-space: nowrap; }
+.rl-medit-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px dashed #d9cffd; padding-top: 10px; font-size: 13px; }
+.rl-medit-add .input, .rl-medit-add .select { height: 36px; padding: 4px 10px; font-size: 13px; }
+.rl-medit-new td { background: #f3fbf7; }
+.rl-newtag { font-size: 10.5px; font-weight: 700; color: #098259; background: #e5f9f1; border-radius: 99px; padding: 1px 7px; }
+.rl-medit-add .select { width: auto; flex: 0 0 auto; }
