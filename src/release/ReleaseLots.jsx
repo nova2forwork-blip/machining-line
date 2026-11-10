@@ -64,6 +64,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   // ★ 2026-11-10 ใบปะหน้า (plan.order) — เทียบกับของในใบ: แบบยังมาไม่ครบ → เตือน + ปุ่มเพิ่มรายการ
   const orderCmp = useMemo(() => (plan.order ? compareOrder(plan.order, need) : []), [plan.order, need]);
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
+  const modsRef = useRef(null);   // ★ 2026-11-10 ประวัติ Modify ย้ายขึ้นมาใต้ล็อต (เดิมอยู่ล่างสุด) · ป้าย "ตอนนี้ M-…" กดแล้วเลื่อนไปที่นี่
+  const [modsAll, setModsAll] = useState(false);
+  const [cmpOpen, setCmpOpen] = useState(() => new Set());   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -156,7 +159,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       <div className="page-head rw-head">
         <div>
           <div className="rw-crumb"><button type="button" className="rw-link" onClick={onBack}>ปล่อยงาน (Release)</button> <span>/</span> {plan.ro}</div>
-          <div className="page-title rl-title">Release {plan.ro} <Pill tone="ok">ใช้งาน</Pill>{plan.mods?.length ? <Pill tone="mod">ตอนนี้ {plan.mods[plan.mods.length - 1].ver}</Pill> : null}</div>
+          <div className="page-title rl-title">Release {plan.ro} <Pill tone="ok">ใช้งาน</Pill>{plan.mods?.length ? <button type="button" className="rl-pillbtn" onClick={() => modsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} title="ดูประวัติ Modify"><Pill tone="mod">ตอนนี้ {plan.mods[plan.mods.length - 1].ver} ›</Pill></button> : null}</div>
           <div className="page-sub">{plan.projectCode}{plan.note ? ` · ${plan.note}` : ""} · {fmtD(plan.date)} · จัดทำโดย {plan.by} · PDF {plan.pdfs?.length || 0} ไฟล์</div>
         </div>
         <div className="rw-head-right">
@@ -272,17 +275,16 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         )}
       </div>
 
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
-
-
       {plan.mods?.length ? (
-        <div className="card rw-card">
+        <div className="card rw-card" ref={modsRef}>
           <div className="rw-sec-head"><div><h2>ประวัติ Modify</h2><p>จำนวนเดิมขีดฆ่า → จำนวนใหม่ · เบอร์/ที่อยู่ที่ยกเลิกเป็น<b className="rl-cx">สีแดง</b> · ของที่ปล่อยแล้วแก้ในล็อตด้วย (QR ที่ยกเลิกเก็บเป็นหลักฐาน)</p></div></div>
           <div className="rl-mods">
-            {[...plan.mods].reverse().map((m) => (
+            {[...plan.mods].reverse().slice(0, modsAll ? undefined : 1).map((m) => (
               <div key={m.ver} className="rl-mod">
-                <div className="rl-mod-h"><Pill tone="mod">{m.ver}</Pill> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}</div>
-                <ul className="rl-mod-items">
+                <div className="rl-mod-h"><Pill tone="mod">{m.ver}</Pill> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}
+                  <button type="button" className={`btn btn-ghost btn-sm rl-mod-cmpbtn ${cmpOpen.has(m.ver) ? "on" : ""}`} onClick={() => setCmpOpen((o) => { const n = new Set(o); if (n.has(m.ver)) n.delete(m.ver); else n.add(m.ver); return n; })} aria-expanded={cmpOpen.has(m.ver)}>⇆ เปรียบเทียบ ก่อน / หลัง</button></div>
+                {cmpOpen.has(m.ver) ? <ModCompare m={m} need={need} /> : null}
+                <ul className="rl-mod-items" hidden={cmpOpen.has(m.ver)}>
                   {(m.bomEdits || []).map((e, i) => (
                     <li key={"b" + i}>
                       <span className="rw-muted">{e.scope === "panel" ? "แผง" : "ซับ"}</span> <span className="rw-mono"><b>{e.owner}</b></span> › <span className="rw-mono"><Code code={e.code} cancel={e.type === "cancel" || e.type === "replace"} /></span>{" "}
@@ -304,8 +306,13 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                 </ul>
               </div>))}
           </div>
+          {plan.mods.length > 1 ? <button type="button" className="rw-link" style={{ marginTop: 8 }} onClick={() => setModsAll((v) => !v)}>{modsAll ? "ย่อ — ดูแค่ครั้งล่าสุด" : `ดูทั้งหมด ${plan.mods.length} ครั้ง (${plan.mods.map((m) => m.ver).join(", ")})`}</button> : null}
         </div>
       ) : null}
+
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
+
+
 
       {modify ? (
         <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => { setModify(false); setInboxFiles(null); }} addOnly={modify === "add"} initialFiles={inboxFiles}
@@ -1152,6 +1159,41 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
         </table></div>
       </aside>
     </>
+  );
+}
+
+// ★ 2026-11-10 ตารางเปรียบเทียบของ Modify 1 ครั้ง: เบอร์ · รายละเอียด · เรื่องที่แก้ · ก่อน · หลัง · ผลต่อล็อต
+function ModCompare({ m, need }) {
+  const descOf = (c) => [...need.parts, ...need.subs, ...(need.hw || []), ...(need.glass || []), ...(need.other || [])].find((x) => NC(x.code) === NC(c))?.d || "";
+  const nn = (v) => (v == null || v === "" ? "—" : typeof v === "number" ? nf(v, v % 1 ? 2 : 0) : String(v));
+  const rows = [
+    ...(m.bomEdits || []).map((e) => ({ code: e.code, where: `${e.scope === "panel" ? "แผง" : "ซับ"} ${e.owner}`, what: e.type === "qty" ? "จำนวน/ชุด" : e.type === "cancel" ? "ยกเลิกลูก" : e.type === "replace" ? "แก้เบอร์" : "เพิ่มลูก",
+      before: e.type === "add" ? "—" : e.type === "replace" ? `${e.code} × ${nn(e.before ?? e.qty)}` : nn(e.before), after: e.type === "cancel" ? "ยกเลิก" : e.type === "replace" ? `${e.newCode} × ${nn(e.qty)}` : nn(e.qty), tone: e.type === "cancel" || e.type === "replace" ? "bad" : e.type === "add" ? "new" : "chg" })),
+    ...m.items.filter((it) => !it.derived || m.items.length < 40).map((it) => ({ code: it.code, where: it.kind === "panel" ? `ที่อยู่ · แผง ${it.unit || ""}` : it.kind === "sub" ? "ซับ" : it.kind === "hw" ? "อุปกรณ์" : "พาร์ท",
+      what: it.type === "qty" ? "จำนวนต้องใช้" : it.type === "cancel" ? "ยกเลิกเบอร์" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? "วัสดุ (INV)" : "เพิ่มเบอร์ใหม่",
+      before: it.type === "add" ? "—" : it.type === "addr" ? "มี" : nn(it.before), after: it.type === "cancel" || it.type === "addr" ? "ยกเลิก" : nn(it.after) + (it.type === "add" ? ` ${it.kind === "sub" ? "SET" : it.kind === "hw" ? it.u || "pcs." : "ชิ้น"}` : ""),
+      lots: (it.lots || []).map((l) => `${l.lot}: ${l.cancel ? `${nf(l.before)} → ยกเลิก` : `${nf(l.before)} → ${nf(l.after)}`}`).join(" · "), derived: it.derived,
+      tone: it.type === "cancel" || it.type === "addr" ? "bad" : it.type === "add" ? "new" : "chg" })),
+  ];
+  return (
+    <div className="rl-cmp">
+      <table className="rl-sc-table rl-cmp-t">
+        <thead><tr><th>เบอร์</th><th>รายละเอียด</th><th>อยู่ที่</th><th>แก้อะไร</th><th className="r">ก่อน</th><th /><th>หลัง</th><th>ล็อตที่ปล่อยแล้ว</th></tr></thead>
+        <tbody>{rows.map((r, i) => (
+          <tr key={i} className={`rl-cmp-${r.tone}`}>
+            <td className="rw-mono"><b>{r.code}</b>{r.derived ? <span className="rw-muted small"> (ผลจากแก้ BOM)</span> : null}</td>
+            <td className="rl-desc"><span>{descOf(r.code)}</span></td>
+            <td className="small">{r.where}</td>
+            <td className="small"><b>{r.what}</b></td>
+            <td className="r rw-mono"><s className="rl-old">{r.before}</s></td>
+            <td className="rw-muted">→</td>
+            <td className="rw-mono"><b className={r.tone === "bad" ? "rl-errtxt" : "rl-new"}>{r.after}</b></td>
+            <td className="small rw-muted">{r.lots || "—"}</td>
+          </tr>))}
+        </tbody>
+      </table>
+      <div className="rw-muted small">{m.sheet ? `ใบ Modify: ${m.sheet.roRaw || m.sheet.file || ""}${m.sheet.issuedBy ? ` · ออกโดย ${m.sheet.issuedBy}` : ""} · ` : ""}เขียว = เพิ่ม · ม่วง = แก้ · แดง = ยกเลิก</div>
+    </div>
   );
 }
 

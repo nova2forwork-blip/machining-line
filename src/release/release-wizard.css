@@ -831,3 +831,14 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-fix-tw { flex: 1; overflow: auto; padding: 0 22px 22px; }
 .rl-fix-t tbody tr { cursor: pointer; }
 .rl-fix-t tbody tr.on { background: rgba(31,157,116,.08); }
+.rl-pillbtn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.rl-pillbtn:hover .pill, .rl-pillbtn:hover span { filter: brightness(.95); text-decoration: underline; }
+.rl-mod-cmpbtn { margin-left: auto; }
+.rl-mod-cmpbtn.on { background: rgba(109,74,255,.1); border-color: #8f74ff; color: #5b3ce0; }
+.rl-mod-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rl-cmp { margin: 8px 0 6px; overflow-x: auto; }
+.rl-cmp-t td, .rl-cmp-t th { white-space: nowrap; }
+.rl-cmp-t td.rl-desc { white-space: normal; min-width: 180px; }
+.rl-cmp-new td:first-child { box-shadow: inset 3px 0 0 #1f9d74; }
+.rl-cmp-chg td:first-child { box-shadow: inset 3px 0 0 #8f74ff; }
+.rl-cmp-bad td:first-child { box-shadow: inset 3px 0 0 #b91c1c; }
