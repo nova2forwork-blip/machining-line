@@ -814,8 +814,6 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const [pdfMsg, setPdfMsg] = useState(null);
   const [pdfDrag, setPdfDrag] = useState(false);
   const pdfRef = useRef(null);
-  const [sheetDrag, setSheetDrag] = useState(false);   // ★ 2026-11-10 2 ช่องเหมือนตอนสร้าง Release: ① ใบปะหน้า ② แบบ
-  const sheetRef = useRef(null);
   // ★ 2026-11-10 ใบปะหน้าของรอบนี้: ใบ Modify (FM(DE)-00 "Release for Modification" · M-060 อ้างถึง P-089 · รายการแบบที่แก้ UA2007 REV.A …)
   //   หรือใบปะหน้า Release (FM(DE)-03) ตอน "เพิ่มรายการ" — วางได้ในช่องเดียวกับแบบ (xls/xlsx/pdf) → เติมเลข M / วันที่ / เหตุผล + เช็กลิสต์ว่าแบบที่แก้มาครบไหม
   const [sheet, setSheet] = useState(null);
@@ -945,26 +943,17 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const nMiss = sheet ? sheetCmp.filter((x) => !x.drop).length : 0;
   const zone = (ref, drag, setDrag, onFiles) => ({ role: "button", tabIndex: 0, onClick: () => ref.current?.click(), onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ref.current?.click(); } },
     onDragOver: (e) => { e.preventDefault(); setDrag(true); }, onDragLeave: () => setDrag(false), onDrop: (e) => { e.preventDefault(); setDrag(false); onFiles(e.dataTransfer.files); } });
+  // ★ 2026-11-10 ผู้ใช้: ใบปะหน้ากับแบบวางที่เดียวกัน — ระบบแยกให้เอง (Excel / PDF ใบปะหน้า = ใบ · PDF แบบ = แบบ) · ใต้ช่องบอกว่าได้อะไรแล้ว
   const pdfDropEl = (
-    <div className="rl-2step">
-      <div className={`rl-step ${sheet ? "done" : ""}`}>
-        <div className="rl-step-h"><span className="rl-step-n">1</span><b>{addOnly ? "ใบปะหน้า Release" : "ใบ Modify (FM(DE)-00)"}</b><small>Excel หรือ PDF · ไม่มีก็ข้ามได้</small></div>
-        {sheet ? (
-          <div className="rl-step-ok">✓ <b>{sheet.roRaw || sheet.mVer || sheet.ro || sheet.file}</b> · {sheet.items.length} รายการ{sheet.refRo ? ` · อ้างถึง ${sheet.refRo}` : ""}
-            <button type="button" className="rw-link" onClick={(e) => { e.stopPropagation(); sheetRef.current?.click(); }}>เปลี่ยน</button> · <button type="button" className="rw-link" onClick={() => setSheet(null)}>เอาออก</button></div>
-        ) : (
-          <div className={`rw-drop rw-drop-sm rl-step-drop ${sheetDrag ? "drag" : ""}`} {...zone(sheetRef, sheetDrag, setSheetDrag, onModPdfs)}>
-            <div className="rw-drop-ic"><Icon name="plus" size={16} /></div><div><b>วางใบปะหน้าที่นี่</b><span>ได้เลขใบ / เหตุผล / วันที่ + เช็กลิสต์ว่าต้องมีแบบเบอร์ไหน</span></div>
-          </div>)}
-        <input ref={sheetRef} type="file" accept=".xls,.xlsx,.xlsm,.pdf,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
+    <div className="rl-1drop">
+      <div className={`rw-drop rw-drop-sm rl-step-drop ${pdfDrag ? "drag" : ""}`} {...zone(pdfRef, pdfDrag, setPdfDrag, onModPdfs)}>
+        <div className="rw-drop-ic"><Icon name="plus" size={16} /></div>
+        <div><b>{nDrawn || sheet ? "วางเพิ่มได้" : `วาง${addOnly ? "ใบปะหน้า Release" : "ใบ Modify (FM(DE)-00)"} + แบบที่${addOnly ? "เพิ่ม" : "แก้"} ที่นี่`}</b><span>วางพร้อมกันหลายไฟล์ได้ · ระบบแยกให้เองว่าไฟล์ไหนเป็นใบปะหน้า ไฟล์ไหนเป็นแบบ · ใบปะหน้า Excel / PDF · แบบ PDF (ซับ / แผง / พาร์ท / Site Item + อุปกรณ์)</span></div>
       </div>
-      <div className={`rl-step ${nDrawn && !nMiss ? "done" : ""}`}>
-        <div className="rl-step-h"><span className="rl-step-n">2</span><b>แบบที่{addOnly ? "เพิ่ม" : "แก้"} (PDF)</b><small>ซับ / แผง / พาร์ท / Site Item + อุปกรณ์ · หลายไฟล์พร้อมกันได้</small></div>
-        <div className={`rw-drop rw-drop-sm rl-step-drop ${pdfDrag ? "drag" : ""}`} {...zone(pdfRef, pdfDrag, setPdfDrag, onModPdfs)}>
-          <div className="rw-drop-ic"><Icon name="plus" size={16} /></div>
-          <div><b>{nDrawn ? `วางแล้ว ${nDrawn} แบบ — วางเพิ่มได้` : "วางแบบที่นี่"}</b><span>{sheet ? (nMiss ? `ตามใบปะหน้ายังขาด ${nMiss} แบบ (ดูเช็กลิสต์ด้านล่าง)` : "ครบตามใบปะหน้าแล้ว") : "ซับ/แผงที่มีในใบ = เทียบ BOM ให้เอง · พาร์ท/ซับใหม่ = เพิ่มเบอร์ใหม่"}</span></div>
-        </div>
-        <input ref={pdfRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
+      <input ref={pdfRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
+      <div className="rl-1drop-st">
+        <span className={`rl-1drop-chip ${sheet ? "ok" : ""}`}>{sheet ? "✓" : "○"} {addOnly ? "ใบปะหน้า" : "ใบ Modify"}: {sheet ? <><b>{sheet.roRaw || sheet.mVer || sheet.ro || sheet.file}</b> · {sheet.items.length} รายการ{sheet.refRo ? ` · อ้างถึง ${sheet.refRo}` : ""} <button type="button" className="rw-link" onClick={() => setSheet(null)}>เอาออก</button></> : <span className="rw-muted">ยังไม่มี (ไม่มีก็ข้ามได้)</span>}</span>
+        <span className={`rl-1drop-chip ${nDrawn && !nMiss ? "ok" : nMiss ? "warn" : ""}`}>{nDrawn && !nMiss ? "✓" : "○"} แบบ: {nDrawn ? <b>วางแล้ว {nDrawn} แบบ</b> : <span className="rw-muted">ยังไม่มี</span>}{sheet ? (nMiss ? <span className="rl-errtxt"> · ตามใบยังขาด {nMiss} แบบ</span> : nDrawn ? " · ครบตามใบ" : "") : ""}</span>
       </div>
     </div>);
   const sheetEl = sheet ? (

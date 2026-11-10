@@ -1005,3 +1005,10 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-me-t tr.adding td { vertical-align: top; }
 .rl-me-t tr.adding td.r, .rl-me-t tr.adding td.c.rw-muted { padding-top: 18px !important; }
 .rl-me-in { max-width: 200px; }
+/* ★ 2026-11-10 Modify: ช่องวางเดียว (ใบปะหน้า + แบบ) */
+.rl-1drop { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; }
+.rl-1drop-st { display: flex; flex-wrap: wrap; gap: 8px; }
+.rl-1drop-chip { font-size: 12.5px; padding: 5px 11px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.rl-1drop-chip.ok { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-dk); }
+.rl-1drop-chip.warn { border-color: #f0c36d; background: #fff8e8; }
+.rl-1drop-chip .rw-link { font-size: 12px; margin-left: 4px; }
