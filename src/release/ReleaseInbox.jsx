@@ -5,9 +5,9 @@
 //           แบบที่ไม่มีใบกำกับ → ทุก Release ที่ใช้แบบนั้น (แผง/ซับใน BOM · พาร์ทในใบ) ให้เลือก
 //   ผลลัพธ์ = ปุ่ม "เปิด Modify P-089 พร้อมไฟล์" / "เพิ่มรายการใน P-069" / "สร้าง Release P-069" → หน้าเดิมเปิดขึ้นพร้อมไฟล์ที่อ่านแล้ว
 // ══════════════════════════════════════════════════════════════════════════
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
-import { NC, findKey, findLatest, readPdfFiles, roKey, nf, nlen } from "./releaseCore.js";
+import { NC, findKey, findLatest, readPdfFiles, roKey, nf, nlen, buildBom, makeCatOf, newerRevOf } from "./releaseCore.js";
 import { readOrderFile, readOrderPdf } from "./orderSheet.js";
 import { Pill } from "./releaseUi.jsx";
 import "./release-wizard.css";
@@ -30,14 +30,47 @@ function plansUsing(d, plans) {
 const planLabel = (p) => `${p.ro}${p.projectCode ? ` (${p.projectCode})` : ""}`;
 
 // docs/setDocs เก็บที่หน้าแม่ (ReleasePage) — เปิดใบไปทำแล้วกดกลับมา งานที่เหลือยังอยู่
-export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, onAddItems, onNewRelease, onOpenPlan, onBunk = null, docs: docsIn, setDocs: setDocsIn }) {
+// โปรเจคของแบบ: PROJECT NO. ในหัวกระดาษ (A10042-US) → เทียบรหัสโปรเจค · ไม่มี = ชื่อโปรเจค (BARRINGTON PLAZA) เทียบชื่อ
+function projectOfDrawing(d, projects) {
+  const t = d.title || {}; const nm = String(t.PROJECT || "").trim().toLowerCase();
+  for (const no of [NC(t.PROJECT_CODE || ""), NC(t.PROJECT_NO || "")].filter(Boolean)) { const base = no.replace(/-[A-Z]{2}$/, ""); const hit = projects.find((p) => NC(p.code) === no) || projects.find((p) => NC(p.code) === base || NC(p.code).startsWith(base + "-")); if (hit) return hit; }
+  if (nm) { const hit = projects.find((p) => String(p.name || "").trim().toLowerCase() === nm) || projects.find((p) => nm && String(p.name || "").toLowerCase().includes(nm)); if (hit) return hit; }
+  return null;
+}
+export default function ReleaseInbox({ plans = [], projects = [], api = null, userName = "", onOpenModify, onAddItems, onNewRelease, onOpenPlan, onBunk = null, onLibrarySaved = null, docs: docsIn, setDocs: setDocsIn }) {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState("");
   const [docsLocal, setDocsLocal] = useState([]);     // { file, type: "modify"|"order"|"drawing"|"bad", data, note }
   const docs = docsIn || docsLocal, setDocs = setDocsIn || setDocsLocal;
   const [open, setOpen] = useState(() => !!(docsIn && docsIn.length));
   const ref = useRef(null);
+  const [libPick, setLibPick] = useState({});   // job key → projectId ที่เลือกเก็บเข้าคลัง
+  const [libMsg, setLibMsg] = useState({});     // job key → { busy | ok | err }
   const byRo = (ro) => (plans || []).find((p) => roKey(p.ro) === roKey(ro));
+  // ★ 2026-11-10 เก็บแบบซับ/พาร์ทเข้าคลังของโปรเจคตรงจากกล่องรับเอกสาร (เหมือนวางที่ขั้น "เลือกซับ / พาร์ท")
+  async function saveToLibrary(j, projectId) {
+    const project = projects.find((p) => p.id === projectId); if (!project || !api?.saveLibrary || !api?.loadBomLibrary) return;
+    const got = j.drawings.map((d) => d.data).filter((d) => d.kind === "sub" || d.kind === "part");
+    if (!got.length) return;
+    setLibMsg((m) => ({ ...m, [j.k]: { busy: "อ่านคลังของโปรเจค…" } }));
+    try {
+      const base = await api.loadBomLibrary(project.id);
+      const older = got.filter((d) => d.kind === "part" && newerRevOf(base.parts, d.code));
+      const use = got.filter((d) => !older.includes(d));
+      if (!use.length) { setLibMsg((m) => ({ ...m, [j.k]: { ok: `คลังมีรุ่นใหม่กว่าอยู่แล้ว (${older.map((d) => d.code).join(", ")}) — ไม่ได้เพิ่ม` } })); return; }
+      const ov = base.ov || {};
+      const merged = buildBom({ lib: base, pdfs: use, ack: {}, useLib: true });
+      const cfg = { partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] };
+      const catOfLib = makeCatOf(merged, ov.catOv || {}, cfg);
+      setLibMsg((m) => ({ ...m, [j.k]: { busy: "บันทึกลงคลัง…" } }));
+      const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
+        newCodes: new Set(use.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
+        pdfs: use.map((d) => ({ file: d.file, kind: d.kind, code: d.code, _file: d._file })), by: userName || "" }, (msg) => setLibMsg((m) => ({ ...m, [j.k]: { busy: msg } })));
+      const gs = use.filter((d) => d.kind === "sub").length, gp = use.length - gs; const errs = (r && r.errors) || [];
+      setLibMsg((m) => ({ ...m, [j.k]: { ok: `เก็บเข้าคลัง ${project.code} แล้ว — ซับ ${gs} · พาร์ท ${gp} เบอร์${older.length ? ` · ข้ามรุ่นเก่า ${older.length}` : ""}${errs.length ? " · " + errs.join(" · ") : ""}` } }));
+      onLibrarySaved && onLibrarySaved(project, use);
+    } catch (e) { setLibMsg((m) => ({ ...m, [j.k]: { err: "เก็บเข้าคลังไม่สำเร็จ: " + (e?.message || e) } })); }
+  }
 
   async function addFiles(list) {
     const files = [...list].filter((f) => /\.(pdf|xlsx?|xlsm)$/i.test(f.name)); if (!files.length) return;
@@ -92,8 +125,9 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
       // แบบที่ไม่มีใบกำกับ → จัดตาม Release ที่ใช้
       const by = new Map(); const none = [];
       for (const d of loose) { const hits = plansUsing(d.data, plans); if (!hits.length) { none.push(d); continue; } for (const h of hits) { const e = by.get(h.plan.id) || { plan: h.plan, drawings: [] }; e.drawings.push({ ...d, how: h.how }); by.set(h.plan.id, e); } }
-      for (const e of by.values()) list.push({ k: "loose:" + e.plan.id, plan: e.plan, drawings: e.drawings, loose: true });
-      if (none.length) list.push({ k: "loose:none", drawings: none, loose: true, none: true });
+      const detect = (ds) => { const c = new Map(); for (const d of ds) { const pj = projectOfDrawing(d.data, projects); if (pj) c.set(pj.id, (c.get(pj.id) || 0) + 1); } const top = [...c.entries()].sort((a, b) => b[1] - a[1])[0]; return top ? projects.find((p) => p.id === top[0]) : null; };
+      for (const e of by.values()) list.push({ k: "loose:" + e.plan.id, plan: e.plan, drawings: e.drawings, loose: true, project: detect(e.drawings) });
+      if (none.length) list.push({ k: "loose:none", drawings: none, loose: true, none: true, project: detect(none) });
     }
     return list;
   }, [docs, plans, projects]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -147,15 +181,27 @@ export default function ReleaseInbox({ plans = [], projects = [], onOpenModify, 
               </div>);
             return (
               <div key={j.k} className={`rw-inbox-job ${j.none ? "bad" : ""}`}>
-                <div className="rw-inbox-job-h"><Pill tone="muted">แบบ (ไม่มีใบกำกับ)</Pill> {j.plan ? <><b>ใช้ใน Release {planLabel(j.plan)}</b></> : <b className="rl-errtxt">ไม่พบ Release ที่ใช้แบบเหล่านี้</b>}</div>
+                <div className="rw-inbox-job-h"><Pill tone="muted">แบบ (ไม่มีใบกำกับ)</Pill> {j.plan ? <><b>ใช้ใน Release {planLabel(j.plan)}</b></> : <b>{j.project ? `โปรเจค ${j.project.code} — ${j.project.name}` : "ยังไม่รู้โปรเจค"}</b>}{!j.plan ? <span className="rw-muted">· ยังไม่มี Release ที่ใช้แบบนี้</span> : null}</div>
                 <div className="rw-inbox-job-b">{j.drawings.map((d) => <Pill key={d.file.name} tone="ok">{d.data.code} <small>{d.data.kind === "panel" ? "แผง" : d.data.kind === "sub" ? "ซับ" : d.data.kind === "loose" ? "Site Item+อุปกรณ์" : "พาร์ท"}{d.how ? ` · ${d.how}` : ""}</small></Pill>)}</div>
                 <div className="rw-inbox-job-a">
                   {j.plan ? <>
                     <button type="button" className="btn btn-accent btn-sm" onClick={() => onOpenModify(j.plan, filesOf(j))}>✎ Modify {j.plan.ro} ด้วยแบบนี้ (แบบ Rev ใหม่)</button>
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => onAddItems(j.plan, filesOf(j))}>+ เพิ่มรายการใน {j.plan.ro}</button>
-                  </> : <span className="rw-muted small">ถ้าเป็นงานใหม่ → วางใบปะหน้ามาด้วย หรือกด "ปล่อยงานใหม่" แล้ววางแบบที่นั่น · แบบซับ/พาร์ทที่จะเก็บเข้าคลัง → หน้า "ซับ / พาร์ท ของโปรเจค"</span>}
+                  </> : null}
+                  {j.drawings.some((d) => d.data.kind === "sub" || d.data.kind === "part") && api?.saveLibrary ? (() => {
+                    const pid = libPick[j.k] ?? (j.project ? j.project.id : (j.plan ? j.plan.projectId : "")); const st = libMsg[j.k]; const nSP = j.drawings.filter((d) => d.data.kind === "sub" || d.data.kind === "part").length;
+                    return <>
+                      <select className="select" style={{ width: "auto", maxWidth: 260 }} value={pid || ""} onChange={(e) => setLibPick((o) => ({ ...o, [j.k]: e.target.value }))} aria-label="โปรเจคที่จะเก็บเข้าคลัง" disabled={!!st?.busy}>
+                        <option value="">— โปรเจค —</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                      </select>
+                      <button type="button" className={`btn btn-sm ${j.plan ? "btn-ghost" : "btn-accent"}`} disabled={!pid || !!st?.busy || !!st?.ok} onClick={() => saveToLibrary(j, pid)} title="บันทึกแบบซับ/พาร์ทลงคลัง “ซับ / พาร์ท ของโปรเจค” (เหมือนวางที่ขั้นเลือกซับ/พาร์ท) — Release ใหม่ดึงจากคลังนี้">
+                        {st?.busy ? st.busy : st?.ok ? "✓ เก็บแล้ว" : `เก็บเข้าคลังซับ/พาร์ท ${nSP} เบอร์${j.project && !libPick[j.k] ? ` · ${j.project.code} (จากในแบบ)` : ""}`}
+                      </button>
+                    </>; })() : null}
+                  {j.drawings.some((d) => d.data.kind === "panel") && !j.plan ? <span className="rw-muted small">แบบแผง → ใช้ตอน "ปล่อยงานใหม่" (วางใบปะหน้ามาด้วยจะสร้างให้เลย)</span> : null}
                   <button type="button" className="rw-link" onClick={() => removeJob(j)}>เอาออก</button>
                 </div>
+                {libMsg[j.k]?.ok || libMsg[j.k]?.err ? <div className={`rw-msg ${libMsg[j.k].err ? "bad" : "ok"}`} style={{ marginTop: 6 }}>{libMsg[j.k].err || "✓ " + libMsg[j.k].ok}</div> : null}
               </div>);
           })}
           {bunkDocs.length ? (

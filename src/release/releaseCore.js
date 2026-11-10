@@ -169,6 +169,14 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     for (const x of line) { if (stop.includes(x.text) || x.x0 - (res.length ? res[res.length - 1].x1 : w.x1) > 60) break; res.push(x); }
     return res.map((x) => x.text).join(" ") || null;
   };
+  // ★ 2026-11-10 โปรเจคของแบบ (ใช้เลือกโปรเจคให้เองตอนเก็บเข้าคลังจากกล่องรับเอกสาร): "PROJECT NO.: A10042-US" · "PROJECT: BARRINGTON PLAZA" · path "...\\A10035-US Barrington Plaza\\..."
+  {
+    const pn = words.find((w) => /^PROJECT$/i.test(w.text) && words.some((x) => /^NO\.?:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 - w.x1 < 8));
+    if (pn) { const no = words.find((x) => /^NO\.?:?$/i.test(x.text) && Math.abs(x.top - pn.top) < 2 && x.x0 > pn.x0); const v = words.filter((x) => Math.abs(x.top - pn.top) < 3 && x.x0 > (no || pn).x1 && x.x0 - (no || pn).x1 < 80).sort((a, b) => a.x0 - b.x0)[0]; if (v && /[A-Z0-9]/i.test(v.text)) out.title.PROJECT_NO = v.text.replace(/[:,]$/, ""); }
+    const pj = words.find((w) => /^PROJECT:?$/i.test(w.text) && !words.some((x) => /^NO\.?:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 - w.x1 < 8));
+    if (pj) out.title.PROJECT = rightOf(pj.text, ["PROJECT", "STOCK", "FINISH:"]) || null;
+    { const m = words.map((w) => w.text).join(" ").match(/\b([A-Z]\d{4,6}-[A-Z]{2})\b/); if (m) out.title.PROJECT_CODE = m[1]; }   // รหัสโปรเจคของเรา (A10035-US) จาก path/ที่ไหนก็ได้ในแบบ — PROJECT NO. บางแบบเป็นเลขของลูกค้า (372-0082)
+  }
   out.title.FINISH = rightOf("FINISH:", ["STOCK"]);
   out.title.STOCK = (rightOf("STOCK", ["PART"]) || "").replace(/^NO\.:\s*/, "") || null;
   out.title.MATERIAL = rightOf("MATERIAL:", []);
