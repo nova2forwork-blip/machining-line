@@ -68,10 +68,15 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [modsOpen, setModsOpen] = useState(false);   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
   const [lotsAll, setLotsAll] = useState(false);
   // ★ 2026-11-10 แถบขวาพับได้: "auto" = พับเองตอนดูแท็บ BOM (ตารางกว้าง) · "show" / "hide" = ผู้ใช้เลือก (จำไว้)
-  const [side, setSideRaw] = useState(() => { try { return localStorage.getItem("rl-side") || "auto"; } catch { return "auto"; } });
-  const [tab, setTab] = useState("part");
+  //   จำไว้แค่ "hide" (ซ่อนทุกแท็บ) · เปิดดูตอนอยู่ BOM = ชั่วคราว (peek) — เปลี่ยนแท็บ / ออกแล้วเข้าใหม่ = BOM พับเองเหมือนเดิม
+  const [side, setSideRaw] = useState(() => { try { return localStorage.getItem("rl-side") === "hide" ? "hide" : "auto"; } catch { return "auto"; } });
+  const [peek, setPeek] = useState(false);
+  const [tab, setTabRaw] = useState("part");
+  const setTab = (t) => { setTabRaw(t); setPeek(false); };
   const setSide = (v) => { setSideRaw(v); try { localStorage.setItem("rl-side", v); } catch { /* ignore */ } };
-  const sideHidden = side === "hide" || (side === "auto" && tab === "bom");   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
+  const sideHidden = !peek && (side === "hide" || tab === "bom");
+  const showSide = () => { if (side === "hide") setSide("auto"); if (tab === "bom") setPeek(true); };
+  const hideSide = () => { setPeek(false); if (tab !== "bom") setSide("hide"); };   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -273,14 +278,15 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         </div>
       {sideHidden ? (
       <aside className="rl-side rl-side-mini">
-        <button type="button" className="rl-side-open" onClick={() => setSide(tab === "bom" ? "show" : "auto")} title="แสดงแถบสถานะ / ล็อต / Modify">‹<span>สถานะ · ล็อต · Modify</span></button>
+        <button type="button" className="rl-side-open" onClick={showSide} title="แสดงแถบสถานะ / ล็อต / Modify">‹<span>สถานะ · ล็อต · Modify</span></button>
         <div className="rl-side-mini-n" title="พาร์ทปล่อยครบ"><b>{nf(partDone)}</b><small>/{nf(liveParts.length)}</small></div>
         <div className="rl-side-mini-n" title="ล็อต"><b>{rel.lots.length}</b><small>ล็อต</small></div>
       </aside>
       ) : (
       <aside className="rl-side">
+        <button type="button" className="rl-side-hidebtn" onClick={hideSide} title={tab === "bom" ? "พับแถบนี้ (แท็บ BOM พับให้เองทุกครั้ง)" : "พับแถบนี้ทุกแท็บ — ให้ตารางกว้างเต็มจอ (กด ‹ ที่ขอบขวาเพื่อเปิด)"}>พับแถบนี้ ›</button>
         <div className="rl-sbox">
-          <div className="rl-sbox-h"><b>สถานะใบนี้</b><button type="button" className="rl-side-hide" onClick={() => setSide("hide")} title="ซ่อนแถบนี้ — ให้ตารางกว้างเต็มจอ">ซ่อน ›</button></div>
+          <div className="rl-sbox-h"><b>สถานะใบนี้</b></div>
           {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([, , b]) => b > 0).map(([l, a, b, s2]) => (
             <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;

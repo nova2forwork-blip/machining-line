@@ -893,3 +893,5 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 @media (max-width: 1100px) { .rl-split.side-off { grid-template-columns: 1fr; } .rl-side-mini { flex-direction: row; } .rl-side-open { min-height: 44px; width: auto; flex-direction: row; padding: 0 14px; } .rl-side-open span { writing-mode: horizontal-tb; } }
 .rl-split { gap: 12px; }
 .rl-side { gap: 12px; }
+.rl-side-hidebtn { align-self: stretch; height: 38px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
+.rl-side-hidebtn:hover { border-color: var(--accent); color: var(--accent-dk); }
