@@ -35,10 +35,10 @@
   --radius: 14px;
   --radius-sm: 10px;
 
-  /* ★ 2026-11-10 ผู้ใช้: ใช้ Leelawadee UI ทั้งแอป (ฟอนต์ระบบ Windows) · เครื่องที่ไม่มี (Mac/มือถือ) ใช้ IBM Plex Sans Thai แทน */
-  --font-display: 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', sans-serif;
-  --font-body: 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', 'IBM Plex Sans', sans-serif;
-  --font-mono: 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', sans-serif;
+  /* ★ 2026-11-10 ผู้ใช้: ใช้ Aptos Narrow ทั้งแอป (อังกฤษ/ตัวเลข) · ภาษาไทย Aptos ไม่มี → Leelawadee UI · เครื่องที่ไม่มีทั้งคู่ใช้ IBM Plex Sans Thai */
+  --font-display: 'Aptos Narrow', 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', sans-serif;
+  --font-body: 'Aptos Narrow', 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', 'IBM Plex Sans', sans-serif;
+  --font-mono: 'Aptos Narrow', 'Leelawadee UI', 'Leelawadee', 'IBM Plex Sans Thai', sans-serif;
 
   --shadow-card: 0 1px 2px rgba(20,50,40,.04), 0 10px 24px -14px rgba(20,50,40,.12);
   --shadow-pop: 0 20px 50px -12px rgba(20,50,40,.22);
@@ -1173,7 +1173,7 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
   animation: mls-splash-in .25s ease both;
 }
 @keyframes mls-splash-in { from { opacity: 0 } to { opacity: 1 } }
-.mls-splash-brand { display: flex; align-items: center; gap: 10px; font-family: 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif; font-weight: 700; letter-spacing: .12em; font-size: 14px; color: #cdeadd; margin-bottom: 4px; }
+.mls-splash-brand { display: flex; align-items: center; gap: 10px; font-family: 'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif; font-weight: 700; letter-spacing: .12em; font-size: 14px; color: #cdeadd; margin-bottom: 4px; }
 .mls-splash-brand img { height: 52px; width: auto; display: block; }
 .mls-splash-brand span { font-size: 12px; letter-spacing: .32em; color: #9fd8f2; align-self: flex-end; padding-bottom: 4px; }
 .mls-splash-brand .m { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(160deg, #1c8f68, #0e6b4c); display: grid; place-items: center; color: #eafff5; box-shadow: 0 5px 16px -5px rgba(22,184,119,.6); }

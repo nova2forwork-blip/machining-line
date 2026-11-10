@@ -2632,7 +2632,7 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
                   style={{ width: "min(92vw, 420px)", background: "linear-gradient(180deg,#12241a,#0e1b14)", border: "1px solid #2f7d55", borderRadius: 20, padding: "30px 26px 22px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
                   <div style={{ width: 78, height: 78, margin: "0 auto 14px", borderRadius: "50%", background: "#1f9d5a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 46, color: "#fff", boxShadow: "0 0 0 6px rgba(31,157,90,.22)" }}>✓</div>
                   <div style={{ fontSize: 21, fontWeight: 800, color: "#eafff5" }}>{asmDone.isGlz ? t("ติดกระจกเสร็จแล้ว", "Glazing done") : asmDone.isPack ? t("แพ็กเสร็จแล้ว", "Packing done") : t("ประกอบเสร็จแล้ว", "Assembly done")}</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif", color: "#8ff0c0", margin: "10px 0 4px", wordBreak: "break-all" }}>{asmDone.partNo}</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif", color: "#8ff0c0", margin: "10px 0 4px", wordBreak: "break-all" }}>{asmDone.partNo}</div>
                   <div style={{ fontSize: 13.5, color: "#bfe6d3" }}>{asmDone.isGlz ? t("ติดกระจก", "Glazed") : asmDone.isSub ? t("ทำเสร็จ", "Made") : t("ใส่ลูกเข้าไป", "Assembled")} {asmDone.count} {t("ชิ้น", "pcs")} · {t("ปิดงานแล้ว", "closed")}{asmDone.queued ? t(" · รอซิงค์", " · queued") : ""}</div>
                   <button onClick={() => setAsmDone(null)} className="stn-pill ok" style={{ marginTop: 18, width: "100%" }}>{t("ตกลง", "OK")}</button>
                 </div>
@@ -2846,7 +2846,7 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
       <div style={{ width: "min(92vw, 380px)", background: "#17231d", border: "1px solid #2f5f49", borderRadius: 16, padding: "22px 22px 18px", boxShadow: "0 16px 48px rgba(0,0,0,.55)" }}>
         <div style={{ textAlign: "center", marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: "#6fd3a6", letterSpacing: ".06em", textTransform: "uppercase" }}>{pending.pack ? t("สแกนของเข้าบั้ง", "Scanned item") : t("สแกนลูกได้", "Scanned child")}</div>
-          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{pending.part_no}</div>
+          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif", color: "#eafff5", margin: "8px 0 2px", wordBreak: "break-all" }}>{pending.part_no}</div>
           {pending.part_name ? <div style={{ fontSize: 13.5, color: "#cfe7dc" }}>{pending.part_name}</div> : null}
           <div style={{ fontSize: 12.5, color: "#9fd8bf", marginTop: 3 }}>
             {pending.len != null && !isNaN(Number(pending.len)) ? <>{t("ยาว", "Len")} {Number(pending.len).toLocaleString()} {t("มม.", "mm")}{pending.wt != null ? " · " : ""}</> : null}
@@ -2871,7 +2871,7 @@ function PendConfirm({ pending, onAdd, onCancel, busy, t }) {
           <NumInput strict inputMode="numeric" min={1} value={q} disabled={busy}
             onFocus={(e) => e.target.select()}
             onChange={(e) => setQ(e.target.value.replace(/[^0-9]/g, ""))}
-            style={{ width: 96, padding: "10px", fontSize: 26, fontWeight: 800, textAlign: "center", borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }} />
+            style={{ width: 96, padding: "10px", fontSize: 26, fontWeight: 800, textAlign: "center", borderRadius: 10, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }} />
           <button type="button" onClick={() => setQ(String(nq + 1))} disabled={busy} style={stepBtn}>+</button>
         </div>
         <div style={{ textAlign: "center", fontSize: 11.5, color: "#7fa694", marginBottom: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
@@ -2935,7 +2935,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
             <NumInput strict inputMode="numeric" min={1} value={pqIn} disabled={busy}
               onFocus={(e) => e.target.select()}
               onChange={(e) => setParentQty && setParentQty(Math.max(1, Math.floor(Number(String(e.target.value).replace(/[^0-9]/g, "")) || 1)))}
-              style={{ width: 130, padding: "12px", fontSize: 40, fontWeight: 800, textAlign: "center", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }} />
+              style={{ width: 130, padding: "12px", fontSize: 40, fontWeight: 800, textAlign: "center", borderRadius: 12, border: "1px solid #2f5f49", background: "#0f1b15", color: "#eafff5", fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }} />
             <button type="button" aria-label="plus" onClick={() => setParentQty && setParentQty(pqIn + 1)} disabled={busy} style={stepBtn}>+</button>
           </div>
           <button type="button" className="asw-q-go" onClick={() => { setParentQty && setParentQty(pqIn); setQtyLocked && setQtyLocked(true); }} disabled={busy}
@@ -3032,7 +3032,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
             <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{t("ใส่ของเพิ่มในชิ้นเดิม · ยอดทำไม่เพิ่ม", "Adding to existing pieces · count unchanged")}{madeSum != null ? <span style={{ color: "#7fa694", fontWeight: 500 }}> · {t(`ทำไว้แล้ว ${nc(madeSum)} ชิ้น`, `${nc(madeSum)} made`)}</span> : null}</span>
           ) : (<>
           <span style={{ fontSize: 14, fontWeight: 700, color: "#cfe7dc", flex: 1, minWidth: 0 }}>{reMore ? t("รอบนี้ทำเพิ่ม", "Making now") : t("จำนวนที่จะทำ", "Qty to make")}{reMore && madeSum != null ? <span style={{ color: "#7fa694", fontWeight: 500 }}> · {t(`ทำไว้แล้ว ${nc(madeSum)} ชิ้น`, `${nc(madeSum)} made`)}</span> : null}</span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: "#8ff0c0", fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }}>{pq}</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#8ff0c0", fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }}>{pq}</span>
           <span style={{ fontSize: 13, color: "#9fd8bf" }}>{t("ชิ้น", "pcs")}</span>
           </>)}
           <button type="button" onClick={() => setQtyLocked && setQtyLocked(false)} disabled={busy}
@@ -3151,7 +3151,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
             ) : autoIn > 0 ? (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 12px", borderRadius: 12, background: "#123524", border: "1px solid #2f7d54", color: "#8ff0bd", fontWeight: 800, fontSize: 16 }}>
                 <span>✓ {t("ครบตามจำนวนแล้ว", "All complete")}</span>
-                <span style={{ fontFamily: "'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }}>· {t("ปิดงานอัตโนมัติใน", "auto-finishing in")} {autoIn}…</span>
+                <span style={{ fontFamily: "'Aptos Narrow', 'Leelawadee UI', 'IBM Plex Sans Thai', sans-serif" }}>· {t("ปิดงานอัตโนมัติใน", "auto-finishing in")} {autoIn}…</span>
               </div>
             ) : (
               <div style={{ textAlign: "center", padding: "14px 12px", borderRadius: 12, background: "#17231d", border: "1px dashed #2f5f49", color: "#9fd8bf", fontSize: 14, lineHeight: 1.6 }}>
