@@ -353,7 +353,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
 
   return (
     <div className="card rw-card rt">
-      <div className="rw-sec-head"><div><h2>Total</h2><p>BOM · Total Part · Total Sub-Assembly · ASSEMBLY (แผง) · Total Mat. — กดหัวเพื่อดูรายการ · ซับ 1 เบอร์อยู่ได้หลายใบ</p></div></div>
+      <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย</p></div></div>
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>
           <span className="rt-head-t">BOM</span>

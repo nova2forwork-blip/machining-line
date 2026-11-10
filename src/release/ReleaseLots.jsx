@@ -64,9 +64,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   // ★ 2026-11-10 ใบปะหน้า (plan.order) — เทียบกับของในใบ: แบบยังมาไม่ครบ → เตือน + ปุ่มเพิ่มรายการ
   const orderCmp = useMemo(() => (plan.order ? compareOrder(plan.order, need) : []), [plan.order, need]);
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
-  const modsRef = useRef(null);   // ★ 2026-11-10 ประวัติ Modify ย้ายขึ้นมาใต้ล็อต (เดิมอยู่ล่างสุด) · ป้าย "ตอนนี้ M-…" กดแล้วเลื่อนไปที่นี่
-  const [modsAll, setModsAll] = useState(false);
-  const [cmpOpen, setCmpOpen] = useState(() => new Set());   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
+  const [cmpOpen, setCmpOpen] = useState(() => new Set());
+  const [modsOpen, setModsOpen] = useState(false);   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
+  const [lotsAll, setLotsAll] = useState(false);   // ★ 2026-11-10 Modify ที่เปิดตารางเปรียบเทียบก่อน/หลัง
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
@@ -74,7 +74,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   // ★ 2026-10-26 ล็อตที่เปิด: เข้ามาครั้งแรก = ล็อตล่าสุดเปิดค้างไว้ · จำที่ผู้ใช้เปิด/ปิดไว้ต่อ Release (localStorage) · ปล่อยล็อตใหม่ = เปิดล็อตใหม่ให้
   const openKey = `mls-lot-open:${plan.id || plan.ro}`;
   const newestNo = rel.lots.length ? rel.lots[rel.lots.length - 1].no : null;
-  const [open, setOpenRaw] = useState(() => { try { const v = localStorage.getItem(openKey); if (v !== null) return v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo; } catch { /* ignore */ } return newestNo; });
+  // ★ 2026-11-10 แบบ B: ล็อตกางในหน้าเฉพาะตอนกด "เปิด" (ไม่มีหน้าล็อตแยก / ใบเบิกอุปกรณ์) — เปิดหน้าใหม่ = ไม่กางค้าง
+  const [open, setOpenRaw] = useState(() => (onOpenLot ? null : (() => { try { const v = localStorage.getItem(openKey); if (v !== null) return v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo; } catch { /* ignore */ } return null; })()));
   const [lotQ, setLotQ] = useState("");   // ★ ค้นหาในล็อตที่เปิด (เบอร์ / รายละเอียด / ที่อยู่ / INV)
   const setOpen = (v) => { setOpenRaw(v); setLotQ(""); try { localStorage.setItem(openKey, v || ""); } catch { /* ignore */ } };
   const nLotsRef = useRef(rel.lots.length);
@@ -159,17 +160,11 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       <div className="page-head rw-head">
         <div>
           <div className="rw-crumb"><button type="button" className="rw-link" onClick={onBack}>ปล่อยงาน (Release)</button> <span>/</span> {plan.ro}</div>
-          <div className="page-title rl-title">Release {plan.ro} <Pill tone="ok">ใช้งาน</Pill>{plan.mods?.length ? <button type="button" className="rl-pillbtn" onClick={() => modsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} title="ดูประวัติ Modify"><Pill tone="mod">ตอนนี้ {plan.mods[plan.mods.length - 1].ver} ›</Pill></button> : null}</div>
+          <div className="page-title rl-title">Release {plan.ro} <Pill tone="ok">ใช้งาน</Pill>{plan.mods?.length ? <button type="button" className="rl-pillbtn" onClick={() => { setCmpOpen(new Set([plan.mods[plan.mods.length - 1].ver])); setModsOpen(true); }} title="ดูประวัติ Modify / เปรียบเทียบ"><Pill tone="mod">ตอนนี้ {plan.mods[plan.mods.length - 1].ver} ›</Pill></button> : null}</div>
           <div className="page-sub">{plan.projectCode}{plan.note ? ` · ${plan.note}` : ""} · {fmtD(plan.date)} · จัดทำโดย {plan.by} · PDF {plan.pdfs?.length || 0} ไฟล์</div>
         </div>
         <div className="rw-head-right">
           <button type="button" className="btn btn-ghost" onClick={onBack}><Icon name="arrowLeft" size={14} /> กลับ</button>
-          {api?.loadBomLibrary && onPlanChange ? <button type="button" className="btn btn-ghost" onClick={syncFromLib} disabled={!!libSync?.busy} title="ดึงข้อมูลล่าสุดจาก “ซับ / พาร์ท ของโปรเจค” มาเติม: รายการครบจาก PDF ของซับ (สกรู/ยาง/กระจก) และรายละเอียด/หน่วยที่ขาด — ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว"><Icon name="refresh" size={14} /> {libSync?.busy ? "กำลังอ่านคลัง…" : "อัปเดต BOM จากคลัง"}</button> : null}
-          {onDelete ? (rel.lots.length
-            ? <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete(rel.lots)} title="ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ แสดงเป็น Release แบบไม่มีใบหลัก (เช่น สร้างใบหลักซ้ำ)">ลบใบหลัก</button>
-            : <button type="button" className="btn btn-ghost" style={{ color: "var(--danger, #b91c1c)" }} onClick={() => onDelete([])} title="ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบทิ้งแล้วใช้เลขนี้ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)">ลบใบนี้</button>) : null}
-          <button type="button" className="btn btn-ghost" onClick={() => setModify("add")} title="เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ (เช่น จากแบบ mock-up) — ไม่นับเป็น Modify ไม่มีเลข M · ของเดิมไม่เปลี่ยน"><Icon name="plus" size={14} /> เพิ่มรายการ</button>
-          <button type="button" className="btn btn-ghost rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ — จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง">✎ Modify</button>
           <button type="button" className="btn btn-accent" onClick={() => { setPreset(null); setBuilder(true); }}><Icon name="plus" size={15} /> ปล่อยล็อตใหม่</button>
         </div>
       </div>
@@ -182,19 +177,14 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       {pulled.length ? <div className="rw-msg ok">✓ ดึง BOM จาก Release อื่นให้อัตโนมัติ {pulled.length} เบอร์: {pulled.slice(0, 6).map((f) => `${f.code} (จาก ${f.from})`).join(", ")}{pulled.length > 6 ? " …" : ""}</div> : null}
       {gaps.panels.length || gaps.subs.length ? <div className="rw-msg warn">⚠ ยังไม่มี BOM: {[gaps.panels.length && `แผง ${gaps.panels.length} แบบ`, gaps.subs.length && `ซับ ${gaps.subs.length} เบอร์`].filter(Boolean).join(" · ")} — ปล่อยได้ก่อน พอ Release อื่นมี BOM ของเบอร์เหล่านี้ ระบบดึงมาให้เอง{plans.length > 1 ? <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => { if (!pullNow()) setPulled([]); }}>ดึงตอนนี้</button></> : null}</div> : null}
 
-      <div className="rl-kpis">
-        {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([l, , b]) => l !== "แผง" || b > 0).map(([l, a, b, s]) => (   // ใบที่ไม่มีแผง (โหมดเฉพาะซับ/พาร์ท) = ไม่โชว์ช่องแผง
 
-          <div key={l} className="rl-kpi"><div className="rl-kpi-top"><span>{l}</span><b>{nf(a)}<small> / {nf(b)}</small></b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div><small>{s} · {pct(a, b)}%</small></div>
-        ))}
-        <div className="rl-kpi rl-kpi-link" role="button" tabIndex={0} title="ไปที่ล็อตที่ปล่อยแล้ว" onClick={() => lotsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} onKeyDown={(e) => { if (e.key === "Enter") lotsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><div className="rl-kpi-top"><span>ล็อต</span><b>{rel.lots.length}</b></div><small>{lastLot ? `ล่าสุด ${lastLot.no} · ${fmtD(lastLot.date)}` : "ยังไม่ได้ปล่อย"}</small></div>
-      </div>
-
-      <div className="card rw-card" ref={lotsRef}>
-        <div className="rw-sec-head"><div><h2>ล็อตที่ปล่อยแล้ว</h2><p>ล่าสุดอยู่บน · แต่ละล็อตมี QR ของตัวเอง · ใบสั่งผลิตใช้เลขล็อต</p></div></div>
+      <div className="rl-split">
+        <div className="rl-main">
+      {open && rel.lots.some((L) => L.no === open) ? <div className="card rw-card" ref={lotsRef}>
+        <div className="rw-sec-head"><div><h2>ล็อต {open}</h2><p>ใบปล่อย / QR / วัสดุของล็อตนี้</p></div><button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(null)}>✕ ปิด</button></div>
         {rel.lots.length ? (
           <div className="rl-lots">
-            {[...rel.lots].reverse().map((L) => { const bySheet = new Map(); L.rows.forEach((r) => rowSheets(r).forEach((k) => (bySheet.get(k) || bySheet.set(k, []).get(k)).push(r)));
+            {rel.lots.filter((L) => L.no === open).map((L) => { const bySheet = new Map(); L.rows.forEach((r) => rowSheets(r).forEach((k) => (bySheet.get(k) || bySheet.set(k, []).get(k)).push(r)));
               const mm = lotModMap(plan, L.no);
               const lotVers = [...new Set([...[...mm.values()].map((x) => x.ver), ...L.rows.map((r) => r.mod_version).filter(Boolean)])].sort();
               return (
@@ -273,13 +263,61 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         ) : (
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
-      </div>
+      </div> : null}
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
+        </div>
+      <aside className="rl-side">
+        <div className="rl-sbox">
+          <div className="rl-sbox-h"><b>สถานะใบนี้</b></div>
+          {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([, , b]) => b > 0).map(([l, a, b, s2]) => (
+            <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
+          {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
+            return !tot ? <div className="rw-muted small">ยังไม่มีของในใบ</div> : left > 0 ? <div className="rl-snote warn">ยังไม่ปล่อย {[nUnits - addrDone > 0 && `แผง ${nf(nUnits - addrDone)} ที่`, liveSubs.length - subDone > 0 && `ซับ ${nf(liveSubs.length - subDone)} เบอร์`, liveParts.length - partDone > 0 && `พาร์ท ${nf(liveParts.length - partDone)} เบอร์`].filter(Boolean).join(" · ")} <button type="button" className="rw-link" onClick={() => { setPreset(null); setBuilder(true); }}>ปล่อยต่อ →</button></div> : <div className="rl-snote ok">ปล่อยครบแล้ว — ไม่มีอะไรค้าง</div>; })()}
+        </div>
 
-      {plan.mods?.length ? (
-        <div className="card rw-card" ref={modsRef}>
-          <div className="rw-sec-head"><div><h2>ประวัติ Modify</h2><p>จำนวนเดิมขีดฆ่า → จำนวนใหม่ · เบอร์/ที่อยู่ที่ยกเลิกเป็น<b className="rl-cx">สีแดง</b> · ของที่ปล่อยแล้วแก้ในล็อตด้วย (QR ที่ยกเลิกเก็บเป็นหลักฐาน)</p></div></div>
+        <div className="rl-sbox" ref={lotsRef}>
+          <div className="rl-sbox-h"><b>ล็อตที่ปล่อย</b><span className="rw-muted small">{rel.lots.length} ล็อต</span></div>
+          {rel.lots.length ? [...rel.lots].reverse().slice(0, lotsAll ? undefined : 5).map((L) => { const pg = lotProg(L); return (
+            <div key={L.no} className={`rl-slot ${open === L.no ? "on" : ""}`}>
+              <div className="rl-slot-top"><b className="rw-mono">{L.no}</b><span className="rw-muted small">{fmtD(L.date)}</span></div>
+              <div className="rw-muted small">{[L.panels && `แผง ${nf(L.panels)}`, L.subs && `ซับ ${nf(L.subs)} เบอร์`, L.parts && `พาร์ท ${nf(L.parts)} เบอร์`, L.hw && L.hw.length && `อุปกรณ์ ${nf(L.hw.length)}`].filter(Boolean).join(" · ")}{pg && pg.t ? ` · ทำแล้ว ${pg.pct}%` : ""}</div>
+              <div className="rl-slot-btns">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => (onOpenLot && !L.hwOnly ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))}>เปิด</button>
+                {!L.hwOnly ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}>พิมพ์ใบ</button> : null}
+                {onPrintQr && !L.hwOnly ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onPrintQr(L.rows.filter((r) => !r.mod_cancelled_at && r.id).map((r) => r.id))}>QR</button> : null}
+                {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => r.kind !== "panel" && !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFixLot(L.no)} title="ปล่อยผิดใบ: ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่">⇄ ย้ายใบ / ยกเลิก</button> : null}
+              </div>
+            </div>); }) : <div className="rw-muted small">ยังไม่ได้ปล่อย — กด "ปล่อยล็อตใหม่"</div>}
+          {rel.lots.length > 5 ? <button type="button" className="rw-link small" onClick={() => setLotsAll((v) => !v)}>{lotsAll ? "ย่อ" : `ดูทั้งหมด ${rel.lots.length} ล็อต`}</button> : null}
+        </div>
+
+        <div className="rl-sbox">
+          <div className="rl-sbox-h"><b>Modify</b><button type="button" className="btn btn-ghost btn-sm rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ / เปลี่ยนวัสดุ — มีเลข M">✎ Modify ใหม่</button></div>
+          {plan.mods?.length ? (() => { const m = plan.mods[plan.mods.length - 1]; return (
+            <div className="rl-smod">
+              <div><b className="rl-smod-v">{m.ver}</b> <span className="rw-muted small">· {fmtD(m.date)} · {m.by}</span></div>
+              {m.reason ? <div className="rw-muted small">{m.reason}</div> : null}
+              <ul className="rl-smod-list">{m.items.filter((it) => !it.derived).slice(0, 4).map((it, i) => <li key={i}><span className="rw-mono">{it.code}</span> {it.type === "add" ? `+${nf(it.after)}` : it.type === "cancel" ? "ยกเลิก" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? `วัสดุ → ${it.after}` : `${nf(it.before)} → ${nf(it.after)}`}</li>)}{m.items.filter((it) => !it.derived).length > 4 ? <li className="rw-muted">… อีก {m.items.filter((it) => !it.derived).length - 4} รายการ</li> : null}</ul>
+              <button type="button" className="rw-link small" onClick={() => { setCmpOpen(new Set([m.ver])); setModsOpen(true); }}>⇆ เปรียบเทียบก่อน / หลัง{plan.mods.length > 1 ? ` · ประวัติทั้งหมด ${plan.mods.length} ครั้ง` : ""}</button>
+            </div>); })() : <div className="rw-muted small">ยังไม่เคย Modify</div>}
+          <button type="button" className="rl-sadd" onClick={() => setModify("add")} title="เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ — ไม่นับเป็น Modify">+ เพิ่มรายการ (ไม่นับ Modify)</button>
+        </div>
+
+        <div className="rl-sother">
+          อื่นๆ:{" "}
+          {api?.loadBomLibrary && onPlanChange ? <button type="button" className="rw-link" onClick={syncFromLib} disabled={!!libSync?.busy} title="ดึงข้อมูลล่าสุดจาก “ซับ / พาร์ท ของโปรเจค” มาเติม — ไม่เปลี่ยนจำนวนที่ปล่อยแล้ว">{libSync?.busy ? "กำลังอ่านคลัง…" : "อัปเดต BOM จากคลัง"}</button> : null}
+          {onDelete ? <> · <button type="button" className="rw-link rl-danger" onClick={() => onDelete(rel.lots.length ? rel.lots : [])} title={rel.lots.length ? "ลบเฉพาะใบหลัก — ล็อตที่ปล่อยแล้ว (QR) ไม่ถูกลบ" : "ใบนี้ยังไม่มีล็อต — ลบแล้วใช้เลขนี้ลงใหม่ได้"}>{rel.lots.length ? "ลบใบหลัก" : "ลบใบนี้"}</button></> : null}
+        </div>
+      </aside>
+      </div>
+      {modsOpen && plan.mods?.length ? (<>
+        <div className="rl-back" onClick={() => setModsOpen(false)} />
+        <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
+        <div className="rl-dr-head"><div className="rl-dr-title"><h2>ประวัติ Modify · {plan.ro}</h2></div><button type="button" className="rl-x" onClick={() => setModsOpen(false)} aria-label="ปิด">×</button></div>
+        <div className="rl-modsdr-body">
+          <div className="rw-sec-head"><div><p>จำนวนเดิมขีดฆ่า → จำนวนใหม่ · เบอร์/ที่อยู่ที่ยกเลิกเป็น<b className="rl-cx">สีแดง</b> · ของที่ปล่อยแล้วแก้ในล็อตด้วย (QR ที่ยกเลิกเก็บเป็นหลักฐาน)</p></div></div>
           <div className="rl-mods">
-            {[...plan.mods].reverse().slice(0, modsAll ? undefined : 1).map((m) => (
+            {[...plan.mods].reverse().map((m) => (
               <div key={m.ver} className="rl-mod">
                 <div className="rl-mod-h"><Pill tone="mod">{m.ver}</Pill> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}
                   <button type="button" className={`btn btn-ghost btn-sm rl-mod-cmpbtn ${cmpOpen.has(m.ver) ? "on" : ""}`} onClick={() => setCmpOpen((o) => { const n = new Set(o); if (n.has(m.ver)) n.delete(m.ver); else n.add(m.ver); return n; })} aria-expanded={cmpOpen.has(m.ver)}>⇆ เปรียบเทียบ ก่อน / หลัง</button></div>
@@ -306,11 +344,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                 </ul>
               </div>))}
           </div>
-          {plan.mods.length > 1 ? <button type="button" className="rw-link" style={{ marginTop: 8 }} onClick={() => setModsAll((v) => !v)}>{modsAll ? "ย่อ — ดูแค่ครั้งล่าสุด" : `ดูทั้งหมด ${plan.mods.length} ครั้ง (${plan.mods.map((m) => m.ver).join(", ")})`}</button> : null}
         </div>
-      ) : null}
-
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
+        </aside>
+      </>) : null}
 
 
 
