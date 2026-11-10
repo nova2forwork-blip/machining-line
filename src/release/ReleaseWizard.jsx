@@ -12,6 +12,7 @@ import {
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
+import { readOrderFile, compareOrder } from "./orderSheet.js";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
@@ -65,6 +66,9 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ── โหมดของใบนี้: "panel" = ลงที่อยู่แผง + อัพ PDF แผง (เดิม) · "items" = ปล่อยเฉพาะซับ/พาร์ท เลือกจากคลังของโปรเจค (ไม่มีแผง) ──
   const [mode, setMode] = useState("panel");
   const [picks, setPicks] = useState([]);                // โหมด items: [{ code, kind:"sub"|"part", qty }]
+  // ★ 2026-11-10 ใบปะหน้า Release (FM(DE)-03 · PDF/Excel) — รายการเบอร์ + จำนวนที่ "ต้องมี" ในใบนี้ · วางก่อนแล้วค่อยวางแบบ ระบบเทียบให้
+  const [order, setOrder] = useState(null);              // { file, ro, projectCode, zone, note, items:[{code,d,qty,unit,remark}] } | null
+  const [orderHw, setOrderHw] = useState([]);            // เบอร์ในใบปะหน้าที่ถือเป็นอุปกรณ์ (ไม่มี QR · ไปใบเบิก) — เก็บเป็น plan.extra kind "hw"
   const itemsMode = mode === "items";
   const [unitsRaw, setUnits] = useState([]);
   const [pdfsRaw, setPdfs] = useState([]);
@@ -82,7 +86,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const [afterSave, setAfterSave] = useState("lots");    // "lots" = บันทึกแล้วเลือกปล่อยเป็นล็อต · "all" = ปล่อยทั้งหมดเป็นเลข Release หลัก
   const [draftAt, setDraftAt] = useState(null);
   // ร่างที่คุ้มจะเสนอ "ทำต่อ": มีแผง / PDF / รายการที่เลือก หรืออย่างน้อยใส่เลขและเลือกโปรเจคแล้ว (แค่พิมพ์เลข P อย่างเดียว = ไม่เสนอ · กดทำต่อแล้วเหมือนไม่มีอะไรเกิดขึ้น)
-  const draftWorth = (d) => !!d && !!(d.units?.length || d.pdfs?.length || d.picks?.length || (d.hdr?.ro && d.hdr?.projectId));
+  const draftWorth = (d) => !!d && !!(d.units?.length || d.pdfs?.length || d.picks?.length || d.order || (d.hdr?.ro && d.hdr?.projectId));
   const [draftOffer, setDraftOffer] = useState(() => { const d = loadDraft(); return draftWorth(d) ? d : null; });
   const [draftSrv, setDraftSrv] = useState({ id: null, at: 0 });   // ★ 2026-11-10 ร่างบนเซิร์ฟเวอร์ (ทำต่อจากเครื่องอื่นได้) · id = แถว release_plans
   // เปิดหน้ามา → ดูร่างบนเซิร์ฟเวอร์ของผู้ใช้คนนี้ ถ้าใหม่กว่าร่างในเครื่อง (หรือเครื่องนี้ไม่มี) → เสนออันนั้น
@@ -125,9 +129,14 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const ui = useMemo(() => unitIssues(itemsMode ? NONE : unitsRaw, ctx.usedAddr), [itemsMode, unitsRaw, ctx.usedAddr]);   // ตามแถวดิบ (ดัชนีตรงตาราง)
   const cv = useMemo(() => coverage(units, bom, pdfs, catOf), [units, bom, pdfs, catOf]);
   const roNorm0 = normalizeRO(hdr.ro);
-  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : {}) }),
-    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg, itemsMode, picks]);
+  const orderExtra = useMemo(() => (order ? orderHw.map((c) => { const it = order.items.find((x) => NC(x.code) === NC(c)); return it ? { kind: "hw", code: it.code, qty: Number(it.qty) || 0, d: it.d || "", u: it.unit && /^m/.test(it.unit) ? "m." : "pcs.", src: order.ro || order.file, by: userName } : null; }).filter(Boolean) : []), [order, orderHw, userName]);
+  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : {}),
+    ...(order ? { order: { file: order.file, ro: order.ro, roRaw: order.roRaw, projectCode: order.projectCode, zone: order.zone, note: order.note, attention: order.attention, issuedBy: order.issuedBy, date: order.date, items: order.items } } : {}), ...(orderExtra.length ? { extra: orderExtra } : {}) }),
+    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg, itemsMode, picks, order, orderExtra]);
+
   const plan = useMemo(() => { const p = needOf(draftPlan); p.subs.forEach((s) => { s.proc = s.procs.join(", "); }); return p; }, [draftPlan]);   // ยอดทั้งใบ + ใบงานต่อเบอร์
+  // เทียบใบปะหน้ากับของที่จะอยู่ในใบ (แผง / ซับ / พาร์ท / อุปกรณ์)
+  const orderCmp = useMemo(() => (order ? compareOrder(order, plan) : []), [order, plan]);
   // โหมด items: ซับ/พาร์ทมาจากคลัง — BOM ของซับมีในระบบอยู่แล้ว ไม่ตั้งทับ
   const bomSave = useMemo(() => (itemsMode ? { list: [], frac: [] } : bomForSave(bom, plan, catOf)), [bom, plan, catOf, itemsMode]);
   const openN = checks.reduce((a, r) => a + r.open, 0);
@@ -165,22 +174,22 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ── ร่างอัตโนมัติ ──
   useEffect(() => {
     if (draftOffer || saving.done) return;
-    if (!hdr.ro && !unitsRaw.length && !pdfsRaw.length && !picks.length) return;
+    if (!hdr.ro && !unitsRaw.length && !pdfsRaw.length && !picks.length && !order) return;
     const t = setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, by: userName })); setDraftAt(new Date()); } catch { /* เต็ม/ปิดไว้ = ข้าม */ }
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, order, orderHw, by: userName })); setDraftAt(new Date()); } catch { /* เต็ม/ปิดไว้ = ข้าม */ }
     }, 600);
     // ★ 2026-11-10 ร่างบนเซิร์ฟเวอร์ (หน่วง 3 วิ · ต้องเลือกโปรเจคแล้ว) — ไม่สำเร็จ = เงียบ ยังมีร่างในเครื่อง
     const t2 = setTimeout(() => {
       if (!api?.saveDraft || !user?.id || !hdr.projectId) return;
-      const draft = { v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw.map(({ _file, ...d }) => d), ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, by: userName };
+      const draft = { v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw.map(({ _file, ...d }) => d), ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, order, orderHw, by: userName };
       api.saveDraft({ projectId: hdr.projectId, userId: user.id, draft, id: draftSrv.id }).then((id) => { if (id) setDraftSrv({ id, at: draft.at }); }).catch(() => {});
     }, 3000);
     return () => { clearTimeout(t); clearTimeout(t2); };
-  }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, draftOffer, saving.done, userName]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, order, orderHw, draftOffer, saving.done, userName]);   // eslint-disable-line react-hooks/exhaustive-deps
   function resumeDraft() {
     const d = draftOffer; if (!d) return;
     setHdr({ ...hdr, ...d.hdr }); setUnits(d.units || []); setPdfs(d.pdfs || []); setAck(d.ack || {}); setAckMeta(d.ackMeta || {});
-    setMode(d.mode === "items" ? "items" : "panel"); setPicks(d.picks || []);
+    setMode(d.mode === "items" ? "items" : "panel"); setPicks(d.picks || []); setOrder(d.order || null); setOrderHw(d.orderHw || []);
     setUseLib(true); setCatOv(d.catOv || {}); setProcOv(d.procOv || {}); setDestOv(d.destOv || {}); setAfterSave(d.afterSave || "lots");
     setStep(Math.min(3, d.step === 2 && d.mode === "items" ? 1 : d.step || 0)); setDraftOffer(null);
     if (d.serverId) setDraftSrv({ id: d.serverId, at: d.at || 0 });
@@ -236,6 +245,34 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   }, []);
   function dropDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } dropSrvDraft(draftOffer?.serverId || null); setDraftOffer(null); }
 
+  // ── ใบปะหน้า: อ่านไฟล์ → เติมหัวใบ (เลข / โปรเจค / หมายเหตุ) ที่ยังว่าง ──
+  const [orderMsg, setOrderMsg] = useState(null);
+  async function onOrderFile(list) {
+    const f = [...list].find((x) => /\.(pdf|xlsx?|xlsm)$/i.test(x.name)); if (!f) { setOrderMsg({ bad: "วางไฟล์ใบปะหน้าเป็น PDF หรือ Excel (.xls/.xlsx)" }); return; }
+    setOrderMsg({ info: `กำลังอ่าน ${f.name}…` });
+    try {
+      const o = await readOrderFile(f);
+      if (!o.items.length) { setOrderMsg({ bad: `อ่าน ${f.name} ไม่ได้รายการ — ${o.warn.join(" · ") || "ไม่พบตาราง Item / Part No. / Qty (ใช่ฟอร์ม Release for Production / Order ไหม)"}` }); return; }
+      setOrder(o); setOrderHw([]);
+      const patch = {};
+      if (o.ro && !hdr.ro.trim()) patch.ro = o.ro;
+      if (!hdr.projectId && o.projectCode) {
+        const pc = NC(o.projectCode); const full = NC(o.projectFull || "");
+        const hit = projects.filter((p) => { const c = NC(p.code); return c === full || c === pc || c.startsWith(pc + "-") || c.startsWith(pc); });
+        if (hit.length === 1) patch.projectId = hit[0].id;
+      }
+      if (o.zone && !hdr.note.trim()) patch.note = o.zone;
+      if (Object.keys(patch).length) setHdr((h) => ({ ...h, ...patch }));
+      const notes = [`${o.file}: ${o.roRaw || o.ro || "ไม่มีเลข Release"} · ${o.items.length} รายการ`];
+      if (o.ro && hdr.ro.trim() && roKey(hdr.ro) !== roKey(o.ro)) notes.push(`เลขในใบปะหน้าเป็น ${o.ro} แต่ช่อง Release เป็น ${normalizeRO(hdr.ro)} — ตรวจด้วย`);
+      if (o.projectCode && !patch.projectId && !hdr.projectId) notes.push(`หาโปรเจค ${o.projectFull || o.projectCode} ในระบบไม่เจอ — เลือกเอง`);
+      if (o.warn.length) notes.push(o.warn.join(" · "));
+      setOrderMsg({ ok: notes });
+    } catch (e) { setOrderMsg({ bad: "อ่านใบปะหน้าไม่ได้: " + (e?.message || e) }); }
+  }
+  const [orderDrag, setOrderDrag] = useState(false);
+  const orderRef = useRef(null);
+
   // ── สถานะแต่ละขั้น (โชว์ในแถบขั้น) ──
   const saveChecks = useMemo(() => {
     const noBom = cnt.filter((r) => !r.has);
@@ -251,6 +288,13 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       { k: "proc", label: "งานของซับ", v: noProc.length ? `${noProc.length} เบอร์ยังไม่ได้เลือกงาน (พับ / เชื่อม / ยิง / Site Item): ${noProc.slice(0, 5).map((s) => s.code).join(", ")} — เลือกได้ในแท็บ "ใบงาน + Category"` : `ครบ ${plan.subs.length} เบอร์ (1 ซับไปได้หลายใบ)`, s: noProc.length ? "warn" : "ok", go: 3, tab: "items" },
       { k: "after", label: "หลังบันทึก", v: afterSave === "all" ? `ปล่อยทั้งหมดเป็น ${roNorm} ทันที (แผง ${nf(units.length)} · ซับ ${nf(plan.subs.length)} เบอร์ · พาร์ท ${nf(plan.parts.length)} เบอร์)` : `เปิดหน้า Release ${roNorm || ""} ให้ office เลือกปล่อยเป็นล็อต ${roNorm ? roNorm + ".1" : ""} …`, s: "ok", go: 3 },
     ];
+    if (order) {
+      const miss = orderCmp.filter((x) => x.status === "missing"), diff = orderCmp.filter((x) => x.status === "more" || x.status === "less");
+      const v = miss.length || diff.length
+        ? [miss.length && `ยังไม่อยู่ในใบ ${miss.length} รายการ: ${miss.slice(0, 5).map((x) => `${x.code} ×${nlen(x.qty)}`).join(", ")}${miss.length > 5 ? " …" : ""}`, diff.length && `จำนวนไม่ตรง ${diff.length}: ${diff.slice(0, 4).map((x) => `${x.code} ใบปะหน้า ${nlen(x.qty)} / ใบนี้ ${nlen(x.have)}`).join(", ")}${diff.length > 4 ? " …" : ""}`].filter(Boolean).join(" · ")
+        : `ครบตามใบปะหน้า ${order.roRaw || order.ro || order.file} — ${order.items.length} รายการ`;
+      all.splice(1, 0, { k: "order", label: "ตามใบปะหน้า", v, s: miss.length || diff.length ? "warn" : "ok", go: itemsMode ? 1 : 2 });
+    }
     if (!itemsMode) return all;
     // โหมด items: ไม่มีที่อยู่ / แผง / PDF — เหลือ หัวใบ + เลือกซับ·พาร์ท + งานของซับ + หลังบันทึก
     const by = (k) => all.find((x) => x.k === k);
@@ -259,12 +303,12 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const bare = picks.filter((x) => { const k = x.kind === "sub" ? findKey(bom.subs, x.code) : null; return k && !(bom.subs[k].items || []).length; });
     const after = { ...by("after"), v: afterSave === "all" ? `ปล่อยทั้งหมดเป็น ${roNorm} ทันที (ซับ ${nf(plan.subs.length)} เบอร์ · พาร์ท ${nf(plan.parts.length)} เบอร์)` : by("after").v };
     return [
-      by("hdr"),
+      by("hdr"), ...(by("order") ? [by("order")] : []),
       { k: "picks", label: "เลือกซับ / พาร์ท", v: !picks.length ? "ยังไม่ได้เลือกเบอร์" : lost.length ? `ไม่พบในคลังของโปรเจค ${lost.length} เบอร์: ${lost.slice(0, 5).map((x) => x.code).join(", ")}` : `เลือกซับ ${nf(nS)} · พาร์ท ${nf(nP)} เบอร์ → รวมลูกที่แตกให้แล้ว ซับ ${nf(plan.subs.length)} · พาร์ท ${nf(plan.parts.length)} เบอร์`, s: !picks.length || lost.length ? "block" : "ok", go: 1 },
       ...(bare.length ? [{ k: "bare", label: "ซับที่ยังไม่มีเบอร์ลูก", v: `${bare.length} เบอร์: ${bare.slice(0, 5).map((x) => x.code).join(", ")} — ปล่อยได้แต่ไม่แตกลูก · ลงแบบซับที่หน้า "ซับ / พาร์ท ของโปรเจค" ก่อนจะได้เบอร์ลูก`, s: "warn", go: 1 }] : []),
       by("proc"), after,
     ];
-  }, [cnt, cv, plan, hdrErr, roNorm, hdr, project, userName, units, ui, openN, bomSave, afterSave, itemsMode, picks, bom]);
+  }, [cnt, cv, plan, hdrErr, roNorm, hdr, project, userName, units, ui, openN, bomSave, afterSave, itemsMode, picks, bom, order, orderCmp]);
   const stepInfo = (k) => {
     if (k === 0) return hdrErr ? ["warn", hdrErr] : ["", `${roNorm} · ${fmtYmd(hdr.date)}`];
     if (k === 1 && itemsMode) return !picks.length ? ["warn", "ยังไม่ได้เลือก"] : ["", `ซับ ${nf(picks.filter((x) => x.kind === "sub").length)} · พาร์ท ${nf(picks.filter((x) => x.kind !== "sub").length)} เบอร์`];
@@ -371,6 +415,28 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       {step === 0 && (
         <div className="card rw-card">
           <SecHead title="ข้อมูล Release" sub={`หัวใบนี้ใช้กับทุกชีตและใบสั่งผลิต · ผู้จัดทำ = คนที่ล็อกอิน (${userName})`} />
+          {/* ★ 2026-11-10 ใบปะหน้า Release (FM(DE)-03) — วางก่อน: ได้เลข / โปรเจค / รายการเบอร์ + จำนวนที่ต้องมี → ขั้นถัดไปเทียบกับแบบที่วาง */}
+          {!order ? (
+            <div className={`rw-drop rw-drop-sm ${orderDrag ? "drag" : ""}`} role="button" tabIndex={0} style={{ marginBottom: 12 }}
+              onClick={() => orderRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); orderRef.current?.click(); } }}
+              onDragOver={(e) => { e.preventDefault(); setOrderDrag(true); }} onDragLeave={() => setOrderDrag(false)}
+              onDrop={(e) => { e.preventDefault(); setOrderDrag(false); onOrderFile(e.dataTransfer.files); }}>
+              <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
+              <div><b>วางใบปะหน้า Release (Release for Production / Order · FM(DE)-03) — PDF หรือ Excel <span className="rw-opt">ถ้ามี</span></b><span>ระบบอ่านเลข Release · โปรเจค · Location/Zone · รายการ Part No. + จำนวน → เติมหัวใบให้ และใช้เทียบกับแบบที่วางในขั้นถัดไป ว่าครบ/ขาดเบอร์ไหน จำนวนตรงไหม</span></div>
+              <input ref={orderRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden data-testid="order-input" onChange={(e) => { onOrderFile(e.target.files); e.target.value = ""; }} />
+            </div>
+          ) : (
+            <div className="rw-order">
+              <div className="rw-order-h">
+                <b>ใบปะหน้า {order.roRaw || order.ro || order.file}</b>
+                <span className="rw-muted">{[order.projectName, order.zone && `Zone: ${order.zone}`, order.issuedBy && `โดย ${order.issuedBy}`, order.date && fmtYmd(order.date)].filter(Boolean).join(" · ")} · {order.items.length} รายการ</span>
+                <button type="button" className="rw-link" onClick={() => { setOrder(null); setOrderHw([]); setOrderMsg(null); }}>เอาออก</button>
+              </div>
+              <div className="rw-order-items">{order.items.map((it) => <span key={it.code} className="rw-pick-chip part" title={it.d}>{it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
+              {order.note ? <div className="rw-muted small">NOTE: {order.note}</div> : null}
+            </div>
+          )}
+          {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
           <div className="rw-mode" role="radiogroup" aria-label="โหมดการปล่อยงาน">
             <button type="button" role="radio" aria-checked={!itemsMode} className={`rw-mode-opt ${!itemsMode ? "on" : ""}`} onClick={() => setMode("panel")}>
               <b>🏢 ปล่อยแผง (มีที่อยู่)</b><small>ลง Address &amp; Unit + อัพ PDF แบบแผง → ระบบแตกเป็นซับ / พาร์ท ให้เอง</small>
@@ -412,11 +478,11 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       )}
 
       {step === 1 && !itemsMode && <UnitsStep units={unitsRaw} total={units.length} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
-      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} />}
+      {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} />}
 
       {step === 2 && !itemsMode && (
         <PdfStep onReloadLib={() => setLibTick((t) => t + 1)} pdfs={pdfs} setPdfs={setPdfs} checks={checks} cv={cv} units={units} useLib={useLib} setUseLib={setUseLib}
-          libState={libState} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} openN={openN} demoTools={demoTools} />
+          libState={libState} lib={lib} ack={ack} ackMeta={ackMeta} decide={decide} openN={openN} demoTools={demoTools} order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} />
       )}
 
       {step === 3 && (
@@ -587,7 +653,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
 }
 
 // ══ ③ อัพ PDF ══
-function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState, lib, ack, ackMeta, decide, openN, demoTools }) {
+function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUseLib, libState, lib, ack, ackMeta, decide, openN, demoTools, order = null, orderCmp = [], orderHw = [], setOrderHw = () => {} }) {
   const [sel, setSel] = useState(null);
   const [focus, setFocus] = useState("");     // เบอร์ที่ขาด ที่กดจากเช็กลิสต์ → เปิดแผงที่ใช้ + กางซับ + ไฮไลต์แถว
   const [focusMsg, setFocusMsg] = useState("");
@@ -615,8 +681,8 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
     } catch (e) { setReading({ err: "โหลดตัวอ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
     setReading(null);
   }
-  const order = { panel: 0, sub: 1, part: 2, unknown: 3 };
-  const list = checks.filter((r) => filt === "all" || (filt === "bad" ? r.open : !r.open)).sort((a, b) => order[a.d.kind] - order[b.d.kind] || ncmp(a.d.code, b.d.code));
+  const kindOrd = { panel: 0, sub: 1, part: 2, unknown: 3 };
+  const list = checks.filter((r) => filt === "all" || (filt === "bad" ? r.open : !r.open)).sort((a, b) => kindOrd[a.d.kind] - kindOrd[b.d.kind] || ncmp(a.d.code, b.d.code));
   const R = checks.find((r) => r.d.file === sel) || checks.find((r) => r.open) || checks[0] || null;
   const nPanel = pdfs.filter((d) => d.kind === "panel").length, nSub = pdfs.filter((d) => d.kind === "sub").length, nPart = pdfs.filter((d) => d.kind === "part").length;
   const covRow = (lab, arr, what) => {
@@ -639,6 +705,7 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
       <div className="card rw-card">
         <SecHead title="อัพ PDF แบบแผง" sub="Release ลงแค่แบบแผง (UA…) — ซับ/พาร์ทที่แผงใช้ ระบบดึงจาก “ซับ / พาร์ท ของโปรเจค” ให้เอง · เบอร์ที่ปล่อยไว้แล้วใน Release อื่นจะถูกใช้เป็นลูก ไม่ปล่อยซ้ำ"
           right={<Help><ul><li><b>เทียบกับ BOM เดิมในระบบ:</b> จำนวน · ยาว · สูง · Finish · INV · Develop · มีใน PDF ไม่มีในระบบ · มีในระบบไม่มีใน PDF</li><li><b>เทียบ PDF กันเอง:</b> เบอร์เดียวกันคนละค่า (ใช้ค่าจากแบบของเบอร์นั้นเอง)</li><li><b>ในแบบเอง:</b> ไม่มีจำนวน · อ่านเบอร์ไม่ได้ · เบอร์ซ้ำ · ยาง HS ยาวกว่าซับ · M.D. &lt; LENGTH · STOCK ≠ INV · ชื่อไฟล์ ≠ เบอร์</li><li>ยาง/เทปต่าง ≤ 1.5 มม. = ปัดเศษ (ไม่นับเป็นผิด)</li><li>จุดที่ต่าง: เลือก "ใช้ตาม PDF" (ค่าเริ่ม) หรือ "ใช้ค่าเดิม" — ระบบจำว่าใครตัดสิน เมื่อไร</li></ul></Help>} />
+        <OrderChecklist order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} hint="เทียบกับแผง / ซับ / พาร์ท / อุปกรณ์ ที่แตกจาก Address & Unit + แบบที่วาง" />
         <div className={`rw-drop ${drag ? "drag" : ""}`} role="button" tabIndex={0}
           onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
           onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
@@ -782,8 +849,39 @@ function SumCard({ tone, title, big, children, wide }) {
   );
 }
 // ══ ④ ตรวจ + บันทึก ══
+// ★ 2026-11-10 เช็กลิสต์ "ตามใบปะหน้า" — ต่อรายการ: อยู่ในใบแล้วเท่าไหร่ / ยังขาด / ถือเป็นอุปกรณ์ (ไม่มี QR)
+//   onApply = โหมด items: เลือกเบอร์ตามใบปะหน้าให้ (เฉพาะที่มีในคลัง) · orderHw/setOrderHw = เบอร์ที่ติ๊กว่าเป็นอุปกรณ์ → ไปใบเบิก
+function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint }) {
+  if (!order) return null;
+  const miss = orderCmp.filter((x) => x.status === "missing").length, bad = orderCmp.filter((x) => x.status === "more" || x.status === "less").length;
+  const isHw = (c) => orderHw.some((x) => NC(x) === NC(c));
+  const tog = (c, on) => setOrderHw((xs) => (on ? [...xs.filter((x) => NC(x) !== NC(c)), c] : xs.filter((x) => NC(x) !== NC(c))));
+  return (
+    <div className={`rw-order-check ${miss || bad ? "warn" : "ok"}`}>
+      <div className="rw-order-h">
+        <b>ตามใบปะหน้า {order.roRaw || order.ro || order.file}</b>
+        <span className="rw-muted">{miss || bad ? [miss && `ยังขาด ${miss}`, bad && `จำนวนไม่ตรง ${bad}`].filter(Boolean).join(" · ") : `ครบ ${order.items.length} รายการ`}{hint ? ` · ${hint}` : ""}</span>
+        {onApply ? <button type="button" className="btn btn-ghost btn-sm" onClick={onApply} title="เลือกเบอร์ + จำนวนตามใบปะหน้า (เฉพาะเบอร์ที่มีในคลังของโปรเจค)">เลือกตามใบปะหน้า</button> : null}
+      </div>
+      <table className="data-table rw-table rw-order-tbl">
+        <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th className="r">ใบปะหน้า</th><th className="r">ในใบนี้</th><th>สถานะ</th><th title="สกรู / น็อต / ยาง ที่ไม่ผลิตเอง — ไม่มี QR ไปใบเบิก ACCESSORIES">อุปกรณ์?</th></tr></thead>
+        <tbody>{orderCmp.map((x) => (
+          <tr key={x.code} className={x.status === "missing" && !isHw(x.code) ? "rl-errrow" : x.status === "ok" ? "" : "rw-picked-row"}>
+            <td className="r rw-muted">{x.item ?? ""}</td>
+            <td className="rw-mono"><b>{x.code}</b></td>
+            <td className="rw-desc">{x.d}{x.remark ? <span className="rw-muted"> · {x.remark}</span> : null}</td>
+            <td className="r">{nlen(x.qty)}{x.unit ? <small className="rw-muted"> {x.unit}</small> : null}</td>
+            <td className="r">{x.status === "missing" ? <span className="rw-muted">—</span> : nlen(x.have)}</td>
+            <td>{x.status === "ok" ? <Pill tone="ok">ครบ{x.kind === "hw" ? " · ใบเบิก" : x.kind === "panel" ? " · แผง" : x.kind === "sub" ? " · ซับ" : ""}</Pill>
+              : x.status === "missing" ? (isHw(x.code) ? <Pill tone="muted">อุปกรณ์ · ใบเบิก</Pill> : <Pill tone="bad">ยังไม่อยู่ในใบ</Pill>)
+              : <Pill tone="warn">{x.status === "more" ? "ในใบมากกว่า" : "ในใบน้อยกว่า"}</Pill>}</td>
+            <td>{x.status === "missing" || isHw(x.code) ? <label className="rw-check"><input type="checkbox" checked={isHw(x.code)} onChange={(e) => tog(x.code, e.target.checked)} /> ไม่มี QR</label> : null}</td>
+          </tr>))}</tbody>
+      </table>
+    </div>);
+}
 // ── ขั้น ② โหมด "เฉพาะซับ / พาร์ท": เลือกเบอร์จากคลังของโปรเจค + จำนวน (ไม่มีแผง · ไม่ต้องอัพ PDF) ──
-function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onReloadLib, api, userName }) {
+function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onReloadLib, api, userName, order = null, orderCmp = [], orderHw = [], setOrderHw = () => {} }) {
   const [tab, setTab] = useState("sub");
   // ★ 2026-11-03: วาง PDF แบบซับ/พาร์ทได้ที่นี่เลย (เหมือนขั้นอัพ PDF แผง) — อ่าน → บันทึกลงคลังของโปรเจคทันที → เลือกให้ ×1
   const [reading, setReading] = useState(null);
@@ -803,6 +901,22 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
     setPicks((old) => { const rest = old.filter((p) => key(p.kind, p.code) !== key(kind, code)); return n > 0 ? [...rest, { code, kind, qty: n }] : rest; });
   };
   const nSub = picks.filter((p) => p.kind === "sub").length, nPart = picks.length - nSub;
+  // ★ 2026-11-10 เลือกตามใบปะหน้า: ซับ/พาร์ท (QR) ที่มีในคลัง → เลือกให้ตามจำนวน · ที่เป็นสกรู/ยางในคลัง (hw) → ติ๊กเป็นอุปกรณ์ให้ · ที่ไม่มีในคลัง → แดง รอวาง PDF หรือติ๊กอุปกรณ์เอง
+  const applyOrder = () => {
+    if (!order) return;
+    const add = []; const hw = [];
+    for (const it of order.items) {
+      const q = Number(it.qty) || 0; if (!(q > 0)) continue;
+      const sk = findKey(bom.subs, it.code); if (sk) { add.push({ code: sk, kind: "sub", qty: q }); continue; }
+      const pk = findLatest(bom.parts, it.code) || findKey(bom.parts, it.code);
+      if (pk) { if (bom.parts[pk].k === "hw") hw.push(it.code); else add.push({ code: pk, kind: "part", qty: q }); continue; }
+      if (/^(HP|R&D)/i.test(it.code)) hw.push(it.code);
+    }
+    if (add.length) setPicks((old) => { const have = new Map(old.map((p) => [key(p.kind, p.code), p])); for (const a of add) have.set(key(a.kind, a.code), { ...(have.get(key(a.kind, a.code)) || {}), ...a }); return [...have.values()]; });
+    if (hw.length) setOrderHw((xs) => [...xs.filter((x) => !hw.some((h) => NC(h) === NC(x))), ...hw]);
+  };
+  const autoRef = useRef("");
+  useEffect(() => { if (!order || libState.s !== "ok" || picks.length) return; const k = order.file + "|" + libState.key; if (autoRef.current === k) return; autoRef.current = k; applyOrder(); }, [order, libState.s, libState.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   async function addFiles(list) {
     const files = [...list].filter((f) => /\.pdf$/i.test(f.name)); if (!files.length || !project) return;
     setReading({ n: 0, of: files.length });
@@ -839,7 +953,8 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
       setPicks((old) => {
         const next = old.map((p) => { const d = p.kind === "part" ? got.find((g) => g.kind === "part" && NC(g.code) !== NC(p.code) && newerRevOf({ [g.code]: 1 }, p.code)) : null; return d ? { ...p, code: d.code } : p; });
         const have = new Set(next.map((p) => key(p.kind, p.code)));
-        return [...next, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: 1 }))];
+        const oq = (c) => { const it = order && order.items.find((x) => NC(x.code) === NC(c)); return it && Number(it.qty) > 0 ? Number(it.qty) : 1; };   // จำนวนตามใบปะหน้า ถ้ามี
+        return [...next, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: oq(d.code) }))];
       });
       onReloadLib();
       const gs = got.filter((d) => d.kind === "sub").length, gp = got.length - gs;
@@ -852,6 +967,7 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
     <div className="card rw-card">
       <SecHead title="เลือกซับ / พาร์ท" sub={`จากคลังของโปรเจค ${project.code} — ใส่จำนวนที่ต้องการปล่อย · ซับจะแตกลูก (ซับย่อย + พาร์ท) ให้เองตาม BOM ในคลัง`}
         right={<button type="button" className="btn btn-ghost btn-sm" onClick={onReloadLib} title="โหลดคลังใหม่ (หลังเพิ่มซับ/พาร์ทที่หน้า ซับ / พาร์ท ของโปรเจค)">↻ โหลดคลังใหม่</button>} />
+      <OrderChecklist order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} onApply={applyOrder} hint="เบอร์ที่ยังไม่อยู่ในใบ = ไม่มีในคลัง → วาง PDF แบบด้านล่าง หรือติ๊กว่าเป็นอุปกรณ์" />
       <div className={`rw-drop rw-drop-sm ${drag ? "drag" : ""}`} role="button" tabIndex={0}
         onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
