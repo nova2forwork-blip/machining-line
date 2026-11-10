@@ -74,7 +74,10 @@ export function guessKind(row) {
 //   แผง: ตาราง "UAxxxx BILL OF MATERIALS" · ซับ: หัวกระดาษ + BOM · พาร์ท: หัวกระดาษ PART NO./LENGTH/INV.CODE/DEVELOP
 // นิ้วแบบเศษส่วน → มม. (ปัด 0.1) · ไม่ใช่รูปแบบนิ้ว = null (ตัวเลขธรรมดาถือเป็นมม. ตามเดิม)
 export function inchToMm(v) {
-  const t = String(v ?? "").trim().replace(/[″”]/g, '"'); if (!t) return null;
+  const t = String(v ?? "").trim().replace(/[″”]/g, '"').replace(/[′’]/g, "'"); if (!t) return null;
+  // ฟุต-นิ้ว: 16'-2" · 7'-11 1/2" · 8'-0" · 3'-5 1/2"  (★ 2026-11-10 แบบซับ US)
+  const ft = /^(\d+)'\s*-?\s*(?:(\d+)(?:\s+(\d+)\/(\d+))?|(\d+)\/(\d+))?\s*"?$/.exec(t);
+  if (ft) { const inch = (+ft[2] || 0) + (ft[3] ? +ft[3] / +ft[4] : 0) + (ft[5] ? +ft[5] / +ft[6] : 0); return Math.round((+ft[1] * 12 + inch) * 25.4 * 10) / 10; }
   const m = /^(?:(\d+(?:\.\d+)?)(?:\s+|\s*-\s*))?(\d+)\s*\/\s*(\d+)\s*"?$/.exec(t) || (/^(\d+(?:\.\d+)?)\s*"$/.exec(t) ? [null, t.replace(/"/, ""), "0", "1"] : null);
   if (!m) return null;
   const whole = m[1] ? parseFloat(m[1]) : 0, num = +m[2], den = +m[3]; if (!den) return null;
@@ -108,17 +111,27 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     if (j >= 0) { words[i] = { ...w, text: "INV.CODE", x1: words[j].x1 }; words.splice(j, 1); if (j < i) i--; }
   }
   const inv = words.find((w) => /^INV\.?CODE$/i.test(w.text));
-  if (inv) {
-    const labs = words.filter((w) => Math.abs(w.top - inv.top) < 2 && w.x0 <= inv.x1 + 1).sort((a, b) => a.x0 - b.x0);
+  // ★ 2026-11-10 หัวกระดาษแบบซับ US (ไม่มี INV. CODE): "PART NO. | REV. | LENGTH | HEIGHT | NOTE | A | M.D." มุมบนซ้าย — A = ความยาวเป็นมม. (LENGTH เป็นฟุต-นิ้ว)
+  const usHdr = !inv ? (() => { const a = words.find((w) => w.text === "A" && w.top < vp.height * 0.2 && words.some((x) => /^M\.D\.$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x1) && words.some((x) => x.text === "LENGTH" && Math.abs(x.top - w.top) < 2 && x.x1 < w.x0)); return a || null; })() : null;
+  const anchor = inv || usHdr;
+  if (anchor) {
+    const labs = words.filter((w) => Math.abs(w.top - anchor.top) < 2 && (w.x0 <= anchor.x1 + 1 || (usHdr && /^M\.D\.$/i.test(w.text))) && !/BILL/i.test(w.text) && !/BILL OF MATERIALS/i.test(w.text)).sort((a, b) => a.x0 - b.x0);
     const cols = [];
     for (const w of labs) { if (w.text === "NO." && cols.length && cols[cols.length - 1][0] === "PART") cols[cols.length - 1] = ["PART NO.", cols[cols.length - 1][1], w.x1]; else cols.push([w.text, w.x0, w.x1]); }
-    const vals = words.filter((w) => w.top - inv.top > 8 && w.top - inv.top < 26 && w.x0 <= inv.x1 + 40);
+    let vals = words.filter((w) => w.top - anchor.top > 8 && w.top - anchor.top < 26 && w.x0 <= (usHdr ? Math.max(...labs.map((l) => l.x1)) + 40 : anchor.x1 + 40));
+    if (usHdr) {   // คำที่ติดกัน (ช่องว่าง < 6) = ค่าเดียวกัน เช่น "SHIP LOOSE" → รวมก่อนจัดคอลัมน์
+      const m = []; for (const w of [...vals].sort((a, b) => a.top - b.top || a.x0 - b.x0)) { const L = m[m.length - 1]; if (L && Math.abs(L.top - w.top) < 3 && w.x0 - L.x1 < 6) { L.text += " " + w.text; L.x1 = w.x1; } else m.push({ ...w }); }
+      vals = m;
+    }
     // ค่าแต่ละคำ → คอลัมน์ที่ใกล้ที่สุด (เดิม: ทุกคอลัมน์ในระยะ 30 → คอลัมน์แคบที่ติดกันแย่งคำกัน เช่น "2" ของ 2 15/16 ไปโผล่ที่ REV.)
     const mids = cols.map(([, a, b]) => (a + b) / 2);
     const pick = cols.map(() => []);
+    // หัวแบบ US: แบ่งคอลัมน์ด้วยเส้นกึ่งกลางระหว่างป้าย (ช่อง NOTE กว้าง ค่า "SHIP LOOSE" เริ่มซ้ายกว่าป้ายมาก)
+    const bounds = usHdr ? cols.map(([, a], i) => (i ? (cols[i - 1][2] + a) / 2 : -1e9)) : null;
     for (const v of vals) {
       const cx = (v.x0 + v.x1) / 2; let bi = -1, bd = 1e9;
-      mids.forEach((m, i) => { const [, a, b] = cols[i]; const d = cx >= a - 3 && cx <= b + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi = i; } });
+      if (bounds) { for (let i = 0; i < cols.length; i++) if (cx >= bounds[i] && (i + 1 >= cols.length || cx < bounds[i + 1])) { bi = i; bd = 0; } }
+      else mids.forEach((m, i) => { const [, a, b] = cols[i]; const d = cx >= a - 3 && cx <= b + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi = i; } });
       if (bi >= 0 && bd < 30) pick[bi].push(v);
     }
     // คำที่ต่อกันเป็นค่าเดียว (ช่องว่าง < 6) แต่ถูกแบ่งไปคนละคอลัมน์ → ย้ายไปอยู่คอลัมน์ของคำที่อยู่กลางกว่า
@@ -131,6 +144,8 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     if (out.title["INV. CODE"] != null && out.title["INV.CODE"] == null) out.title["INV.CODE"] = out.title["INV. CODE"];
     // ความยาว/สูงเป็นนิ้วแบบเศษส่วน (2 15/16 · 3/4" · 2-15/16") → แปลงเป็นมม. (เก็บค่าเดิมไว้ใน *_IN)
     for (const k of ["LENGTH", "HEIGHT"]) { const mm = inchToMm(out.title[k]); if (mm != null) { out.title[k + "_IN"] = out.title[k]; out.title[k] = String(mm); } }
+    // ช่อง "A" = ความยาวตัดเป็นมม. (ตรงกับ LENGTH ที่แปลงจากนิ้ว เช่น 16'-2" = 4927.6) → ใช้ค่านี้เป็นหลักเมื่อมี
+    { const a = num(out.title.A); if (a != null && a > 0 && out.title.LENGTH_IN) { out.title.LENGTH = String(a); } }
     const dv = words.find((w) => w.text === "DEVELOP");
     if (dv) out.title.DEVELOP = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
   }
@@ -163,14 +178,19 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
   for (const it of words.filter((w) => w.text === "ITEM")) {
     const hdr = words.filter((w) => Math.abs(w.top - it.top) < 2 && w.x0 >= it.x0 - 2).sort((a, b) => a.x0 - b.x0);
     const names = hdr.map((w) => w.text);
-    if (!names.includes("NUMBER") || !names.includes("QTY.")) continue;
+    const usBom = !names.includes("NUMBER") && names.includes("PART") && names.includes("NO.");   // ★ 2026-11-10 ตาราง BOM แบบ US: ITEM | PART NO. | QTY. | LENGTH | DESCRIPTION | NOTE
+    if ((!names.includes("NUMBER") && !usBom) || !names.includes("QTY.")) continue;
     const cut = hdr.find((w) => w.text === "ITEM" && w.x0 > it.x0 + 5);
     const xmax = cut ? cut.x0 - 2 : Math.max(...hdr.map((w) => w.x1)) + 25;
     const hx = {}; for (const w of hdr) if (w.x0 < xmax && hx[w.text] == null) hx[w.text] = [w.x0, w.x1];
     const numx = {}; for (const k of ["QTY.", "LENGTH", "HEIGHT", "FINISH"]) if (hx[k]) numx[k] = hx[k];
     if (!numx["QTY."]) continue;
     const qx0 = numx["QTY."][0] - 22;
-    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 0.5);   // QTY บางแบบพิมพ์ใหญ่กว่าคอลัมน์อื่นนิดหน่อย (7.01 vs 6.68) — เดิม 0.3 ทำให้จำนวนหาย
+    // แบบ US: DESCRIPTION / NOTE อยู่ขวาของคอลัมน์ตัวเลข — หัวคอลัมน์จัดกลาง ค่าเริ่มซ้ายกว่าหัวมาก → ขอบ = หลังคอลัมน์ตัวเลขสุดท้าย
+    const lastNumX1 = Math.max(...Object.values(numx).map((c) => c[1]));
+    const descX = usBom && hx["DESCRIPTION"] ? Math.min(hx["DESCRIPTION"][0] - 14, lastNumX1 + 18) : null;
+    const noteX = usBom && hx["NOTE"] ? (hx["NOTE"][0] + hx["DESCRIPTION"]?.[1] || hx["NOTE"][0] * 2) / 2 : null;
+    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 0.7);   // QTY บางแบบพิมพ์ใหญ่กว่าคอลัมน์อื่นนิดหน่อย (7.01 vs 6.68) — เดิม 0.3 ทำให้จำนวนหาย
     const colof = (w) => { const cx = (w.x0 + w.x1) / 2; let best = null; for (const k in numx) { const [a, b] = numx[k]; const d = a - 3 <= cx && cx <= b + 3 ? 0 : Math.min(Math.abs(cx - a), Math.abs(cx - b)); if (!best || d < best[0]) best = [d, k]; } return best[1]; };
     let last = null;
     for (const { ws } of rowsByY(cells)) {
@@ -181,15 +201,23 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
         if (last && ex.length === 1 && /^(M|PCS|MM)\.?$/i.test(ex[0])) last.qty_unit = ex[0].replace(".", "").toLowerCase();
         continue;
       }
-      const r = {}; const txt = [];
-      for (const w of ws.slice(1)) { if (w.x0 >= qx0) (r[colof(w)] = r[colof(w)] || []).push(w.text); else txt.push(w.text); }
+      const r = {}; const txt = []; const descW = []; const noteW = [];
+      for (const w of ws.slice(1)) {
+        if (noteX != null && w.x0 >= noteX) noteW.push(w.text);
+        else if (descX != null && w.x0 >= descX) descW.push(w.text);
+        else if (w.x0 >= qx0) (r[colof(w)] = r[colof(w)] || []).push(w.text); else txt.push(w.text);
+      }
       if (!txt.length && !Object.keys(r).length) continue;
       if (txt.length && !/[A-Za-z]/.test(txt[0])) continue;   // เบอร์จริงมีตัวอักษรเสมอ — ข้อความมิติในรูป (เช่น 13/32") ที่อยู่แนวเดียวกับเลข ITEM ไม่ใช่แถว BOM
       let code = txt[0] || ""; let rest = txt.slice(1);
       if (rest.length && /^[A-Z]{1,2}\*?$/.test(rest[0])) { code += " " + rest[0]; rest = rest.slice(1); }
       const q = r["QTY."] || [], L = r["LENGTH"] || [], H = r["HEIGHT"] || [], F = r["FINISH"] || [];
-      const row = { item: +ws[0].text, code, desc: rest.join(" "), qty: q.length ? num(q[0]) : null, len: L.length ? num(L[0]) : null, ht: H.length ? num(H[0]) : null, fin: F.join(" ") || null };
-      if (L.length && /^(MM|M|PCS)\.?$/i.test(L[0])) { row.qty_unit = L[0].replace(".", "").toLowerCase(); row.len = L.length > 1 ? num(L[1]) : null; }
+      // ความยาวแบบนิ้ว/ฟุต-นิ้ว (16'-2" · 2 5/8") → มม.
+      const lenOf = (arr) => { if (!arr.length) return null; const j = arr.join(" "); const mm = inchToMm(j); if (mm != null) return mm; return num(arr[0]); };
+      const row = { item: +ws[0].text, code, desc: (usBom ? descW : rest).join(" "), qty: q.length ? num(q[0]) : null, len: lenOf(L), ht: lenOf(H), fin: F.join(" ") || null };
+      if (usBom && noteW.length) row.note = noteW.join(" ");
+      if (usBom && rest.length && !descW.length) row.desc = rest.join(" ");
+      if (L.length && /^(MM|M|PCS)\.?$/i.test(L[0])) { row.qty_unit = L[0].replace(".", "").toLowerCase(); row.len = L.length > 1 ? lenOf(L.slice(1)) : null; }
       if (!code) out.warn_read.push(`แถว ${row.item}: อ่านเบอร์ไม่ได้`);
       if (row.qty == null && code) out.warn_read.push(`แถว ${row.item} ${code}: ไม่มีจำนวน`);
       out.bom.push(row); last = row;
@@ -271,7 +299,7 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     for (const r of out.site) if (r.qty == null) out.warn_read.push(`Site Item ${r.code}: ไม่มี COUNT`);
     return out;
   }
-  out.kind = /^UA\d/i.test(out.title.BOM_OF || "") || (!inv && out.bom.length) ? "panel" : out.bom.length ? "sub" : inv ? "part" : "unknown";
+  out.kind = /^UA\d/i.test(out.title.BOM_OF || "") || (!inv && !usHdr && out.bom.length) ? "panel" : out.bom.length ? "sub" : (inv || usHdr) ? "part" : "unknown";
   out.code = (out.title["PART NO."] || out.title.BOM_OF || String(fileName).replace(/^.*?_?([A-Z]{2,}[\w-]*)\.pdf$/i, "$1")).trim();
   if (out.kind === "panel" && out.title.BOM_OF) out.code = out.title.BOM_OF;
   return out;
