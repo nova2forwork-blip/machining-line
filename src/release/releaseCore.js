@@ -1225,10 +1225,21 @@ export function applyModToPlan(plan, mod) {
     else if (it.type === "add") p.extra.push({ kind: it.kind, code: it.code, qty: it.after, d: it.d || "", l: it.l ?? null, inv: it.inv || "", dest: it.dest, mod: mod.ver, ...(it.cat ? { cat: it.cat } : {}), ...(it.u ? { u: it.u } : {}), ...(it.src ? { src: it.src } : {}) });
     else if (it.type === "addr") p.cancelAddr[addrKey(it.code)] = mod.ver;
     else if (it.type === "len" && Number(it.after) > 0) p.lenOv = { ...(p.lenOv || {}), [it.code]: { to: Number(it.after), ver: mod.ver, file: it.file || "" } };   // ★ 2026-11-10 ความยาวใหม่ตามแบบ (Modify)
-    else if (it.type === "mat" && String(it.after || "").trim()) p.matOv = { ...(p.matOv || {}), [it.code]: { to: String(it.after).trim().toUpperCase(), r: `Modify ${mod.ver}${it.file ? ` · แบบ ${it.file}` : ""}`, at: mod.at, by: mod.by } };   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify (แบบ Rev ใหม่ INV ต่างจากเดิม)
+    else if (it.type === "mat" && String(it.after || "").trim()) { const cur = (p.matOv || {})[it.code]; const prev = cur ? (/^Modify /.test(String(cur.r || "")) ? cur.prev : cur) : undefined; p.matOv = { ...(p.matOv || {}), [it.code]: { to: String(it.after).trim().toUpperCase(), r: `Modify ${mod.ver}${it.file ? ` · แบบ ${it.file}` : ""}`, at: mod.at, by: mod.by, ...(prev ? { prev } : {}) } }; }   // prev = ค่าที่ตั้งเองก่อน Modify (แก้ M เอาออก → คืนค่านี้)   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify (แบบ Rev ใหม่ INV ต่างจากเดิม)
     if (it.type === "add" && it.kind === "sub" && it.procs) p.procOv = { ...(p.procOv || {}), [it.code]: it.procs };
   }
   return p;
+}
+
+// ★ 2026-11-10 แก้ Modify ที่บันทึกไปแล้ว (บันทึกผิด): คำนวณผลของ Modify ทุกครั้งใหม่จากฐานที่ไม่มีผล Modify
+//   ล้าง adj / cancel / cancelAddr / extra ที่มาจาก Modify / matOv-lenOv ที่มาจาก Modify แล้ว replay mods (ไม่แตะ BOM ลูก — bomEdits อยู่ใน BOM แล้ว)
+//   mods = รายการ Modify ใหม่ทั้งชุด (แก้แล้ว) · คืนแผนใหม่
+export function replayMods(plan, mods) {
+  const fromMod = (o) => /^Modify /.test(String(o?.r || "")) || !!o?.ver;
+  const keep = (ov) => Object.fromEntries(Object.entries(ov || {}).map(([k, o]) => [k, fromMod(o) ? o.prev : o]).filter(([, o]) => o && !fromMod(o)));
+  let p = { ...plan, adj: {}, cancel: {}, cancelAddr: {}, extra: (plan.extra || []).filter((x) => !x.mod), matOv: keep(plan.matOv), lenOv: keep(plan.lenOv), mods: [] };
+  for (const m of mods) { const r = applyModToPlan(p, { ...m, bomEdits: [] }); p = { ...r, bom: p.bom, bomEdits: plan.bomEdits, mods: [...p.mods, m] }; }
+  return { ...p, bom: plan.bom, bomEdits: plan.bomEdits };
 }
 
 // ══ Modify BOM ลูก (ซับ / แผง) ══

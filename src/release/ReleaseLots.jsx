@@ -8,9 +8,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useUndoState, pushUndoGate } from "../undo.js";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
+import { getSession } from "../auth.js";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -65,7 +66,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderCmp = useMemo(() => (plan.order ? compareOrder(plan.order, need) : []), [plan.order, need]);
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
-  const [modsOpen, setModsOpen] = useState(false);   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
+  const [modsOpen, setModsOpen] = useState(false);
+  const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
   const [lotsAll, setLotsAll] = useState(false);
   // ★ 2026-11-10 แถบขวาพับได้: "auto" = พับเองตอนดูแท็บ BOM (ตารางกว้าง) · "show" / "hide" = ผู้ใช้เลือก (จำไว้)
   //   จำไว้แค่ "hide" (ซ่อนทุกแท็บ) · เปิดดูตอนอยู่ BOM = ชั่วคราว (peek) — เปลี่ยนแท็บ / ออกแล้วเข้าใหม่ = BOM พับเองเหมือนเดิม
@@ -313,10 +315,10 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rl-sbox-h"><b>Modify</b><button type="button" className="btn btn-ghost btn-sm rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ / เปลี่ยนวัสดุ — มีเลข M">✎ Modify ใหม่</button></div>
           {plan.mods?.length ? (() => { const m = plan.mods[plan.mods.length - 1]; return (
             <div className="rl-smod">
-              <div><b className="rl-smod-v">{m.ver}</b> <span className="rw-muted small">· {fmtD(m.date)} · {m.by}</span></div>
+              <div><button type="button" className="rl-smod-v rl-mlink" onClick={() => { setCmpOpen(new Set([m.ver])); setModsOpen(true); }} title="ดูก่อน / หลัง · แก้ได้">{m.ver} ›</button> <span className="rw-muted small">· {fmtD(m.date)} · {m.by}</span></div>
               {m.reason ? <div className="rw-muted small">{m.reason}</div> : null}
               <ul className="rl-smod-list">{m.items.filter((it) => !it.derived).slice(0, 4).map((it, i) => <li key={i}><span className="rw-mono">{it.code}</span> {it.type === "add" ? `+${nf(it.after)}` : it.type === "cancel" ? "ยกเลิก" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? `วัสดุ → ${it.after}` : it.type === "len" ? `ยาว → ${it.after}` : `${nf(it.before)} → ${nf(it.after)}`}</li>)}{m.items.filter((it) => !it.derived).length > 4 ? <li className="rw-muted">… อีก {m.items.filter((it) => !it.derived).length - 4} รายการ</li> : null}</ul>
-              <button type="button" className="rw-link small" onClick={() => { setCmpOpen(new Set([m.ver])); setModsOpen(true); }}>⇆ เปรียบเทียบก่อน / หลัง{plan.mods.length > 1 ? ` · ประวัติทั้งหมด ${plan.mods.length} ครั้ง` : ""}</button>
+              {plan.mods.length > 1 ? <button type="button" className="rw-link small" onClick={() => { setCmpOpen(new Set()); setModsOpen(true); }}>ประวัติทั้งหมด {plan.mods.length} ครั้ง</button> : null}
             </div>); })() : <div className="rw-muted small">ยังไม่เคย Modify</div>}
           <button type="button" className="rl-sadd" onClick={() => setModify("add")} title="เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ — ไม่นับเป็น Modify">+ เพิ่มรายการ (ไม่นับ Modify)</button>
         </div>
@@ -338,8 +340,14 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rl-mods">
             {[...plan.mods].reverse().map((m) => (
               <div key={m.ver} className="rl-mod">
-                <div className="rl-mod-h"><Pill tone="mod">{m.ver}</Pill> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}
-                  <button type="button" className={`btn btn-ghost btn-sm rl-mod-cmpbtn ${cmpOpen.has(m.ver) ? "on" : ""}`} onClick={() => setCmpOpen((o) => { const n = new Set(o); if (n.has(m.ver)) n.delete(m.ver); else n.add(m.ver); return n; })} aria-expanded={cmpOpen.has(m.ver)}>⇆ เปรียบเทียบ ก่อน / หลัง</button></div>
+                <div className="rl-mod-h"><button type="button" className={`rl-mlink big ${cmpOpen.has(m.ver) ? "on" : ""}`} onClick={() => setCmpOpen((o) => { const n = new Set(o); if (n.has(m.ver)) n.delete(m.ver); else n.add(m.ver); return n; })} aria-expanded={cmpOpen.has(m.ver)} title="กดเพื่อดู / ซ่อน ตารางก่อน → หลัง">{m.ver} {cmpOpen.has(m.ver) ? "▾" : "▸"}</button> <b>{fmtD(m.date)}</b> <span className="rw-muted">· {m.by} · {(m.bomEdits || []).length ? `แก้ BOM ${m.bomEdits.length} จุด · ` : ""}{m.items.length} รายการ{m.edited?.length ? ` · แก้ไขแล้ว ${m.edited.length} ครั้ง (ล่าสุด ${m.edited[m.edited.length - 1].by})` : ""}</span>{m.reason ? <span className="rl-mod-reason">เหตุผล: {m.reason}</span> : null}
+                  {onPlanChange ? <button type="button" className="btn btn-ghost btn-sm rl-mod-editbtn" onClick={() => setModEdit(modEdit === m.ver ? null : m.ver)}>{modEdit === m.ver ? "ปิดการแก้" : `✎ แก้ ${m.ver}`}</button> : null}</div>
+                {modEdit === m.ver ? <ModEditor m={m} need={need} onCancel={() => setModEdit(null)} onSave={async (nm) => {
+                  const nmods = plan.mods.map((x) => (x.ver === m.ver ? nm : x));
+                  const ok = await askConfirm({ title: `บันทึกการแก้ ${m.ver}?`, message: `ยอดต้องใช้ / ของที่เพิ่ม / วัสดุ / ความยาว ในใบจะคำนวณใหม่ตาม ${m.ver} ที่แก้\nล็อตที่ปล่อยแล้วไม่เปลี่ยน · ประวัติการแก้เก็บไว้ใน ${m.ver}`, tone: "warn", confirmText: "บันทึกการแก้", cancelText: "กลับ" });
+                  if (!ok) return;
+                  onPlanChange(replayMods(plan, nmods)); setModEdit(null); setCmpOpen((o) => new Set([...o, m.ver]));
+                }} /> : null}
                 {cmpOpen.has(m.ver) ? <ModCompare m={m} need={need} /> : null}
                 <ul className="rl-mod-items" hidden={cmpOpen.has(m.ver)}>
                   {(m.bomEdits || []).map((e, i) => (
@@ -1293,6 +1301,56 @@ function ModCompare({ m, need }) {
         </tbody>
       </table>
       <div className="rw-muted small">{m.sheet ? `ใบ Modify: ${m.sheet.roRaw || m.sheet.file || ""}${m.sheet.issuedBy ? ` · ออกโดย ${m.sheet.issuedBy}` : ""} · ` : ""}เขียว = เพิ่ม · ม่วง = แก้ · แดง = ยกเลิก</div>
+    </div>
+  );
+}
+
+// ★ 2026-11-10 แก้ Modify ที่บันทึกไปแล้ว — วันที่ / เหตุผล / ค่าของแต่ละรายการ / เอารายการออก
+//   ล็อก: รายการที่ไปลด/ยกเลิก QR ในล็อตแล้ว (it.lots) · ผลจากแก้ BOM ลูก (derived) · แก้ BOM ลูก (bomEdits) → ต้องทำ Modify ใหม่
+function ModEditor({ m, need, onCancel, onSave }) {
+  const [date, setDate] = useState(m.date || "");
+  const [reason, setReason] = useState(m.reason || "");
+  const [items, setItems] = useState(() => m.items.map((it, i) => ({ ...it, _i: i, _del: false })));
+  const descOf = (c) => [...need.parts, ...need.subs, ...(need.hw || [])].find((x) => NC(x.code) === NC(c))?.d || "";
+  const locked = (it) => (it.lots || []).length ? `แก้ QR ในล็อต ${(it.lots || []).map((l) => l.lot).join(", ")} แล้ว` : it.derived ? "ผลจากแก้ BOM ลูก" : "";
+  const editable = (it) => ["add", "qty", "mat", "len"].includes(it.type);
+  const up = (i, patch) => setItems((a) => a.map((x) => (x._i === i ? { ...x, ...patch } : x)));
+  const changed = date !== (m.date || "") || reason !== (m.reason || "") || items.some((x, i) => x._del || String(x.after) !== String(m.items[i].after));
+  const bad = items.some((x) => !x._del && (x.type === "add" || x.type === "qty") && !(Number(x.after) >= 0 && String(x.after).trim() !== "")) || items.some((x) => !x._del && x.type === "len" && !(Number(x.after) > 0)) || !reason.trim();
+  function save() {
+    const kept = items.filter((x) => !x._del).map(({ _i, _del, ...x }) => ({ ...x, after: x.type === "mat" ? String(x.after).trim().toUpperCase() : Number(x.after) }));
+    const diff = items.filter((x, i) => x._del || String(x.after) !== String(m.items[i].after)).map((x) => (x._del ? `เอา ${x.code} (${x.type}) ออก` : `${x.code}: ${m.items[x._i].after} → ${x.after}`));
+    if (date !== (m.date || "")) diff.push(`วันที่ ${m.date} → ${date}`);
+    if (reason !== (m.reason || "")) diff.push("แก้เหตุผล");
+    onSave({ ...m, date, reason: reason.trim(), items: kept, edited: [...(m.edited || []), { at: new Date().toISOString(), by: getSession()?.name || "", what: diff }] });
+  }
+  return (
+    <div className="rl-medit">
+      <div className="rl-medit-row">
+        <label>วันที่ <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label style={{ flex: 1 }}>เหตุผล <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="เหตุผล *" /></label>
+      </div>
+      <table className="rl-sc-table rl-cmp-t">
+        <thead><tr><th>เบอร์</th><th>รายละเอียด</th><th>รายการ</th><th className="r">เดิม</th><th>ค่าใน {m.ver}</th><th /></tr></thead>
+        <tbody>{items.map((it) => { const lk = locked(it); return (
+          <tr key={it._i} className={it._del ? "rl-cancelrow" : ""}>
+            <td className="rw-mono"><b className={it._del ? "rl-cx" : ""}>{it.code}</b></td>
+            <td className="rl-desc"><span>{descOf(it.code)}</span></td>
+            <td className="small"><b>{it.type === "add" ? "เพิ่มเบอร์ใหม่" : it.type === "qty" ? "จำนวนต้องใช้" : it.type === "cancel" ? "ยกเลิกเบอร์" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? "วัสดุ (INV)" : it.type === "len" ? "ความยาว" : it.type}</b></td>
+            <td className="r rw-mono rw-muted">{it.type === "add" ? "—" : String(it.before ?? "—")}</td>
+            <td>{lk || !editable(it) || it._del ? <span className="rw-mono">{it.type === "cancel" || it.type === "addr" ? "ยกเลิก" : String(it.after)}</span>
+              : <input className="input rw-cell rw-mono" style={{ width: it.type === "mat" ? 170 : 100 }} type={it.type === "mat" ? "text" : "number"} value={it.after} onChange={(e) => up(it._i, { after: e.target.value })} aria-label={`ค่าใหม่ ${it.code}`} />}</td>
+            <td>{lk ? <span className="rw-muted small" title="ต้องทำ Modify ใหม่เพื่อแก้">🔒 {lk}</span>
+              : it._del ? <button type="button" className="rw-link small" onClick={() => up(it._i, { _del: false })}>เอากลับ</button>
+              : <button type="button" className="rw-link small rl-danger" onClick={() => up(it._i, { _del: true })}>เอาออก</button>}</td>
+          </tr>); })}</tbody>
+      </table>
+      {(m.bomEdits || []).length ? <div className="rw-muted small">🔒 แก้ BOM ลูก {m.bomEdits.length} จุดใน {m.ver} แก้ที่นี่ไม่ได้ — ทำ Modify ใหม่เพื่อแก้กลับ</div> : null}
+      <div className="rl-medit-row">
+        <span className="rw-muted small">{bad ? (!reason.trim() ? "ใส่เหตุผล" : "ใส่ค่าให้ครบ (จำนวน ≥ 0 · ความยาว > 0)") : changed ? "ล็อตที่ปล่อยแล้วไม่เปลี่ยน · ยอดในใบคำนวณใหม่" : "ยังไม่ได้แก้อะไร"}</span>
+        <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={onCancel}>ยกเลิก</button>
+        <button type="button" className="btn btn-accent btn-sm" disabled={!changed || bad} onClick={save}>บันทึกการแก้ {m.ver}</button>
+      </div>
     </div>
   );
 }
