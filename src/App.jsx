@@ -6523,6 +6523,67 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [exporting, setExporting] = useState(false);   // กำลังสร้างไฟล์ Excel ของตารางนี้
   const sort = useTableSort();
   const colApi = useRef(null);   // ปุ่มรีเซ็ตลำดับคอลัมน์ (DataTable ส่ง { reset } มาให้)
+  // ★ 2026-11-10 ปล่อยผิดใบ: ติ๊กแถว → "ย้ายไปใบ…" (แก้หมายเหตุ "ใบ: …" + หมวดในใบหลัก · QR เดิม) หรือ "ยกเลิกการปล่อย" (ลบแถว + QR ที่ยังไม่สแกน → กลับไปเป็น "เหลือ" ปล่อยใหม่ได้)
+  const [sel, setSel] = useState(() => new Set());
+  const [sheetDefs, setSheetDefs] = useState([]);   // SHEETS จาก releaseCore (โหลดตอนเปิดหน้า)
+  const [bulkBusy, setBulkBusy] = useState("");
+  useEffect(() => { let alive = true; import("./release/releaseCore.js").then((c) => { if (alive) setSheetDefs(c.SHEETS); }).catch(() => {}); return () => { alive = false; }; }, []);
+  const selRows = releases.filter((r) => sel.has(r.id));
+  const selKinds = new Set(selRows.map((r) => (r.part_master?.kind === "subassembly" ? "sub" : r.part_master?.kind === "panel" ? "panel" : "part")));
+  const sheetOpts = selKinds.size === 1 ? sheetDefs.filter((x) => x.kind === [...selKinds][0] && x.kind !== "panel") : [];
+  const sheetOfNote = (note) => (/ใบ:\s*(.+?)(?:\s*·|$)/.exec(note || "") || [])[1] || "";
+  async function moveSelSheet(label) {
+    if (!label || !selRows.length) return;
+    const rows = selRows.filter((r) => sheetOfNote(r.note) !== label);
+    if (!rows.length) { mlsToast("แถวที่เลือกอยู่ในใบนี้อยู่แล้ว", "info"); return; }
+    const ok = await askConfirm({ title: `ย้าย ${nc(rows.length)} แถว → ใบ ${label}?`, message: `${rows.map((r) => `${r.part_master?.part_no} (${fmtNum(r.qty)})`).join(", ")}\nจากใบ ${[...new Set(rows.map((r) => sheetOfNote(r.note) || "—"))].join(", ")}\n\nQR และประวัติสแกนเดิมอยู่ครบ · ใบสั่งผลิตที่พิมพ์ไปแล้วต้องพิมพ์ใหม่ · หมวดในใบหลักเปลี่ยนตาม`, tone: "warn", confirmText: "ย้ายใบงาน", cancelText: "ยกเลิก" });
+    if (!ok) return;
+    setBulkBusy("กำลังย้าย…");
+    try {
+      const core = await import("./release/releaseCore.js");
+      const done = await realReleaseApi.moveReleasedSheet(rows.map((r) => ({ id: r.id, note: r.note || "" })), label);
+      const next = releases.map((r) => { if (!rows.some((x) => x.id === r.id)) return r; const old = r.note || ""; const note = /ใบ:/.test(old) ? old.replace(/ใบ:\s*(.+?)(?=\s*·|$)/, `ใบ: ${label}`) : [`ใบ: ${label}`, old].filter(Boolean).join(" · "); return { ...r, note }; });
+      setReleases(next);
+      // หมวดในใบหลัก (แผน Release) ให้ตรงกับใบใหม่ — เฉพาะพาร์ท (ซับ: ใบตามงานซับ ไม่แตะ)
+      if ([...selKinds][0] === "part" && projectId) {
+        try {
+          const { plans } = await realReleaseApi.listPlans(projectId);
+          const plan = (plans || []).find((p) => core.inPlan(hdr.ro, p.ro));
+          const cat = Object.keys(core.CAT_DEST).find((k) => core.destLabel(core.CAT_DEST[k]) === label);
+          if (plan && cat) { const catOv = { ...(plan.catOv || {}) }; const destOv = { ...(plan.destOv || {}) }; for (const r of rows) { const c = r.part_master?.part_no; if (c) { catOv[c] = cat; delete destOv[c]; } } await realReleaseApi.updatePlan({ ...plan, catOv, destOv }); }
+        } catch (_) { /* ไม่มีแผนแบบใหม่ */ }
+      }
+      auditRecord("move_release_sheet", "release", hdr.ro, { to: label, ids: rows.map((r) => r.id) });
+      mlsToast(`ย้าย ${nc(done)} แถวไปใบ ${label} แล้ว`, "success");
+      setSel(new Set()); onChanged && onChanged();
+    } catch (e) { mlsToast("ย้ายไม่สำเร็จ: " + (e?.message || e), "error"); }
+    setBulkBusy("");
+  }
+  async function unreleaseSel() {
+    if (!selRows.length) return;
+    setBulkBusy("กำลังตรวจประวัติสแกน…");
+    const okRows = [], blocked = [];
+    try {
+      for (const r of selRows) {
+        const [units, recs] = await Promise.all([listRows("part_units", { filters: { release_id: r.id }, strict: true }), countReleaseStationRecords(r.id)]);
+        const scanned = units.filter((u) => u.status !== "released").length;
+        if (scanned > 0 || recs > 0) blocked.push(`${r.part_master?.part_no} (สแกนแล้ว ${nc(scanned)}${recs ? ` · บันทึกงาน ${nc(recs)}` : ""})`); else okRows.push(r);
+      }
+    } catch (e) { setBulkBusy(""); mlsToast("ตรวจประวัติไม่สำเร็จ: " + (e?.message || e), "error"); return; }
+    setBulkBusy("");
+    if (!okRows.length) { await askConfirm({ title: "ยกเลิกการปล่อยไม่ได้", message: `ทุกแถวที่เลือกมีประวัติการทำงานแล้ว:\n${blocked.join("\n")}\n\nถ้าจะเอาออกจริง ใช้ "แก้ไข" → ลบ Release (แอดมิน) ซึ่งจะลบประวัติด้วย`, tone: "warn", confirmText: "ตกลง", cancelText: "" }); return; }
+    const q = okRows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+    const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${nc(okRows.length)} แถวของ ${hdr.ro}?`, message: `${okRows.map((r) => `${r.part_master?.part_no} (${fmtNum(r.qty)})`).join(", ")}\n\nลบแถวพร้อม QR ${nc(q)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" ในใบหลัก → ปล่อยใหม่ในใบ/ล็อตที่ถูกได้${blocked.length ? `\n\nข้าม ${blocked.length} แถวที่มีประวัติแล้ว: ${blocked.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
+    if (!ok) return;
+    setBulkBusy("กำลังยกเลิก…");
+    let n = 0; const ids = new Set();
+    for (const r of okRows) { try { await deleteReleaseCascade(r.id); ids.add(r.id); n++; auditRecord("unrelease", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty }); } catch (e) { mlsToast(`${r.part_master?.part_no}: ${e?.message || e}`, "error"); break; } }
+    setBulkBusy("");
+    const next = releases.filter((r) => !ids.has(r.id)); setReleases(next); setSel(new Set());
+    if (n) mlsToast(`ยกเลิกการปล่อย ${nc(n)} แถวแล้ว — ปล่อยใหม่ได้ที่ใบหลัก ${hdr.ro.replace(/\.\d+$/, "")}`, "success");
+    onChanged && onChanged();
+    if (!next.length) onBack();
+  }
   // ── Modify (M-01, M-02 …) ──
   const projectId = releases[0]?.part_master?.project_id || null;
   const [modInfo, setModInfo] = useState(null);     // { origin, mods, limits, next_no } | { ok:false, reason }
@@ -7055,6 +7116,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         ]} />
         {(() => {
           const cols = [
+            ...(canEdit ? [{ key: "sel", header: <input type="checkbox" aria-label="เลือกทุกแถว" checked={viewRows.length > 0 && viewRows.every((r) => sel.has(r.id))} onChange={(e) => setSel(e.target.checked ? new Set(viewRows.map((r) => r.id)) : new Set())} />, dataLabel: "", thStyle: { width: 32 }, tdProps: () => ({ onClick: (e) => e.stopPropagation() }),
+              cell: (r) => <input type="checkbox" aria-label={`เลือก ${r.part_master?.part_no || ""}`} checked={sel.has(r.id)} onChange={(e) => setSel((o) => { const n = new Set(o); if (e.target.checked) n.add(r.id); else n.delete(r.id); return n; })} /> }] : []),
             { key: "item", header: lang === "en" ? "Item" : "ลำดับ",
               thStyle: { minWidth: 44, textAlign: "right", whiteSpace: "nowrap" },
               tdStyle: { color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" },
@@ -7175,6 +7238,16 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               <div className="pm-hint">{LL("กดชิปเครื่อง หรือ “▸ N เครื่อง” ใต้เบอร์ = เปิดดูรายละเอียดของแต่ละเครื่อง · กดที่อื่นในแถว = เปิดความคืบหน้าเหมือนเดิม",
                 "Click a machine chip or “▸ N machines” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
             )}
+            {canEdit && sel.size ? (
+              <div className="pm-tbar" style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <span className="pm-tbar-count">เลือก <b>{nc(sel.size)}</b> แถว</span>
+                {sheetOpts.length ? <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>ย้ายไปใบ <select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
+                  : <span className="muted" style={{ fontSize: 12 }}>{selKinds.size > 1 ? "ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด" : ""}</span>}
+                {canDelete ? <Btn variant="danger" size="sm" onClick={unreleaseSel} disabled={!!bulkBusy} title="ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้">ยกเลิกการปล่อย {nc(sel.size)} แถว</Btn>
+                  : <span className="muted" style={{ fontSize: 12 }}>ยกเลิกการปล่อย = แอดมิน</span>}
+                <Btn variant="ghost" size="sm" onClick={() => setSel(new Set())} disabled={!!bulkBusy}>✕ ล้างที่เลือก</Btn>
+                {bulkBusy ? <span className="muted" style={{ fontSize: 12 }}>{bulkBusy}</span> : null}
+              </div>) : null}
             <DataTable id="lot-parts" columns={cols} rows={viewRows} rowKey={(r) => r.id}
               sort={sort} sortAccessors={sortAccessors} rowCtx={rctx} orderApiRef={colApi}
               wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
