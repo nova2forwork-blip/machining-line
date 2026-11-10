@@ -1222,6 +1222,7 @@ export function applyModToPlan(plan, mod) {
     else if (it.type === "qty") p.adj[it.code] = { qty: it.after, ver: mod.ver };
     else if (it.type === "add") p.extra.push({ kind: it.kind, code: it.code, qty: it.after, d: it.d || "", l: it.l ?? null, inv: it.inv || "", dest: it.dest, mod: mod.ver, ...(it.cat ? { cat: it.cat } : {}), ...(it.u ? { u: it.u } : {}), ...(it.src ? { src: it.src } : {}) });
     else if (it.type === "addr") p.cancelAddr[addrKey(it.code)] = mod.ver;
+    else if (it.type === "mat" && String(it.after || "").trim()) p.matOv = { ...(p.matOv || {}), [it.code]: { to: String(it.after).trim().toUpperCase(), r: `Modify ${mod.ver}${it.file ? ` · แบบ ${it.file}` : ""}`, at: mod.at, by: mod.by } };   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify (แบบ Rev ใหม่ INV ต่างจากเดิม)
     if (it.type === "add" && it.kind === "sub" && it.procs) p.procOv = { ...(p.procOv || {}), [it.code]: it.procs };
   }
   return p;

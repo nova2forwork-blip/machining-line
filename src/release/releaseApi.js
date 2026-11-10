@@ -424,4 +424,16 @@ export async function monthReleases(ym) {
   }
   return all;
 }
-export const realReleaseApi = { monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };
+// ★ 2026-11-10 ย้ายของที่ปล่อยแล้วไปใบงานอื่น (ปล่อยผิดใบ เช่น งานพับไปอยู่ MACHINING PART): แก้หมายเหตุ "ใบ: …" ของแถว releases
+//   QR / ประวัติสแกนเดิมอยู่ครบ · หน้าล็อต / ใบสั่งผลิต / แท็บ Machine-Sub อ่านใบจากหมายเหตุนี้
+export async function moveReleasedSheet(rows, toLabel) {
+  let n = 0;
+  for (const r of rows) {
+    const old = String(r.note || ""); const cur = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(old);
+    const note = cur ? old.replace(/ใบ:\s*(.+?)(?=\s*·|$)/, `ใบ: ${toLabel}`) : [`ใบ: ${toLabel}`, old].filter(Boolean).join(" · ");
+    if (note === old) continue;
+    await updateRow("releases", r.id, { note }); n++;
+  }
+  return n;
+}
+export const realReleaseApi = { moveReleasedSheet, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };

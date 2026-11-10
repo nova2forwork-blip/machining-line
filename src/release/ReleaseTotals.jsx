@@ -19,7 +19,7 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 const hwQty = (p) => (p.u === "m." && p.mm ? p.qty / 1000 : p.qty);
 
-export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease }) {
+export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null }) {
   const [grp, setGrp] = useState("part");
   const [sub, setSub] = useState({ part: "ALL", sub: "ALL", mat: "MAT", panel: "ALL", bom: "" });
   const [q, setQ] = useState("");
@@ -75,8 +75,11 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     panel: { tot: liveUnits.length, done: panelDone },
   };
   // ย้ายพาร์ทไปหมวดอื่น (catOv ของแผน) — หมวดผลิตเอง (QR) ใบงานตามหมวด · ที่ปล่อยแล้วย้ายไม่ได้
+  //   ★ 2026-11-10 ที่ปล่อยแล้ว: ย้ายได้ถ้าหน้าใบหลักให้ onMoveReleased มา (แก้หมายเหตุ "ใบ: …" ของแถวที่ปล่อย + หมวดในแผน) — ถามยืนยันก่อน
   const setCats = (codes, cat) => {
-    const ok = codes.filter((c) => !doneOf(c)); if (!ok.length || !onPlanChange) return;
+    const ok = codes.filter((c) => !doneOf(c)); const done = codes.filter((c) => doneOf(c));
+    if (done.length && onMoveReleased) onMoveReleased(done, cat);
+    if (!ok.length || !onPlanChange) return;
     const destOv = { ...(plan.destOv || {}) }; for (const c of ok) delete destOv[c];
     const catOv = { ...(plan.catOv || {}) }; for (const c of ok) { if (cat === UNCAT || !cat) delete catOv[c]; else catOv[c] = cat; }
     onPlanChange({ ...plan, catOv, destOv });
@@ -211,7 +214,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="rt-inv">{r.qr ? <MatEdit cur={r.inv} orig={r.invOrig != null ? r.invOrig || "—" : ""} note={r.matNote} list={invList} withLen len={r.invOrig != null ? r.ml : ""} label={r.code}
                 onSave={setMatOv && !r.cancelled ? (v) => setMatOv([r.code], v) : null} onReset={resetMatOv ? () => resetMatOv([r.code]) : null} /> : <span className="rw-mono">{r.inv || <span className="rw-muted">—</span>}</span>}</td>
               <td className="rt-usedcell">{usedCell(r.code)}</td>
-              <td>{onPlanChange && !r.cancelled && !done ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
+              <td>{onPlanChange && !r.cancelled && (!done || (onMoveReleased && r.qr)) ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`} title={done ? "ปล่อยไปแล้ว — เปลี่ยนหมวดจะย้ายใบงานของที่ปล่อยแล้วด้วย (ถามยืนยัน)" : ""}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
                   : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>

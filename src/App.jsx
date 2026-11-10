@@ -7419,6 +7419,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
           await onReload();
         }}
+        onSheetMoved={async ({ codes, toLabel, rows }) => { hist.reset(); mlsToast(`ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await onReload(); }}
         onReleased={async ({ lotNo, rows, hw = 0 }) => {
           hist.reset();
           const q = rows.reduce((a, r) => a + r.qty, 0);

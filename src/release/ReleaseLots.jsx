@@ -10,7 +10,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
   NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -34,8 +34,30 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onSheetMoved = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
+  // ★ 2026-11-10 ปล่อยผิดใบ (งานพับไปอยู่ MACHINING PART) → ย้ายหมวดของเบอร์ที่ปล่อยแล้ว: แก้ "ใบ: …" ในแถวที่ปล่อย + หมวดในแผน (QR เดิมใช้ต่อ)
+  async function moveReleased(codes, cat) {
+    const set = new Set(codes.map(NC));
+    const rows = rel.lots.flatMap((L) => L.rows.filter((r) => set.has(NC(r.code)) && r.kind !== "panel" && r.kind !== "subassembly" && !r.mod_cancelled_at).map((r) => ({ ...r, lot: L.no })));
+    if (!rows.length) return;
+    const dest = CAT_DEST[cat] || ruleDest(cat, codes[0]); const toLabel = destLabel(dest);
+    const fromLabels = [...new Set(rows.map((r) => (/ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || "") || [])[1] || "—"))];
+    const qty = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+    const ok = await askConfirm({
+      title: `ย้าย ${codes.length} เบอร์ที่ปล่อยแล้ว → ใบ ${toLabel}?`,
+      message: [`เบอร์: ${codes.join(", ")}`, `ล็อต: ${[...new Set(rows.map((r) => r.lot))].join(", ")} · ${nf(qty)} ชิ้น · จากใบ ${fromLabels.join(", ")}`, "", "QR และประวัติสแกนเดิมอยู่ครบ · หน้าล็อต / ใบสั่งผลิต จะย้ายไปใบใหม่ (ใบที่พิมพ์ไปแล้วต้องพิมพ์ใหม่) · หมวดในใบหลักเปลี่ยนเป็น " + cat].join("\n"),
+      tone: "warn", confirmText: "ย้ายใบงาน", cancelText: "ยกเลิก",
+    });
+    if (!ok) return;
+    try {
+      const n = await api.moveReleasedSheet(rows, toLabel);
+      const catOv = { ...(plan.catOv || {}) }; const destOv = { ...(plan.destOv || {}) };
+      for (const c of codes) { catOv[c] = cat; if (CAT_DEST[cat]) delete destOv[c]; else destOv[c] = dest; }
+      onPlanChange({ ...plan, catOv, destOv });
+      onSheetMoved && onSheetMoved({ codes, toLabel, rows: n });
+    } catch (e) { alert("ย้ายใบงานไม่สำเร็จ: " + (e?.message || e)); }
+  }
   // ★ 2026-11-10 มาจากกล่องรับเอกสาร: เปิด Modify / เพิ่มรายการ พร้อมไฟล์ที่วางไว้แล้ว (inbox = { mode: "modify"|"add", files })
   const [inboxFiles, setInboxFiles] = useState(null);
   useEffect(() => { if (inbox && inbox.files && inbox.files.length) { setInboxFiles(inbox.files); setModify(inbox.mode === "add" ? "add" : true); } }, [inbox]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -244,7 +266,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         )}
       </div>
 
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} />
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} />
 
 
       {plan.mods?.length ? (
@@ -269,6 +291,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                       {it.type === "qty" ? <>ต้องใช้ <s className="rl-old">{nf(it.before)}</s> → <b className="rl-new">{nf(it.after)}</b></>
                         : it.type === "cancel" ? <>ยกเลิกเบอร์ (เดิม <span className="rl-cxq">{nf(it.before)}</span>)</>
                         : it.type === "addr" ? <>ยกเลิกที่อยู่ (แผง {it.unit || ""})</>
+                        : it.type === "mat" ? <>เปลี่ยนวัสดุ <span className="rw-mono"><s className="rl-old">{it.before || "—"}</s> → <b className="rl-new">{it.after}</b></span>{it.file ? <span className="rw-muted"> · แบบ {it.file}</span> : null}</>
                         : <>เพิ่มใหม่ {it.kind === "hw" ? nlen(it.after) : nf(it.after)} {it.kind === "sub" ? "SET" : it.kind === "hw" ? (it.u || "pcs.") + " · อุปกรณ์ ไม่มี QR" : "ชิ้น"}{it.src ? <span className="rw-muted"> · จากแบบ {it.src}</span> : null}</>}
                       {(it.lots || []).map((l) => <span key={l.lot} className="rl-mod-lot"> · {l.lot}: {l.cancel ? <><span className="rl-cxq">{nf(l.before)}</span> ยกเลิก</> : <><s className="rl-old">{nf(l.before)}</s> → <b>{nf(l.after)}</b></>}</span>)}
                     </li>))}
@@ -578,6 +601,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   useEffect(() => pushUndoGate(), []);                 // "part|CODE" → { type: "qty"|"cancel", qty }
   const [addrs, setAddrs] = useUndoState(() => new Set(), { label: "Modify: ยกเลิกที่อยู่" });  // ที่อยู่ที่จะยกเลิก
   const [adds, setAdds] = useUndoState([], { label: "Modify: เพิ่มเบอร์", coalesceMs: 800 });
+  // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify: วางแบบพาร์ท Rev ใหม่ที่ INV.CODE ต่างจากเดิม → เสนอเป็นรายการ "เปลี่ยนวัสดุ" (ติ๊กออกได้) · บันทึกเป็น matOv ของแผน
+  const [matChg, setMatChg] = useState([]);   // [{ code, from, to, file, len?, lenOld?, on }]
   const [bscope, setBscope] = useState("sub");          // แก้ BOM ลูกของ: ซับ / แผง
   const [bowner, setBowner] = useState("");
   const [bchg, setBchg] = useUndoState({}, { label: "Modify: BOM ลูก", coalesceMs: 800 });                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
@@ -631,7 +656,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const realChanges = changes.filter((c) => !noop(c));
   const lotTouched = [...ops.lotOps.entries()].map(([lot, list]) => ({ lot, n: list.length, qr: list.reduce((s, o) => s + (o.type === "cancel" ? o.before - o.after : o.n), 0) }));
   const needAdmin = ops.lotOps.size > 0 && user && user.role && user.role !== "admin";
-  const nChange = realChanges.length + addrs.size + adds.length + edits.length;
+  const matOn = matChg.filter((x) => x.on);
+  const nChange = realChanges.length + addrs.size + adds.length + edits.length + matOn.length;
   const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
   const blockers = addOnly ? [
     !adds.length && "ยังไม่ได้เพิ่มอะไร",
@@ -653,7 +679,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const relQty = (code) => (rel.byCode.get(NC(code)) || { qty: 0 }).qty;
   const setRow = (kind, code, patch) => setChg((c) => { const k = key(kind, code); const nx = { ...(c[k] || {}), ...patch }; const o = { ...c }; if (!nx.type) delete o[k]; else o[k] = nx; return o; });
   const unitRows = plan.units.filter((u) => match(u.addr, u.unit));
-  const tabCount = (k) => (k === "addr" ? addrs.size : k === "add" ? adds.length : k === "bom" ? edits.filter((e) => e.scope === "panel").length : realChanges.filter((c) => c.kind === k).length + (k === "sub" ? edits.filter((e) => e.scope === "sub").length : 0));
+  const tabCount = (k) => (k === "addr" ? addrs.size : k === "add" ? adds.length : k === "bom" ? edits.filter((e) => e.scope === "panel").length : realChanges.filter((c) => c.kind === k).length + (k === "sub" ? edits.filter((e) => e.scope === "sub").length : 0) + (k === "part" ? matOn.length : 0));
 
   async function save() {
     if (blockers.length || busy) return;
@@ -678,6 +704,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         ...ops.items.filter((it) => !(it.type === "qty" && it.before === it.after)).map((it) => (derivedSet.has(NC(it.code)) ? { ...it, derived: true } : it)),
         ...bomFx.adds.filter((a) => !manualCodes.has(NC(a.code))).map((a) => ({ kind: a.kind, type: "add", code: a.code, d: a.d, l: a.l, inv: a.inv, dest: a.kind === "part" ? ruleDest(ruleCat(a.code, "part"), a.code) : undefined, before: 0, after: a.qty, derived: true })),
         ...[...addrs].map((a) => ({ kind: "panel", type: "addr", code: a, unit: plan.units.find((u) => addrKey(u.addr) === a)?.unit || "", before: 1, after: 0 })),
+        ...matOn.map((x) => ({ kind: "part", type: "mat", code: x.code, before: x.from, after: x.to, file: x.file })),
         ...adds.map((a) => ({ kind: a.kind, type: "add", code: a.code.trim().toUpperCase(), d: a.d, l: a.l === "" ? null : Number(a.l), inv: a.inv, dest: a.kind === "hw" ? undefined : a.dest, procs: a.procs, before: 0, after: Number(a.qty), ...(a.cat ? { cat: a.cat } : {}), ...(a.kind === "hw" ? { u: a.u || "pcs." } : {}), ...(a.src ? { src: a.src } : {}) })),
       ],
     };
@@ -690,6 +717,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         addrs.size && `• ยกเลิกที่อยู่แผง ${addrs.size} ที่ (ยังไม่ได้ปล่อย)`,
         edits.length && `• แก้ BOM ลูกใน${[...new Set(edits.map((e) => (e.scope === "panel" ? "แผง " : "ซับ ") + e.owner))].join(", ")} — ${edits.length} จุด (ผลต่อยอดต้องใช้ทั้งใบ ${derivedSet.size} เบอร์)`,
         adds.length && `• เพิ่มเบอร์ใหม่ ${adds.length} เบอร์ (ปล่อยในล็อตถัดไป)`,
+        matOn.length && `• เปลี่ยนวัสดุ ${matOn.length} เบอร์: ${matOn.map((x) => `${x.code} ${x.from || "—"} → ${x.to}`).join(" · ")} (ใบปล่อย / ใบเบิกวัสดุใช้ค่าใหม่ · ล็อตที่ตัดไปแล้วไม่เปลี่ยน)`,
         lotTouched.length && `• แก้ในล็อต: ${lotTouched.map((x) => `${x.lot} (ยกเลิก QR ${nf(x.qr)} ใบ)`).join(" · ")} — QR ที่ยกเลิกเก็บเป็นหลักฐาน`,
         `\nเหตุผล: ${reason.trim()}`,
       ].filter(Boolean).join("\n"),
@@ -792,7 +820,18 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         }
         notes.push(`${d.code} (${d.title?.DESC || "แบบ Site Item + อุปกรณ์"}): Site Item ${ns} เบอร์ · อุปกรณ์ ${nh} รายการ${skip ? ` · ข้าม ${skip} (มีแล้ว)` : ""}${(d.units || []).length ? ` · แผงในแบบ: ${d.units.map((u) => `${u.code} ×${u.qty}`).join(", ")}` : ""}`);
       } else if (d.kind === "part" || d.kind === "sub") {
-        if (exists(d.code)) { notes.push(`${d.code}: มีในใบแล้ว — แก้จำนวนที่แท็บ${d.kind === "sub" ? "ซับ" : "พาร์ท"}`); continue; }
+        if (exists(d.code)) {
+          const cur = d.kind === "part" ? need.parts.find((x) => NC(x.code) === NC(d.code)) : null;
+          const t = d.title || {}; const inv = String(t["INV.CODE"] || "").trim().toUpperCase(); const L = parseFloat(t.LENGTH);
+          const curInv = cur ? String(cur.inv || "").trim().toUpperCase() : "";
+          if (cur && inv && inv !== "-" && inv !== curInv) {
+            const lenDiff = Number.isFinite(L) && cur.l != null && Math.abs(L - cur.l) > 0.05;
+            setMatChg((m) => [...m.filter((x) => NC(x.code) !== NC(d.code)), { code: cur.code, from: curInv, to: inv, file: d.file, on: true, ...(lenDiff ? { len: L, lenOld: cur.l } : {}) }]);
+            notes.push(`${d.code}: วัสดุในแบบ ${inv} ≠ เดิม ${curInv || "—"} → เปลี่ยนวัสดุ (ติ๊กออกได้ที่แท็บพาร์ท)${lenDiff ? ` · ความยาวในแบบ ${L} ≠ เดิม ${cur.l} (ความยาวแก้ที่คลังซับ/พาร์ท)` : ""}`);
+            drops[NC(d.code)] = `เปลี่ยนวัสดุ → ${inv}`; setTab("part"); continue;
+          }
+          notes.push(`${d.code}: มีในใบแล้ว${cur && Number.isFinite(L) && cur.l != null && Math.abs(L - cur.l) > 0.05 ? ` · ความยาวในแบบ ${L} ≠ เดิม ${cur.l} (แก้ที่คลังซับ/พาร์ท)` : " — วัสดุ/จำนวนตรงเดิม"} — แก้จำนวนที่แท็บ${d.kind === "sub" ? "ซับ" : "พาร์ท"}`); continue;
+        }
         const t = d.title || {}; const L = parseFloat(t.LENGTH); const inv = String(t["INV.CODE"] || "").trim();
         const old = d.kind === "part" ? need.parts.find((x) => baseOf(x.code) === baseOf(d.code) && NC(x.code) !== NC(d.code)) : null;
         drops[NC(d.code)] = "เพิ่มเป็นเบอร์ใหม่";
@@ -835,6 +874,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
             <td>{x.drop ? <span className="rw-ok small">✓ {x.drop}</span> : <span className="rl-errtxt small">ยังไม่ได้วางแบบ</span>}</td>
           </tr>))}</tbody>
       </table>
+    </div>) : null;
+  const matChgEl = matChg.length ? (
+    <div className="rw-msg info" style={{ marginTop: 0, marginBottom: 10 }}>
+      <b>เปลี่ยนวัสดุ (จากแบบที่วาง)</b>
+      {matChg.map((x) => <label key={x.code} style={{ display: "block", marginTop: 4 }}><input type="checkbox" checked={x.on} onChange={(e) => setMatChg((m) => m.map((y) => (y.code === x.code ? { ...y, on: e.target.checked } : y)))} /> <span className="rw-mono"><b>{x.code}</b></span> วัสดุ <span className="rw-mono"><s className="rl-old">{x.from || "—"}</s> → <b className="rl-new">{x.to}</b></span> <span className="rw-muted small">· แบบ {x.file}</span>{x.len != null ? <span className="rw-muted small"> · ความยาวในแบบ {x.len} ≠ เดิม {x.lenOld} (แก้ที่คลังซับ/พาร์ท)</span> : null}</label>)}
+      <div className="rw-muted small">ใบปล่อย / Total / ใบเบิกวัสดุของล็อตถัดไปใช้วัสดุใหม่ · ล็อตที่ตัดไปแล้วไม่เปลี่ยน</div>
     </div>) : null;
   const pdfMsgEl = pdfMsg ? (
     <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
@@ -922,7 +967,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
               <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
             </button>))}
         </div>}
-        {tab === "sub" || tab === "bom" || tab === "add" || tab === "part" ? <>{pdfDropEl}{pdfMsgEl}{sheetEl}</> : null}
+        {tab === "sub" || tab === "bom" || tab === "add" || tab === "part" ? <>{pdfDropEl}{pdfMsgEl}{tab === "part" && !addOnly ? matChgEl : null}{sheetEl}</> : null}
         {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
           <div className="rl-tools">
             <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -1006,7 +1051,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         {err ? <div className="rw-msg bad">✗ {err}</div> : null}
         <div className="rl-dr-foot">
           <div className="rl-sum">
-            {addOnly ? <><b>เพิ่มรายการ:</b> พาร์ท/ซับ {adds.filter((a) => a.kind !== "hw").length} เบอร์ · อุปกรณ์ {adds.filter((a) => a.kind === "hw").length} รายการ <small className="rw-muted">· ไม่นับเป็น Modify</small></> : <><b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}</>}
+            {addOnly ? <><b>เพิ่มรายการ:</b> พาร์ท/ซับ {adds.filter((a) => a.kind !== "hw").length} เบอร์ · อุปกรณ์ {adds.filter((a) => a.kind === "hw").length} รายการ <small className="rw-muted">· ไม่นับเป็น Modify</small></> : <><b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}{matOn.length ? <> · เปลี่ยนวัสดุ {matOn.length}</> : null}</>}
             {lotTouched.length ? <div className="rl-sum-chips">{lotTouched.map((x) => <Pill key={x.lot} tone="bad">{x.lot}: QR −{nf(x.qr)}</Pill>)}</div> : null}
             {blockers.length ? <div className="rw-muted small">{blockers.join(" · ")}</div> : null}
           </div>
