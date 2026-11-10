@@ -209,7 +209,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="r rw-num">{i + 1}</td>
               <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ (เพิ่มจากแบบ)`}>SITE ITEM +{nf(r.siteQty)}</Pill></> : null}</td>
               <td className="rl-desc"><span>{r.d}</span></td>
-              <td className="r rw-num">{nlen(r.l)}</td>
+              <td className="r rw-num">{r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{nlen(r.l)}</td>
               <td className="r">{r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
               <td className="rt-inv">{r.qr ? <MatEdit cur={r.inv} orig={r.invOrig != null ? r.invOrig || "—" : ""} note={r.matNote} list={invList} withLen len={r.invOrig != null ? r.ml : ""} label={r.code}
                 onSave={setMatOv && !r.cancelled ? (v) => setMatOv([r.code], v) : null} onReset={resetMatOv ? () => resetMatOv([r.code]) : null} /> : <span className="rw-mono">{r.inv || <span className="rw-muted">—</span>}</span>}</td>

@@ -1137,6 +1137,8 @@ export function needOf(plan) {
   p.parts.forEach((x) => { x.dest = (plan.destOv || {})[x.code] || (plan.extra || []).find((e) => e.code === x.code)?.dest || ruleDest(x.cat, x.code); });
   p.cancelledAddr = cAddr;
   applyMatOv(p, plan);
+  // ★ 2026-11-10 ความยาวที่ Modify เปลี่ยนตามแบบ (plan.lenOv) — ล็อตถัดไปใช้ค่าใหม่ · lOrig = ค่าเดิม (โชว์ขีดฆ่า)
+  for (const r of [...p.parts, ...p.subs]) { const o = (plan.lenOv || {})[r.code]; if (o && Number(o.to) > 0) { r.lOrig = r.l; r.l = Number(o.to); r.lenVer = o.ver; } }
   return p;
 }
 // ★ 2026-11-04 เปลี่ยนวัสดุ (วัสดุตามแบบไม่มี / หมด → ใช้ตัวอื่น) — เก็บกับแผน · ใบปล่อย / Total / วัสดุของล็อต ใช้ค่าใหม่
@@ -1222,6 +1224,7 @@ export function applyModToPlan(plan, mod) {
     else if (it.type === "qty") p.adj[it.code] = { qty: it.after, ver: mod.ver };
     else if (it.type === "add") p.extra.push({ kind: it.kind, code: it.code, qty: it.after, d: it.d || "", l: it.l ?? null, inv: it.inv || "", dest: it.dest, mod: mod.ver, ...(it.cat ? { cat: it.cat } : {}), ...(it.u ? { u: it.u } : {}), ...(it.src ? { src: it.src } : {}) });
     else if (it.type === "addr") p.cancelAddr[addrKey(it.code)] = mod.ver;
+    else if (it.type === "len" && Number(it.after) > 0) p.lenOv = { ...(p.lenOv || {}), [it.code]: { to: Number(it.after), ver: mod.ver, file: it.file || "" } };   // ★ 2026-11-10 ความยาวใหม่ตามแบบ (Modify)
     else if (it.type === "mat" && String(it.after || "").trim()) p.matOv = { ...(p.matOv || {}), [it.code]: { to: String(it.after).trim().toUpperCase(), r: `Modify ${mod.ver}${it.file ? ` · แบบ ${it.file}` : ""}`, at: mod.at, by: mod.by } };   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify (แบบ Rev ใหม่ INV ต่างจากเดิม)
     if (it.type === "add" && it.kind === "sub" && it.procs) p.procOv = { ...(p.procOv || {}), [it.code]: it.procs };
   }

@@ -911,3 +911,24 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .bm-pick { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
 .bm-pick label { display: flex; align-items: center; gap: 6px; }
 .bm-pick .select { min-width: 240px; }
+/* ★ 2026-11-10 Modify: 2 ช่อง ① ใบปะหน้า ② แบบ (เหมือนตอนสร้าง Release) */
+.rl-2step { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 10px; }
+@media (max-width: 900px) { .rl-2step { grid-template-columns: 1fr; } }
+.rl-step { border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.rl-step.done { border-color: var(--accent); background: color-mix(in srgb, var(--accent-tint) 50%, var(--surface)); }
+.rl-step-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rl-step-h small { color: var(--muted); font-size: 11.5px; }
+.rl-step-n { width: 22px; height: 22px; border-radius: 99px; background: var(--text); color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; align-self: center; }
+.rl-step.done .rl-step-n { background: var(--accent); }
+.rl-step-drop { margin: 0 !important; }
+.rl-step-ok { font-size: 13px; color: var(--accent-dk); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 2px; }
+.rl-step-ok .rw-link { font-size: 12.5px; }
+.rl-drawer > .rl-2step, .rl-drawer > .rw-order-check { margin-left: 22px !important; margin-right: 22px !important; }
+/* ★ 2026-11-10 Modify: ตาราง "เทียบกับแบบที่วาง" */
+.rl-found { margin: 0 22px 10px; border: 1px solid #d9cffd; background: #fbfaff; border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.rl-found-h { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.rl-found-h .rw-link { margin-left: auto; }
+.rl-found-tw { max-height: 320px; overflow: auto; }
+.rl-cmp-same td { color: var(--muted); }
+.rl-dr-top { flex: 0 1 auto; max-height: 46vh; overflow: auto; min-height: 0; padding: 0 22px; }
+.rl-dr-top > .rl-2step, .rl-dr-top > .rw-order-check, .rl-dr-top > .rl-found, .rl-dr-top > .rw-msg { margin-left: 0 !important; margin-right: 0 !important; }
