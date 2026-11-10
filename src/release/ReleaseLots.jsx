@@ -125,6 +125,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const descMap = useMemo(() => new Map([...need.parts, ...need.subs].map((x) => [NC(x.code), x.d])), [need]);
   const descOf = (code) => descMap.get(NC(code)) || "";
+  const [fixLot, setFixLot] = useState(null);   // ★ 2026-11-10 แก้ล็อตที่ปล่อยผิด (ย้ายใบ / ยกเลิกการปล่อย) — เปิดจากแถบล็อตด้านบน ไม่ต้องเลื่อนลงไปหา
   const [sheetPrev, setSheetPrev] = useState(null);   // ตัวอย่างใบปล่อย (PDF / Excel) ของล็อต
   // ★ ความคืบหน้าต่อล็อต: ยอดที่ทำแล้วต่อแถว release (get_release_modify_info) — โหลดเบื้องหลัง · ไม่ได้ = ไม่โชว์
   const lotKey = rel.lots.map((l) => `${l.no}:${l.rows.length}:${l.qty}`).join("|");
@@ -149,6 +150,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map(sheetKeyOf); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
   return (
     <div className="rw rl">
+      {fixLot && rel.lots.find((L) => L.no === fixLot) ? <LotFixDrawer lot={rel.lots.find((L) => L.no === fixLot)} plan={plan} need={need} api={api} user={user} rowSheets={rowSheets} onPlanChange={onPlanChange}
+        onClose={() => setFixLot(null)} onDone={(msg) => { setFixLot(null); onSheetMoved && onSheetMoved({ msg }); }} /> : null}
       {sheetPrev ? <LotSheetPreview args={sheetPrev} onClose={() => setSheetPrev(null)} /> : null}
       <div className="page-head rw-head">
         <div>
@@ -193,6 +196,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
               const lotVers = [...new Set([...[...mm.values()].map((x) => x.ver), ...L.rows.map((r) => r.mod_version).filter(Boolean)])].sort();
               return (
                 <div key={L.no} className={`rl-lot ${open === L.no ? "open" : ""}`}>
+                  <div className="rl-lot-hw">
                   <button type="button" className="rl-lot-h" onClick={() => (onOpenLot && !L.hwOnly ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))} aria-expanded={onOpenLot && !L.hwOnly ? undefined : open === L.no}>
                     <b className="rw-mono">{L.no}</b>
                     <span className="rw-muted">{fmtD(L.date)}</span>
@@ -204,6 +208,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                     <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}{L.hw && L.hw.length ? <Pill tone="muted">ACCESSORIES {L.hw.length}</Pill> : null}</span>
                     {onOpenLot && !L.hwOnly ? <span className="rl-caret" aria-hidden="true">›</span> : <span className="rl-caret" aria-hidden="true">▾</span>}
                   </button>
+                  {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => r.kind !== "panel" && !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm rl-lot-fix" onClick={() => setFixLot(L.no)} title={`ปล่อยผิดใบ: เลือกเบอร์ใน ${L.no} → ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่`}>⇄ ย้ายใบ / ยกเลิก</button> : null}
+                  </div>
                   {open === L.no && (!onOpenLot || L.hwOnly) ? (
                     <div className="rl-lot-body">
                       <div className="rl-lot-bar">
@@ -1066,6 +1072,89 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
 }
 
 // ══ การ์ด "Release ที่ยังปล่อยไม่ครบ" (หน้ารายการปล่อยงาน) ══
+// ★ 2026-11-10 แก้ล็อตที่ปล่อยผิด — ติ๊กเบอร์ → ย้ายไปใบอื่น (QR เดิม) หรือยกเลิกการปล่อย (ลบแถว + QR ที่ยังไม่สแกน → ยอดกลับเป็น "เหลือ" ปล่อยใหม่ได้)
+function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onClose, onDone }) {
+  const [q, setQ] = useState("");
+  const [pick, setPick] = useState(() => new Set());
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const admin = user && user.role === "admin";
+  const descOf = (r) => (r.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(r.code))?.d || "";
+  const rows = lot.rows.filter((r) => r.kind !== "panel" && !r.mod_cancelled_at);
+  const ql = q.trim().toUpperCase();
+  const vis = rows.filter((r) => !ql || [r.code, descOf(r), r.note].some((x) => String(x || "").toUpperCase().includes(ql)));
+  const sel = rows.filter((r) => pick.has(r.id));
+  const kinds = new Set(sel.map((r) => (r.kind === "subassembly" ? "sub" : "part")));
+  const opts = kinds.size === 1 ? SHEETS.filter((x) => x.kind === [...kinds][0]) : [];
+  const sheetName = (r) => rowSheets(r).map((k) => sheetOf(k).label).join(", ");
+  const tog = (ids, on) => setPick((o) => { const n = new Set(o); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
+  async function move(label) {
+    const list = sel.filter((r) => sheetName(r) !== label); if (!list.length) { setErr("เบอร์ที่เลือกอยู่ในใบนี้อยู่แล้ว"); return; }
+    const ok = await askConfirm({ title: `ย้าย ${list.length} เบอร์ → ใบ ${label}?`, message: `${list.map((r) => `${r.code} (${nf(r.qty)})`).join(", ")}\nล็อต ${lot.no} · จากใบ ${[...new Set(list.map(sheetName))].join(", ")}\n\nQR และประวัติสแกนเดิมอยู่ครบ · ใบสั่งผลิตที่พิมพ์ไปแล้วต้องพิมพ์ใหม่${[...kinds][0] === "part" ? " · หมวดในใบหลักเปลี่ยนตาม (ล็อตต่อไปไปใบนี้)" : ""}`, tone: "warn", confirmText: "ย้ายใบงาน", cancelText: "ยกเลิก" });
+    if (!ok) return;
+    setBusy("กำลังย้าย…"); setErr("");
+    try {
+      const n = await api.moveReleasedSheet(list, label);
+      if ([...kinds][0] === "part" && onPlanChange) {
+        const sk = SHEETS.find((x) => x.label === label)?.k; const cat = Object.keys(CAT_DEST).find((c) => CAT_DEST[c] === sk);
+        const catOv = { ...(plan.catOv || {}) }, destOv = { ...(plan.destOv || {}) };
+        for (const r of list) { if (cat) { catOv[r.code] = cat; delete destOv[r.code]; } else if (sk) destOv[r.code] = sk; }
+        onPlanChange({ ...plan, catOv, destOv });
+      }
+      setBusy(""); onDone(`ย้าย ${n} เบอร์ของ ${lot.no} ไปใบ ${label} แล้ว`);
+    } catch (e) { setBusy(""); setErr("ย้ายไม่สำเร็จ: " + (e?.message || e)); }
+  }
+  async function unrelease() {
+    setBusy("กำลังตรวจประวัติสแกน…"); setErr("");
+    let chk; try { chk = await api.checkUnrelease(sel); } catch (e) { setBusy(""); setErr("ตรวจประวัติไม่สำเร็จ: " + (e?.message || e)); return; }
+    setBusy("");
+    const bl = chk.blocked.map((b) => `${b.row.code} (สแกนแล้ว ${nf(b.scanned)}${b.recs ? ` · บันทึกงาน ${nf(b.recs)}` : ""})`);
+    if (!chk.ok.length) { setErr(`ยกเลิกไม่ได้ — ทุกเบอร์ที่เลือกเริ่มทำแล้ว: ${bl.join(", ")} · ใช้ "ย้ายไปใบ" แทน`); return; }
+    const pcs = chk.ok.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+    const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${chk.ok.length} เบอร์ใน ${lot.no}?`, message: `${chk.ok.map((r) => `${r.code} (${nf(r.qty)})`).join(", ")}\n\nลบพร้อม QR ${nf(pcs)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" → กด "ปล่อยล็อตใหม่" ปล่อยในใบ/ล็อตที่ถูกได้${bl.length ? `\n\nข้าม ${bl.length} เบอร์ที่เริ่มทำแล้ว: ${bl.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
+    if (!ok) return;
+    try { const n = await api.unreleaseRows(chk.ok, (m) => setBusy(m)); setBusy(""); onDone(`ยกเลิกการปล่อย ${n} เบอร์ของ ${lot.no} แล้ว — ปล่อยใหม่ได้ที่ "ปล่อยล็อตใหม่"`); }
+    catch (e) { setBusy(""); setErr("ยกเลิกไม่สำเร็จ (บางเบอร์อาจลบไปแล้ว — รีเฟรชดู): " + (e?.message || e)); }
+  }
+  return (
+    <>
+      <div className="rl-back" onClick={() => !busy && onClose()} />
+      <aside className="rl-drawer rl-fix" role="dialog" aria-modal="true" aria-label={`ย้ายใบ / ยกเลิก ${lot.no}`}>
+        <div className="rl-dr-head">
+          <div className="rl-dr-title"><h2>ย้ายใบ / ยกเลิกการปล่อย · <span className="rw-mono">{lot.no}</span></h2></div>
+          <button type="button" className="rl-x" onClick={onClose} disabled={!!busy} aria-label="ปิด">×</button>
+        </div>
+        <div className="rl-dr-sub">ติ๊กเบอร์ที่ปล่อยผิด → <b>ย้ายไปใบ</b> (QR เดิมใช้ต่อ) หรือ <b>ยกเลิกการปล่อย</b> (เฉพาะเบอร์ที่ยังไม่สแกน · ยอดกลับเป็น "เหลือ" ปล่อยใหม่ได้)</div>
+        <div className="rl-fix-bar">
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด / ใบ" aria-label="ค้นหาเบอร์ในล็อต" />
+          <span className="rw-muted small">เลือก <b>{sel.length}</b> / {rows.length}</span>
+          <label className="rl-fix-act">ย้ายไปใบ <select className="select" value="" disabled={!sel.length || !opts.length || !!busy} onChange={(e) => { if (e.target.value) move(e.target.value); }} aria-label="ย้ายเบอร์ที่เลือกไปใบ">
+            <option value="">{!sel.length ? "— ติ๊กเบอร์ก่อน —" : !opts.length ? "เลือกพาร์ท หรือ ซับ อย่างเดียว" : "— เลือกใบ —"}</option>{opts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
+          <button type="button" className="btn btn-sm rl-fix-del" disabled={!sel.length || !admin || !!busy} onClick={unrelease} title={admin ? "" : "ยกเลิกการปล่อย = แอดมิน"}>ยกเลิกการปล่อย {sel.length || ""}</button>
+        </div>
+        {err ? <div className="rw-msg bad">{err}</div> : null}
+        {busy ? <div className="rw-msg info">{busy}</div> : null}
+        <div className="rl-fix-tw"><table className="rl-sc-table rl-fix-t">
+          <thead><tr>
+            <th style={{ width: 34 }}><input type="checkbox" checked={vis.length > 0 && vis.every((r) => pick.has(r.id))} onChange={(e) => tog(vis.map((r) => r.id), e.target.checked)} aria-label="เลือกทั้งหมดที่เห็น" /></th>
+            <th>เบอร์</th><th>รายละเอียด</th><th>ใบตอนนี้</th><th className="r">จำนวน</th>
+          </tr></thead>
+          <tbody>{vis.map((r) => (
+            <tr key={r.id} className={pick.has(r.id) ? "on" : ""} onClick={() => tog([r.id], !pick.has(r.id))}>
+              <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={pick.has(r.id)} onChange={(e) => tog([r.id], e.target.checked)} aria-label={`เลือก ${r.code}`} /></td>
+              <td className="rw-mono"><b>{r.code}</b>{r.kind === "subassembly" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
+              <td className="rl-desc"><span>{descOf(r)}</span></td>
+              <td><Pill tone={r.kind === "subassembly" ? "sub" : "part"}>{sheetName(r) || "—"}</Pill></td>
+              <td className="r rw-num">{nf(r.qty)}</td>
+            </tr>))}
+            {!vis.length ? <tr><td colSpan={5} className="rw-muted">ไม่เจอ “{q}”</td></tr> : null}
+          </tbody>
+        </table></div>
+      </aside>
+    </>
+  );
+}
+
 export function ReleasePlansCard({ plans, releases, onOpen }) {
   const rows = useMemo(() => (plans || []).map((p) => {
     const need = needOf(p); const rel = releasedOf(releases, p);

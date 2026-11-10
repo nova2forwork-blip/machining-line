@@ -10,6 +10,7 @@
 import {
   supabase, listRows, insertRows, createReleaseBatch, releaseOrderExists, updateRow, setBom, getBom, updatePartMaster,
   listReleaseIdsOfOrder, setReleaseMdf, addMaterialsFromRelease, getMaterials, getReleaseModifyInfo, applyReleaseModify,
+  deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
 import { NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest } from "./releaseCore.js";
@@ -436,4 +437,20 @@ export async function moveReleasedSheet(rows, toLabel) {
   }
   return n;
 }
-export const realReleaseApi = { moveReleasedSheet, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };
+// ★ 2026-11-10 ยกเลิกการปล่อย (ปล่อยผิด → ปล่อยใหม่): เช็คทุกแถวก่อน — มีสแกน / บันทึกงานหน้าเครื่อง = ไม่ลบ (คืนใน blocked)
+//   check(rows) → { ok:[row], blocked:[{row, scanned, recs}] } · unrelease(rows) → จำนวนที่ลบ (ลบแถว + QR ผ่าน authz_delete_release)
+export async function checkUnrelease(rows) {
+  const ok = [], blocked = [];
+  for (const r of rows) {
+    const [units, recs] = await Promise.all([listRows("part_units", { filters: { release_id: r.id }, strict: true }), countReleaseStationRecords(r.id)]);
+    const scanned = (units || []).filter((u) => u.status !== "released").length;
+    if (scanned > 0 || recs > 0) blocked.push({ row: r, scanned, recs }); else ok.push(r);
+  }
+  return { ok, blocked };
+}
+export async function unreleaseRows(rows, onProgress = () => {}) {
+  let n = 0;
+  for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
+  return n;
+}
+export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };

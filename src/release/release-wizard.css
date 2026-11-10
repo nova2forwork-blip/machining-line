@@ -817,3 +817,17 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rw-inbox-job-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .rw-inbox-job-b { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; align-items: center; }
 .rw-inbox-job-a { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ★ 2026-11-10 ปุ่ม "ย้ายใบ / ยกเลิก" บนแถบล็อต + แผงแก้ล็อต */
+.rl-lot-hw { display: flex; align-items: center; }
+.rl-lot-hw > .rl-lot-h { flex: 1; min-width: 0; }
+.rl-lot-fix { margin-right: 10px; white-space: nowrap; flex-shrink: 0; }
+.rl-drawer.rl-fix { width: min(860px, calc(100vw - 48px)); }
+.rl-fix-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 22px 10px; position: sticky; top: 0; background: var(--surface); z-index: 2; }
+.rl-fix-bar > .input { flex: 1; min-width: 200px; }
+.rl-fix-act { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.rl-fix-del { background: #b91c1c !important; color: #fff !important; border: 0; }
+.rl-fix-del:disabled { opacity: .45; }
+.rl-fix-tw { flex: 1; overflow: auto; padding: 0 22px 22px; }
+.rl-fix-t tbody tr { cursor: pointer; }
+.rl-fix-t tbody tr.on { background: rgba(31,157,116,.08); }

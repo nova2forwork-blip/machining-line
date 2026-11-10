@@ -7239,7 +7239,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 "Click a machine chip or “▸ N machines” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
             )}
             {canEdit && sel.size ? (
-              <div className="pm-tbar" style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              <div className="pm-tbar" style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", position: "sticky", top: 0, zIndex: 5, background: "var(--surface)", padding: "8px 0", boxShadow: "0 6px 10px -8px rgba(0,0,0,.25)" }}>
                 <span className="pm-tbar-count">เลือก <b>{nc(sel.size)}</b> แถว</span>
                 {sheetOpts.length ? <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>ย้ายไปใบ <select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
                   : <span className="muted" style={{ fontSize: 12 }}>{selKinds.size > 1 ? "ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด" : ""}</span>}
@@ -7492,7 +7492,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
           await onReload();
         }}
-        onSheetMoved={async ({ codes, toLabel, rows }) => { hist.reset(); mlsToast(`ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await onReload(); }}
+        onSheetMoved={async ({ codes, toLabel, rows, msg }) => { hist.reset(); mlsToast(msg || `ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await onReload(); }}
         onReleased={async ({ lotNo, rows, hw = 0 }) => {
           hist.reset();
           const q = rows.reduce((a, r) => a + r.qty, 0);
