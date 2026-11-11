@@ -80,6 +80,56 @@ export function SimpleBarChart({ data = [], color = "#10b981", height = 260 }) {
   );
 }
 
+// ─── ★ 2026-11-11 กราฟเส้น (ชุดเดียว · แกนเดียว) — data: [{ name, count, tip? }] เรียงตามเวลา ───────────
+//   ผู้ใช้: "กราฟ เป็นเส้น" · เส้น 2px · ไม่มีจุดทุกค่า (รก) — จุดขึ้นเฉพาะตอนชี้ + เส้นตั้งนำสายตา + กล่องค่า · ป้ายค่าปลายเส้น
+//   ตัวหนังสือใช้สีหมึก ไม่ใช้สีเส้น · ตาราง/แกนสีจาง · สีเส้นเข้มพอบนพื้นขาว (เขียวเข้มของแอป)
+export function SimpleLineChart({ data = [], color = "#0b7a55", height = 260, unit = "" }) {
+  const [ref, W] = useSize();
+  const [hi, setHi] = useState(null);
+  const H = height, padL = 46, padR = 54, padT = 16, padB = 34;
+  const iw = Math.max(0, W - padL - padR), ih = Math.max(0, H - padT - padB);
+  const n = data.length;
+  const vals = data.map((d) => Number(d.count) || 0);
+  const { ticks, top } = niceScale(Math.max(1, ...(vals.length ? vals : [1])), 4);
+  const xAt = (i) => padL + (n > 1 ? (i / (n - 1)) * iw : iw / 2);
+  const yAt = (v) => padT + ih - (top ? (v / top) * ih : 0);
+  const line = vals.map((v, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(" ");
+  const area = n > 1 ? `${line} L${xAt(n - 1).toFixed(1)},${padT + ih} L${xAt(0).toFixed(1)},${padT + ih} Z` : "";
+  const every = n > 10 ? Math.ceil(n / 9) : 1;
+  const fmtV = (v) => (Number(v) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const onMove = (e) => {
+    if (!n) return; const r = e.currentTarget.getBoundingClientRect(); const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const i = n > 1 ? Math.round(((x - padL) / (iw || 1)) * (n - 1)) : 0; setHi(Math.max(0, Math.min(n - 1, i)));
+  };
+  const gid = "mlsLine" + String(color).replace(/[^a-z0-9]/gi, "");
+  const tipLeft = hi != null ? Math.max(6, Math.min(W - 156, xAt(hi) + (xAt(hi) > W * 0.6 ? -160 : 12))) : 0;
+  return (
+    <div ref={ref} style={{ width: "100%", height, position: "relative" }}>
+      {W > 0 && (
+        <svg width={W} height={H} role="img" aria-label={`กราฟเส้น ${n} จุด`} style={{ display: "block", fontFamily: "inherit", touchAction: "pan-y" }}
+          onMouseMove={onMove} onMouseLeave={() => setHi(null)} onTouchStart={onMove} onTouchMove={onMove} onTouchEnd={() => setHi(null)}>
+          <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.16" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+          {ticks.map((tk, i) => (
+            <g key={"t" + i}>
+              <line x1={padL} y1={yAt(tk)} x2={W - padR} y2={yAt(tk)} stroke="#e1e9e5" strokeDasharray={tk === 0 ? undefined : "3 3"} />
+              <text x={padL - 6} y={yAt(tk) + 4} textAnchor="end" fontSize="12" fill="#5a6a63">{fmtTick(tk)}</text>
+            </g>))}
+          {data.map((d, i) => ((i % every === 0 && i + every / 2 < n) || i === n - 1 ? <text key={"x" + i} x={xAt(i)} y={H - padB + 18} textAnchor={i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle"} fontSize="12" fill="#5a6a63">{d.name}</text> : null))}
+          {area ? <path d={area} fill={`url(#${gid})`} /> : null}
+          {n > 1 ? <path d={line} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /> : null}
+          {n === 1 ? <circle cx={xAt(0)} cy={yAt(vals[0])} r="4" fill={color} stroke="#fff" strokeWidth="2" /> : null}
+          {n > 1 && hi == null ? <><circle cx={xAt(n - 1)} cy={yAt(vals[n - 1])} r="4" fill={color} stroke="#fff" strokeWidth="2" /><text x={xAt(n - 1) + 8} y={yAt(vals[n - 1]) + 4} fontSize="12" fontWeight="700" fill="#142420">{fmtTick(Math.round(vals[n - 1] * 10) / 10)}</text></> : null}
+          {hi != null && n > 0 ? <><line x1={xAt(hi)} y1={padT} x2={xAt(hi)} y2={padT + ih} stroke="#9db1a8" /><circle cx={xAt(hi)} cy={yAt(vals[hi])} r="5" fill={color} stroke="#fff" strokeWidth="2" /></> : null}
+        </svg>)}
+      {hi != null && n > 0 && W > 0 ? (
+        <div style={{ position: "absolute", left: tipLeft, top: 0, width: 148, pointerEvents: "none", background: "#fff", border: "1px solid #e1e9e5", borderRadius: 10, boxShadow: "0 6px 18px rgba(0,0,0,.12)", padding: "6px 10px", fontSize: 12, lineHeight: 1.4 }}>
+          <div style={{ color: "#5a6a63" }}>{data[hi].tip || data[hi].name}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#142420" }}>{fmtV(vals[hi])} <span style={{ fontSize: 12, fontWeight: 500, color: "#5a6a63" }}>{unit}</span></div>
+        </div>) : null}
+    </div>
+  );
+}
+
 // ─── กราฟพื้นที่ (แทน AreaChart) — data: [{ hour, pcs, kg }] · 2 แกน (pcs ซ้าย/kg ขวา) ──
 export function SimpleAreaChart({ data = [], showPcs = true, showKg = true, height }) {
   const [ref, W, H0] = useSize();

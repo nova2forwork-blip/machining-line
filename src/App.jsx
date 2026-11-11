@@ -483,7 +483,7 @@ import {
   machineDailyMatrix, missingWeightParts, logWeight, logWeightNeedsBackfill, } from "./metrics.js";
 import Icon from "./icons.jsx";
 import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
-import { SimpleBarChart } from "./svgcharts.jsx";
+import { SimpleBarChart, SimpleLineChart } from "./svgcharts.jsx";
 import PasswordField from "./pwfield.jsx";
 
 // ─── Chart theme (สีกราฟ SVG — ค่าสีตรงกับ CSS variables ของแอป) ──
@@ -939,12 +939,13 @@ const Badge = ({ children, tone = "accent" }) => {
   const t = TONES[tone] || TONES.accent;
   return <span className="badge" style={{ color: t.c, background: t.bg, borderColor: t.bd }}>{children}</span>;
 };
-const StatCard = ({ label, value, icon }) => (
+const StatCard = ({ label, value, icon, sub, unit }) => (
   <div className="card">
     <div className="stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
       {icon && <Icon name={icon} size={13} />}{label}
     </div>
-    <div className="stat-value">{value}</div>
+    <div className="stat-value">{value}{unit ? <small className="stat-unit"> {unit}</small> : null}</div>
+    {sub ? <div className="stat-sub">{sub}</div> : null}
   </div>
 );
 
@@ -9567,7 +9568,7 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
               const chart = Object.keys(byDay).sort().map((d) => ({ name: d.slice(5).split("-").reverse().join("/"), count: byDay[d] }));
               return (
                 <>
-                  {chart.length > 1 && <SimpleBarChart data={chart} color={CHART.accent} height={200} />}
+                  {chart.length > 1 && <SimpleLineChart data={chart} height={200} />}
                   <div className="table-wrap" style={{ maxHeight: "50vh", overflow: "auto" }}><table className="data-table" style={{ minWidth: 0 }}>
                     <thead><tr><th>{L("วันที่", "Date")}</th><th>{L("เครื่อง", "Machine")}</th><th style={{ textAlign: "right" }}>{L("ชิ้น", "pcs")}</th><th style={{ textAlign: "right" }}>{L("กก.", "kg")}</th><th style={{ textAlign: "right" }}>{L("เวลา", "Time")}</th></tr></thead>
                     <tbody>{[...detail.rows].sort((a, b) => String(b.b).localeCompare(String(a.b)) || String(a.code).localeCompare(String(b.code))).map((x, i) => (
@@ -9663,7 +9664,7 @@ function TrendView({ filters }) {
               <StatCard label={(H.kind === "week" ? L("สัปดาห์ก่อน", "Last week") : L("เดือนก่อน", "Last month")) + ` (${unit})`} value={prev ? fmtNum(val(prev)) : "—"} icon="chart" />
               <StatCard label={L(`เฉลี่ยต่อช่วง (${unit})`, `Average per period (${unit})`)} value={fmtNum(Math.round(avg * 10) / 10)} icon="bolt" />
             </div>
-            <SimpleBarChart data={chart} color={CHART.accent} height={260} />
+            <SimpleLineChart data={chart} height={260} unit={unit} />
             <div className="table-wrap" style={{ marginTop: 12, maxHeight: 340, overflow: "auto" }}><table className="data-table" style={{ minWidth: 0 }}>
               <thead><tr><th>{H.kind === "week" ? L("สัปดาห์ (เริ่มจันทร์)", "Week (from Mon)") : L("เดือน", "Month")}</th><th style={{ textAlign: "right" }}>{L("ชิ้น", "pcs")}</th><th style={{ textAlign: "right" }}>{L("กก.", "kg")}</th><th style={{ textAlign: "right" }}>{L("เวลาเครื่อง", "Machine time")}</th><th style={{ textAlign: "right" }}>{L("วันที่มีงาน", "Active days")}</th><th style={{ textAlign: "right" }}>{L("เฉลี่ย กก./วัน", "Avg kg/day")}</th></tr></thead>
               <tbody>{[...rows].reverse().map((r) => (
@@ -9700,6 +9701,7 @@ function ReportPage({ goTo }) {
   const [deptFilter, setDeptFilter] = useState("machine");   // "machine"/"assembly"/"packing" — แต่ละแผนกดูคนละแบบ
   // ★ รอบ 13: มุมมอง — ภาพรวม (เดิม) · รายพนักงาน (admin/office/supervisor) · แนวโน้มรายสัปดาห์/เดือน (สรุปฝั่ง server)
   const [view, setView] = useState("overview");
+  const [dayMetric, setDayMetric] = useState("count");   // ★ 2026-11-11 กราฟเส้นรายวัน: ชิ้น | กก. (แกนเดียว สลับดูทีละค่า)
   const canSeeEmp = canManage(getSession());
   const [operations, setOperations] = useState([]);   // ไว้แม็ป operation → แผนก (op_type)
   const [drill, setDrill] = useState(null);   // ป็อปอัปดูรายละเอียดการสแกน (เปิดจากแถวตาราง) — {mode,title,subtitle,logs}
@@ -10109,11 +10111,12 @@ function ReportPage({ goTo }) {
       {deptFilter === "machine" ? (
       <>
       <div className="stat-row" style={logsState.loading ? { opacity: .45 } : undefined}>
-        <StatCard label="จำนวนที่บันทึก · นับต่อขั้นตอน" value={totalPieces(filteredLogs).toLocaleString()} icon="scan" />
-        <StatCard label="งาน/ล็อตที่มีความเคลื่อนไหว" value={distinctUnits.toLocaleString()} icon="box" />
-        <StatCard label={lang === "en" ? "Avg weight · per active day (kg)" : "น้ำหนักเฉลี่ย · ต่อวันทำงาน (กก.)"} value={fmtNum(avgWeightPerDay)} icon="weight" />
-        <StatCard label="ปริมาณงานที่ประมวลผล · ทุกขั้นตอน (กก.)" value={fmtNum(processed)} icon="bolt" />
-        <StatCard label="เวลาเดินเครื่องรวม (จับจากหน้าเครื่อง)" value={fmtHrs(totalSeconds)} icon="bolt" />
+        {/* ★ 2026-11-11 ผู้ใช้: "ออกแบบหน้านี้ใหม่ให้ดูง่าย" → ชื่อการ์ดสั้น + หน่วยข้างตัวเลข + คำอธิบายเล็กใต้ตัวเลข */}
+        <StatCard label={lang === "en" ? "Recorded" : "จำนวนที่บันทึก"} value={totalPieces(filteredLogs).toLocaleString()} unit={lang === "en" ? "pcs" : "ชิ้น"} sub={lang === "en" ? "counted per operation" : "นับต่อขั้นตอน"} icon="scan" />
+        <StatCard label={lang === "en" ? "Active jobs / lots" : "งาน / ล็อตที่เคลื่อนไหว"} value={distinctUnits.toLocaleString()} sub={lang === "en" ? `${nc(activeDays)} active day(s)` : `มีงาน ${nc(activeDays)} วัน`} icon="box" />
+        <StatCard label={lang === "en" ? "Workload" : "ปริมาณงาน"} value={fmtNum(processed)} unit={lang === "en" ? "kg" : "กก."} sub={lang === "en" ? "all operations" : "รวมทุกขั้นตอน"} icon="weight" />
+        <StatCard label={lang === "en" ? "Average per day" : "เฉลี่ยต่อวัน"} value={fmtNum(avgWeightPerDay)} unit={lang === "en" ? "kg" : "กก."} sub={lang === "en" ? "per active day" : "เฉพาะวันที่มีงาน"} icon="chart" />
+        <StatCard label={lang === "en" ? "Machine time" : "เวลาเดินเครื่อง"} value={fmtHrs(totalSeconds)} sub={lang === "en" ? "from the terminals" : "จับจากหน้าเครื่อง"} icon="bolt" />
       </div>
 
       {noWeight.length > 0 && (
@@ -10139,16 +10142,38 @@ function ReportPage({ goTo }) {
           : <><b>น้ำหนักเฉลี่ย/วัน</b> = ปริมาณงานที่ประมวลผล ÷ จำนวนวันที่มีงานจริง · ชิ้นที่ทำหลายขั้นตอนในเครื่องเดียว (สแกนครั้งเดียว) นับครั้งเดียว ·{" "}
               <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอน (คนละครั้ง) นับต่อขั้นตอน (วัดภาระงานรวมของสาย)</>}
       </HowTo>
-      <Card title="แยกตามขั้นตอนการทำงาน">
-        <SimpleBarChart data={chartData} color={CHART.accent} height={260} />
+      {/* ★ 2026-11-11 ผู้ใช้: "กราฟ เป็นเส้น" → กราฟเส้นปริมาณงานรายวัน (เดิมกราฟแท่งแยกขั้นตอน) · แยกขั้นตอน = แถวตัวเลขใต้กราฟ (ขั้นตอนไม่ใช่ลำดับเวลา ลากเส้นแล้วอ่านผิด) */}
+      <Card title={lang === "en" ? "Daily workload" : "ปริมาณงานรายวัน"}
+        right={<span className="rp-seg" role="group" aria-label={lang === "en" ? "Metric" : "หน่วยที่แสดง"}>
+          <button type="button" className={dayMetric === "count" ? "on" : ""} onClick={() => setDayMetric("count")}>{lang === "en" ? "Pieces" : "ชิ้น"}</button>
+          <button type="button" className={dayMetric === "weight" ? "on" : ""} onClick={() => setDayMetric("weight")}>{lang === "en" ? "kg" : "กก."}</button>
+        </span>}>
+        {(() => {
+          const tot = new Map(); dailyMatrix.machines.forEach((m) => Object.entries(m.days || {}).forEach(([d, v]) => { const t = tot.get(d) || tot.set(d, { count: 0, weight: 0 }).get(d); t.count += v.count || 0; t.weight += v.weight || 0; }));
+          const keys = [...tot.keys()].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+          const series = [];
+          if (keys.length) { const end = Date.parse(keys[keys.length - 1] + "T00:00:00Z"); let n = 0; for (let t = Date.parse(keys[0] + "T00:00:00Z"); t <= end && n < 800; t += 86400000, n++) { const d = new Date(t).toISOString().slice(0, 10); const v = tot.get(d); const [y, mo, dd] = d.split("-"); series.push({ name: `${dd}/${mo}`, tip: `${dd}/${mo}/${y}`, count: v ? Math.round((v[dayMetric] || 0) * 100) / 100 : 0 }); } }
+          return series.length === 0
+            ? <div style={{ color: "var(--muted)", fontSize: 13, padding: "26px 2px", textAlign: "center" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
+            : <SimpleLineChart data={series} height={250} unit={dayMetric === "count" ? (lang === "en" ? "pcs" : "ชิ้น") : (lang === "en" ? "kg" : "กก.")} />;
+        })()}
+        {chartData.length ? (
+          <div className="rp-ops">
+            <span className="rp-ops-h">{lang === "en" ? "By operation" : "แยกตามขั้นตอน"}</span>
+            {chartData.map((o) => <span key={o.name} className="rp-op"><span>{opLabel(o.name, lang)}</span><b>{dayMetric === "count" ? nc(o.count) : fmtNum(o.weight)}</b><small>{dayMetric === "count" ? (lang === "en" ? "pcs" : "ชิ้น") : (lang === "en" ? "kg" : "กก.")}</small></span>)}
+          </div>) : null}
       </Card>
 
-      <Card title="เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)">
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+      <Card title={lang === "en" ? "Machine × Operation" : "เครื่องจักร × ขั้นตอน"}>
+        <HowTo id="report-machine-op" style={{ margin: "-4px 0 10px" }} label={lang === "en" ? "How to read this table" : "อ่านตารางนี้ยังไง"}>
           {lang === "en"
             ? <>How much each machine did per operation (pcs·kg) + machine time + avg/day, all in one table · <b>Avg/day</b> is based on days with activity only</>
             : <>แต่ละเครื่องทำขั้นตอนอะไรไปเท่าไร (ชิ้น·กก.) + เวลาเดินเครื่อง + เฉลี่ย/วัน ในตารางเดียว · <b>เฉลี่ย/วัน</b> คิดจากเฉพาะวันที่มีงานจริง</>}
-        </div>
+          <br />
+          {lang === "en"
+            ? <>Numbers are workload (counted per scan), not material quantity · <b>Machine time</b> = time captured between START–SAVE on the terminal (not the machine's actual power-on time)</>
+            : <>ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)</>}
+        </HowTo>
         {matrix.machines.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (
@@ -10182,19 +10207,14 @@ function ReportPage({ goTo }) {
                 cell: (m, i, c) => c.dm ? <span>{fmtNum(c.dm.avg.count)} ชิ้น{c.dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(c.dm.avg.seconds)}</span> : null}</span> : "—" },
             ]} />
         )}
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, lineHeight: 1.6 }}>
-          {lang === "en"
-            ? <>Numbers are workload (counted per scan), not material quantity · <b>Machine time</b> = time captured between START–SAVE on the terminal (not the machine's actual power-on time)</>
-            : <>ตัวเลขคือปริมาณงาน (นับต่อการสแกน) ไม่ใช่จำนวนวัสดุ · <b>เวลาเดินเครื่อง</b> = เวลาที่จับจากกด START–SAVE บนหน้าเครื่อง (ไม่ใช่เวลาเครื่องเปิดจริง)</>}
-        </div>
       </Card>
 
       <Card title={lang === "en" ? "Release × Part × Operation" : "Release × Part × ขั้นตอน"}>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        <HowTo id="report-part-op" style={{ margin: "-4px 0 10px" }} label={lang === "en" ? "How to read this table" : "อ่านตารางนี้ยังไง"}>
           {lang === "en"
             ? <>Each row = a Part in each Release · Operation columns = pieces that passed that operation · <b>Weight</b> in its own column · <b>Finished</b> = pieces marked Finished</>
             : <>แต่ละแถว = Part ในแต่ละ Release · คอลัมน์ขั้นตอน = จำนวนชิ้นที่ผ่านขั้นตอนนั้น · <b>น้ำหนัก</b> แยกคอลัมน์ · <b>เสร็จ</b> = ชิ้นที่กด Finished</>}
-        </div>
+        </HowTo>
         {partMatrix.parts.length === 0 ? (
           <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 2px" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
         ) : (

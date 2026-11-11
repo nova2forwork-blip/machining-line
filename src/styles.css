@@ -1792,3 +1792,14 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .qr-tile-info b { font-size: 13px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
 .qr-tile-info span { font-size: 11.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
 .qr-tile-code { grid-area: code; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); background: rgba(0,0,0,.04); border-radius: 6px; padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; letter-spacing: .01em; }
+
+/* ★ 2026-11-11 รายงานข้อมูลสแกน: การ์ดตัวเลข + กราฟเส้น + แถวแยกขั้นตอน */
+.stat-unit { font-size: 13px; font-weight: 500; color: var(--muted); font-family: var(--font-sans, inherit); }
+.stat-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.rp-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #eef3f1; border: 1px solid #dfe8e4; }
+.rp-seg button { border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 700; color: #5a6f68; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+.rp-seg button.on { background: #fff; color: var(--accent-dk); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.rp-ops { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft, #eef2f0); }
+.rp-ops-h { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 4px; }
+.rp-op { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 12px; border-radius: 999px; background: var(--surface-2, #f3f6f5); font-size: 12.5px; }
+.rp-op span { color: var(--muted); } .rp-op b { font-size: 14px; font-variant-numeric: tabular-nums; } .rp-op small { color: var(--muted); font-size: 11.5px; }
