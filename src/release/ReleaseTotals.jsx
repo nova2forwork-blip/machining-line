@@ -364,7 +364,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   useEffect(() => { checkTop(); });   // เปลี่ยนแท็บ / ข้อมูลเปลี่ยน = ตารางใหม่อยู่บนสุด → ซ่อนปุ่ม
   return (
     <div className="card rw-card rt" ref={rootRef} onScrollCapture={checkTop}>
-      {scrolled ? <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑ บนสุด</button> : null}
+      {scrolled ? <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑</button> : null}
       <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย</p></div></div>
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>
