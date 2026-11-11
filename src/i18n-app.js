@@ -2804,3 +2804,40 @@ registerI18n({
     ["{1} มีชิ้นที่เสร็จแล้ว {2} ชิ้น — ลบไม่ได้ เพราะจะลบประวัติการผลิตไปด้วย", "{1} has {2} finished piece(s) — it can't be deleted because production history would be lost"],
   ],
 });
+
+// ★ 2026-11-11 หน้าพิมพ์ QR / ป้าย (ส่วนเลือกชนิดป้ายแบบใหม่ + แถบเครื่องมือ)
+registerI18n({
+  dict: {
+    "ล้างตัวกรองทั้งหมด": "Clear all filters",
+    "เบอร์ ·": "part(s) ·",
+    "ทั้งล็อต": "Whole lot",
+    "ชนิดป้าย · ทุกเบอร์": "Label type · all parts",
+    "1 OF N · รายชิ้น": "1 OF N · per piece",
+    "ทั้งล็อต · ใบเดียว": "Whole lot · one label",
+    "กดสวิตช์ท้ายแถวเพื่อเปลี่ยนทีละเบอร์ · ติ๊กหลายเบอร์ (Shift = ทั้งช่วง) เพื่อตั้งพร้อมกัน": "Use the switch on a row to change one part · tick several (Shift = range) to set them together",
+    "พิมพ์รหัสใต้ป้าย": "Print code under label",
+    "ป้าย 1 ใบต่อ 1 ชิ้น เลขวิ่ง 1 OF N (ชิ้นใหญ่)": "One label per piece, numbered 1 OF N (large pieces)",
+    "ป้ายเดียวแทนทั้งล็อต สแกนแล้วกรอกจำนวน (ชิ้นเล็ก)": "One label for the whole lot — scan, then enter the quantity (small pieces)",
+    "จำนวนป้ายที่จะได้": "Labels this part will get",
+    "ป้ายรายชิ้น 1 OF N": "Per-piece label, 1 OF N",
+    "ป้ายรวมทั้งล็อต ใบเดียว": "One label for the whole lot",
+    "เครื่องพิมพ์ป้าย (ม้วน) — 1 ป้ายต่อ 1 หน้า ขนาดเท่าจริง": "Label printer (roll) — one label per page at actual size",
+    "เครื่องพิมพ์ทั่วไป — เรียงหลายป้ายในกระดาษ A4": "Office printer — several labels on an A4 sheet",
+    "แสดงรหัสของ QR เป็นตัวอักษรใต้ป้าย — ทั้งในตัวอย่างบนจอและบนป้ายที่พิมพ์": "Show the QR code as text under the label — in the on-screen preview and on the printed label",
+    "ตั้งที่เลือกเป็น": "Set selected to",
+    "ไม่พบเบอร์ที่ค้นหา": "No matching parts",
+    "ค้นหาเบอร์...": "Search parts…",
+    "ค้นหาเบอร์": "Search parts",
+    "ล้างที่เลือก": "Clear selection",
+    "ชนิดป้ายของเบอร์เหล่านี้ตั้งตามที่เคยพิมพ์ครั้งก่อน — เปลี่ยนได้ที่สวิตช์": "These parts use the label type from the last print — change it with the switch",
+  },
+  tpls: [
+    ["{1} ป้ายรายชิ้น 1 OF N", "{1} per-piece label, 1 OF N"],
+    ["{1} ป้ายรวมทั้งล็อต", "{1} whole-lot label"],
+    ["เลือก {1} เบอร์", "{1} selected"],
+    ["เลือกทั้งหมดที่ค้นเจอ", "Select all found"],
+    ["{1} ใบ", "{1} label(s)"],
+    ["↻ ตามที่เคยพิมพ์ {1} เบอร์", "↻ {1} as last printed"],
+    ["กราฟเส้น {1} จุด", "Line chart, {1} points"],
+  ],
+});
