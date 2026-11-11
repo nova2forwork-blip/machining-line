@@ -322,11 +322,13 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         <div className="rl-sbox">
           <div className="rl-sbox-h"><b>Modify</b><button type="button" className="btn btn-ghost btn-sm rl-modbtn" onClick={() => setModify(true)} title="แก้จำนวน / ยกเลิกเบอร์ / ยกเลิกที่อยู่ / เพิ่มเบอร์ / เปลี่ยนวัสดุ — มีเลข M">✎ Modify ใหม่</button></div>
           {plan.mods?.length ? (() => { const m = plan.mods[plan.mods.length - 1]; return (
-            <div className="rl-smod">
-              <div><button type="button" className="rl-smod-v rl-mlink" onClick={() => { setCmpOpen(new Set([m.ver])); setModsOpen(true); }} title="ดูก่อน / หลัง · แก้ได้">{m.ver} ›</button> <span className="rw-muted small">· {fmtD(m.date)} · {m.by}</span></div>
+            <div className="rl-smod click" role="button" tabIndex={0} title="ดูก่อน / หลัง · แก้ได้"
+              onClick={() => { setCmpOpen(new Set([m.ver])); setModsOpen(true); }}
+              onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setCmpOpen(new Set([m.ver])); setModsOpen(true); } }}>
+              <div><button type="button" className="rl-smod-v rl-mlink" onClick={(e) => { e.stopPropagation(); setCmpOpen(new Set([m.ver])); setModsOpen(true); }} title="ดูก่อน / หลัง · แก้ได้">{m.ver} ›</button> <span className="rw-muted small">· {fmtD(m.date)} · {m.by}</span></div>
               {m.reason ? <div className="rw-muted small">{m.reason}</div> : null}
               <ul className="rl-smod-list">{m.items.filter((it) => !it.derived).slice(0, 4).map((it, i) => <li key={i}><span className="rw-mono">{it.code}</span> {it.type === "add" ? `+${nf(it.after)}` : it.type === "cancel" ? "ยกเลิก" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? `วัสดุ → ${it.after}` : it.type === "len" ? `ยาว → ${it.after}` : `${nf(it.before)} → ${nf(it.after)}`}</li>)}{m.items.filter((it) => !it.derived).length > 4 ? <li className="rw-muted">… อีก {m.items.filter((it) => !it.derived).length - 4} รายการ</li> : null}</ul>
-              {plan.mods.length > 1 ? <button type="button" className="rw-link small" onClick={() => { setCmpOpen(new Set()); setModsOpen(true); }}>ประวัติทั้งหมด {plan.mods.length} ครั้ง</button> : null}
+              {plan.mods.length > 1 ? <button type="button" className="rw-link small" onClick={(e) => { e.stopPropagation(); setCmpOpen(new Set()); setModsOpen(true); }}>ประวัติทั้งหมด {plan.mods.length} ครั้ง</button> : null}
             </div>); })() : <div className="rw-muted small">ยังไม่เคย Modify</div>}
           <button type="button" className="rl-sadd" onClick={() => setModify("add")} title="เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบ — ไม่นับเป็น Modify">+ เพิ่มรายการ (ไม่นับ Modify)</button>
         </div>

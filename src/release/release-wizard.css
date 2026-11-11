@@ -862,6 +862,8 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-slot-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .rl-slot-btns .btn { padding: 4px 9px; font-size: 12px; min-height: 32px; }
 .rl-smod { border-left: 3px solid #8f74ff; padding: 2px 0 2px 11px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.rl-smod.click { cursor: pointer; border-radius: 0 8px 8px 0; margin-right: -6px; padding-right: 6px; transition: background .12s; }
+.rl-smod.click:hover, .rl-smod.click:focus-visible { background: rgba(143,116,255,.09); outline: none; }
 .rl-smod-v { color: #5b3ce0; }
 .rl-smod-list { margin: 2px 0; padding-left: 16px; font-size: 12.5px; }
 .rl-sadd { height: 38px; border: 1px dashed var(--muted-2); border-radius: 10px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
