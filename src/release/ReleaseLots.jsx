@@ -67,6 +67,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
   const [modsOpen, setModsOpen] = useState(false);
+  const [progOpen, setProgOpen] = useState(false);   // ★ 2026-11-11 ป็อปอัพ "ทำไปแค่ไหนแล้ว" ทั้ง Release (แบบที่ 3)
   const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
   const [lotsAll, setLotsAll] = useState(false);
   // ★ 2026-11-10 แถบขวาพับได้: "auto" = พับเองตอนดูแท็บ BOM (ตารางกว้าง) · "show" / "hide" = ผู้ใช้เลือก (จำไว้)
@@ -296,7 +297,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rl-sbox-h"><b>สถานะใบนี้</b></div>
           {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([, , b]) => b > 0).map(([l, a, b, s2]) => (
             <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
-          {madeBy && madeBy.t ? <div className="rl-sstat rl-sstat-made"><div className="rl-sstat-top"><span>ผลิตแล้ว <small className="rw-muted">ชิ้น · จากที่ปล่อย</small></span><b>{nf(madeBy.d)} / {nf(madeBy.t)}</b></div><div className="rl-bar"><i style={{ width: `${pct(madeBy.d, madeBy.t)}%` }} /></div><small className="rw-muted">{pct(madeBy.d, madeBy.t)}% · ดูทีละเบอร์ที่คอลัมน์ "ปล่อยแล้ว" ในตาราง</small></div> : null}
+          {madeBy && madeBy.t ? <div className="rl-sstat rl-sstat-made"><div className="rl-sstat-top"><span>ผลิตแล้ว <small className="rw-muted">ชิ้น · จากที่ปล่อย</small></span><b>{nf(madeBy.d)} / {nf(madeBy.t)}</b></div><div className="rl-bar"><i style={{ width: `${pct(madeBy.d, madeBy.t)}%` }} /></div><small className="rw-muted">{pct(madeBy.d, madeBy.t)}%</small></div> : null}
+          {rel.lots.length ? <button type="button" className="rl-progbtn" onClick={() => setProgOpen(true)}>ดูความคืบหน้าทีละรายการ ›</button> : null}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
             return !tot ? <div className="rw-muted small">ยังไม่มีของในใบ</div> : left > 0 ? <div className="rl-snote warn">ยังไม่ปล่อย {[nUnits - addrDone > 0 && `แผง ${nf(nUnits - addrDone)} ที่`, liveSubs.length - subDone > 0 && `ซับ ${nf(liveSubs.length - subDone)} เบอร์`, liveParts.length - partDone > 0 && `พาร์ท ${nf(liveParts.length - partDone)} เบอร์`].filter(Boolean).join(" · ")} <button type="button" className="rw-link" onClick={() => { setPreset(null); setBuilder(true); }}>ปล่อยต่อ →</button></div> : <div className="rl-snote ok">ปล่อยครบแล้ว — ไม่มีอะไรค้าง</div>; })()}
         </div>
@@ -337,6 +339,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       </aside>
       )}
       </div>
+      {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
         <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
@@ -1397,6 +1400,74 @@ function ModEditor({ m, need, doneOf = () => 0, onCancel, onSave }) {
         <button type="button" className="btn btn-accent btn-sm" disabled={!changed || bad} onClick={save}>บันทึกการแก้ {m.ver}</button>
       </div>
     </div>
+  );
+}
+
+// ★ 2026-11-11 ป็อปอัพความคืบหน้าทั้ง Release: การ์ดสรุป (ทั้งใบ / ตามใบงาน / ตามล็อต) + ตารางรายการ เรียงจากที่ทำได้น้อยสุด
+//   ผลิตแล้ว = ยอดจากหน้าเครื่อง (prod: release_id → ชิ้น) · ไม่นับแถวที่ Modify ยกเลิก · เบอร์เดียวกันหลายล็อตรวมกัน
+function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
+  const [flt, setFlt] = useState("left");
+  const [q, setQ] = useState("");
+  const data = useMemo(() => {
+    const items = new Map(), sheets = new Map(), lots = [];
+    for (const L of rel.lots) {
+      if (L.hwOnly) continue; let ld = 0, lt = 0;
+      for (const r of L.rows) {
+        if (r.mod_cancelled_at) continue; const qy = Number(r.qty) || 0; if (!qy) continue;
+        const m = prod ? Math.min(qy, prod.get(String(r.id)) || 0) : 0; ld += m; lt += qy;
+        const sk = rowSheets(r)[0] || (r.kind === "panel" ? "panel" : "—");
+        const key = r.kind + "|" + NC(r.code);
+        const it = items.get(key) || items.set(key, { code: r.code, kind: r.kind, qty: 0, made: 0, lots: [], sheet: sk }).get(key);
+        it.qty += qy; it.made += m; if (!it.lots.includes(L.no)) it.lots.push(L.no);
+        const sh = sheets.get(sk) || sheets.set(sk, { k: sk, qty: 0, made: 0, codes: new Set() }).get(sk);
+        sh.qty += qy; sh.made += m; sh.codes.add(key);
+      }
+      lots.push({ no: L.no, made: ld, qty: lt });
+    }
+    const list = [...items.values()];
+    return { list, sheets: SHEETS.filter((x) => sheets.has(x.k)).map((x) => ({ ...sheets.get(x.k), label: x.label })), lots, made: list.reduce((a, x) => a + x.made, 0), qty: list.reduce((a, x) => a + x.qty, 0) };
+  }, [rel, prod]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const descOf = (it) => (it.kind === "panel" ? "แผง" : (it.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(it.code))?.d || "");
+  const pc = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
+  const left = data.list.filter((x) => x.made < x.qty), done = data.list.filter((x) => x.made >= x.qty);
+  const ql = q.trim().toUpperCase();
+  const rows = (flt === "left" ? left : flt === "done" ? done : data.list).filter((x) => !ql || x.code.toUpperCase().includes(ql) || descOf(x).toUpperCase().includes(ql)).sort((a, b) => a.made / a.qty - b.made / b.qty || ncmp(a.code, b.code));
+  const Bar = ({ m, t }) => <div className={`rl-pp-bar ${m >= t && t ? "full" : ""}`}><i><b style={{ width: `${pc(m, t)}%` }} /></i><span>{nf(m)} / {nf(t)}</span></div>;
+  const stOf = (x) => (x.made >= x.qty ? ["full", "เสร็จ"] : x.made > 0 ? ["part", "กำลังทำ"] : ["zero", "รอเริ่ม"]);
+  return (
+    <>
+      <div className="rl-back" onClick={onClose} />
+      <div className="rl-pop" role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`}>
+        <div className="rl-pop-h"><h2>Release {plan.ro} ทำไปแค่ไหนแล้ว</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
+        {!prod ? <div className="rw-msg warn">ยังโหลดยอดผลิตไม่ได้ (หรือยังไม่ได้ติดตั้งส่วน Modify) — ตัวเลขผลิตแล้วจะเป็น 0</div> : null}
+        <div className="rl-pop-body">
+          <div className="rl-pp-cards">
+            <div className="rl-pp-card main"><div className="rl-pp-card-t"><b>ทั้งใบ</b><span>{pc(data.made, data.qty)}%</span></div><small>ผลิตแล้ว {nf(data.made)} / {nf(data.qty)} ชิ้น · {nf(data.list.length)} รายการ</small><Bar m={data.made} t={data.qty} /></div>
+            {data.sheets.map((sh) => <div key={sh.k} className="rl-pp-card"><div className="rl-pp-card-t"><b>{sh.label}</b><span>{pc(sh.made, sh.qty)}%</span></div><small>{nf(sh.codes.size)} {sh.k === "panel" ? "แบบ" : "เบอร์"}</small><Bar m={sh.made} t={sh.qty} /></div>)}
+            <div className="rl-pp-card"><div className="rl-pp-card-t"><b>ตามล็อต</b></div>
+              <div className="rl-pp-lots">{[...data.lots].reverse().map((L) => <div key={L.no}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(L.no)}>{L.no}</button> : <span className="rw-mono">{L.no}</span>}<Bar m={L.made} t={L.qty} /></div>)}</div></div>
+          </div>
+          <div className="rl-pp-tools">
+            <b>{flt === "left" ? `ยังค้าง ${nf(left.length)} รายการ` : flt === "done" ? `เสร็จแล้ว ${nf(done.length)} รายการ` : `ทั้งหมด ${nf(data.list.length)} รายการ`}</b><span className="rw-muted small">เรียงจากที่ทำได้น้อยสุด</span>
+            <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
+            {[["left", `ยังค้าง ${nf(left.length)}`], ["done", `เสร็จแล้ว ${nf(done.length)}`], ["all", `ทั้งหมด ${nf(data.list.length)}`]].map(([k, l]) => <button key={k} type="button" className={`rl-pp-chip ${flt === k ? "on" : ""}`} onClick={() => setFlt(k)}>{l}</button>)}
+          </div>
+          <div className="rl-pp-tw"><table className="rl-sc-table">
+            <thead><tr><th>รายการ</th><th>ใบงาน · ล็อต</th><th style={{ width: 260 }}>ผลิตแล้ว</th><th className="r">เหลือ (ชิ้น)</th><th>สถานะ</th></tr></thead>
+            <tbody>{rows.map((x) => { const [c, l] = stOf(x); return (
+              <tr key={x.kind + x.code}>
+                <td><b className="rw-mono">{x.code}</b> <span className="rw-muted small">{descOf(x)}</span></td>
+                <td className="small">{sheetOf(x.sheet).label} · {x.lots.join(", ")}</td>
+                <td><Bar m={x.made} t={x.qty} /></td>
+                <td className="r"><b>{nf(x.qty - x.made)}</b></td>
+                <td><span className={`rl-pp-st ${c}`}>{l}</span></td>
+              </tr>); })}
+              {!rows.length ? <tr><td colSpan={5} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+    </>
   );
 }
 

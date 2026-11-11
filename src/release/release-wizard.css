@@ -1019,3 +1019,25 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-made i b { display: block; height: 6px; background: #f0a020; }
 .rt-made.full { color: var(--accent-dk); font-weight: 600; } .rt-made.full i b { background: var(--accent); }
 .rl-sstat-made { border-top: 1px dashed var(--border); padding-top: 10px; } .rl-sstat-made .rl-bar i { background: #f0a020; }
+/* ★ 2026-11-11 ปุ่ม + ป็อปอัพความคืบหน้าทั้ง Release */
+.rl-progbtn { height: 40px; border: 1px solid var(--accent); border-radius: 11px; background: var(--surface); color: var(--accent-dk); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.rl-progbtn:hover { background: var(--accent-tint); }
+.rl-pop { position: fixed; z-index: 71; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1180px, calc(100vw - 32px)); max-height: 92vh; background: var(--bg, #eef3f1); border-radius: 20px; box-shadow: var(--shadow-pop, 0 20px 60px rgba(0,0,0,.3)); display: flex; flex-direction: column; overflow: hidden; }
+.rl-pop-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 16px 20px 12px; background: var(--surface); }
+.rl-pop-h h2 { margin: 0; font-size: 19px; font-weight: 600; } .rl-pop-h .rl-x { margin-left: auto; align-self: center; }
+.rl-pop > .rw-msg { margin: 10px 20px 0; }
+.rl-pop-body { overflow: auto; padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.rl-pp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.rl-pp-card { background: var(--surface); border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.rl-pp-card.main { box-shadow: inset 0 0 0 2px var(--accent); }
+.rl-pp-card-t { display: flex; justify-content: space-between; align-items: baseline; } .rl-pp-card-t b { font-size: 14.5px; } .rl-pp-card-t span { font-size: 24px; font-weight: 700; }
+.rl-pp-card small { color: var(--muted); font-size: 12.5px; }
+.rl-pp-lots { display: flex; flex-direction: column; gap: 6px; font-size: 13px; max-height: 120px; overflow: auto; }
+.rl-pp-bar { display: flex; align-items: center; gap: 8px; }
+.rl-pp-bar i { flex: 1; height: 8px; border-radius: 99px; background: #dfe8e4; overflow: hidden; display: block; } .rl-pp-bar i b { display: block; height: 8px; background: #f0a020; }
+.rl-pp-bar.full i b { background: var(--accent); } .rl-pp-bar span { font-size: 12.5px; white-space: nowrap; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; } .rl-pp-bar.full span { color: var(--accent-dk); font-weight: 600; }
+.rl-pp-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--surface); border-radius: 16px 16px 0 0; padding: 12px 16px 8px; margin-bottom: -12px; }
+.rl-pp-tools .input { margin-left: auto; width: 240px; height: 36px; }
+.rl-pp-chip { height: 34px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); font: inherit; font-size: 13px; cursor: pointer; } .rl-pp-chip.on { background: var(--text); color: #fff; border-color: var(--text); font-weight: 600; }
+.rl-pp-tw { background: var(--surface); border-radius: 0 0 16px 16px; padding: 0 16px 12px; overflow-x: auto; }
+.rl-pp-st { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 99px; background: #eef2f0; color: #45534d; } .rl-pp-st.part { background: #fff3da; color: #8a5300; } .rl-pp-st.full { background: var(--accent-tint); color: var(--accent-dk); }
