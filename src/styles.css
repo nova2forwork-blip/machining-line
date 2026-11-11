@@ -1742,3 +1742,15 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .lot-pm-m ul { margin: 3px 0; padding-left: 16px; } .lot-pm-m li b { font-family: var(--font-mono); }
 .rs-search.sm { flex: 0 1 340px; min-width: 220px; width: 340px; height: 34px; font-weight: 400; }
 .rs-search.sm input { font-size: 13px; }
+
+/* ★ 2026-11-11 หน้าพิมพ์ QR: แถบเลือกล็อตแถวเดียว */
+.qf-bar { display: grid; grid-template-columns: minmax(240px, 1.5fr) repeat(3, minmax(150px, 1fr)) auto; gap: 10px 12px; align-items: end; }
+.qf-bar > * { min-width: 0; margin: 0; }
+.qf-bar .field, .qf-bar .form-field { margin-bottom: 0; }
+.qf-search { width: 100%; min-width: 0; border-radius: 12px; height: 42px; flex: none; box-sizing: border-box; }
+.qf-search.on { border-color: var(--accent); background: var(--accent-tint); }
+.qf-act { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+@media (max-width: 1180px) { .qf-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); } .qf-bar > :first-child { grid-column: 1 / -1; } .qf-act { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .qf-bar { grid-template-columns: 1fr; } }
+.qf-bar .field > *:last-child, .qf-bar .field select { margin-bottom: 0; }
+.qf-bar .field select, .qf-bar .field .mcs-btn, .qf-bar .field button.select { height: 42px; }

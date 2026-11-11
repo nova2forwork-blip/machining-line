@@ -8428,18 +8428,16 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
       <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseIds([]); }} />
 
+      {/* ★ 2026-11-11 ผู้ใช้: "ออกแบบใหม่" → แถวเดียว: ค้นหา · Projects · Release · Part · ปุ่มค้นหา QR / ล้าง (เดิมช่องค้นหาเต็มแถว + ดรอปดาว 3 ช่อง + ปุ่มอีกแถว) */}
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
-        {/* ช่องค้นหาอิสระ (กรองตัวเลือกในดรอปดาวน์) */}
-        <div className={`lot-search ${hasFilter ? "has" : ""}`}>
-          <svg className="lot-search-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
-          </svg>
-          <input className="lot-search-in" value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="ค้นหา Part No. / Release Order / โปรเจค / วันที่..." />
-        </div>
-
-        {/* ดรอปดาวลูกโซ่: เลือกโปรเจค → รายการ Release แคบลง → เลือก Part */}
-        <div className="grid-3" style={{ gap: 12, marginTop: 14 }}>
+        <div className="qf-bar">
+          <Field label="ค้นหา">
+            <label className={`rs-search qf-search ${search ? "on" : ""}`}>
+              <Icon name="search" size={15} />
+              <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา Part No. / Release Order / โปรเจค / วันที่..." />
+              {search ? <button type="button" className="rs-x" onClick={() => setSearch("")} aria-label="ล้างคำค้น">✕</button> : null}
+            </label>
+          </Field>
           <Field label="Projects">
             <Select value={projectFilter}
               onChange={(e) => { setProjectFilter(e.target.value); setReleaseOrder(""); setReleaseIds([]); }}
@@ -8456,20 +8454,18 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 .sort((a, b) => QR_COLL.compare(partOf(a)?.part_no || "", partOf(b)?.part_no || "") || QR_COLL.compare(a.release_order || "", b.release_order || ""))
                 .map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${nc(r.qty)} ชิ้น` }))} />
           </Field>
+          <div className="qf-act">
+            <Btn variant="accent" onClick={doSearch} disabled={!activeIdsKey}>
+              <Icon name="qr" size={15} /> ค้นหา QR
+            </Btn>
+            <Btn variant="ghost" onClick={clearSearch} disabled={!hasFilter && !committedKey} title="ล้างตัวกรองทั้งหมด">
+              <Icon name="close" size={14} /> ล้าง
+            </Btn>
+          </div>
         </div>
-
-        {/* ★ เลือกก่อน แล้วกด "ค้นหา" ค่อยโหลด/แสดง QR · ปุ่มล้างอยู่ข้างกัน */}
-        <div style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <Btn variant="accent" onClick={doSearch} disabled={!activeIdsKey}>
-            <Icon name="qr" size={15} /> ค้นหา QR
-          </Btn>
-          <Btn variant="ghost" onClick={clearSearch} disabled={!hasFilter && !committedKey}>
-            <Icon name="close" size={14} /> ล้าง
-          </Btn>
-          {searchDirty && committedKey && (
-            <span style={{ fontSize: 12, color: "var(--warn, #b45309)", fontWeight: 600 }}>ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต</span>
-          )}
-        </div>
+        {searchDirty && committedKey && (
+          <div style={{ fontSize: 12, color: "var(--warn, #b45309)", fontWeight: 600, marginTop: 10 }}>ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต</div>
+        )}
         {hasFilter && filteredReleases.length === 0 && (
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด</div>
         )}
