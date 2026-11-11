@@ -8652,13 +8652,14 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               </>
             )}
             <Field label="รูปแบบการพิมพ์">
-              <div className="chip-row">
-                <span className={`chip ${printMode === "roll" ? "active" : ""}`} onClick={() => setPrintMode("roll")}>1 ป้าย/หน้า · เท่าจริง</span>
-                <span className={`chip ${printMode === "sheet" ? "active" : ""}`} onClick={() => setPrintMode("sheet")}>หลายป้าย/แผ่น A4</span>
-              </div>
+              {/* ★ 2026-11-11 แถบเครื่องมือเข้าชุดกับส่วนบน: สวิตช์สองฝั่ง (เดิมชิป) */}
+              <span className="rp-seg qr-mode" role="group" aria-label="รูปแบบการพิมพ์">
+                <button type="button" className={printMode === "roll" ? "on" : ""} onClick={() => setPrintMode("roll")} title="เครื่องพิมพ์ป้าย (ม้วน) — 1 ป้ายต่อ 1 หน้า ขนาดเท่าจริง">1 ป้าย/หน้า · เท่าจริง</button>
+                <button type="button" className={printMode === "sheet" ? "on" : ""} onClick={() => setPrintMode("sheet")} title="เครื่องพิมพ์ทั่วไป — เรียงหลายป้ายในกระดาษ A4">หลายป้าย/แผ่น A4</button>
+              </span>
             </Field>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 9 }}>
-              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดง + พิมพ์รหัสใต้ป้าย
+            <label className={"qr-codechk" + (showCode ? " on" : "")} title="แสดงรหัสของ QR เป็นตัวอักษรใต้ป้าย — ทั้งในตัวอย่างบนจอและบนป้ายที่พิมพ์">
+              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} /> พิมพ์รหัสใต้ป้าย
             </label>
             {/* ★ แถวพิมพ์ — แบบผสม: ขึ้นแถวใหม่เต็มกว้าง · ซ้าย = จำนวนที่เลือก · ขวา = [พิมพ์เฉพาะ: ทั้งล็อต | 1 OF N] + พิมพ์ทั้งหมด */}
             {(() => {

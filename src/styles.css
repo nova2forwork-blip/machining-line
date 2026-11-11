@@ -1825,3 +1825,16 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .fin-scope-note { font-size: 12.5px; color: var(--muted); }
 .rp-seg button:disabled { opacity: .45; cursor: default; }
 .qs-mem { margin-left: 12px; padding: 2px 9px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-size: 11.5px; font-weight: 600; color: var(--muted); }
+
+/* ★ 2026-11-11 หน้าพิมพ์ QR: แถบเครื่องมือล่างเข้าชุดกับส่วนบน */
+.qr-toolbar { border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2, #f3f6f5); padding: 12px 14px; gap: 12px 14px; align-items: flex-end; }
+.qr-toolbar .field { margin-bottom: 0; }
+.qr-toolbar .label-el { font-size: 11.5px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+.qr-toolbar .select, .qr-toolbar select, .qr-toolbar .input { height: 38px; border-radius: 10px; background-color: var(--surface); }
+.qr-mode { background: #e9efec; height: 38px; align-items: center; }
+.qr-mode button { padding: 6px 14px; font-size: 12.5px; }
+.qr-codechk { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.qr-codechk input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.qr-codechk.on { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-dk); }
+.qr-toolbar-print { padding-bottom: 0; }
+.qr-count { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
