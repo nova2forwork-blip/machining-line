@@ -8468,7 +8468,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         },
       };
     });
-    printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels" });
+    printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels", showCode });
   }
 
   function doSearch() { setCommittedKey(activeIdsKey); setSearchNonce((n) => n + 1); }   // กดค้นหา = โหลด/แสดง QR ตามตัวกรองปัจจุบัน (กดซ้ำ = โหลดใหม่)
@@ -8638,7 +8638,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               </div>
             </Field>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", paddingBottom: 9 }}>
-              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดงรหัสใต้ QR
+              <input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} style={{ accentColor: "var(--accent)" }} /> แสดง + พิมพ์รหัสใต้ป้าย
             </label>
             {/* ★ แถวพิมพ์ — แบบผสม: ขึ้นแถวใหม่เต็มกว้าง · ซ้าย = จำนวนที่เลือก · ขวา = [พิมพ์เฉพาะ: ทั้งล็อต | 1 OF N] + พิมพ์ทั้งหมด */}
             {(() => {

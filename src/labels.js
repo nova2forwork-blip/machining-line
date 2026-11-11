@@ -27,24 +27,29 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     heightMm = 12,
     mode = "sheet", // "sheet" (A4 grid) | "roll" (one label per page — thermal printers)
     title = "Part Labels",
+    showCode = false,   // ★ 2026-11-11 พิมพ์รหัส QR (ตัวอักษร) เป็นแถบเล็กใต้ป้าย — เดิมตัวเลือก "แสดงรหัสใต้ QR" มีผลแค่บนจอ
   } = opts;
+  // มีแถบรหัส: เนื้อป้ายเดิมย่อเหลือ 84% ของความสูง (สัดส่วนเดิมทุกอย่าง) · อีก 16% ล่าง = บรรทัดรหัส · ขนาดป้ายรวมเท่าเดิม
+  const fullH = heightMm;
+  const codeH = showCode ? fullH * 0.16 : 0;
+  const bodyH = fullH - codeH;
 
   // ขนาดสัมพัทธ์กับความสูงป้าย เพื่อให้ย่อ/ขยายป้ายแล้วสัดส่วนคงเดิม
-  const qrMm = heightMm.toFixed(2);              // QR ใหญ่เต็มความสูงป้าย
-  const fSmall = (heightMm * 0.17).toFixed(2);
-  const fProj = (heightMm * 0.17 * 1.3).toFixed(2);   // ★ 2026-10-12: เลขโปรเจค / ชื่อโปรเจค ใหญ่ขึ้น 30% (มีที่ว่างเหลือ)
+  const qrMm = bodyH.toFixed(2);              // QR ใหญ่เต็มความสูงป้าย
+  const fSmall = (bodyH * 0.17).toFixed(2);
+  const fProj = (bodyH * 0.17 * 1.3).toFixed(2);   // ★ 2026-10-12: เลขโปรเจค / ชื่อโปรเจค ใหญ่ขึ้น 30% (มีที่ว่างเหลือ)
   // ★ 2026-10-12: Part No. ใหญ่ขึ้น + ฐานตัวอักษรชิดขอบล่างของ QR (เดิม 0.27 × สูง ลอยกลาง)
   //   สคริปต์ย่อทีละนิดถ้าเบอร์ยาวจนล้นช่อง (ไม่ตัด "…")
-  const fBig = (heightMm * 0.27 * 1.66).toFixed(2);   // ★ 2026-10-12: Part No. ใหญ่ขึ้น 66% จากเดิม (0.27 × สูง)
+  const fBig = (bodyH * 0.27 * 1.66).toFixed(2);   // ★ 2026-10-12: Part No. ใหญ่ขึ้น 66% จากเดิม (0.27 × สูง)
   // ★ 2026-10-12: ฝั่งขวา (MDF / REL / 1 OF 6) ย่อลง 15% → Part No. ได้ที่กว้างขึ้น
-  const fMed = (heightMm * 0.23 * 0.85).toFixed(2);   // MDF NO. / REL NO.
+  const fMed = (bodyH * 0.23 * 0.85).toFixed(2);   // MDF NO. / REL NO.
   const fQty = fMed;
   const rowMm = (Math.max(Number(fMed), Number(fProj)) * 1.2).toFixed(2);     // ★ ระยะบรรทัดของ 2 แถวบน (ซ้าย/ขวาเท่ากัน → ตรงระดับกัน)                                   // 1 OF 6 — ★ ขนาดเท่า MDF NO. (เดิมเล็กไป มองไม่เห็น)
 
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
-    return `<div class="lbl">
+    return `<div class="lbl${showCode ? " wc" : ""}">${showCode ? '<div class="lrow">' : ""}
       <div class="qr">${svg}</div>
       <div class="body">
         <div class="col left">
@@ -60,7 +65,7 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
           </div>
           <div class="c qty">${escapeHtml(L.qtyText || "")}</div>
         </div>
-      </div>
+      </div>${showCode ? `</div><div class="lcode">${escapeHtml(u.qr_code || "")}</div>` : ""}
     </div>`;
   }).join("");
 
@@ -72,6 +77,10 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
       font-family: Arial, 'Helvetica Neue', sans-serif; color: #000;
       page-break-inside: avoid;
     }
+    .lbl.wc { flex-direction: column; align-items: stretch; gap: 0; }
+    .lbl.wc .lrow { display: flex; align-items: center; gap: 1.5mm; height: ${bodyH.toFixed(2)}mm; min-height: 0; }
+    .lcode { height: ${codeH.toFixed(2)}mm; line-height: ${codeH.toFixed(2)}mm; font-size: ${(codeH * 0.78).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700;
+             letter-spacing: .02em; white-space: nowrap; overflow: hidden; color: #000; }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
     .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
     /* ห้าม !important ทับ fill ทั้งหมด — เดิมทำให้ "พื้นหลัง QR ดำ" กลายเป็นกล่องดำทึบ
