@@ -6538,6 +6538,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const sheetOfNote = (note) => (/ใบ:\s*(.+?)(?:\s*·|$)/.exec(note || "") || [])[1] || "";
   async function moveSelSheet(label) {
     if (!label || !selRows.length) return;
+    const fin = selRows.filter((r) => doneOfRow(r) > 0);   // ★ 2026-11-11 เบอร์ที่มีชิ้นเสร็จแล้ว = ย้ายใบไม่ได้ (งานทำไปแล้วตามใบเดิม)
+    if (fin.length) { await askConfirm({ title: "ย้ายใบไม่ได้", message: `เบอร์ที่มีชิ้นเสร็จแล้วย้ายใบไม่ได้:\n${fin.map((r) => `${r.part_master?.part_no} (เสร็จ ${nc(doneOfRow(r))})`).join("\n")}\n\nเอาติ๊กเบอร์เหล่านี้ออกแล้วย้ายเฉพาะเบอร์ที่ยังไม่ได้ทำ`, tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
     const rows = selRows.filter((r) => sheetOfNote(r.note) !== label);
     if (!rows.length) { mlsToast("แถวที่เลือกอยู่ในใบนี้อยู่แล้ว", "info"); return; }
     const ok = await askConfirm({ title: `ย้าย ${nc(rows.length)} แถว → ใบ ${label}?`, message: `${rows.map((r) => `${r.part_master?.part_no} (${fmtNum(r.qty)})`).join(", ")}\nจากใบ ${[...new Set(rows.map((r) => sheetOfNote(r.note) || "—"))].join(", ")}\n\nQR และประวัติสแกนเดิมอยู่ครบ · ใบสั่งผลิตที่พิมพ์ไปแล้วต้องพิมพ์ใหม่ · หมวดในใบหลักเปลี่ยนตาม`, tone: "warn", confirmText: "ย้ายใบงาน", cancelText: "ยกเลิก" });
@@ -6597,6 +6599,14 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const [modOpen, setModOpen] = useState(false);
   const [modView, setModView] = useState(null);     // null | M0 | "M-03"
   // ★ 2026-11-04 ผู้ใช้: "ที่ปล่อยไปแล้ว มันคืออะไร ส่วนไหน ปล่อยมาจากแผงไหน" → โหลดแผน Release ของล็อต (P-241.1 → P-241) แล้วไล่ BOM ขึ้นไป
+  // ★ 2026-11-11 Modify มีสองชั้น: ของใบหลัก (แผน · เพิ่มเบอร์ / เปลี่ยนวัสดุ / ความยาว ไม่แตะแถวในล็อต) กับของล็อต (แก้จำนวน / ยกเลิก)
+  //   เดิมหน้าล็อตโชว์แค่ของล็อต → ใบหลักมี M-001 แต่ล็อตขึ้น "M-000 ยังไม่เคย Modify" คนอ่านเข้าใจผิด → โชว์ของใบหลักด้วย
+  const [planMods, setPlanMods] = useState(null);   // { ro, mods, NC } | null
+  useEffect(() => { setPlanMods(null); }, [projectId, hdr.ro]);
+  const planModList = (planMods && planMods.mods) || [];
+  const lotCodes = useMemo(() => new Set(releases.map((r) => (planMods ? planMods.NC(r.part_master?.part_no || "") : ""))), [releases, planMods]);
+  const pmItemText = (it) => (it.type === "add" ? `เพิ่ม +${fmtNum(it.after)}` : it.type === "cancel" ? "ยกเลิกเบอร์" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? `วัสดุ ${it.before || "—"} → ${it.after}` : it.type === "len" ? `ยาว ${it.before ?? "—"} → ${it.after}` : `จำนวน ${fmtNum(it.before)} → ${fmtNum(it.after)}`);
+  const planModsOf = (pn) => { if (!planMods) return []; const k = planMods.NC(pn || ""); return planModList.filter((m) => (m.items || []).some((it) => !it.derived && planMods.NC(it.code) === k)); };
   const [origin, setOrigin] = useState(null);   // { of(code) → {subs,panels}, addrsOf(panel) → [addr…] } | null = ไม่มีแผน/ยังไม่โหลด
   useEffect(() => {
     let alive = true; setOrigin(null);
@@ -6609,6 +6619,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         if (!alive || !plan) return;
         const of = core.originIndex(plan.bom || {});
         const byUnit = new Map(); for (const u of plan.units || []) { const k = core.NC(u.unit); if (!byUnit.has(k)) byUnit.set(k, []); byUnit.get(k).push(u.addr); }
+        setPlanMods({ ro: plan.ro, mods: plan.mods || [], NC: core.NC });   // ★ 2026-11-11 Modify ของใบหลัก → โชว์ในหน้าล็อตด้วย
         setOrigin({ of, addrsOf: (unit) => byUnit.get(core.NC(unit)) || [], ro: plan.ro });
       } catch { /* ไม่มีแผนแบบใหม่ / ยังไม่รัน SQL — ไม่แสดงคอลัมน์ */ }
     })();
@@ -6729,6 +6740,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   // ── ลบ Release (พร้อม QR + ประวัติสแกนของล็อตนั้น) ───────────────────────
   async function handleDelete(r) {
+    // ★ 2026-11-11 เบอร์ที่มีชิ้นเสร็จแล้ว = ลบ Release ไม่ได้ (เดิมแอดมินลบได้พร้อมประวัติ)
+    const dn = doneOfRow(r);
+    if (dn > 0) { await askConfirm({ title: "ลบ Release ไม่ได้", message: `${r.part_master?.part_no} มีชิ้นที่เสร็จแล้ว ${nc(dn)} ชิ้น — ลบไม่ได้ เพราะจะลบประวัติการผลิตไปด้วย`, tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
     setBusyId(r.id);
     try {
       // ★ รอบ 11 (A8): อ่านไม่ได้ = หยุด (เดิมถือว่า 0 → "ยังไม่มีการสแกน" แล้วลบประวัติทิ้ง) · นับงานหน้าเครื่องด้วย
@@ -6953,6 +6967,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
             </Btn>
           </div>
           <div className="page-title">{hdr.ro ? `Release Order: ${hdr.ro}` : `Release — ${releases[0]?.part_master?.part_no || ""}`}
+            {planModList.length ? <span title={`ใบหลัก ${planMods.ro} ถูก Modify ${planModList.length} ครั้ง — ดูรายละเอียดในกล่อง Modify ด้านขวา`} style={{ marginLeft: 8, fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 7, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)", verticalAlign: "middle", whiteSpace: "nowrap" }}>{lang === "en" ? "Master" : "ใบหลัก"} {planMods.ro} · {planModList[planModList.length - 1].ver}</span> : null}
             {modReady && hdr.ro && (
               // ★ ทุกเวอร์ชัน: M-000 (ต้นฉบับ) → … → ล่าสุดอยู่ขวาสุด · กดดูรายละเอียดได้ · ตัวที่ใช้อยู่ตอนนี้ = ทึบม่วง · ที่ยกเลิก = ขีดฆ่า
               <span className="relmod-vstrip">
@@ -7069,6 +7084,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 <span className="pm-pnline1">
                   {/* เบอร์ที่ยกเลิก = เปลี่ยนสี (ไม่ขีดฆ่า) · ย้ายหมดแล้ว = สีจาง */}
                   <span style={r.mod_cancelled_at ? (r.mod_cancel_keep === "moved" ? { color: "var(--muted)" } : { color: "var(--danger)", fontWeight: 700 }) : undefined}>{r.part_master?.part_no || "-"}</span>
+                  {planModsOf(r.part_master?.part_no).filter((m) => m.ver !== r.mod_version).map((m) => (
+                    <span key={"pm" + m.ver} title={`แก้ในใบหลัก ${planMods.ro} ${m.ver}: ${(m.items || []).filter((it) => planMods.NC(it.code) === planMods.NC(r.part_master?.part_no || "")).map(pmItemText).join(" · ")}`}
+                      style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "#fff", color: MOD_PURPLE, border: "1px dashed rgba(109,74,255,.55)" }}>{m.ver}</span>))}
                   {r.mod_version && (
                     <span onClick={(e) => { e.stopPropagation(); if (modByVersion(r.mod_version)) setModView(r.mod_version); }}
                       title={modNoteText(r.mod_note, lang) || (lang === "en" ? "See what changed" : "ดูว่าแก้อะไร")}
@@ -7172,10 +7190,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 )}
               </div>
             )}
-            {pmReady && (
-              <div className="pm-hint">{LL("กดชิปเครื่อง หรือ “▸” ใต้เบอร์ = เปิดดูรายละเอียดของแต่ละเครื่อง · กดที่อื่นในแถว = เปิดความคืบหน้าเหมือนเดิม",
-                "Click a machine chip or “▸” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
-            )}
             {canEdit && sel.size ? (
               <div className="lot-bulk">
                 <span className="lot-bulk-n"><b>{nc(sel.size)}</b> {lang === "en" ? "selected" : "แถวที่เลือก"}</span>
@@ -7213,7 +7227,6 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           <button type="button" className="lot-side-btn" onClick={() => setLotSide(false)} title={lang === "en" ? "Fold this panel — wider table" : "พับแถบนี้ — ให้ตารางกว้างเต็มจอ"}>{lang === "en" ? "Fold panel ›" : "พับแถบนี้ ›"}</button>
           {projectId && hdr.ro ? (
           <Card title={lang === "en" ? "Lot release sheet" : "ใบปล่อยของล็อต"}>
-            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Cover sheet (Instruction No. / remark) · editable yellow cells · print / PDF / Excel" : "ใบปะหน้า (Instruction No. / หมายเหตุ) · ช่องเหลืองแก้ได้ · พิมพ์ / PDF / Excel"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <Btn variant={lotSheetOpen ? "primary" : "ghost"} size="sm" onClick={() => setLotSheetOpen((v) => !v)}>{lotSheetOpen ? (lang === "en" ? "Hide sheet" : "ซ่อนใบปล่อย") : (lang === "en" ? "View / edit sheet" : "ดู / แก้ใบปล่อย")}</Btn>
               <Btn variant="ghost" size="sm" onClick={exportReleaseSheet} disabled={sheetBusy}><Icon name="printer" size={13} /> {lang === "en" ? "Print / PDF / Excel" : "พิมพ์ / PDF / Excel"}</Btn>
@@ -7234,7 +7247,18 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? (lang === "en" ? "Modify isn't installed — run migration-release-modify.sql in Supabase" : "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase") : (lang === "en" ? "Couldn't load history" : "โหลดประวัติไม่สำเร็จ")}</div>
               : (
                 <>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{lang === "en" ? "What changed · in which M · click an M for details · previous values are kept as evidence" : "แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้"}</div>
+                  {planModList.length ? (
+                    <div className="lot-pm">
+                      <div className="lot-pm-h">{lang === "en" ? "Master release" : "ใบหลัก"} {planMods.ro}</div>
+                      {[...planModList].reverse().map((m) => { const its = (m.items || []).filter((it) => !it.derived); const mine = its.filter((it) => lotCodes.has(planMods.NC(it.code))); const rest = its.length - mine.length; return (
+                        <div key={m.ver} className="lot-pm-m">
+                          <div className="lot-pm-top"><b>{m.ver}</b><span>{fmtYmd(m.date)}{m.by ? ` · ${m.by}` : ""}</span></div>
+                          {m.reason ? <div className="lot-pm-r">{m.reason}</div> : null}
+                          {mine.length ? <ul>{mine.map((it, k) => <li key={k}><b>{it.code}</b> {pmItemText(it)}</li>)}</ul> : null}
+                          <div className="lot-pm-r">{mine.length ? (rest ? (lang === "en" ? `+ ${rest} change(s) on parts not in this lot` : `+ อีก ${rest} รายการ เป็นเบอร์ที่ไม่อยู่ในล็อตนี้`) : "") : (lang === "en" ? `${its.length} change(s) — none on parts in this lot` : `${its.length} รายการ — ไม่มีเบอร์ของล็อตนี้`)}</div>
+                        </div>); })}
+                      <div className="lot-pm-h" style={{ marginTop: 10 }}>{lang === "en" ? "This lot" : "ล็อตนี้"}</div>
+                    </div>) : null}
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 236, overflow: "auto" }}>
                     {modList.map((m) => {
                       const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));

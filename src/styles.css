@@ -1732,3 +1732,11 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .rs-sel:focus-visible, .rs-dates:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); outline: none; }
 .rs-clear { height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: none; font: inherit; font-size: 13px; font-weight: 600; color: var(--accent-dk); cursor: pointer; }
 .rs-clear:hover { background: var(--accent-tint); }
+
+/* ★ 2026-11-11 หน้าล็อต: Modify ของใบหลัก */
+.lot-pm { margin-bottom: 8px; }
+.lot-pm-h { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.lot-pm-m { border-left: 3px solid #8f74ff; background: rgba(143,116,255,.06); border-radius: 0 10px 10px 0; padding: 7px 10px; margin-bottom: 6px; font-size: 12.5px; }
+.lot-pm-top { display: flex; align-items: baseline; gap: 8px; } .lot-pm-top b { font-family: var(--font-mono); color: #5b3ce0; font-size: 13px; } .lot-pm-top span { color: var(--muted); font-size: 12px; }
+.lot-pm-r { color: var(--muted); font-size: 12px; }
+.lot-pm-m ul { margin: 3px 0; padding-left: 16px; } .lot-pm-m li b { font-family: var(--font-mono); }

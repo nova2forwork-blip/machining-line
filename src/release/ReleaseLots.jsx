@@ -42,6 +42,9 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     const set = new Set(codes.map(NC));
     const rows = rel.lots.flatMap((L) => L.rows.filter((r) => set.has(NC(r.code)) && r.kind !== "panel" && r.kind !== "subassembly" && !r.mod_cancelled_at).map((r) => ({ ...r, lot: L.no })));
     if (!rows.length) return;
+    // ★ 2026-11-11 เบอร์ที่มีชิ้นเสร็จแล้ว = ย้ายใบไม่ได้
+    const fin = rows.filter((r) => prod && (prod.get(String(r.id)) || 0) > 0);
+    if (fin.length) { await askConfirm({ title: "ย้ายใบไม่ได้", message: `เบอร์ที่มีชิ้นเสร็จแล้วย้ายใบไม่ได้:\n${fin.map((r) => `${r.code} · ${r.lot} (เสร็จ ${nf(prod.get(String(r.id)))})`).join("\n")}`, tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
     const dest = CAT_DEST[cat] || ruleDest(cat, codes[0]); const toLabel = destLabel(dest);
     const fromLabels = [...new Set(rows.map((r) => (/ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || "") || [])[1] || "—"))];
     const qty = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
@@ -67,6 +70,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
   const [modsOpen, setModsOpen] = useState(false);
+  // ★ 2026-11-11 ประวัติ Modify: ตารางทุกเบอร์ของ M-00k = ค่า "ณ ตอนบันทึก M นั้น" (เล่น Modify ซ้ำถึง M นั้น) — เดิมใช้ค่าปัจจุบัน ทำให้ M เก่าโชว์ค่าหลัง M ใหม่
+  const needAsOf = (ver) => { const ms = plan.mods || []; const i = ms.findIndex((x) => x.ver === ver); if (i < 0 || i === ms.length - 1) return need; try { return needOf(replayMods(plan, ms.slice(0, i + 1))); } catch { return need; } };
   // ★ 2026-11-11 ป้ายม่วง M-001 ในตาราง (ModTag) กดแล้ว → เปิดประวัติ Modify ที่ M นั้น
   useEffect(() => {
     const on = (e) => { const v = String(e.detail || ""); if (!v) return; setCmpOpen(new Set([v])); setModsOpen(true); };
@@ -191,7 +196,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const rowSheets = (r) => { const m = /ใบ:\s*(.+?)(?:\s*·|$)/.exec(r.note || ""); if (r.kind === "panel") return ["panel"]; if (m) return m[1].split(/\s*,\s*/).map(sheetKeyOf); return r.kind === "subassembly" ? (need.subs.find((s) => NC(s.code) === NC(r.code))?.procs || []) : [need.parts.find((p) => NC(p.code) === NC(r.code))?.dest || "CUTTING"]; };
   return (
     <div className="rw rl">
-      {fixLot && rel.lots.find((L) => L.no === fixLot) ? <LotFixDrawer lot={rel.lots.find((L) => L.no === fixLot)} plan={plan} need={need} api={api} user={user} rowSheets={rowSheets} onPlanChange={onPlanChange}
+      {fixLot && rel.lots.find((L) => L.no === fixLot) ? <LotFixDrawer prod={prod} lot={rel.lots.find((L) => L.no === fixLot)} plan={plan} need={need} api={api} user={user} rowSheets={rowSheets} onPlanChange={onPlanChange}
         onClose={() => setFixLot(null)} onDone={(msg) => { setFixLot(null); onSheetMoved && onSheetMoved({ msg }); }} /> : null}
       {sheetPrev ? <LotSheetPreview args={sheetPrev} onClose={() => setSheetPrev(null)} /> : null}
       <div className="page-head rw-head">
@@ -380,7 +385,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                   if (!ok) return;
                   onPlanChange(replayMods(plan, nmods)); setModEdit(null); setCmpOpen((o) => new Set([...o, m.ver]));
                 }} /> : null}
-                {cmpOpen.has(m.ver) && modEdit !== m.ver ? <ModCompare m={m} need={need} /> : null}
+                {cmpOpen.has(m.ver) && modEdit !== m.ver ? <ModCompare m={m} need={needAsOf(m.ver)} last={plan.mods[plan.mods.length - 1].ver === m.ver} /> : null}
                 <ul className="rl-mod-items" hidden={cmpOpen.has(m.ver) || modEdit === m.ver}>
                   {(m.bomEdits || []).map((e, i) => (
                     <li key={"b" + i}>
@@ -1211,7 +1216,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
 
 // ══ การ์ด "Release ที่ยังปล่อยไม่ครบ" (หน้ารายการปล่อยงาน) ══
 // ★ 2026-11-10 แก้ล็อตที่ปล่อยผิด — ติ๊กเบอร์ → ย้ายไปใบอื่น (QR เดิม) หรือยกเลิกการปล่อย (ลบแถว + QR ที่ยังไม่สแกน → ยอดกลับเป็น "เหลือ" ปล่อยใหม่ได้)
-function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onClose, onDone }) {
+function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onClose, onDone, prod = null }) {
+  const madeOfRow = (r) => (prod ? prod.get(String(r.id)) || 0 : 0);   // ★ 2026-11-11 เบอร์ที่มีชิ้นเสร็จแล้ว = ย้ายใบ / ยกเลิก ไม่ได้
   const [q, setQ] = useState("");
   const [pick, setPick] = useState(() => new Set());
   const [busy, setBusy] = useState("");
@@ -1227,6 +1233,7 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
   const sheetName = (r) => rowSheets(r).map((k) => sheetOf(k).label).join(", ");
   const tog = (ids, on) => setPick((o) => { const n = new Set(o); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
   async function move(label) {
+    const fin = sel.filter((r) => madeOfRow(r) > 0); if (fin.length) { setErr(`ย้ายใบไม่ได้ — เบอร์ที่มีชิ้นเสร็จแล้ว: ${fin.map((r) => `${r.code} (เสร็จ ${nf(madeOfRow(r))})`).join(", ")} · เอาติ๊กออกแล้วย้ายเฉพาะเบอร์ที่ยังไม่ได้ทำ`); return; }
     const list = sel.filter((r) => sheetName(r) !== label); if (!list.length) { setErr("เบอร์ที่เลือกอยู่ในใบนี้อยู่แล้ว"); return; }
     const ok = await askConfirm({ title: `ย้าย ${list.length} เบอร์ → ใบ ${label}?`, message: `${list.map((r) => `${r.code} (${nf(r.qty)})`).join(", ")}\nล็อต ${lot.no} · จากใบ ${[...new Set(list.map(sheetName))].join(", ")}\n\nQR และประวัติสแกนเดิมอยู่ครบ · ใบสั่งผลิตที่พิมพ์ไปแล้วต้องพิมพ์ใหม่${[...kinds][0] === "part" ? " · หมวดในใบหลักเปลี่ยนตาม (ล็อตต่อไปไปใบนี้)" : ""}`, tone: "warn", confirmText: "ย้ายใบงาน", cancelText: "ยกเลิก" });
     if (!ok) return;
@@ -1243,11 +1250,12 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
     } catch (e) { setBusy(""); setErr("ย้ายไม่สำเร็จ: " + (e?.message || e)); }
   }
   async function unrelease() {
+    const fin = sel.filter((r) => madeOfRow(r) > 0); if (fin.length) { setErr(`ยกเลิกไม่ได้ — เบอร์ที่มีชิ้นเสร็จแล้ว: ${fin.map((r) => `${r.code} (เสร็จ ${nf(madeOfRow(r))})`).join(", ")}`); return; }
     setBusy("กำลังตรวจประวัติสแกน…"); setErr("");
     let chk; try { chk = await api.checkUnrelease(sel); } catch (e) { setBusy(""); setErr("ตรวจประวัติไม่สำเร็จ: " + (e?.message || e)); return; }
     setBusy("");
     const bl = chk.blocked.map((b) => `${b.row.code} (สแกนแล้ว ${nf(b.scanned)}${b.recs ? ` · บันทึกงาน ${nf(b.recs)}` : ""})`);
-    if (!chk.ok.length) { setErr(`ยกเลิกไม่ได้ — ทุกเบอร์ที่เลือกเริ่มทำแล้ว: ${bl.join(", ")} · ใช้ "ย้ายไปใบ" แทน`); return; }
+    if (!chk.ok.length) { setErr(`ยกเลิกไม่ได้ — ทุกเบอร์ที่เลือกเริ่มทำแล้ว: ${bl.join(", ")} `); return; }
     const pcs = chk.ok.reduce((a, r) => a + (Number(r.qty) || 0), 0);
     const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${chk.ok.length} เบอร์ใน ${lot.no}?`, message: `${chk.ok.map((r) => `${r.code} (${nf(r.qty)})`).join(", ")}\n\nลบพร้อม QR ${nf(pcs)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" → กด "ปล่อยล็อตใหม่" ปล่อยในใบ/ล็อตที่ถูกได้${bl.length ? `\n\nข้าม ${bl.length} เบอร์ที่เริ่มทำแล้ว: ${bl.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
     if (!ok) return;
@@ -1294,7 +1302,7 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
 }
 
 // ★ 2026-11-10 ตารางเปรียบเทียบของ Modify 1 ครั้ง: เบอร์ · รายละเอียด · เรื่องที่แก้ · ก่อน · หลัง · ผลต่อล็อต
-function ModCompare({ m, need }) {
+function ModCompare({ m, need, last = true }) {
   const descOf = (c) => [...need.parts, ...need.subs, ...(need.hw || []), ...(need.glass || []), ...(need.other || [])].find((x) => NC(x.code) === NC(c))?.d || "";
   const nn = (v) => (v == null || v === "" ? "—" : typeof v === "number" ? nf(v, v % 1 ? 2 : 0) : String(v));
   const rows = [
@@ -1327,7 +1335,7 @@ function ModCompare({ m, need }) {
   return (
     <div className="rl-cmp">
       <div className="rl-cmp-bar">
-        <span><b>{nf(nChg)}</b> เบอร์ที่ {m.ver} แก้ · จาก {nf(full.length)} เบอร์ในใบ</span>
+        <span><b>{nf(nChg)}</b> เบอร์ที่ {m.ver} แก้ · จาก {nf(full.length)} เบอร์ในใบ{last ? "" : <span className="rw-muted"> · ค่าในตาราง = ณ ตอน {m.ver} (ก่อน Modify ครั้งถัดไป)</span>}</span>
         <span className="rl-cmp-seg"><button type="button" className={!onlyChg ? "on" : ""} onClick={() => setOnlyChg(false)}>ทุกเบอร์</button><button type="button" className={onlyChg ? "on" : ""} onClick={() => setOnlyChg(true)}>เฉพาะที่แก้</button></span>
       </div>
       <table className="rl-sc-table rl-cmp-t rl-cmp-full">
