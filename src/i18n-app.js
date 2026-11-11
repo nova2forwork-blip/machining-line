@@ -2809,6 +2809,7 @@ registerI18n({
 registerI18n({
   dict: {
     "ล้างตัวกรองทั้งหมด": "Clear all filters",
+    "· ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามแบบ)": "· not changed (tick to use the drawing value)",
     "เบอร์ ·": "part(s) ·",
     "ทั้งล็อต": "Whole lot",
     "ชนิดป้าย · ทุกเบอร์": "Label type · all parts",

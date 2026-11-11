@@ -912,7 +912,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         });
         for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { bAdds.push({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; foundL.push({ code: e.code, what: "ลูกใหม่", from: "—", to: `${nf(e.qty, 2)}/ชุด`, where: `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`, tone: "new" }); }
         // ความยาวซับตามหัวกระดาษ
-        if (scope === "sub") { const cs = need.subs.find((x) => NC(x.code) === NC(ok)); const Ls = parseFloat(d.title?.LENGTH); if (cs && Number.isFinite(Ls) && Ls > 0 && (cs.l == null || Math.abs(Ls - Number(cs.l)) > 0.05)) { const ent = { id: `${NC(ok)}|len`, code: ok, kind: "sub", field: "len", from: cs.l ?? "—", to: Ls, file: d.file, on: true }; setMatChg((m) => [...m.filter((x) => x.id !== ent.id), ent]); foundL.push({ code: ok, what: "ความยาวซับ", from: cs.l ?? "—", to: Ls, where: "ซับ", tone: "chg" }); } }
+        if (scope === "sub") { const cs = need.subs.find((x) => NC(x.code) === NC(ok)); const Ls = parseFloat(d.title?.LENGTH); if (cs && Number.isFinite(Ls) && Ls > 0 && (cs.l == null || Math.abs(Ls - Number(cs.l)) > 0.05)) { const ent = { id: `${NC(ok)}|len`, code: ok, kind: "sub", field: "len", from: cs.l ?? "—", to: Ls, file: d.file, on: false }; setMatChg((m) => [...m.filter((x) => x.id !== ent.id), ent]); foundL.push({ code: ok, what: "ความยาวซับ", from: cs.l ?? "—", to: Ls, where: "ซับ", tone: "chg" }); } }
         const sum = [nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน";
         drops[NC(ok)] = sum;
         notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${sum}`);
@@ -949,7 +949,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           if (cur && d.kind === "part") { const curInv = String(cur.inv || "").trim().toUpperCase(); if (inv && inv !== "-" && inv !== curInv) got.push({ field: "mat", from: curInv || "—", to: inv }); }
           if (cur && Number.isFinite(L) && L > 0 && (cur.l == null || Math.abs(L - Number(cur.l)) > 0.05)) got.push({ field: "len", from: cur.l ?? "—", to: L });
           if (got.length) {
-            const ents = got.map((g) => ({ id: `${NC(cur.code)}|${g.field}`, code: cur.code, kind: d.kind, file: d.file, on: true, ...g }));
+            // ★ 2026-11-11 ผู้ใช้: "งานจริงความยาวไม่เปลี่ยน เปลี่ยนแค่ MATERIAL" → ความยาวที่ต่างจากในใบ = ไม่ติ๊กให้เอง (ต้องติ๊กเองถ้าจะเปลี่ยนจริง) · วัสดุยังติ๊กให้เหมือนเดิม
+            //   เดิมติ๊กให้ทั้งคู่ → วางแบบเพื่อเปลี่ยนวัสดุ แล้วความยาวในใบถูกแก้ตามหัวกระดาษไปด้วยโดยไม่ตั้งใจ (74.6 → 75)
+            const ents = got.map((g) => ({ id: `${NC(cur.code)}|${g.field}`, code: cur.code, kind: d.kind, file: d.file, on: g.field !== "len", ...g }));
             setMatChg((m) => [...m.filter((x) => !ents.some((y) => y.id === (x.id || `${NC(x.code)}|${x.field || "mat"}`))), ...ents]);
             got.forEach((g) => foundL.push({ code: cur.code, what: g.field === "len" ? "ความยาว" : "วัสดุ (INV)", from: g.from, to: g.to, where: d.kind === "sub" ? "ซับ" : "พาร์ท", tone: "chg" }));
             drops[NC(d.code)] = got.map((g) => (g.field === "len" ? `ยาว → ${g.to}` : `วัสดุ → ${g.to}`)).join(" · ");
@@ -1023,7 +1025,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <tbody>{found.map((f, i) => { const c = (f.what === "วัสดุ (INV)" || f.what === "ความยาว" || f.what === "ความยาวซับ") ? chgOf(f) : null; return (
           <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone}`}>
             <td>{c ? <input type="checkbox" checked={c.on} onChange={(e) => togChg(c.id || `${NC(c.code)}|${c.field || "mat"}`, e.target.checked)} aria-label={`ใช้ ${f.what} ของ ${f.code}`} /> : f.tone === "same" ? <span className="rw-muted">=</span> : <span className="rw-ok">✓</span>}</td>
-            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b></td>
+            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && (c.field === "len") && !c.on ? <span className="rw-muted"> · ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามแบบ)</span> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? <s className="rl-old">{String(f.from)}</s> : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
             <td className="rw-mono"><b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b></td>
           </tr>); })}</tbody>
