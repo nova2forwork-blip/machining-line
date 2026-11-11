@@ -7,7 +7,7 @@ import "./i18n-release.js";
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf } from "./releaseCore.js";
+import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
@@ -74,6 +74,25 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   const units = plan.units || [];
   const liveUnits = units.filter((u) => !need.cancelledAddr[addrKey(u.addr)]);
   const panelDone = liveUnits.filter((u) => rel.addrLot.has(addrKey(u.addr))).length;
+  // ★ 2026-11-11 ผู้ใช้: "ตารางแยกตามชั้นด้วยได้ไหม" (แท็บ L13 / L14 / LOB แบบ Excel) — ชั้นเก็บที่ plan.units[].floor
+  //   แท็บชั้น: โชว์เฉพาะเบอร์ที่ใช้ในแผงของชั้นนั้น · จำนวน = BOM × จำนวนแผงของชั้น (ยอดปล่อย/เหลือ ยังเป็นของทั้งใบ)
+  const floors = useMemo(() => floorsOf(liveUnits), [units, need]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const hasFloors = floors.some((x) => x.f);
+  const [floorSel, setFloorSel] = useState(null);   // null = รวมทุกชั้น · "" = ยังไม่ระบุชั้น
+  const floor = floorSel != null && floors.some((x) => x.f === floorSel) ? floorSel : null;
+  const [pmx, setPmx] = useState(false);            // แท็บแผง: ตาราง แบบแผง × ชั้น (เหมือนชีตสรุปใน Excel)
+  const fq = useMemo(() => {
+    if (floor == null) return null;
+    const cnt = new Map(); for (const u of liveUnits) { if (floorKey(u) !== floor) continue; const k = String(u.unit || "").trim(); if (k) cnt.set(k, (cnt.get(k) || 0) + 1); }
+    const m = new Map();
+    for (const [unit, n] of cnt) for (const r of rowsOfType(plan, unit)) { if (r.cx || !(r.per > 0)) continue; const k = NC(r.code); m.set(k, (m.get(k) || 0) + r.per * n); }
+    return m;
+  }, [floor, units, need, plan.bom]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const inFloor = (code) => !fq || fq.has(NC(code));
+  const qOf = (r) => (fq ? Math.round((fq.get(NC(r.code)) || 0) * 100) / 100 : r.qty);
+  const fqCell = (r) => <><b>{nlen(qOf(r))}</b> <small className="rw-muted" title={`ชั้น ${floor || "ไม่ระบุ"} ใช้ ${nlen(qOf(r))} · ทั้งใบ ${nlen(r.qty)}`}>/ {nlen(r.qty)}</small></>;
+  const setFloor = (keys, v) => { if (!onPlanChange) return; const ks = new Set(keys); const f = String(v || "").trim().toUpperCase();
+    onPlanChange({ ...plan, units: units.map((u) => { if (!ks.has(addrKey(u.addr))) return u; const { floor: _f, ...rest } = u; return f ? { ...rest, floor: f } : rest; }) }); };
   const head = {
     part: stat(parts), sub: stat(subs),
     mat: { MAT: mats.length, GLASS: glass.length, FIXING: hw.length, OTHER: other.length },
@@ -191,7 +210,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     // ── Total Part: พาร์ททุกเบอร์ (ผลิตเอง + กระจก + สกรู/ยาง + อื่นๆ) จัดกลุ่มตามหมวด · Auto = ตามกติกา · Setting = office สร้างหมวดเอง ──
     const groups = partGroupsOf(plan);
     const all = allParts
-      .filter((r) => partGrp === "ALL" || r.cat === partGrp)
+      .filter((r) => partGrp === "ALL" || r.cat === partGrp).filter((r) => inFloor(r.code))
       .filter((r) => has(Q, r.code, r.d, r.inv, r.cat)).filter((r) => partDest === "ALL" || (r.qr && r.dest === partDest));
     const order = new Map([...groups, ...PART_CATS].map((g, k) => [g, k]));
     all.sort((a, b) => ((order.has(a.cat) ? order.get(a.cat) : 999) - (order.has(b.cat) ? order.get(b.cat) : 999)) || ncmp(a.code, b.code));
@@ -216,7 +235,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>
               <td className="rl-desc"><span>{r.d}</span></td>
               <td className="r rw-num">{r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{nlen(r.l)}</td>
-              <td className="r">{r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
+              <td className="r">{fq && !r.cancelled && !(r.u === "m." && r.mm) ? fqCell(r) : r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
               <td className="rt-inv">{r.qr ? <MatEdit cur={r.inv} orig={r.invOrig != null ? r.invOrig || "—" : ""} note={r.matNote} list={invList} withLen len={r.invOrig != null ? r.ml : ""} label={r.code}
                 onSave={setMatOv && !r.cancelled ? (v) => setMatOv([r.code], v) : null} onReset={resetMatOv ? () => resetMatOv([r.code]) : null} /> : <span className="rw-mono">{r.inv || <span className="rw-muted">—</span>}</span>}</td>
               <td className="rt-usedcell">{usedCell(r.code)}</td>
@@ -230,17 +249,17 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             </tr>);
           return rows;
         })}</tbody>
-        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + p.qty, 0))}</b></td><td colSpan={3} /><td /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
+        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b> · ผลิตเอง (QR) {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {all.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + qOf(p), 0))}</b></td><td colSpan={3} /><td /><td className="r"><b>{nf(live.filter((r) => r.qr).reduce((a, p) => a + leftOf(p.code, p.qty), 0))}</b></td><td /></tr></tfoot>
       </table>);
   } else if (grp === "sub") {
-    const rows = subs.filter(inSheet("sub", cur)).filter((s) => has(Q, s.code, s.d) || (kids && kidRows(s.code, 1).some((k) => has(Q, k.c, k.d))));
+    const rows = subs.filter(inSheet("sub", cur)).filter((s) => inFloor(s.code)).filter((s) => has(Q, s.code, s.d) || (kids && kidRows(s.code, 1).some((k) => has(Q, k.c, k.d))));
     total = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     const all = cur === "ALL";
     const live = rows.filter((s) => !s.cancelled);
     table = (
       <table className="data-table rw-table rt-table">
         <thead><tr><th style={{ width: 34 }}><Chk keys={vis.filter((x) => !x.cancelled && leftOf(x.code, x.qty) > 0).map((x) => x.code)} set={pickS} tog={tS} label="เลือกทั้งหน้า" /></th><th className="r">ITEM</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH (mm.)</th><th className="r">SUB QTY.</th>{kids ? <><th className="r">QTY OF PART/SUB</th><th className="r">PART QTY.</th></> : null}<th>UOM</th><th>งาน (ติ๊กได้หลายงาน)</th><th>ปล่อยแล้ว</th><th className="r">เหลือ</th></tr></thead>
-        <tbody>{vis.map((s, i) => { const left = leftOf(s.code, s.qty); const done = doneOf(s.code); const ks = kids ? kidRows(s.code, s.qty) : []; return (
+        <tbody>{vis.map((s, i) => { const left = leftOf(s.code, s.qty); const done = doneOf(s.code); const ks = kids ? kidRows(s.code, qOf(s)) : []; return (
           <Fragment key={s.code}>
             <tr className={`rt-subrow ${s.cancelled ? "rl-cancelrow" : pickS.has(s.code) ? "rl-sel" : left <= 0 ? "rt-full" : ""}`} {...rowClick(s.code, "subassembly")}>
               <td><input type="checkbox" checked={pickS.has(s.code)} disabled={s.cancelled || left <= 0} onChange={(e) => tS([s.code], e.target.checked)} aria-label={`เลือก ${s.code}`} /></td>
@@ -248,7 +267,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="rw-mono"><Code code={s.code} cancel={!!s.cancelled} added={s.added} /></td>
               <td className="rl-desc"><span>{s.d}</span></td>
               <td className="r rw-num">{nlen(s.l)}</td>
-              <td className="r"><ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} /></td>
+              <td className="r">{fq && !s.cancelled ? fqCell(s) : <ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} />}</td>
               {kids ? <><td /><td /></> : null}
               <td className="rw-muted small">SET</td>
               <td>{onPlanChange && !s.cancelled ? <span className="rw-procs">{PROCS.map((k) => { const on = s.procs.includes(k); return <label key={k} className={`rw-proc ${on ? "on" : ""}`}><input type="checkbox" checked={on} onChange={(e) => setProcs([s.code], (c) => (e.target.checked ? [...c, k] : c.filter((x) => x !== k)))} />{SUB_SHORT[k]}</label>; })}</span> : s.procs.map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}{!s.procs.length ? <Pill tone="warn">ยังไม่เลือกงาน</Pill> : null}</td>
@@ -258,11 +277,11 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             {ks.map((k) => (
               <tr key={s.code + ">" + k.c} className={`rt-kid ${s.cancelled ? "rl-cancelrow" : ""}`}>
                 <td /><td /><td className="rw-mono"><span className="rt-kid-ic">└</span>{k.c}{k.t === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
-                <td className="rl-desc"><span>{k.d}</span></td><td className="r rw-num">{nlen(k.l)}</td><td className="r rw-num">{nf(s.qty)}</td>
+                <td className="rl-desc"><span>{k.d}</span></td><td className="r rw-num">{nlen(k.l)}</td><td className="r rw-num">{nlen(qOf(s))}</td>
                 <td className="r rw-num">{nlen(k.qq)}</td><td className="r"><b>{nlen(k.tot)}</b></td><td className="rw-muted small">{k.uom}</td><td /><td /><td />
               </tr>))}
           </Fragment>); })}</tbody>
-        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b>{rows.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {rows.length - live.length}</span> : null}</td><td className="r"><b>{nf(live.reduce((a, s) => a + s.qty, 0))}</b> <small className="rw-muted">SET</small></td>{kids ? <><td /><td /></> : null}<td /><td /><td><b>{nf(live.reduce((a, s) => a + Math.min(s.qty, doneOf(s.code)), 0))}</b></td><td className="r"><b>{nf(live.reduce((a, s) => a + leftOf(s.code, s.qty), 0))}</b></td></tr></tfoot>
+        <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b>{rows.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {rows.length - live.length}</span> : null}</td><td className="r"><b>{nlen(live.reduce((a, s) => a + qOf(s), 0))}</b> <small className="rw-muted">SET</small></td>{kids ? <><td /><td /></> : null}<td /><td /><td><b>{nf(live.reduce((a, s) => a + Math.min(s.qty, doneOf(s.code)), 0))}</b></td><td className="r"><b>{nf(live.reduce((a, s) => a + leftOf(s.code, s.qty), 0))}</b></td></tr></tfoot>
       </table>);
   } else if (grp === "mat" && cur === "MAT") {
     const rows = mats.filter((m) => has(Q, m.inv, m.d, ...m.parts.map((p) => p.code)));
@@ -321,21 +340,41 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         <thead><tr><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th>CATEGORY</th><th className="r">QTY</th></tr></thead>
         <tbody>{vis.map((o, i) => <tr key={o.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(o, other.map((x) => x.code))}</td><td className="rl-desc"><span>{o.d}</span></td><td><Pill tone="muted">{o.cat}</Pill></td><td className="r"><b>{nf(o.qty)}</b></td></tr>)}</tbody>
       </table>);
+  } else if (pmx) {
+    // แบบแผง × ชั้น (เหมือนชีตสรุปใน Excel: Panel | L13 | L14 | … | TOTAL)
+    const cols = floors.map((x) => x.f); const m = new Map();
+    for (const u of liveUnits) { const k = String(u.unit || "").trim(); if (!k || !has(Q, k)) continue; const e = m.get(k) || m.set(k, new Map()).get(k); const f = floorKey(u); e.set(f, (e.get(f) || 0) + 1); }
+    const rows = [...m.entries()].sort((a, b) => ncmp(a[0], b[0])); total = rows.length; shown = rows.length;
+    const colSum = (f) => rows.reduce((a, [, e]) => a + (e.get(f) || 0), 0);
+    table = (
+      <table className="data-table rw-table rt-table rt-floormx">
+        <thead><tr><th className="r">NO.</th><th>PANEL</th>{cols.map((f) => <th key={f || "-"} className="r">{f || "ไม่ระบุชั้น"}</th>)}<th className="r">TOTAL</th></tr></thead>
+        <tbody>{rows.map(([k, e], i) => <tr key={k}><td className="r rw-num">{i + 1}</td><td className="rw-mono"><b>{k}</b></td>{cols.map((f) => <td key={f || "-"} className="r rw-num">{e.get(f) ? nf(e.get(f)) : ""}</td>)}<td className="r"><b>{nf([...e.values()].reduce((a, b) => a + b, 0))}</b></td></tr>)}</tbody>
+        <tfoot><tr><td /><td><b>รวม {nf(rows.length)} แบบ</b></td>{cols.map((f) => <td key={f || "-"} className="r"><b>{nf(colSum(f))}</b></td>)}<td className="r"><b>{nf(cols.reduce((a, f) => a + colSum(f), 0))}</b></td></tr></tfoot>
+      </table>);
   } else {
-    const rows = units.filter((u) => has(Q, u.addr, u.unit)); total = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
+    const rows = units.filter((u) => floor == null || floorKey(u) === floor).filter((u) => has(Q, u.addr, u.unit, u.floor)); total = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     table = (
       <table className="data-table rw-table rt-table">
-        <thead><tr><th style={{ width: 34 }}><Chk keys={vis.map((u) => addrKey(u.addr)).filter((a) => !rel.addrLot.has(a) && !need.cancelledAddr[a])} set={pickA} tog={tA} label="เลือกทั้งหน้า" /></th><th className="r">NO.</th><th>ADDRESS</th><th>UNIT</th><th>BOM</th><th>สถานะ</th></tr></thead>
+        <thead><tr><th style={{ width: 34 }}><Chk keys={vis.map((u) => addrKey(u.addr)).filter((a) => !rel.addrLot.has(a) && !need.cancelledAddr[a])} set={pickA} tog={tA} label="เลือกทั้งหน้า" /></th><th className="r">NO.</th><th>ADDRESS</th><th>UNIT</th><th style={{ width: 110 }}>ชั้น</th><th>BOM</th><th>สถานะ</th></tr></thead>
         <tbody>{vis.map((u, i) => { const a = addrKey(u.addr); const lot = rel.addrLot.get(a); const cx = need.cancelledAddr[a]; return (
           <tr key={a + i} className={cx ? "rl-cancelrow" : pickA.has(a) ? "rl-sel" : lot ? "rt-full" : ""}>
             <td><input type="checkbox" checked={pickA.has(a)} disabled={!!lot || !!cx} onChange={(e) => tA([a], e.target.checked)} aria-label={`เลือก ${a}`} /></td>
             <td className="r rw-num">{i + 1}</td>
             <td className="rw-mono"><b className={cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : null}</td>
             <td className="rw-mono">{u.unit}</td>
+            <td>{onPlanChange ? <input key={a + "|" + floorKey(u)} className="input rw-cell rw-mono rt-floorin" defaultValue={floorKey(u)} placeholder="—" aria-label={`ชั้นของ ${a}`}
+              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== floorKey(u)) setFloor([a], v); }} /> : <span className="rw-mono">{floorKey(u) || <span className="rw-muted">—</span>}</span>}</td>
             <td>{findKey(plan.bom.panels, u.unit) ? <Pill tone="ok">✓</Pill> : <Pill tone="warn">ไม่มี BOM</Pill>}</td>
             <td>{lot ? <LotTag no={lot} /> : cx ? <span className="rl-cxq small">ยกเลิกแล้ว</span> : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
           </tr>); })}</tbody>
       </table>);
+    foot = onPlanChange && rows.length ? (
+      <form className="rt-floorset" onSubmit={(e) => { e.preventDefault(); const inp = e.target.elements.fl; setFloor(rows.map((u) => addrKey(u.addr)), inp.value); inp.value = ""; }}>
+        <label>ตั้งชั้นให้ทั้ง {nf(rows.length)} แถวที่แสดง <input name="fl" className="input rw-cell rw-mono" placeholder="เช่น L13" style={{ width: 96 }} /></label>
+        <button type="submit" className="btn btn-ghost btn-sm">ตั้งชั้น</button>
+        <span className="rw-muted small">ค้นหาที่อยู่ให้เหลือเฉพาะชั้นนั้นก่อน (เช่นพิมพ์ 13-) แล้วกดตั้งทีเดียว · เว้นว่าง = ล้างชั้น</span>
+      </form>) : null;
   }
 
   const T = TOTALS.find((t) => t.k === grp) || { label: grp === "bom" ? "BOM" : "ASSEMBLY (แผง)", sheets: [] };
@@ -411,11 +450,21 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         {grp === "sub" ? <label className="rw-check"><input type="checkbox" checked={kids} onChange={(e) => setKids(e.target.checked)} /> แสดงพาร์ทลูก (แบบ Excel)</label> : null}
         <span className="rw-muted small">แสดง {nf(shown)} จาก {nf(total)}</span>
       </div>
+      {(grp === "part" || grp === "sub" || grp === "panel") && (hasFloors || grp === "panel") ? (
+        <div className="rt-floors" role="tablist" aria-label="แยกตามชั้น">
+          <span className="rt-mode-lab">ชั้น:</span>
+          <button type="button" role="tab" aria-selected={floor == null && !pmx} className={`rt-floor ${floor == null && !(pmx && grp === "panel") ? "on" : ""}`} onClick={() => { setFloorSel(null); setPmx(false); setLimit(PAGE); }}>รวมทุกชั้น <small>{nf(liveUnits.length)}</small></button>
+          {floors.map((x) => <button key={x.f || "-"} type="button" role="tab" aria-selected={floor === x.f} className={`rt-floor ${floor === x.f && !(pmx && grp === "panel") ? "on" : ""} ${x.f ? "" : "none"}`} onClick={() => { setFloorSel(x.f); setPmx(false); setLimit(PAGE); }}>{x.f || "ยังไม่ระบุชั้น"} <small>{nf(x.n)}</small></button>)}
+          {grp === "panel" && hasFloors ? <button type="button" role="tab" aria-selected={pmx} className={`rt-floor mx ${pmx ? "on" : ""}`} onClick={() => setPmx(true)}>แบบแผง × ชั้น</button> : null}
+          {fq && grp !== "panel" ? <span className="rw-muted small">จำนวน = ที่ใช้ในชั้นนี้ / ทั้งใบ · ปล่อยแล้ว-เหลือ นับทั้งใบ</span> : null}
+          {grp === "panel" && !hasFloors ? <span className="rw-muted small">ยังไม่มีชั้น — พิมพ์ในช่อง "ชั้น" ของแต่ละแถว หรือใช้ "ตั้งชั้น" ใต้ตาราง</span> : null}
+        </div>) : null}
       {grp === "mat" && cur !== "MAT" ? <div className="rt-note"><b>✎ ที่เบอร์ = ใช้เบอร์อื่นแทน</b> (ของตามแบบไม่มี / หมด) · ใบเบิกของทุกล็อตใช้เบอร์ใหม่ + หมายเหตุ "ใช้แทน …" · ↺ = กลับไปตามแบบ</div> : null}
       {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>✎ ที่รหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
       <div className="table-wrap rw-tw rt-tw">
         {total ? table : <div className="rw-muted small rt-empty">{q ? "ไม่พบรายการที่ค้นหา" : "ไม่มีในใบนี้"}</div>}
       </div>
+      {grp === "panel" && !pmx ? foot : null}
       {nPick ? (
         <div className="rt-pickbar" role="region" aria-label="รายการที่เลือกปล่อย">
           <span><b>เลือก {nf(nPick)} รายการ</b> <small>{[pickP.size && `พาร์ท ${nf(pickP.size)}`, pickS.size && `ซับ ${nf(pickS.size)}`, pickA.size && `แผง ${nf(pickA.size)}`].filter(Boolean).join(" · ")} · ปล่อยยอดที่เหลือทั้งหมดของแต่ละเบอร์ · แผง/ซับดึงลูกมาด้วย</small></span>

@@ -637,7 +637,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
         {units.length ? (
           <div className="table-wrap rw-tw">
             <table className="data-table rw-table">
-              <thead><tr><th style={{ width: 44 }}>#</th><th>Unit</th><th>Address</th><th title="แผง Mockup (PMU / VMU / EMU) ไม่ต้องมีที่อยู่">Mockup</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Unit</th><th>Address</th><th style={{ width: 96 }} title="ชั้นที่ติดตั้ง เช่น L13 · LOB (ไม่บังคับ) — ใช้แยกตารางตามชั้นในใบหลัก">ชั้น</th><th title="แผง Mockup (PMU / VMU / EMU) ไม่ต้องมีที่อยู่">Mockup</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
               <tbody>
                 {view.map((i) => { const r = units[i]; const is = ui.row[i] || []; const bad = is.some((x) => x[0] === "bad");
                   return (
@@ -646,6 +646,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
                       <td><input className="input rw-cell rw-mono" value={r.unit} onChange={(e) => setCell(i, "unit", e.target.value)} aria-label={`Unit แถว ${i + 1}`} /></td>
                       <td>{r.mock ? <span className="rw-mock-addr" title="ที่อยู่สมมติ — ระบบออกให้ ใช้แทนที่อยู่จริงของแผง Mockup"><b>MOCKUP</b> {mockType(r.unit)} <label className="rw-mock-qty" title="จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)">× <input className="input rw-cell" type="number" min="1" max="999" step="1" inputMode="numeric" value={r.qty || 1} onChange={(e) => setQty(i, e.target.value)} aria-label={`จำนวน Mockup แถว ${i + 1}`} /></label> <i className="rw-mono">{mockQty(r) > 1 ? `${String(r.addr || "").replace(/-\d+$/, "")}-1…${mockQty(r)}` : r.addr}</i></span>
                         : <input className="input rw-cell rw-mono" value={r.addr} onChange={(e) => setCell(i, "addr", e.target.value)} aria-label={`Address แถว ${i + 1}`} />}</td>
+                      <td><input className="input rw-cell rw-mono" value={r.floor || ""} placeholder="—" onChange={(e) => setCell(i, "floor", e.target.value)} aria-label={`ชั้น แถว ${i + 1}`} /></td>
                       <td style={{ textAlign: "center" }}><input type="checkbox" checked={!!r.mock} onChange={() => toggleMock(i)} aria-label={`Mockup แถว ${i + 1}`} /></td>
                       <td>{is.length ? is.map(([t, m], k) => <Pill key={k} tone={t === "bad" ? "bad" : "warn"}>{m}</Pill>) : (cnt.find((c) => c.unit === r.unit)?.has ? <Pill tone="ok">✓ มี BOM</Pill> : <Pill tone="muted">รอ PDF</Pill>)}</td>
                       <td><button type="button" className="rw-x" onClick={() => del(i)} title="ลบแถว" aria-label={`ลบแถว ${i + 1}`}>×</button></td>
@@ -655,7 +656,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
             {(onlyBad ? badIdx.length : units.length) > 400 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 400 แถวแรก จาก {nf(onlyBad ? badIdx.length : units.length)}</div> : null}
           </div>
         ) : (
-          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Unit | Address จาก Excel แล้วกด Ctrl+V · แผง Mockup พิมพ์ชื่อ Unit (เช่น EMU-E-3036) ไม่ต้องใส่ Address</span></div>
+          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Unit | Address จาก Excel แล้วกด Ctrl+V (มีคอลัมน์ ชั้น เป็นคอลัมน์ที่ 3 ได้) · แผง Mockup พิมพ์ชื่อ Unit (เช่น EMU-E-3036) ไม่ต้องใส่ Address</span></div>
         )}
       </div>
 

@@ -1145,3 +1145,19 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-snote-act { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 5px; }
 .rl-snote-act .rw-link { font-weight: 700; }
 .rl-snote-list { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 6px; font-size: 12px; max-height: 120px; overflow: auto; }
+
+/* ★ 2026-11-11 แท็บชั้น (L13 / L14 / LOB แบบแท็บชีตใน Excel) */
+.rt-floors { display: flex; align-items: flex-end; gap: 4px; flex-wrap: wrap; padding: 8px 12px 0; border-bottom: 2px solid #1a9a6c; background: #f1f5f3; }
+.rt-floors .rt-mode-lab { padding-bottom: 8px; }
+.rt-floors > .rw-muted { padding: 0 6px 8px; }
+.rt-floor { border: 1px solid #cfdcd6; border-bottom: 0; background: #e3ebe7; border-radius: 8px 8px 0 0; padding: 7px 14px; font-weight: 700; font-size: 13px; cursor: pointer; color: #24352f; min-height: 36px; }
+.rt-floor small { font-weight: 500; color: #5a6f68; }
+.rt-floor:hover { background: #fff; }
+.rt-floor.on { background: #1a9a6c; border-color: #1a9a6c; color: #fff; }
+.rt-floor.on small { color: #e6fff4; }
+.rt-floor.none { border-style: dashed; font-weight: 500; }
+.rt-floor.mx { margin-left: 10px; }
+.rt-floorin { width: 84px; }
+.rt-floorset { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid #d7e2de; background: #fafcfb; font-size: 13px; }
+.rt-floormx td, .rt-floormx th { text-align: right; }
+.rt-floormx td:nth-child(2), .rt-floormx th:nth-child(2) { text-align: left; }

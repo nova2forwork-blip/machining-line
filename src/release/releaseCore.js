@@ -758,6 +758,13 @@ export function unitIssues(units, usedAddr) {
   if (nOdd) warn.push(`Unit รูปแบบแปลก ${nOdd} แถว`);
   return { row, block, warn };
 }
+// ★ 2026-11-11 ชั้นของแผง (plan.units[].floor) — แยกตารางตามชั้นเหมือนแท็บ L13 / L14 / LOB ใน Excel
+export const FLOOR_RE = /^(?:[A-Z]{0,3}[-\s]?\d{1,3}[A-Z]?|LOB|LOBBY|ROOF|RF|GF?|MZ|PODIUM)$/i;
+export const floorKey = (u) => String((u && u.floor) || "").trim().toUpperCase();
+export function floorsOf(units) {
+  const m = new Map(); for (const u of units || []) { const f = floorKey(u); m.set(f, (m.get(f) || 0) + 1); }
+  return [...m.entries()].map(([f, n]) => ({ f, n })).sort((a, b) => (a.f === "" ? 1 : b.f === "" ? -1 : a.f.localeCompare(b.f, "en", { numeric: true })));
+}
 // วางจาก Excel: 2 คอลัมน์ Unit | Address (สลับลำดับได้ · มีหัวตารางได้ · คอลัมน์เดียว = ข้าม)
 export function parseUnitsPaste(text) {
   const lines = String(text || "").replace(/\r/g, "").split("\n").filter((l) => l.trim());
@@ -777,10 +784,15 @@ export function parseUnitsPaste(text) {
     ui = best; ai = ui === 0 ? 1 : 0;
     if (sample.length && !unitLike(cells[0][ui]) && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
   }
+  // ★ 2026-11-11 คอลัมน์ "ชั้น" (ไม่บังคับ): หัวตาราง ชั้น/Floor/Level หรือคอลัมน์ที่ 3 ที่หน้าตาเป็นชั้น (L13 · B1 · LOB · 14)
+  let fi = h.findIndex((c) => /ชั้น|floor|level|^lv/.test(c)); if (!(hu >= 0 && ha >= 0)) fi = -1;
+  if (fi < 0) { const w = Math.max(...cells.map((r) => r.length)); for (let i = 0; i < w; i++) { if (i === ui || i === ai) continue; const vals = cells.slice(start).map((r) => (r[i] || "").trim()).filter(Boolean); if (vals.length && vals.every((v) => FLOOR_RE.test(v)) && vals.some((v) => /[A-Z]/i.test(v))) { fi = i; break; } } }
   const rows = []; let skipped = 0;
   for (const r of cells.slice(start)) {
     const unit = (r[ui] || "").trim().toUpperCase(), addr = (r[ai] || "").trim().toUpperCase();
+    const floor = fi >= 0 ? (r[fi] || "").trim().toUpperCase() : "";
     if (!unit && !addr) { skipped++; continue; }
+    if (floor && !(mockType(unit) && /^\d{1,3}$/.test(addr))) { rows.push({ unit, addr, floor }); continue; }
     if (mockType(unit) && /^\d{1,3}$/.test(addr) && Number(addr) >= 1) { rows.push({ unit, addr: "", mock: true, qty: Number(addr) }); continue; }   // ★ "PMU-01 | 4" = Mockup 4 แผง
     rows.push({ unit, addr });
   }
