@@ -195,13 +195,13 @@ export function BomView({ plan, need }) {
     count = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     body = (
       <div className="table-wrap rw-tw rt-tw"><table className="data-table rw-table rt-table">
-        <thead><tr><Th k="code">เบอร์</Th><Th k="d">รายละเอียด</Th><Th k="l" r>ยาว</Th><Th k="m">MATERIAL</Th><Th k="total" r>รวมทั้งใบ</Th><th>หน่วย</th><Th k="uses">ใช้ใน (ซับ ×จำนวน)</Th><Th k="reuse" r>เศษ</Th></tr></thead>
+        <thead><tr><Th k="code">เบอร์</Th><Th k="d">รายละเอียด</Th><Th k="l" r>ยาว</Th><Th k="m">MATERIAL</Th><Th k="total" r>รวมทั้งใบ</Th><th>หน่วย</th><Th k="reuse" r>เศษ</Th><Th k="uses">ใช้ใน (ซับ ×จำนวน)</Th></tr></thead>
         <tbody>{vis.map((e) => (
           <tr key={e.code} className={e.kind === "sub" ? "rt-subrow" : ""}>
             <td className="rw-mono"><b>{e.code}</b>{e.kind === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td><td className="rl-desc"><span>{e.d}</span></td><td className="r rw-num">{nlen(e.l)}</td>
             <td className="rw-mono rt-inv">{e.m}</td><td className="r"><b>{nlen(Math.round(e.total * 1000) / 1000)}</b></td><td className="rw-muted small">{e.uom}</td>
-            <td><div className="bm-uses">{[...e.uses.entries()].slice(0, 6).map(([p, u]) => <span key={p} className="rt-use" title={`${[...u.panels].slice(0, 6).join(", ")}${u.panels.size > 6 ? " …" : ""}`}><b className="rw-mono">{p}</b> × {nlen(u.q)}</span>)}{e.uses.size > 6 ? <small className="rw-muted">+{e.uses.size - 6}</small> : null}</div></td>
             <td className="r">{e.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${e.reuse} จาก ${e.reuse + e.fresh} ชิ้น`}>×{nf(e.reuse)}</Pill> : ""}</td>
+            <td><div className="bm-uses">{[...e.uses.entries()].slice(0, 6).map(([p, u]) => <span key={p} className="rt-use" title={`${[...u.panels].slice(0, 6).join(", ")}${u.panels.size > 6 ? " …" : ""}`}><b className="rw-mono">{p}</b> × {nlen(u.q)}</span>)}{e.uses.size > 6 ? <small className="rw-muted">+{e.uses.size - 6}</small> : null}</div></td>
           </tr>))}</tbody>
         <tfoot><tr><td colSpan={8}><b>{nf(rows.length)} เบอร์</b>{ALL ? " · ทุกแบบแผง" : ` · ${cur?.unit}`} · รวมทั้งใบ = ต่อชุด × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
       </table></div>);
