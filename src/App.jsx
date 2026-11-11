@@ -8103,8 +8103,12 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
               { key: "ordered", header: L("สั่ง", "Ordered"), sortKey: "ordered", align: "right", cell: (x) => fmtNum(x.qty) },
               { key: "finished", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "finished", align: "right",
                 tdProps: (x) => ({ style: { fontWeight: 700, color: x.finished >= x.qty ? "var(--success)" : "var(--text)", whiteSpace: "nowrap" } }),
-                cell: (x) => <>{fmtNum(x.finished)}<span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{pctLabel(x.pct, x.finished >= x.qty)}</span>
-                  {x.spare > 0 && <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{L(`สแปร์ ${fmtNum(x.spare)}`, `spare ${fmtNum(x.spare)}`)}</span>}</> },
+                // ★ 2026-11-11 ผู้ใช้: "คอลัมน์ให้มันตรงกัน" → ป้ายสแปร์ย้ายไปอยู่หน้าตัวเลข · ตัวเลขกับ % กว้างคงที่ ชิดขวา (เดิมป้ายต่อท้ายแล้วดันตัวเลขเยื้องซ้ายเฉพาะแถวที่มีสแปร์)
+                cell: (x) => <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
+                  {x.spare > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#d97a00", background: "rgba(217,122,0,.12)", border: "1px solid rgba(217,122,0,.4)", borderRadius: 99, padding: "1px 6px" }}>{L(`สแปร์ ${fmtNum(x.spare)}`, `spare ${fmtNum(x.spare)}`)}</span>}
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtNum(x.finished)}</span>
+                  <span style={{ display: "inline-block", width: 36, textAlign: "right", fontSize: 11, fontWeight: 600, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{pctLabel(x.pct, x.finished >= x.qty)}</span>
+                </span> },
               { key: "weight", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (x) => x.unitWeight ? fmtNum(x.weight) : "—" },
               { key: "len", header: L("ความยาว (มม.)", "Length (mm)"), sortKey: "len", align: "right", tdStyle: { whiteSpace: "nowrap" }, cell: (x) => x.len != null ? fmtNum(x.len) : "-" },
               { key: "mach", header: L("เครื่อง · ขั้นตอนที่ติ๊ก", "Machine · steps ticked"), sortKey: "mach", dataLabel: L("เครื่อง", "Machine"),
