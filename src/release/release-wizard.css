@@ -1013,3 +1013,4 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-1drop-chip.warn { border-color: #f0c36d; background: #fff8e8; }
 .rl-1drop-chip .rw-link { font-size: 12px; margin-left: 4px; }
 .rl-noinv { font-weight: 400; font-family: var(--font-mono); margin-top: 2px; white-space: normal; }
+.rl-noinv { display: flex; flex-direction: column; gap: 1px; } .rl-noinv-c { white-space: nowrap; }
