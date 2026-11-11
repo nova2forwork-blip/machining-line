@@ -7960,13 +7960,14 @@ function ReleasePage({ user, goTo }) {
 //   · รวมชิ้นสแกนสำนักงานแบบเดิม (part_units.status) · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์)
 //   · ยังไม่ได้รัน migration-finished-pieces.sql → ใช้ค่าประมาณจาก release_op_progress (ขั้นตอนที่มีชิ้นเสร็จมากสุด)
 //   ยอดสะสมทั้งหมด (ไม่ขึ้นกับช่วงเวลา) · กรองตาม โปรเจค / Part / Release Order ของหน้า Report
-function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "" }) {
+function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "", goTo = null }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const [rels, setRels] = useState(relsIn || null);
   const [prog, setProg] = useState(null);     // { fin, opProg, unitStats, needSql } · null = กำลังโหลด
   const [err, setErr] = useState("");
   const sort = useTableSort();
+  const [viewRel, setViewRel] = useState(null);   // ★ 2026-11-11 ผู้ใช้: "ให้กดดูรายละเอียดแต่ละแถวได้" → ป็อปอัพความคืบหน้าแยกขั้นตอน/เครื่อง (ตัวเดียวกับหน้าล็อต)
   useEffect(() => { if (relsIn) setRels(relsIn); }, [relsIn]);
   // ★ รอบ 11 (B7): ผู้เรียกส่ง releases มา (แม้ยังเป็น null = กำลังโหลด) → รอของผู้เรียก ไม่โหลดซ้ำเอง
   //   (เดิมหน้า Report โหลด releases ทั้งหมด 2 รอบ แล้วคิดยอด Finished ของทุก release ซ้ำ 2–3 ครั้ง)
@@ -8082,6 +8083,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
         ) : (
           <DataTable id="finished-parts" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
             rows={rows} rowKey={(x) => x.id} sort={sort}
+            rowProps={(x) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => setViewRel(x.r), title: L("กดเพื่อดูรายละเอียด: ขั้นตอน · เครื่อง · จำนวนที่เสร็จ", "Click for details: steps · machines · finished count") })}
             sortAccessors={{
               ro: (x) => x.ro, part: (x) => x.partNo, name: (x) => x.partName, proj: (x) => x.projectName,
               ordered: (x) => x.qty, finished: (x) => x.finished, weight: (x) => x.weight, len: (x) => x.len,
@@ -8119,6 +8121,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
             ]} />
         )}
       </Card>
+      {viewRel ? <PartProgressModal release={viewRel} user={getSession()} goTo={goTo} onClose={() => setViewRel(null)} /> : null}
     </>
   );
 }
@@ -10114,7 +10117,7 @@ function ReportPage({ goTo }) {
         <TrendView filters={sumFilters({ projectFilter, partFilter, releaseFilter, deptFilter })} />
       ) : view === "finished" ? (
         // ★ 2026-11-11 ผู้ใช้: "แยกตัวนี้ไปเป็นหัวข้อใหม่" → Finished Part เป็นแท็บของตัวเอง (เดิมต่อท้ายหน้าภาพรวม ต้องเลื่อนลงไปไกล)
-        <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} />
+        <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} goTo={goTo} />
       ) : (<>
       <LoadStateBanner state={logsState} onRetry={() => setReloadTick((t) => t + 1)} />
 
