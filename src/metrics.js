@@ -181,7 +181,7 @@ export function machineOpMatrix(logs, opOrder) {
 //     parts: [{ partNo, partName, total:{count,weight}, ops:{ opName:{count,weight} } }],
 //     opNames: [ชื่อขั้นตอนทั้งหมดที่พบ เรียงแล้ว],
 //   }
-export function partOpMatrix(logs, opOrder) {
+export function partOpMatrix(logs, opOrder, qtyByRelease = null) {
   // แยกราย (Release + Part) → รู้ว่า Part ไหนมาจาก Release ไหน · เก็บ finished แยกด้วย
   // ★ จำนวนต่อขั้นตอน = "ชิ้นที่ผ่านขั้นตอนนั้น" แบบรู้จัก co-tick (1 สแกนติ๊กหลายขั้น = ตัวหลักมีจำนวน · ที่ติ๊กร่วม = 0)
   //   จับ 1 สแกน (ตัวหลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน) แล้วเครดิตจำนวนให้ทุกขั้นตอนในสแกนนั้น
@@ -214,7 +214,7 @@ export function partOpMatrix(logs, opOrder) {
     // ★ รอบ 11 (B1): "เสร็จ (ชิ้น)" = กติกาเดียวกับหน้า Release (release_finished_pieces v4)
     //   ต่อป้าย: เครื่องที่กด Finished กับป้ายนั้นแล้ว → รวมจำนวนต่อขั้นตอน (ข้ามเครื่อง) → ขั้นตอนที่มากสุด
     //   เดิมบวกจำนวนทุกแถว Finished ทุกเครื่อง/ทุกรอบ → ตัด+เจาะแยกเครื่องกด Finished = นับ 2 เท่า · รอบ In Process ไม่นับ
-    entry.total.finished = finishedPiecesV4(kv.rows);
+    entry.total.finished = finishedPiecesV4(kv.rows, qtyByRelease && kv.releaseId != null ? qtyByRelease.get(String(kv.releaseId)) || 0 : 0);
 
     // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
     const asc = [...kv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
@@ -247,26 +247,39 @@ export function partOpMatrix(logs, opOrder) {
 }
 
 // ชิ้นที่เสร็จ (กติกา v4) จากชุด log ของ Release เดียว — ดู migration-audit-round11.sql (release_finished_pieces)
-export function finishedPiecesV4(rows) {
+export function finishedPiecesV4(rows, orderQty = 0) {
   const finMachine = new Set();                   // `${ป้าย}|${เครื่อง}` ที่กด Finished แล้ว
   for (const l of rows || []) {
     if (String(l.status || "").toLowerCase() === "finished" && l.part_unit_id) {
       finMachine.add(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`);
     }
   }
-  // ★ 2026-11-11 ผู้ใช้: "ชิ้นงานมีหลายเครื่องทำ ขั้นตอนและเวลาไม่ตรงกัน = ชิ้นเดียวกัน"
-  //   เดิม: รวมทีละป้าย (ป้ายละ max ของขั้นตอน) แล้วบวกทุกป้าย → เครื่อง A ตัด 2 ชิ้นบนป้ายใบที่ 1 · เครื่อง B บาก/กัด/เจาะ 2 ชิ้นบนป้ายใบที่ 2
-  //         ได้ 2 + 2 = 4 (เกินจำนวนสั่ง → ขึ้น "สแปร์") ทั้งที่เป็น 2 ชิ้นเดิม
-  //   ใหม่: รวมทั้ง Release ต่อขั้นตอน (เครื่องที่ทำขั้นตอนเดียวกัน = คนละชิ้น บวกกัน) แล้วเอาขั้นตอนที่มากสุด — ขั้นตอนต่างกัน = ชิ้นเดียวกัน ไม่บวกซ้ำ
-  const byOp = new Map();                         // ขั้นตอน → จำนวนที่เครื่อง Finished ทำ (รวมทุกป้ายของ Release)
+  // ★ 2026-11-11 ผู้ใช้: "ชิ้นงานมีหลายเครื่องทำ ขั้นตอนและเวลาไม่ตรงกัน = ชิ้นเดียวกัน" + "ดูป้าย QR ด้วย ไม่ใช่แค่เครื่องคนละเวลา" + "ป้ายละไม่เกินจำนวนของป้าย"
+  //   เดิม (v4): ป้ายละ max ของขั้นตอน แล้วบวกทุกป้าย → เครื่อง A ตัด 2 ชิ้นบนป้ายใบที่ 1 · เครื่อง B บาก/กัด/เจาะ 2 ชิ้นบนป้ายใบที่ 2 = 4 (ขึ้น "สแปร์") ทั้งที่เป็น 2 ชิ้นเดิม
+  //   ใหม่ = ค่าที่น้อยกว่าของสองมุม:
+  //   (ก) มุมขั้นตอน: รวมทั้ง Release ต่อขั้นตอน (เครื่องที่ทำขั้นตอนเดียวกัน = คนละชิ้น บวกกัน) แล้วเอาขั้นตอนที่มากสุด — ขั้นตอนต่างกัน = ชิ้นเดียวกัน
+  //   (ข) มุมป้าย QR: ป้ายเดียวกัน = ชิ้นชุดเดียวกัน (ข้ามเครื่อง/ข้ามเวลา ไม่บวกซ้ำ) · ป้ายละไม่เกินจำนวนที่ป้ายนั้นแทนได้
+  //       ระบบไม่ได้เก็บว่าป้ายเป็น "รายชิ้น" หรือ "รวมล็อต" → อนุมานจากจำนวนป้ายที่ถูกสแกน: สั่ง N ชิ้น สแกน k ป้าย → ป้ายอื่นแทนอย่างน้อยใบละ 1 ชิ้น
+  //       ป้ายหนึ่งจึงแทนได้ไม่เกิน N − (k − 1) (สแกนใบเดียว = ป้ายรวมล็อต ได้ถึง N · สแกนครบ N ใบ = ป้ายรายชิ้น ใบละ 1) · ไม่รู้จำนวนสั่ง = ไม่ตัด
+  const byOp = new Map();                         // ขั้นตอน → จำนวน (รวมทุกป้ายของ Release)
+  const byUnitOp = new Map();                     // ป้าย → (ขั้นตอน → จำนวน)
   for (const l of rows || []) {
     const qv = q(l);
     if (qv <= 0 || !l.part_unit_id) continue;
     if (!finMachine.has(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`)) continue;
     const op = l.operation?.name || "?";
     byOp.set(op, (byOp.get(op) || 0) + qv);
+    const m = byUnitOp.get(l.part_unit_id) || new Map();
+    m.set(op, (m.get(op) || 0) + qv);
+    byUnitOp.set(l.part_unit_id, m);
   }
-  return byOp.size ? Math.max(0, ...byOp.values()) : 0;
+  if (!byOp.size) return 0;
+  const opView = Math.max(0, ...byOp.values());
+  const N = Number(orderQty) || 0, k = byUnitOp.size;
+  const cap = N > 0 ? Math.max(1, N - (k - 1)) : Infinity;
+  let labelView = 0;
+  for (const m of byUnitOp.values()) labelView += Math.min(cap, Math.max(0, ...m.values()));
+  return Math.min(opView, labelView);
 }
 
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────

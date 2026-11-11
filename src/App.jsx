@@ -5045,6 +5045,7 @@ function PartProgressModal({ release, user, goTo, onClose }) {
   const [machineProg, setMachineProg] = useState([]);   // [{code,name,done,finished,caps:[{name,seq,used}]}] แยกตามเครื่อง
   const [lang] = useLang();
   const [finished, setFinished] = useState(0);
+  const [machTimes, setMachTimes] = useState(() => new Map());   // machine_id|code → { first_at, last_at, run_seconds, … }
   const [over, setOver] = useState(0);   // เสร็จเกินจำนวนสั่ง = สแปร์
   const [inProgress, setInProgress] = useState(0);
   const [totalUnits, setTotalUnits] = useState(release.qty || 0);
@@ -5065,19 +5066,29 @@ function PartProgressModal({ release, user, goTo, onClose }) {
       try {
         // จำนวนชิ้น (รวม/เสร็จ/กำลังทำ) + ความคืบหน้าแยกขั้นตอนจากงานหน้าเครื่องจริง
         // ใช้แหล่งเดียวกับการ์ดรวมในหน้ารายละเอียด Release เพื่อให้ตัวเลขตรงกัน
-        const [stats, prog, mprog] = await Promise.all([
+        const [stats, prog, mprog, mstat] = await Promise.all([
           getUnitStatsByReleaseIds([release.id]),
           getReleaseOpProgressFin([release.id]),
           getReleaseMachineProgress(release.id),
+          getReleaseMachineStatus([release.id]).catch(() => null),   // ★ 2026-11-11 วันที่-เวลา เริ่ม/ล่าสุด ต่อเครื่อง + ขั้นตอนที่เครื่องทำจริง (ไม่มี = ไม่โชว์)
         ]);
         if (!alive) return;
         setMachineProg(Array.isArray(mprog) ? mprog : []);
+        const stRows = mstat && mstat.ok && mstat.data ? (mstat.data[release.id] || mstat.data[String(release.id)] || []) : [];
+        setMachTimes(new Map((Array.isArray(stRows) ? stRows : []).map((x) => [String(x.machine_id || x.code), x])));
         const ops = Array.isArray(prog[release.id]) ? prog[release.id] : [];
         // ── นิยาม "เสร็จ / กำลังทำ" เดียวกับการ์ดรวมและตารางแต่ละ Part (relProgress) ──
         //    เสร็จ = ชิ้นที่หน้าเครื่องกด Finished (ตามรูทของเครื่อง) หรือสแกนสำนักงานแบบเดิม — ค่าที่มากกว่า
         const p = relProgress(release, stats, prog);
         const total = p.total;
-        const fin = p.finished, overFin = p.over, inProg = p.inProgress;
+        let fin = p.finished, overFin = p.over; const inProg = p.inProgress;
+        // ★ 2026-11-11 ผู้ใช้: "หลายเครื่อง ขั้นตอนไม่ตรงกัน = ชิ้นเดียวกัน" → ถ้ายอดเสร็จเกินจำนวนสั่ง ลองคิดแบบรวมต่อขั้นตอน (เครื่องที่ทำขั้นตอนเดียวกัน = คนละชิ้น บวกกัน)
+        //   แล้วเอาขั้นตอนที่มากสุด — ตัด 2 (เครื่อง A) + บาก/กัด/เจาะ 2 (เครื่อง B) = 2 ชิ้นเดิม ไม่ใช่ 4 · ใช้เฉพาะตอนที่ทำให้ยอดลดลง (ไม่เพิ่มยอดเอง)
+        if (overFin > 0 && Array.isArray(stRows) && stRows.length) {
+          const byOp = new Map();
+          for (const m of stRows) { const fn = Number(m.finished) || 0; if (!(fn > 0)) continue; for (const o of (Array.isArray(m.ops) ? m.ops : [])) { const nm = o && o.name; if (nm) byOp.set(nm, (byOp.get(nm) || 0) + fn); } }
+          if (byOp.size) { const raw2 = Math.max(p.officeFin || 0, Math.min(p.done, Math.max(...byOp.values()))); fin = total > 0 ? Math.min(raw2, total) : raw2; overFin = total > 0 ? Math.max(0, raw2 - total) : 0; }
+        }
         setTotalUnits(total || release.qty || 0);
         setFinished(fin);
         setOver(overFin);
@@ -5214,6 +5225,14 @@ function PartProgressModal({ release, user, goTo, onClose }) {
                       {over ? <span style={{ color: "var(--warning)" }}> · {lang === "en" ? "over (spare)" : "เกิน (สแปร์)"}</span> : null}
                     </div>
                     <ProgressBar pct={Math.min(pct, 100)} finished={done} total={totalUnits} />
+                    {/* ★ 2026-11-11 ผู้ใช้: "แต่ละเครื่อง บอกวันที่ และเวลาด้วย" */}
+                    {(() => { const t = machTimes.get(String(m.machine_id || m.code)) || machTimes.get(String(m.code)); if (!t || (!t.first_at && !t.last_at)) return null; const same = t.first_at && t.last_at && fmtDT(t.first_at) === fmtDT(t.last_at); return (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--border)", fontSize: 12, color: "var(--muted)" }}>
+                        {t.first_at ? <span>{same ? (lang === "en" ? "Done" : "ทำเมื่อ") : (lang === "en" ? "Start" : "เริ่ม")} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtDT(t.first_at)}</b></span> : null}
+                        {t.last_at && !same ? <span>{lang === "en" ? "Last" : "ล่าสุด"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtDT(t.last_at)}</b></span> : null}
+                        {Number(t.run_seconds) > 0 ? <span>{lang === "en" ? "Run time" : "เวลาทำงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtHrs(Number(t.run_seconds))}</b></span> : null}
+                        {t.last_employee ? <span>{lang === "en" ? "By" : "โดย"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{typeof t.last_employee === "string" ? t.last_employee : (t.last_employee.name || t.last_employee.code || "")}</b></span> : null}
+                      </div>); })()}
                   </div>
                 );
               })}
@@ -9841,7 +9860,7 @@ function ReportPage({ goTo }) {
     const processed = processedWeight(filteredLogs);
     const distinctUnits = distinctUnitCount(filteredLogs);
     const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
-    const partMatrix = partOpMatrix(filteredLogs, opOrder); // ตารางแยก Part No. × ขั้นตอน
+    const partMatrix = partOpMatrix(filteredLogs, opOrder, new Map((allRels || []).map((r) => [String(r.id), Number(r.qty) || 0]))); // ตารางแยก Part No. × ขั้นตอน · จำนวนสั่ง = ไว้ตัดยอดต่อป้าย QR
     // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
     const chartData = matrix.opNames.map((op) => {
       let count = 0, weight = 0;
@@ -9853,7 +9872,7 @@ function ReportPage({ goTo }) {
     const needBackfill = filteredLogs.reduce((n, l) => n + (logWeightNeedsBackfill(l) ? 1 : 0), 0);   // ตั้งน้ำหนักแล้ว แต่ฐานข้อมูลยังเก็บ 0
     const totalSeconds = filteredLogs.reduce((s, l) => s + (Number(l.process_seconds) || 0), 0);
     return { processed, distinctUnits, matrix, partMatrix, chartData, dailyMatrix, noWeight, needBackfill, totalSeconds };
-  }, [filteredLogs, opOrder]);
+  }, [filteredLogs, opOrder, allRels]);
   const { processed, distinctUnits, matrix, partMatrix, chartData, dailyMatrix, noWeight, needBackfill, totalSeconds } = calc;
   // คีย์จับคู่ log → แถวในตาราง Part (ต้องตรงกับ partOpMatrix เป๊ะ) สำหรับ drill-down
   const partKeyOf = (l) => `${(l.release_id || l.part_unit?.release_id) || (l.release_order || "—")}|${l.part_unit?.part_master?.part_no || "ไม่ระบุ"}`;
