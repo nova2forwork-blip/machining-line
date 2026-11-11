@@ -53,7 +53,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   const cur = sub[grp];
   // ★ 2026-11-11 ผลิตไปแล้วกี่ชิ้นของที่ปล่อย (จากหน้าเครื่อง · รวมทุกล็อต) — แถบเล็กใต้ช่อง "ปล่อยแล้ว"
   const madeEl = (code, done) => { if (!madeOf || !(done > 0)) return null; const m = madeOf(code); if (m == null) return null; const pc = Math.min(100, Math.round((m / done) * 100));
-    return <div className={`rt-made ${m >= done ? "full" : m > 0 ? "part" : "zero"}`} title={`ผลิตแล้ว ${nf(m)} จากที่ปล่อย ${nf(done)} ชิ้น (ทุกล็อต)`}><i><b style={{ width: `${pc}%` }} /></i><span>{m >= done ? "✓ " : ""}ผลิตแล้ว {nf(m)}/{nf(done)}</span></div>; };
+    return <div className={`rt-made ${m >= done ? "full" : m > 0 ? "part" : "zero"}`} title={`ผลิตแล้ว ${nf(m)} จากที่ปล่อย ${nf(done)} ชิ้น (ทุกล็อต)`}><i><b style={{ width: `${pc}%` }} /></i><span>{m >= done ? "✓ " : ""}{nf(m)}/{nf(done)}</span></div>; };
   const pick = (g, s) => { setGrp(g); if (onTab) onTab(g); if (s) setSub((x) => ({ ...x, [g]: s })); setLimit(PAGE); setOpenMat(null); };
 
   const parts = useMemo(() => [...need.parts].sort((a, b) => ncmp(a.code, b.code)), [need]);
