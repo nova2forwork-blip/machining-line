@@ -2809,7 +2809,7 @@ registerI18n({
 registerI18n({
   dict: {
     "ล้างตัวกรองทั้งหมด": "Clear all filters",
-    "· ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามแบบ)": "· not changed (tick to use the drawing value)",
+    "· ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามตารางในแบบ)": "· not changed (tick to use the value from the drawing table)",
     "เบอร์ ·": "part(s) ·",
     "ทั้งล็อต": "Whole lot",
     "ชนิดป้าย · ทุกเบอร์": "Label type · all parts",
@@ -2840,6 +2840,6 @@ registerI18n({
     ["{1} ใบ", "{1} label(s)"],
     ["↻ ตามที่เคยพิมพ์ {1} เบอร์", "↻ {1} as last printed"],
     ["กราฟเส้น {1} จุด", "Line chart, {1} points"],
-    ["แบบไม่ได้แก้ความยาว — ในใบเป็นค่าที่แปลงจากนิ้ว ({1}) · ช่อง A ในแบบระบุเป็นมม. = {2}", "The drawing length is unchanged — the release holds the value converted from inches ({1}) · column A on the drawing gives {2} mm"],
+    ["แบบไม่ได้แก้ความยาว — ปรับเป็นค่าช่อง A ของตาราง ({1} มม.) แทนค่าที่แปลงจากนิ้ว ({2})", "The drawing length is unchanged — switching to column A of the table ({1} mm) instead of the value converted from inches ({2})"],
   ],
 });
