@@ -1135,3 +1135,7 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-cmp-full tbody tr.rl-cmp-hit.bad td { background: #fdeaea; }
 .rl-cmp-full tbody tr.rl-cmp-hit.bad td:first-child { box-shadow: inset 4px 0 0 #b91c1c; }
 .rl-cmp-sub { margin: 14px 0 4px; font-size: 12.5px; font-weight: 700; color: #48605a; }
+
+/* ★ 2026-11-11 การ์ดล็อตในแถบขวา: กดตรงไหนในกรอบก็เปิดล็อต */
+.rl-slot.click { cursor: pointer; transition: border-color .12s, background .12s; }
+.rl-slot.click:hover { border-color: var(--accent); background: var(--accent-tint); }

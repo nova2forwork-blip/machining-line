@@ -325,7 +325,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
         <div className="rl-sbox" ref={lotsRef}>
           <div className="rl-sbox-h"><b>ล็อตที่ปล่อย</b><span className="rw-muted small">{rel.lots.length} ล็อต</span></div>
           {rel.lots.length ? [...rel.lots].reverse().slice(0, lotsAll ? undefined : 5).map((L) => { const pg = lotProg(L); return (
-            <div key={L.no} className={`rl-slot ${open === L.no ? "on" : ""}`}>
+            <div key={L.no} className={`rl-slot click ${open === L.no ? "on" : ""}`} title={`เปิด ${L.no}`}
+              onClick={(e) => { if (e.target.closest("button, a, input, select")) return; if (onOpenLot && !L.hwOnly) onOpenLot(L.no); else setOpen(open === L.no ? null : L.no); }}>
               <div className="rl-slot-top"><b className="rw-mono">{L.no}</b><span className="rw-muted small">{fmtD(L.date)}</span></div>
               <div className="rw-muted small">{[L.panels && `แผง ${nf(L.panels)}`, L.subs && `ซับ ${nf(L.subs)} เบอร์`, L.parts && `พาร์ท ${nf(L.parts)} เบอร์`, L.hw && L.hw.length && `อุปกรณ์ ${nf(L.hw.length)}`].filter(Boolean).join(" · ")}{pg && pg.t ? ` · ทำแล้ว ${pg.pct}%` : ""}</div>
               <div className="rl-slot-btns">
