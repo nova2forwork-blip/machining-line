@@ -9505,12 +9505,15 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to, fkey]);
+  // ★ 2026-11-11 ผู้ใช้: "เพิ่ม ชื่อ ด้วย" (= รหัสบัญชี / รหัสเครื่อง) → คอลัมน์รหัสบัญชีที่ล็อกอิน (เช่น CT-057) หน้าชื่อ — สรุปจากฐานข้อมูลให้มาแค่ชื่อ จึงโหลดรายชื่อบัญชีมาจับคู่ด้วย id
+  const [empCode, setEmpCode] = useState(() => new Map());
+  useEffect(() => { let alive = true; getEmployees().then((e) => { if (alive) setEmpCode(new Map((Array.isArray(e) ? e : []).map((x) => [String(x.id), x.code || ""]))); }).catch(() => {}); return () => { alive = false; }; }, []);
   const rows = (res && res.ok ? res.rows : []).map((r) => ({
-    ...r, name: r.label || L("(ไม่ระบุพนักงาน)", "(no employee)"), qty: Number(r.qty) || 0, kg: Number(r.kg) || 0, sec: Number(r.sec) || 0,
+    ...r, code: empCode.get(String(r.k)) || "", name: r.label || L("(ไม่ระบุพนักงาน)", "(no employee)"), qty: Number(r.qty) || 0, kg: Number(r.kg) || 0, sec: Number(r.sec) || 0,
     scans: Number(r.scans) || 0, days: Number(r.days) || 0,
   }));
   const tot = rows.reduce((a, r) => ({ qty: a.qty + r.qty, kg: a.kg + r.kg, sec: a.sec + r.sec }), { qty: 0, kg: 0, sec: 0 });
-  const acc = { name: (r) => r.name, qty: (r) => r.qty, kg: (r) => r.kg, sec: (r) => r.sec, pph: (r) => perHour(r.qty, r.sec) || 0,
+  const acc = { code: (r) => r.code, name: (r) => r.name, qty: (r) => r.qty, kg: (r) => r.kg, sec: (r) => r.sec, pph: (r) => perHour(r.qty, r.sec) || 0,
     kph: (r) => perHour(r.kg, r.sec) || 0, scans: (r) => r.scans, days: (r) => r.days, avg: (r) => (r.days ? r.qty / r.days : 0) };
   async function openDetail(r) {
     setDetail({ row: r, rows: null });
@@ -9519,7 +9522,7 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
   }
   function doExport() {
     const sheet = rows.map((r) => ({
-      [L("พนักงาน", "Employee")]: r.name, [L("จำนวน (ชิ้น)", "Pieces")]: r.qty, [L("น้ำหนัก (กก.)", "Weight (kg)")]: Math.round(r.kg * 100) / 100,
+      [L("รหัส", "Code")]: r.code, [L("พนักงาน", "Employee")]: r.name, [L("จำนวน (ชิ้น)", "Pieces")]: r.qty, [L("น้ำหนัก (กก.)", "Weight (kg)")]: Math.round(r.kg * 100) / 100,
       [L("เวลาเดินเครื่อง (ชม.)", "Machine time (h)")]: Math.round(r.sec / 36) / 100, [L("ชิ้น/ชม.", "pcs/h")]: r.sec ? Math.round(perHour(r.qty, r.sec) * 10) / 10 : "",
       [L("กก./ชม.", "kg/h")]: r.sec ? Math.round(perHour(r.kg, r.sec) * 10) / 10 : "", [L("จำนวนสแกน", "Scans")]: r.scans, [L("วันทำงาน", "Days worked")]: r.days,
       [L("เฉลี่ย ชิ้น/วัน", "Avg pcs/day")]: r.days ? Math.round((r.qty / r.days) * 10) / 10 : "",
@@ -9541,6 +9544,8 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
               sort={sort} sortAccessors={acc}
               rowProps={(r) => ({ className: "release-row", style: { cursor: "pointer" }, onClick: () => openDetail(r) })}
               columns={[
+                { key: "code", header: L("รหัส", "Code"), sortKey: "code", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 18 },
+                  cell: (r) => (r.code ? <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12.5, padding: "2px 9px", borderRadius: 999, background: "var(--accent-tint)", color: "var(--accent-dk)" }}>{r.code}</span> : <span style={{ color: "var(--muted)" }}>—</span>) },
                 { key: "name", header: L("พนักงาน", "Employee"), sortKey: "name", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.name },
                 { key: "qty", header: L("จำนวน (ชิ้น)", "Pieces"), sortKey: "qty", align: "right", tdStyle: { fontWeight: 700 }, cell: (r) => fmtNum(r.qty) },
                 { key: "kg", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "kg", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (r) => fmtNum(r.kg) },
