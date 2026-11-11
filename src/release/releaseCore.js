@@ -148,7 +148,12 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const normTitle = (t) => {
       for (const k of ["LENGTH", "HEIGHT", "M.D."]) { const mm = inchToMm(t[k]); if (mm != null) { t[k + "_IN"] = t[k]; t[k] = String(mm); } }
       // ช่อง "A" = ความยาวตัดเป็นมม. (ตรงกับ LENGTH ที่แปลงจากนิ้ว เช่น 16'-2" = 4927.6) → ใช้ค่านี้เป็นหลักเมื่อมี
-      { const a = num(t.A); if (a != null && a > 0 && t.LENGTH_IN) { t.LENGTH = String(a); } }
+      // ★ 2026-11-11 ผู้ใช้: "ถ้ามี 2 อันแบบนี้ ให้ดู A · อันเดียว ให้ดู LENGTH" — "แบบนี้" = LENGTH เป็นนิ้ว + ช่อง A เป็นมม.ของความยาวเดียวกัน
+      //   ใช้ A เมื่อ (1) LENGTH เป็นนิ้ว และ (2) A ห่างจากค่าที่แปลงจากนิ้วไม่เกิน 1 มม. (นิ้วในแบบปัดทีละ 1/16" = ±0.8 มม.)
+      //   ไม่เข้าเงื่อนไข = ใช้ LENGTH: แบบบางชุดมีช่อง A/B/C/D เป็นระยะอื่น (BL01-001: LENGTH 1363.66 · A 44.45 = ระยะรู ไม่ใช่ความยาว)
+      { const a = num(t.A), li = t.LENGTH_IN ? num(t.LENGTH) : null;
+        if (a != null && a > 0 && li != null && Math.abs(a - li) <= 1) { t.LENGTH = String(a); t.LENGTH_SRC = "A"; }
+        else if (t.LENGTH != null && t.LENGTH !== "") t.LENGTH_SRC = "LENGTH"; }
       return t;
     };
     normTitle(out.title);
