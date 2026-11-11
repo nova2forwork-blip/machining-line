@@ -6636,6 +6636,22 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   const planModList = (planMods && planMods.mods) || [];
   const lotCodes = useMemo(() => new Set(releases.map((r) => (planMods ? planMods.NC(r.part_master?.part_no || "") : ""))), [releases, planMods]);
   const pmItemText = (it) => (it.type === "add" ? `เพิ่ม +${fmtNum(it.after)}` : it.type === "cancel" ? "ยกเลิกเบอร์" : it.type === "addr" ? "ยกเลิกที่อยู่" : it.type === "mat" ? `วัสดุ ${it.before || "—"} → ${it.after}` : it.type === "len" ? `ยาว ${it.before ?? "—"} → ${it.after}` : `จำนวน ${fmtNum(it.before)} → ${fmtNum(it.after)}`);
+  // ★ 2026-11-11 วัสดุ / ความยาว "ตามใบหลัก" ของแถวในล็อต: { cur, old } — old มีค่าเมื่อแถวนี้ปล่อยไปด้วยค่าเดิม (ใบปล่อย PDF/Excel ออกเป็นค่าใหม่อยู่แล้ว ตารางนี้ต้องตรงกัน)
+  const eqInv = (a, b) => String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+  const matOfRow = (r) => {
+    const shown = r.part_master?.material || r.material || "";
+    const ov = planMods && planMods.matOv ? planMods.matOv.get(planMods.NC(r.part_master?.part_no || "")) : null;
+    const to = ov && String(ov.to || "").trim();
+    if (!to) return { cur: shown, old: "" };
+    return { cur: to, old: eqInv(shown, to) || eqInv(r.material, to) ? "" : shown, why: ov.r || "" };
+  };
+  const lenOfRow = (r) => {
+    const shown = Number(r.length_mm) || 0;
+    const ov = planMods && planMods.lenOv ? planMods.lenOv.get(planMods.NC(r.part_master?.part_no || "")) : null;
+    const to = ov ? Number(ov.to) || 0 : 0;
+    if (!(to > 0)) return { cur: shown, old: 0 };
+    return { cur: to, old: shown > 0 && Math.abs(shown - to) > 1e-6 ? shown : 0, why: ov.ver || "" };
+  };
   const planModsOf = (pn) => { if (!planMods) return []; const k = planMods.NC(pn || ""); return planModList.filter((m) => (m.items || []).some((it) => !it.derived && planMods.NC(it.code) === k)); };
   const [origin, setOrigin] = useState(null);   // { of(code) → {subs,panels}, addrsOf(panel) → [addr…] } | null = ไม่มีแผน/ยังไม่โหลด
   useEffect(() => {
@@ -6649,7 +6665,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         if (!alive || !plan) return;
         const of = core.originIndex(plan.bom || {});
         const byUnit = new Map(); for (const u of plan.units || []) { const k = core.NC(u.unit); if (!byUnit.has(k)) byUnit.set(k, []); byUnit.get(k).push(u.addr); }
-        setPlanMods({ ro: plan.ro, mods: plan.mods || [], NC: core.NC });   // ★ 2026-11-11 Modify ของใบหลัก → โชว์ในหน้าล็อตด้วย
+        // matOv / lenOv = วัสดุ / ความยาวที่ใบหลักเปลี่ยน (Modify หรือ ✎ เปลี่ยนวัสดุ) — แถวที่ปล่อยไปก่อนหน้ายังเก็บค่าเดิม → หน้าล็อตโชว์ค่าเดิมขีดฆ่า → ค่าใหม่
+        const ovMap = (o) => new Map(Object.entries(o || {}).map(([k, v]) => [core.NC(k), v]));
+        setPlanMods({ ro: plan.ro, mods: plan.mods || [], NC: core.NC, matOv: ovMap(plan.matOv), lenOv: ovMap(plan.lenOv) });   // ★ 2026-11-11 Modify ของใบหลัก → โชว์ในหน้าล็อตด้วย
         setOrigin({ of, addrsOf: (unit) => byUnit.get(core.NC(unit)) || [], ro: plan.ro });
       } catch { /* ไม่มีแผนแบบใหม่ / ยังไม่รัน SQL — ไม่แสดงคอลัมน์ */ }
     })();
@@ -6927,7 +6945,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           uw: isAsmGroup ? [] : [[E ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)", r.unit_weight ? w2(r.unit_weight) : ""]],
           tw: isAsmGroup ? [] : [[E ? "Total weight (kg)" : "น้ำหนักรวม (กก.)", r.unit_weight ? w2((Number(r.qty) || 0) * r.unit_weight) : ""]],
           len: [[E ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)", r.length_mm ? Number(r.length_mm) : ""]],
-          material: [["INV Code", r.part_master?.material || r.material || ""]],
+          material: [["INV Code", matOfRow(r).cur || ""]],   // ตามใบหลัก (หลัง Modify) — ตรงกับที่โชว์ในตารางและใบปล่อย
           matlen: [[E ? "Mat. Length (mm)" : "Mat. Length (มม.)", a.length === 1 ? Number(a[0]) : a.map((n) => fmtNum(n)).join(" · ")]],
           remark: [[E ? "Remark" : "หมายเหตุ", r.note || ""]],
         };
@@ -7161,8 +7179,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               { key: "uw", header: lang === "en" ? "Wt/pc (kg)" : "นน./ชิ้น (กก.)", sortKey: "uw", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.unit_weight ? fmtNum(r.unit_weight) : "-" },
               { key: "tw", header: lang === "en" ? "Total wt (kg)" : "นน.รวม (กก.)", sortKey: "tw", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.unit_weight ? fmtNum(r.qty * r.unit_weight) : "-" },
             ] : []),
-            { key: "len", header: lang === "en" ? "Len/pc (mm)" : "ยาว/ชิ้น (มม.)", sortKey: "len", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.length_mm ? fmtNum(r.length_mm) : "-" },
-            { key: "material", header: "INV Code", sortKey: "material", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_master?.material || r.material || "-" },
+            { key: "len", header: lang === "en" ? "Len/pc (mm)" : "ยาว/ชิ้น (มม.)", sortKey: "len", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => { const l = lenOfRow(r); return l.old ? <span title={(lang === "en" ? "Changed in the master release" : "เปลี่ยนในใบหลัก") + (l.why ? ` · ${l.why}` : "")}><s style={{ color: "var(--muted)" }}>{fmtNum(l.old)}</s> → <b style={{ color: MOD_PURPLE }}>{fmtNum(l.cur)}</b></span> : (l.cur ? fmtNum(l.cur) : "-"); } },
+            { key: "material", header: "INV Code", sortKey: "material", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => { const m = matOfRow(r); return m.old ? <span title={(lang === "en" ? "Changed in the master release" : "เปลี่ยนในใบหลัก") + (m.why ? ` · ${m.why}` : "")}><s style={{ color: "var(--muted)" }}>{m.old}</s> → <b style={{ color: MOD_PURPLE }}>{m.cur}</b></span> : (m.cur || "-"); } },
             { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", sortKey: "matlen", align: "right", tdStyle: { whiteSpace: "nowrap" },
               cell: (r) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r) },
             { key: "remark", header: lang === "en" ? "Remark" : "หมายเหตุ", cell: (r) => r.note || "-" },
