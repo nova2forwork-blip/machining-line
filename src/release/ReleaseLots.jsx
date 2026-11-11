@@ -67,6 +67,11 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
   const [modsOpen, setModsOpen] = useState(false);
+  // ★ 2026-11-11 ป้ายม่วง M-001 ในตาราง (ModTag) กดแล้ว → เปิดประวัติ Modify ที่ M นั้น
+  useEffect(() => {
+    const on = (e) => { const v = String(e.detail || ""); if (!v) return; setCmpOpen(new Set([v])); setModsOpen(true); };
+    window.addEventListener("rl-open-mod", on); return () => window.removeEventListener("rl-open-mod", on);
+  }, []);
   const [progOpen, setProgOpen] = useState(false);   // ★ 2026-11-11 ป็อปอัพ "ทำไปแค่ไหนแล้ว" ทั้ง Release (แบบที่ 3)
   const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
   const [lotsAll, setLotsAll] = useState(false);

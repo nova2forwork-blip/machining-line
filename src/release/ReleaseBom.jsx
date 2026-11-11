@@ -7,7 +7,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useMemo, useState } from "react";
 import { NC, ncmp, nf, nlen, findKey, stockLen, KERF, addrKey, destLabel } from "./releaseCore.js";
-import { Pill, ModQty, SUB_SHORT } from "./releaseUi.jsx";
+import { Pill, ModQty, SUB_SHORT, ModTag } from "./releaseUi.jsx";
 
 const PAGE = 300;
 const MIN_OFFCUT = 500;
@@ -176,13 +176,13 @@ export function BomView({ plan, need }) {
           const key = `${cur.unit}|${[...r.path, r.code].join(">")}`; const shut = closed.has(key);
           if (r.kind === "sub") return (
             <div key={r.i} className={`bm-row bm-sub d${Math.min(r.depth, 2)}`} style={{ marginLeft: r.depth * 22 }}>
-              <div className="bm-main"><button type="button" className="bm-tg" onClick={() => setClosed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; })} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button><b className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</b><Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? <Pill tone="mod">เพิ่ม {r.ver}</Pill> : null}{destOf(r).map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}<span className="bm-d">{r.d}</span></div>
+              <div className="bm-main"><button type="button" className="bm-tg" onClick={() => setClosed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; })} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button><b className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</b><Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>} : null}{destOf(r).map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}<span className="bm-d">{r.d}</span></div>
               <span className="bm-n r">{nlen(r.l)}</span><span className="bm-mat" />
               <span className="bm-q r"><small>ต่อชุด</small> {r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : nlen(r.q)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(r.per * cur.n)}</b> <small>SET</small></span>
             </div>);
           return (
             <div key={r.i} className={`bm-row bm-part ${r.kind}`} style={{ marginLeft: r.depth * 22 + 24 }}>
-              <div className="bm-main"><span className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</span>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? <Pill tone="mod">เพิ่ม {r.ver}</Pill> : null}{r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{destOf(r).map((k) => <Pill key={k} tone="part">{destLabel(k)}</Pill>)}<span className="bm-d">{r.d}</span></div>
+              <div className="bm-main"><span className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</span>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>} : null}{r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{destOf(r).map((k) => <Pill key={k} tone="part">{destLabel(k)}</Pill>)}<span className="bm-d">{r.d}</span></div>
               <span className="bm-n r">{nlen(r.l)}</span>
               <span className="bm-mat"><span className="rw-mono rt-inv">{r.m}</span> {cutChip(r)}</span>
               <span className="bm-q r"><small>ต่อชุด</small> {r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : nlen(r.q)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b> <small>{r.uom}</small></span>
@@ -216,7 +216,7 @@ export function BomView({ plan, need }) {
           <tr key={r.unit + r.i + "-" + i} className={r.kind === "sub" ? (r.depth ? "rt-b2" : "rt-b1") : ""}>
             <td className="rw-mono">{r.unit}</td><td className="r rw-num">{nf(r.n)}</td>
             <td className="rw-mono rt-inv">{r.path[0] || (r.kind === "sub" ? r.code : "")}</td><td className="rw-mono rt-inv">{r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : "")}</td>
-            <td className="rw-mono" style={{ paddingLeft: sort.k ? 12 : 12 + 12 * r.depth }}><span className={r.cx ? "rl-cx" : ""}>{r.kind === "sub" ? <b>{r.code}</b> : r.code}</span>{r.cx ? <> <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill></> : r.add ? <> <Pill tone="mod">เพิ่ม {r.ver}</Pill></> : null}</td>
+            <td className="rw-mono" style={{ paddingLeft: sort.k ? 12 : 12 + 12 * r.depth }}><span className={r.cx ? "rl-cx" : ""}>{r.kind === "sub" ? <b>{r.code}</b> : r.code}</span>{r.cx ? <> <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill></> : r.add ? <> {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>}</> : null}</td>
             <td className="rl-desc"><span>{r.d}</span></td><td className="r rw-num">{nlen(r.l)}</td><td className="rt-rem">{r.f}</td>
             <td className={`rw-mono rt-inv ${r.cut?.reuse ? "rt-waste" : ""}`}>{r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.m}</td>
             <td className="rt-waste">{r.cut?.reuse ? "wast" : ""}</td>

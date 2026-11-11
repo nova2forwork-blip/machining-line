@@ -13,7 +13,11 @@ export function ModQty({ orig, cur, ver, cancel, unit = "" }) {
 }
 // เบอร์ที่ถูกยกเลิก = เปลี่ยนเป็นสีแดง (ไม่ขีดฆ่า)
 // added = "M-001" (จาก Modify · ป้ายม่วง) หรือ "จากแบบ …" / "ใหม่" (จาก "เพิ่มรายการ" ไม่นับ Modify · ป้ายฟ้า)
-export const Code = ({ code, cancel, added }) => <><b className={cancel ? "rl-cx" : ""} title={cancel ? "ยกเลิกแล้ว" : undefined}>{code}</b>{added ? <> <Pill tone={/^M-\d/.test(String(added)) ? "mod" : "info"}>เพิ่ม {added}</Pill></> : null}</>;
+export const Code = ({ code, cancel, added }) => <><b className={cancel ? "rl-cx" : ""} title={cancel ? "ยกเลิกแล้ว" : undefined}>{code}</b>{added ? <> {/^M-\d/.test(String(added)) ? <ModTag ver={added} /> : <Pill tone="info">{added}</Pill>}</> : null}</>;
+// ★ 2026-11-11 ผู้ใช้: "ตรงนี้กดได้ เอาเพิ่ม ออกด้วย" → ป้ายม่วง M-001 (เบอร์ที่เพิ่มจาก Modify) กดแล้วเปิดประวัติ Modify ของ M นั้น
+//   ส่งเป็น event ให้หน้า Release (ReleasePlanView) เปิดลิ้นชักเอง — ไม่ต้องร้อย prop ผ่านทุกตาราง
+export const ModTag = ({ ver }) => <button type="button" className="rw-pill mod rl-modtag" title={`เพิ่มจาก ${ver} — กดดูก่อน / หลัง`}
+  onClick={(e) => { e.stopPropagation(); try { window.dispatchEvent(new CustomEvent("rl-open-mod", { detail: String(ver) })); } catch { /* ignore */ } }}>{ver}</button>;
 
 // ══ แถบหมวดย่อยของพาร์ท: Auto (ตามกติกาเบอร์) / Setting (ตั้งหมวดเอง + ตัวหน้าของเบอร์) ══
 //   ใช้ทั้งหน้า Release (Total Part) และหน้า "ซับ / พาร์ท ของโปรเจค"
