@@ -49,6 +49,12 @@ const cutFlow = (c) => {
   return { from: c.reuse ? fmt(c.srcs) : [], to: fmt(c.outs) };
 };
 const wasteLens = (c) => { const e = [...c.lens.entries()].sort((a, b) => b[0] - a[0]); return e.length === 1 ? nf(e[0][0]) : e.map(([l, n]) => `${l}(${n})`).join(", "); };
+// ★ 2026-11-11 ผู้ใช้: "ให้ตัดบรรทัดละ 6" → ความยาวเศษหลายค่า ขึ้นบรรทัดใหม่ทุก 6 ค่า (บนจอ · Excel ยังเป็นบรรทัดเดียว)
+const wasteLines = (c) => {
+  const parts = wasteLens(c).split(", "); if (parts.length <= 6) return parts.join(", ");
+  const out = []; for (let i = 0; i < parts.length; i += 6) out.push(parts.slice(i, i + 6).join(", ") + (i + 6 < parts.length ? "," : ""));
+  return out.map((t, i) => <div key={i} style={{ whiteSpace: "nowrap" }}>{t}</div>);
+};
 export function BomView({ plan, need }) {
   const [sel, setSel] = useState("");          // "" = แบบแรก · "__ALL__" = ทุกแบบ
   const [view, setView] = useState("tree");
@@ -220,7 +226,7 @@ export function BomView({ plan, need }) {
             <td className="rl-desc"><span>{r.d}</span></td><td className="r rw-num">{nlen(r.l)}</td><td className="rt-rem">{r.f}</td>
             <td className={`rw-mono rt-inv ${r.cut?.reuse ? "rt-waste" : ""}`}>{r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.m}</td>
             <td className="rt-waste">{r.cut?.reuse ? "wast" : ""}</td>
-            <td className={`r rw-num ${r.cut?.reuse ? "rt-waste" : ""}`} title={r.cut?.reuse ? r.cut.src : ""}>{r.cut?.reuse ? wasteLens(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
+            <td className={`r rw-num ${r.cut?.reuse ? "rt-waste" : ""}`} title={r.cut?.reuse ? r.cut.src : ""}>{r.cut?.reuse ? wasteLines(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r rw-num">{r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} /> : nlen(r.q)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td>
             <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
               {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
