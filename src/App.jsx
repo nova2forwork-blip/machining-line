@@ -10254,18 +10254,20 @@ function ReportPage({ goTo }) {
               title: lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้",
             })}
             columns={[
-              { key: "release", header: "Release", sortKey: "release", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.releaseOrder },
-              { key: "part_no", header: "Part No.", sortKey: "part_no", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.partNo },
+              // ★ 2026-11-11 ผู้ใช้: "ช่องว่างไม่สวย จัดตารางใหม่" → Release / Part No. กว้างเท่าเนื้อหา · ชื่อ Part รับที่ว่างที่เหลือ · คอลัมน์ขั้นตอนกว้างเท่ากัน ชิดกลาง ·
+              //   (Part No. / ชื่อ Part รับที่ว่าง — ซ่อนชื่อ Part ไว้ก็ยังเหลือช่องว่างก้อนเดียวหลัง Part No.) · คอลัมน์สรุปกว้างคงที่ชิดขวา · หน่วยอยู่ที่หัวคอลัมน์ ไม่ซ้ำในทุกช่อง (เดิมทุกคอลัมน์ยืดเท่า ๆ กัน ช่องว่างกระจายไม่เป็นระเบียบ)
+              { key: "release", header: "Release", sortKey: "release", thStyle: { width: "1%" }, tdStyle: { width: "1%", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", paddingRight: 22 }, cell: (p) => p.releaseOrder },
+              { key: "part_no", header: "Part No.", sortKey: "part_no", tdStyle: { fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", paddingRight: 22 }, cell: (p) => p.partNo },
               { key: "part_name", header: "ชื่อ Part", sortKey: "part_name", tdStyle: { color: "var(--muted)", fontSize: 12.5, whiteSpace: "nowrap" }, cell: (p) => p.partName },
               ...partMatrix.opNames.map((op) => ({
-                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
-                cell: (p) => { const cell = p.ops[op]; return cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "center", thStyle: { width: 84, textAlign: "center" }, tdStyle: { width: 84, fontVariantNumeric: "tabular-nums" },
+                cell: (p) => { const cell = p.ops[op]; return cell ? cell.count.toLocaleString() : <span style={{ color: "#c3cfca" }}>–</span>; },
               })),
-              { key: "total", header: "รวม (ชิ้น)", sortKey: "total", align: "right", tdStyle: { fontWeight: 600 }, cell: (p) => `${p.total.count.toLocaleString()} ชิ้น` },
-              { key: "weight", header: "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (p) => p.total.weight > 0 ? `${fmtNum(p.total.weight)} กก.` : "—" },
-              { key: "finished", header: "เสร็จ (ชิ้น)", sortKey: "finished", align: "right",
-                tdProps: (p) => ({ style: { fontWeight: 700, color: p.total.finished > 0 ? "var(--success)" : "var(--muted)" } }),
-                cell: (p) => p.total.finished > 0 ? `${p.total.finished.toLocaleString()} ชิ้น` : "—" },
+              { key: "total", header: lang === "en" ? "Total (pcs)" : "รวม (ชิ้น)", sortKey: "total", align: "right", thStyle: { width: 104 }, tdStyle: { width: 104, fontWeight: 700, fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border-soft, #eef2f0)" }, cell: (p) => p.total.count.toLocaleString() },
+              { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", thStyle: { width: 120 }, tdStyle: { width: 120, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (p) => p.total.weight > 0 ? fmtNum(p.total.weight) : "—" },
+              { key: "finished", header: lang === "en" ? "Finished (pcs)" : "เสร็จ (ชิ้น)", sortKey: "finished", align: "right", thStyle: { width: 110 },
+                tdProps: (p) => ({ style: { width: 110, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: p.total.finished > 0 ? "var(--success)" : "var(--muted)" } }),
+                cell: (p) => p.total.finished > 0 ? p.total.finished.toLocaleString() : "—" },
             ]} />
         )}
       </Card>
