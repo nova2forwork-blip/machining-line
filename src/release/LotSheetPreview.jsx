@@ -30,8 +30,9 @@ export default function LotSheetPreview({ args: args0, onClose }) {
   };
   const only = sel.length === keys.length ? null : sel;
   // ★ 2026-11-04 ใบปะหน้า (FM(PL)-01/02/03) หน้าแรกของใบ MACHINING / BENDING / STEEL — เปิด/ปิดได้ · จำในเครื่อง
-  const [covers, setCovers] = useState(() => { try { return localStorage.getItem("mls-lot-cover") !== "0"; } catch { return true; } });
-  const flipCovers = () => setCovers((v) => { try { localStorage.setItem("mls-lot-cover", v ? "0" : "1"); } catch { /* ignore */ } return !v; });
+  //   ★ 2026-11-11 3 ทาง: ไม่ใส่ (false) · แบบเต็ม "full" (มีรายการ) · แบบสั้น "see" (SEE ATTACHED FILE อย่างเดียว) — จำในเครื่อง
+  const [covers, setCoversRaw] = useState(() => { try { const v = localStorage.getItem("mls-lot-cover"); return v === "0" ? false : v === "see" ? "see" : "full"; } catch { return "full"; } });
+  const setCovers = (v) => { setCoversRaw(v); try { localStorage.setItem("mls-lot-cover", v === false ? "0" : v); } catch { /* ignore */ } };
   const model = useMemo(() => buildLotModel({ ...args, only }), [args, only && only.join("|")]);   // eslint-disable-line react-hooks/exhaustive-deps
   const html = useMemo(() => {
     let logoUrl = ""; try { logoUrl = new URL(`${(import.meta.env && import.meta.env.BASE_URL) || "/"}brand/artclad-company.png`, window.location.origin).href; } catch { /* ไม่มีโลโก้ก็ได้ */ }
@@ -71,9 +72,10 @@ export default function LotSheetPreview({ args: args0, onClose }) {
         {model.sheets.some((x) => x.cover) || full.all.some((x) => ["CUTTING", "BENDING", "STEEL"].includes(x.key)) ? (
           <div className="lp-pick" role="group" aria-label="ใบปะหน้า">
             <span className="lp-pick-lab">ใบปะหน้า:</span>
-            <button type="button" className={`lp-chip part ${covers ? "on" : ""}`} onClick={flipCovers} aria-pressed={covers} title="ฟอร์ม FM(PL)-01/02/03 · หน้าแรกของใบ MACHINING / BENDING / STEEL · แก้เลขที่ / หมายเหตุ ได้ที่หน้าล็อต">
-              <span className="lp-box" aria-hidden="true">{covers ? "✓" : ""}</span>ใส่ใบปะหน้า (Instruction) <small>{model.sheets.filter((x) => x.cover).length}</small>
-            </button>
+            {[[false, "ไม่ใส่", "ไม่มีใบปะหน้า"], ["full", "แบบเต็ม", "มีรายการวัตถุดิบ (Inventory Code / Stock Length / Total Req'd) + SEE ATTACHED FILE"], ["see", "แบบสั้น", "มีแค่ SEE ATTACHED FILE — ไม่มีรายการ"]].map(([v, l, tip]) => (
+              <button key={String(v)} type="button" className={`lp-chip part ${covers === v ? "on" : ""}`} onClick={() => setCovers(v)} aria-pressed={covers === v} title={`ฟอร์ม FM(PL)-01/02/03 · หน้าแรกของใบ MACHINING / BENDING / STEEL — ${tip}`}>
+                <span className="lp-box" aria-hidden="true">{covers === v ? "✓" : ""}</span>{l}{v ? <small>{model.sheets.filter((x) => x.cover).length}</small> : null}
+              </button>))}
           </div>) : null}
         <div className="lp-hint">ปุ่ม <b>พิมพ์ / PDF</b> → ที่ปลายทางเลือก <b>“บันทึกเป็น PDF”</b> (Save as PDF) · ปุ่ม <b>Excel</b> โหลดไฟล์ .xlsx · แต่ละใบงานขึ้นหน้าใหม่{err ? <span className="lp-err"> · {err}</span> : null}</div>
       </div>

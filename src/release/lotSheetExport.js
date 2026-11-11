@@ -193,6 +193,9 @@ function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName, cov
   };
 }
 
+// ★ 2026-11-11 ใบปะหน้า 2 แบบ: "full" = มีรายการวัตถุดิบ (แบบเดิม) · "see" = แถวเดียว SEE ATTACHED FILE (ไม่มีรายการ)
+export const coverFor = (c, mode) => (!c ? null : mode === "see" ? { ...c, items: [{ inv: "SEE ATTACHED FILE", see: true }] } : c);
+
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
 // only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
 export function buildLotModel({ plan, need, lot, userName, printDate, only = null, lang = "th", projectName = "", coverSeq = null }) {
@@ -280,7 +283,7 @@ export function buildLotWorkbook(ExcelJS, args) {
 
   const usedNames = new Set(model.sheets.map((x) => x.name));
   for (const sh of model.sheets) {
-    if (sh.cover && args.covers !== false) addCoverSheet(wb, sh, logoId, usedNames);
+    if (sh.cover && args.covers !== false) addCoverSheet(wb, { ...sh, cover: coverFor(sh.cover, args.covers) }, logoId, usedNames);
     const { name, cols, groups, two, t1, t2, rows: out, total, totalAt } = sh; const sheet = { kind: sh.kind }; const mat = sh.kind === "mat"; const W = cols.length;
     const ws = wb.addWorksheet(name, { pageSetup: { paperSize: 9, orientation: W > 6 ? "landscape" : "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } }, views: [{ showGridLines: false }] });
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.w; });
@@ -402,7 +405,7 @@ u.fill{text-decoration:none;border-bottom:1px solid #000;display:inline-block;mi
 const COVER_PAGES_JS = `<script>(function(){function run(){var mm=96/25.4;document.querySelectorAll("section.cv").forEach(function(cv){var sh=cv.nextElementSibling;if(!sh||!sh.classList.contains("pg"))return;var land=sh.classList.contains("land");var P=(land?194:281)*mm;var h=sh.offsetHeight-16*mm;var th=sh.querySelector("thead");var tH=th?th.offsetHeight:0;var n=h<=P?1:1+Math.ceil((h-P)/Math.max(P-tH,1));cv.querySelectorAll(".cv-of[data-auto]").forEach(function(b){b.textContent=String(1+n);});});}if(document.readyState==="complete")run();else window.addEventListener("load",run);})();<\/script>`;
 export function lotSheetsHtml(model, { logoUrl = "", covers = true } = {}) {
   const { meta } = model; LANG = meta.lang || "th";
-  const pages = model.sheets.map((sh) => (covers && sh.cover ? coverHtml(sh.cover, logoUrl) + "\n" : "") + (() => {
+  const pages = model.sheets.map((sh) => (covers && sh.cover ? coverHtml(coverFor(sh.cover, covers), logoUrl) + "\n" : "") + (() => {
     const W = sh.cols.length; const tot = sh.cols.reduce((n, c) => n + c.w, 0);
     const land = W > 6; const mat = sh.kind === "mat";
     const colgroup = sh.cols.map((c) => `<col style="width:${(c.w / tot * 100).toFixed(2)}%">`).join("");
