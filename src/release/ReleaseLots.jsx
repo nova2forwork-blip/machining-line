@@ -1417,8 +1417,9 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
         const m = prod ? Math.min(qy, prod.get(String(r.id)) || 0) : 0; ld += m; lt += qy;
         const sk = rowSheets(r)[0] || (r.kind === "panel" ? "panel" : "—");
         const key = r.kind + "|" + NC(r.code);
-        const it = items.get(key) || items.set(key, { code: r.code, kind: r.kind, qty: 0, made: 0, lots: [], sheet: sk }).get(key);
+        const it = items.get(key) || items.set(key, { code: r.code, kind: r.kind, qty: 0, made: 0, lots: [], sheet: sk, uw: null, len: null, inv: "", notes: [] }).get(key);
         it.qty += qy; it.made += m; if (!it.lots.includes(L.no)) it.lots.push(L.no);
+        if (it.uw == null && Number(r.unit_weight) > 0) it.uw = Number(r.unit_weight); if (it.len == null && Number(r.length_mm) > 0) it.len = Number(r.length_mm); if (!it.inv && r.material) it.inv = r.material;
         const sh = sheets.get(sk) || sheets.set(sk, { k: sk, qty: 0, made: 0, codes: new Set() }).get(sk);
         sh.qty += qy; sh.made += m; sh.codes.add(key);
       }
@@ -1431,7 +1432,8 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
   const pc = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
   const left = data.list.filter((x) => x.made < x.qty), done = data.list.filter((x) => x.made >= x.qty);
   const ql = q.trim().toUpperCase();
-  const rows = (flt === "left" ? left : flt === "done" ? done : data.list).filter((x) => !ql || x.code.toUpperCase().includes(ql) || descOf(x).toUpperCase().includes(ql)).sort((a, b) => a.made / a.qty - b.made / b.qty || ncmp(a.code, b.code));
+  const wait = data.list.filter((x) => !x.made), doing = data.list.filter((x) => x.made > 0 && x.made < x.qty);
+  const rows = (flt === "left" ? left : flt === "done" ? done : flt === "wait" ? wait : flt === "doing" ? doing : data.list).filter((x) => !ql || x.code.toUpperCase().includes(ql) || descOf(x).toUpperCase().includes(ql)).sort((a, b) => a.made / a.qty - b.made / b.qty || ncmp(a.code, b.code));
   const Bar = ({ m, t }) => <div className={`rl-pp-bar ${m >= t && t ? "full" : ""}`}><i><b style={{ width: `${pc(m, t)}%` }} /></i><span>{nf(m)} / {nf(t)}</span></div>;
   const stOf = (x) => (x.made >= x.qty ? ["full", "เสร็จ"] : x.made > 0 ? ["part", "กำลังทำ"] : ["zero", "รอเริ่ม"]);
   return (
@@ -1448,21 +1450,27 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
               <div className="rl-pp-lots">{[...data.lots].reverse().map((L) => <div key={L.no}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(L.no)}>{L.no}</button> : <span className="rw-mono">{L.no}</span>}<Bar m={L.made} t={L.qty} /></div>)}</div></div>
           </div>
           <div className="rl-pp-tools">
-            <b>{flt === "left" ? `ยังค้าง ${nf(left.length)} รายการ` : flt === "done" ? `เสร็จแล้ว ${nf(done.length)} รายการ` : `ทั้งหมด ${nf(data.list.length)} รายการ`}</b><span className="rw-muted small">เรียงจากที่ทำได้น้อยสุด</span>
+            <b>รายละเอียดแต่ละรายการ</b>
+            <div className="rl-pp-status"><span>สถานะ</span>
+              {[["all", "ทั้งหมด", data.list.length, ""], ["left", "ยังค้าง", left.length, ""], ["wait", "Pending", wait.length, "zero"], ["doing", "In Process", doing.length, "part"], ["done", "Finish", done.length, "full"]].map(([k, l, n, c]) => <button key={k} type="button" className={`rl-pp-chip ${flt === k ? "on" : ""}`} onClick={() => setFlt(k)}>{c ? <i className={c} /> : null}{l} <small>{nf(n)}</small></button>)}</div>
             <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
-            {[["left", `ยังค้าง ${nf(left.length)}`], ["done", `เสร็จแล้ว ${nf(done.length)}`], ["all", `ทั้งหมด ${nf(data.list.length)}`]].map(([k, l]) => <button key={k} type="button" className={`rl-pp-chip ${flt === k ? "on" : ""}`} onClick={() => setFlt(k)}>{l}</button>)}
           </div>
-          <div className="rl-pp-tw"><table className="rl-sc-table">
-            <thead><tr><th>รายการ</th><th>ใบงาน · ล็อต</th><th style={{ width: 260 }}>ผลิตแล้ว</th><th className="r">เหลือ (ชิ้น)</th><th>สถานะ</th></tr></thead>
-            <tbody>{rows.map((x) => { const [c, l] = stOf(x); return (
+          <div className="rl-pp-tw"><table className="rl-pp-t">
+            <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th>ล็อต</th></tr></thead>
+            <tbody>{rows.map((x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
+              const len = x.len ?? np?.l ?? null, inv = x.inv || np?.inv || ""; return (
               <tr key={x.kind + x.code}>
-                <td><b className="rw-mono">{x.code}</b> <span className="rw-muted small">{descOf(x)}</span></td>
-                <td className="small">{sheetOf(x.sheet).label} · {x.lots.join(", ")}</td>
-                <td><Bar m={x.made} t={x.qty} /></td>
-                <td className="r"><b>{nf(x.qty - x.made)}</b></td>
-                <td><span className={`rl-pp-st ${c}`}>{l}</span></td>
+                <td className="r rw-muted">{i + 1}</td>
+                <td><div className="rl-pp-pn"><b>{x.code}</b><span className={`rl-pp-st ${c}`}>{c === "full" ? "Finish" : c === "part" ? "In Process" : "Pending"}</span></div><div className="rw-muted small">{descOf(x)}</div></td>
+                <td className="r">{nf(x.qty)}</td>
+                <td className={c === "zero" ? "" : "rl-pp-fin"}>{nf(x.made)} ชิ้น</td>
+                <td><div className={`rl-pp-prog ${c}`}><i><b style={{ width: `${pc(x.made, x.qty)}%` }} /></i><b>{pc(x.made, x.qty)}%</b><span>({nf(x.made)}/{nf(x.qty)})</span></div></td>
+                <td className="r">{x.uw ? nlen(x.uw) : "-"}</td><td className="r">{x.uw ? nlen(Math.round(x.uw * x.qty * 100) / 100) : "-"}</td>
+                <td className="r">{len != null ? nlen(len) : "-"}</td><td>{inv || "-"}</td>
+                <td className="small">{sheetOf(x.sheet).label}</td>
+                <td className="small">{x.lots.map((l) => (onOpenLot ? <button key={l} type="button" className="rw-link rw-mono" style={{ marginRight: 6 }} onClick={() => onOpenLot(l)}>{l}</button> : <span key={l} className="rw-mono" style={{ marginRight: 6 }}>{l}</span>))}</td>
               </tr>); })}
-              {!rows.length ? <tr><td colSpan={5} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
+              {!rows.length ? <tr><td colSpan={11} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
             </tbody>
           </table></div>
         </div>
