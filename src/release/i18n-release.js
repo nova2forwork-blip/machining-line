@@ -1809,6 +1809,7 @@ registerI18n({
     "ยังไม่ได้แก้อะไร": "Nothing changed yet",
     "บันทึกการแก้": "Save changes",
     "เหตุผล *": "Reason *",
+    "↑ บนสุด": "↑ Top", "ขึ้นบนสุดของตาราง": "Back to the top of the table",
     "ขยายเต็มจอ": "Maximise", "ย่อหน้าต่าง": "Restore size",
     "รายละเอียดแต่ละรายการ": "Details of each item", "สถานะ": "Status", "ยังค้าง": "Pending work", "ใบงาน": "Sheet", "ล็อต": "Lot",
     "ดูความคืบหน้าทีละรายการ ›": "Progress by item ›",

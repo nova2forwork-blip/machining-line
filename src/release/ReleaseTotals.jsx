@@ -6,7 +6,7 @@ import "./i18n-release.js";
 //   Total Mat.         → วัตถุดิบงานตัด · GLASS · FIXING (· อื่นๆ)                 (ใบเบิก · ไม่มี QR)
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
@@ -355,8 +355,12 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
       </button>);
   };
 
+  // ★ 2026-11-11 ปุ่ม "ขึ้นบนสุด" ของตาราง (เลื่อนกล่องตารางในแท็บที่เปิดอยู่กลับไปแถวแรก)
+  const rootRef = useRef(null);
+  const toTop = () => { const r = rootRef.current; if (!r) return; r.querySelectorAll(".rt-tw, .bm-tree").forEach((el) => el.scrollTo({ top: 0, behavior: "smooth" })); };
   return (
-    <div className="card rw-card rt">
+    <div className="card rw-card rt" ref={rootRef}>
+      <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑ บนสุด</button>
       <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย</p></div></div>
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>

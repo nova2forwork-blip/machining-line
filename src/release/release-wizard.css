@@ -1071,3 +1071,6 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-usedmore { color: var(--accent-dk); font-weight: 600; font-size: 12px; }
 .rt-usedpop { display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 8px; gap: 6px; flex-wrap: wrap; width: max-content; max-width: 360px; white-space: normal; }
 .rt-usedin:hover .rt-usedpop, .rt-usedin:focus-within .rt-usedpop { display: flex; }
+.rw-card.rt { position: relative; }
+.rt-totop { position: absolute; right: 26px; bottom: 26px; z-index: 6; height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); box-shadow: 0 6px 16px rgba(0,0,0,.14); font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
+.rt-totop:hover { border-color: var(--accent); color: var(--accent-dk); }
