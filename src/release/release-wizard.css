@@ -1066,3 +1066,8 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-pop-rz.s { left: 14px; right: 14px; bottom: 0; height: 8px; cursor: ns-resize; }
 .rl-pop-rz.sw, .rl-pop-rz.se { bottom: 0; width: 16px; height: 16px; } .rl-pop-rz.sw { left: 0; cursor: nesw-resize; } .rl-pop-rz.se { right: 0; cursor: nwse-resize; }
 .rl-pop-rz:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+/* ★ 2026-11-11 "ใช้ในแผง": โชว์แผงแรก + จำนวนที่เหลือ · ชี้แล้วเห็นทั้งหมด */
+.rt-usedin { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.rt-usedmore { color: var(--accent-dk); font-weight: 600; font-size: 12px; }
+.rt-usedpop { display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 8px; gap: 6px; flex-wrap: wrap; width: max-content; max-width: 360px; white-space: normal; }
+.rt-usedin:hover .rt-usedpop, .rt-usedin:focus-within .rt-usedpop { display: flex; }

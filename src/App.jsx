@@ -6619,7 +6619,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       <span className="rl-origin" title={[o.subs.length ? (lang === "en" ? "In sub: " : "ในซับ: ") + o.subs.join(", ") : "", o.panels.length ? (lang === "en" ? "Panel: " : "แผง: ") + o.panels.join(", ") : ""].filter(Boolean).join("\n")}>
         {o.subs.length ? <><b>{lang === "en" ? "sub" : "ซับ"}</b> {cut(o.subs, 2)}</> : null}
         {o.subs.length && o.panels.length ? " → " : null}
-        {o.panels.length ? <><b>{lang === "en" ? "panel" : "แผง"}</b> {cut(o.panels, 3)}</> : null}
+        {o.panels.length ? cut(o.panels, 3) : null}
       </span>);
   };
   const loadModInfo = useCallback(async () => {
