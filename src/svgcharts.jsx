@@ -85,7 +85,8 @@ export function SimpleBarChart({ data = [], color = "#10b981", height = 260 }) {
 //   ตัวหนังสือใช้สีหมึก ไม่ใช้สีเส้น · ตาราง/แกนสีจาง · สีเส้นเข้มพอบนพื้นขาว (เขียวเข้มของแอป)
 export function SimpleLineChart({ data = [], color = "#0b7a55", height = 260, unit = "" }) {
   const [ref, W] = useSize();
-  const [hi, setHi] = useState(null);
+  const [hiRaw, setHi] = useState(null);
+  const hi = hiRaw != null && hiRaw < data.length ? hiRaw : null;   // ข้อมูลสั้นลง (สลับ วัน→เดือน) ขณะชี้อยู่ = ไม่ชี้
   const H = height, padL = 46, padR = 54, padT = 16, padB = 34;
   const iw = Math.max(0, W - padL - padR), ih = Math.max(0, H - padT - padB);
   const n = data.length;

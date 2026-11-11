@@ -9701,6 +9701,7 @@ function ReportPage({ goTo }) {
   const [deptFilter, setDeptFilter] = useState("machine");   // "machine"/"assembly"/"packing" — แต่ละแผนกดูคนละแบบ
   // ★ รอบ 13: มุมมอง — ภาพรวม (เดิม) · รายพนักงาน (admin/office/supervisor) · แนวโน้มรายสัปดาห์/เดือน (สรุปฝั่ง server)
   const [view, setView] = useState("overview");
+  const [dayGran, setDayGran] = useState("day");   // ★ 2026-11-11 ผู้ใช้: "กราฟให้เลือกรายวัน สัปดาห์ เดือน ปี ได้ด้วย"
   const [dayMetric, setDayMetric] = useState("count");   // ★ 2026-11-11 กราฟเส้นรายวัน: ชิ้น | กก. (แกนเดียว สลับดูทีละค่า)
   const canSeeEmp = canManage(getSession());
   const [operations, setOperations] = useState([]);   // ไว้แม็ป operation → แผนก (op_type)
@@ -10143,16 +10144,34 @@ function ReportPage({ goTo }) {
               <b>ปริมาณงานที่ประมวลผล</b> = รวมทุกครั้งที่สแกน ชิ้นที่ผ่านหลายขั้นตอน (คนละครั้ง) นับต่อขั้นตอน (วัดภาระงานรวมของสาย)</>}
       </HowTo>
       {/* ★ 2026-11-11 ผู้ใช้: "กราฟ เป็นเส้น" → กราฟเส้นปริมาณงานรายวัน (เดิมกราฟแท่งแยกขั้นตอน) · แยกขั้นตอน = แถวตัวเลขใต้กราฟ (ขั้นตอนไม่ใช่ลำดับเวลา ลากเส้นแล้วอ่านผิด) */}
-      <Card title={lang === "en" ? "Daily workload" : "ปริมาณงานรายวัน"}
-        right={<span className="rp-seg" role="group" aria-label={lang === "en" ? "Metric" : "หน่วยที่แสดง"}>
+      <Card title={lang === "en" ? "Workload over time" : "ปริมาณงานตามเวลา"}
+        right={<span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span className="rp-seg" role="group" aria-label={lang === "en" ? "Group by" : "รวมเป็นช่วง"}>
+            {[["day", "วัน", "Day"], ["week", "สัปดาห์", "Week"], ["month", "เดือน", "Month"], ["year", "ปี", "Year"]].map(([k, th, en]) => <button key={k} type="button" className={dayGran === k ? "on" : ""} onClick={() => setDayGran(k)}>{lang === "en" ? en : th}</button>)}
+          </span>
+          <span className="rp-seg" role="group" aria-label={lang === "en" ? "Metric" : "หน่วยที่แสดง"}>
           <button type="button" className={dayMetric === "count" ? "on" : ""} onClick={() => setDayMetric("count")}>{lang === "en" ? "Pieces" : "ชิ้น"}</button>
           <button type="button" className={dayMetric === "weight" ? "on" : ""} onClick={() => setDayMetric("weight")}>{lang === "en" ? "kg" : "กก."}</button>
+          </span>
         </span>}>
         {(() => {
           const tot = new Map(); dailyMatrix.machines.forEach((m) => Object.entries(m.days || {}).forEach(([d, v]) => { const t = tot.get(d) || tot.set(d, { count: 0, weight: 0 }).get(d); t.count += v.count || 0; t.weight += v.weight || 0; }));
           const keys = [...tot.keys()].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
-          const series = [];
-          if (keys.length) { const end = Date.parse(keys[keys.length - 1] + "T00:00:00Z"); let n = 0; for (let t = Date.parse(keys[0] + "T00:00:00Z"); t <= end && n < 800; t += 86400000, n++) { const d = new Date(t).toISOString().slice(0, 10); const v = tot.get(d); const [y, mo, dd] = d.split("-"); series.push({ name: `${dd}/${mo}`, tip: `${dd}/${mo}/${y}`, count: v ? Math.round((v[dayMetric] || 0) * 100) / 100 : 0 }); } }
+          // รายวัน: เติมวันที่ไม่มีงานเป็น 0 · สัปดาห์ (เริ่มวันจันทร์) / เดือน / ปี: รวมยอดรายวันเข้าช่วง — ช่วงที่ไม่มีงานก็ลงเป็น 0
+          const days = [];
+          if (keys.length) { const end = Date.parse(keys[keys.length - 1] + "T00:00:00Z"); let n = 0; for (let t = Date.parse(keys[0] + "T00:00:00Z"); t <= end && n < 4000; t += 86400000, n++) { const d = new Date(t).toISOString().slice(0, 10); const v = tot.get(d); days.push({ d, v: v ? v[dayMetric] || 0 : 0 }); } }
+          const MON = lang === "en" ? ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] : ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+          const dm = (d) => { const [y, mo, dd] = d.split("-"); return { y, mo, dd }; };
+          const bucketOf = (d) => {
+            const { y, mo, dd } = dm(d);
+            if (dayGran === "year") return { k: y, name: y, tip: (lang === "en" ? "Year " : "ปี ") + y };
+            if (dayGran === "month") return { k: `${y}-${mo}`, name: `${MON[+mo - 1]} ${y.slice(2)}`, tip: `${MON[+mo - 1]} ${y}` };
+            if (dayGran === "week") { const t = Date.parse(d + "T00:00:00Z"); const wd = (new Date(t).getUTCDay() + 6) % 7; const a = dm(new Date(t - wd * 86400000).toISOString().slice(0, 10)); const b = dm(new Date(t + (6 - wd) * 86400000).toISOString().slice(0, 10)); return { k: `${a.y}-${a.mo}-${a.dd}`, name: `${a.dd}/${a.mo}`, tip: `${a.dd}/${a.mo} – ${b.dd}/${b.mo}/${b.y}` }; }
+            return { k: d, name: `${dd}/${mo}`, tip: `${dd}/${mo}/${y}` };
+          };
+          const series = []; const at = new Map();
+          for (const x of days) { const b = bucketOf(x.d); let r = at.get(b.k); if (!r) { r = { name: b.name, tip: b.tip, count: 0 }; at.set(b.k, r); series.push(r); } r.count += x.v; }
+          series.forEach((r) => { r.count = Math.round(r.count * 100) / 100; });
           return series.length === 0
             ? <div style={{ color: "var(--muted)", fontSize: 13, padding: "26px 2px", textAlign: "center" }}>{lang === "en" ? "No scans in this period" : "ยังไม่มีการสแกนในช่วงเวลานี้"}</div>
             : <SimpleLineChart data={series} height={250} unit={dayMetric === "count" ? (lang === "en" ? "pcs" : "ชิ้น") : (lang === "en" ? "kg" : "กก.")} />;
