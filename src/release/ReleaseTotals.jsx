@@ -6,7 +6,7 @@ import "./i18n-release.js";
 //   Total Mat.         → วัตถุดิบงานตัด · GLASS · FIXING (· อื่นๆ)                 (ใบเบิก · ไม่มี QR)
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
@@ -358,9 +358,13 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   // ★ 2026-11-11 ปุ่ม "ขึ้นบนสุด" ของตาราง (เลื่อนกล่องตารางในแท็บที่เปิดอยู่กลับไปแถวแรก)
   const rootRef = useRef(null);
   const toTop = () => { const r = rootRef.current; if (!r) return; r.querySelectorAll(".rt-tw, .bm-tree").forEach((el) => el.scrollTo({ top: 0, behavior: "smooth" })); };
+  // ★ 2026-11-11 ผู้ใช้: "ไม่แสดง จนกว่าจะมีช่องว่างข้างบน" → ปุ่มขึ้นเฉพาะตอนเลื่อนตารางลงมาแล้ว
+  const [scrolled, setScrolled] = useState(false);
+  const checkTop = () => { const r = rootRef.current; if (!r) return; let y = 0; r.querySelectorAll(".rt-tw, .bm-tree").forEach((el) => { y = Math.max(y, el.scrollTop || 0); }); const on = y > 60; setScrolled((v) => (v === on ? v : on)); };
+  useEffect(() => { checkTop(); });   // เปลี่ยนแท็บ / ข้อมูลเปลี่ยน = ตารางใหม่อยู่บนสุด → ซ่อนปุ่ม
   return (
-    <div className="card rw-card rt" ref={rootRef}>
-      <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑ บนสุด</button>
+    <div className="card rw-card rt" ref={rootRef} onScrollCapture={checkTop}>
+      {scrolled ? <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑ บนสุด</button> : null}
       <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย</p></div></div>
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>
