@@ -1819,3 +1819,8 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
   .rf-f.on .select, .rf-f.on .input { font-weight: 600; color: var(--accent-dk); }
   .rf-clear { border-radius: 999px; border-color: transparent; background: none; }
 }
+
+/* ★ 2026-11-11 แท็บ Finished Part: สวิตช์ ทั้งหมด / ในช่วงที่เลือก */
+.fin-scope { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 2px 12px; }
+.fin-scope-note { font-size: 12.5px; color: var(--muted); }
+.rp-seg button:disabled { opacity: .45; cursor: default; }

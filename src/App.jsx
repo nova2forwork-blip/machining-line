@@ -4950,7 +4950,16 @@ async function getReleaseOpProgressFin(ids) {
 // ยอดหน้าเครื่องของ 1 release: fin = ชิ้นที่กด Finished · done = ชิ้นที่ถูกสแกน (ทุกสถานะ) · has = มีงานหน้าเครื่อง
 function stationRelProg(opProg, rid) {
   const f = opProg && opProg.__fin ? opProg.__fin[rid] : undefined;
-  if (f) return { fin: Number(f.finished) || 0, done: Math.max(Number(f.done) || 0, Number(f.finished) || 0), has: true };
+  if (f) {
+    // ★ 2026-11-11 กติกาเดียวกันทุกหน้า (หน้าล็อต · การ์ดรวม · รายการ Release · ป็อปอัพ): "หลายเครื่อง ขั้นตอนไม่ตรงกัน = ชิ้นเดียวกัน"
+    //   ยอดจากฐานข้อมูลบวกแยกป้าย (ตัด 2 + บาก/กัด/เจาะ 2 = 4) → คิดซ้ำจากยอดต่อเครื่อง: รวมต่อขั้นตอน (เครื่องที่ติ๊กขั้นตอนเดียวกัน = คนละชิ้น บวกกัน)
+    //   แล้วเอาขั้นตอนที่มากสุด · ใช้ค่าที่น้อยกว่าเท่านั้น (ไม่เพิ่มยอดเอง) · ไม่มีข้อมูลเครื่อง/ขั้นตอน = ใช้ยอดเดิม
+    let fin = Number(f.finished) || 0;
+    const byOp = new Map();
+    for (const m of (Array.isArray(f.machines) ? f.machines : [])) { const fn = Number(m.finished) || 0; if (!(fn > 0)) continue; for (const o of (Array.isArray(m.ops) ? m.ops : [])) { const nm = typeof o === "string" ? o : o && o.name; if (nm) byOp.set(nm, (byOp.get(nm) || 0) + fn); } }
+    if (byOp.size) fin = Math.min(fin, Math.max(...byOp.values()));
+    return { fin, done: Math.max(Number(f.done) || 0, fin), has: true };
+  }
   const ops = (opProg && opProg[rid]) || [];
   if (opProg && opProg.__fin && !ops.length) return { fin: 0, done: 0, has: false };
   if (!ops.length) return { fin: 0, done: 0, has: false };
@@ -7979,7 +7988,7 @@ function ReleasePage({ user, goTo }) {
 //   · รวมชิ้นสแกนสำนักงานแบบเดิม (part_units.status) · ไม่เกินจำนวนสั่ง (ส่วนเกิน = สแปร์)
 //   · ยังไม่ได้รัน migration-finished-pieces.sql → ใช้ค่าประมาณจาก release_op_progress (ขั้นตอนที่มีชิ้นเสร็จมากสุด)
 //   ยอดสะสมทั้งหมด (ไม่ขึ้นกับช่วงเวลา) · กรองตาม โปรเจค / Part / Release Order ของหน้า Report
-function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "", goTo = null }) {
+function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter = "", releaseFilter = "", goTo = null, from = null, to = null, rangeLabel = "" }) {
   const [lang] = useLang();
   const L = (th, en) => (lang === "en" ? en : th);
   const [rels, setRels] = useState(relsIn || null);
@@ -8064,10 +8073,18 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
     out.sort((a, b) => String(b.lastAt || b.date || "").localeCompare(String(a.lastAt || a.date || "")));   // เสร็จล่าสุดก่อน
     return out;
   }, [rels, prog]);
+  // ★ 2026-11-11 ช่วงเวลาด้านบนเคยไม่มีผลกับแท็บนี้เลย (ยอดสะสมทั้งหมด) ทั้งที่แถบช่วงเวลายังโชว์อยู่ → มีสวิตช์:
+  //   "ทั้งหมด (สะสม)" = เหมือนเดิม · "เสร็จในช่วงที่เลือก" = เฉพาะแถวที่เสร็จล่าสุดอยู่ในช่วงเวลาด้านบน (จำนวนชิ้นของแถวยังเป็นยอดสะสมของ Release นั้น)
+  const [finScope, setFinScope] = useState(() => { try { return localStorage.getItem("mls-fin-scope") === "range" ? "range" : "all"; } catch { return "all"; } });
+  const pickScope = (v) => { setFinScope(v); try { localStorage.setItem("mls-fin-scope", v); } catch { /* ignore */ } };
+  const fromMs = from ? new Date(from).getTime() : NaN, toMs = to ? new Date(to).getTime() : NaN;
+  const canRange = isFinite(fromMs) && isFinite(toMs);
+  const inRange = (x) => { const t = x.lastAt ? new Date(x.lastAt).getTime() : NaN; return isFinite(t) && t >= fromMs && t <= toMs; };
   const rows = allRows.filter((x) =>
     (!projectFilter || x.projectId === projectFilter) &&
     (!partFilter || x.partNo === partFilter) &&
-    (!releaseFilter || String(x.ro) === releaseFilter));
+    (!releaseFilter || String(x.ro) === releaseFilter) &&
+    (finScope !== "range" || !canRange || inRange(x)));
   const totalPcs = rows.reduce((s, x) => s + x.finished, 0);
   const totalWeight = rows.reduce((s, x) => s + x.weight, 0);
   const fullRel = rows.filter((x) => x.qty > 0 && x.finished >= x.qty).length;
@@ -8076,6 +8093,15 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
 
   return (
     <>
+      <div className="fin-scope">
+        <span className="rp-seg" role="group" aria-label={L("ช่วงของข้อมูล", "Data range")}>
+          <button type="button" className={finScope === "all" ? "on" : ""} onClick={() => pickScope("all")}>{L("ทั้งหมด (สะสม)", "All time")}</button>
+          <button type="button" className={finScope === "range" ? "on" : ""} disabled={!canRange} onClick={() => pickScope("range")}>{L("เสร็จในช่วงที่เลือก", "Finished in the selected period")}</button>
+        </span>
+        <span className="fin-scope-note">{finScope === "range" && canRange
+          ? L(`เฉพาะเบอร์ที่เสร็จล่าสุดในช่วง ${rangeLabel} · จำนวนชิ้นเป็นยอดสะสมของ Release นั้น`, `Only parts last finished within ${rangeLabel} · piece counts are cumulative for that release`)
+          : L("ยอดสะสมทั้งหมด — ช่วงเวลาด้านบนไม่มีผลกับแท็บนี้", "Cumulative totals — the period above does not apply to this tab")}</span>
+      </div>
       <div className="stat-row">
         <StatCard label={L("ชิ้นที่เสร็จทั้งหมด", "Total finished")} value={loading ? "…" : fmtNum(totalPcs)} icon="check" />
         <StatCard label={L("น้ำหนักวัสดุ (กก.)", "Material weight (kg)")} value={loading ? "…" : fmtNum(totalWeight)} icon="weight" />
@@ -9540,7 +9566,7 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
   const [empCode, setEmpCode] = useState(() => new Map());
   useEffect(() => { let alive = true; getEmployees().then((e) => { if (alive) setEmpCode(new Map((Array.isArray(e) ? e : []).map((x) => [String(x.id), x.code || ""]))); }).catch(() => {}); return () => { alive = false; }; }, []);
   const rows = (res && res.ok ? res.rows : []).map((r) => ({
-    ...r, code: empCode.get(String(r.k)) || "", name: r.label || L("(ไม่ระบุพนักงาน)", "(no employee)"), qty: Number(r.qty) || 0, kg: Number(r.kg) || 0, sec: Number(r.sec) || 0,
+    ...r, code: empCode.get(String(r.k)) || "", name: r.label || L("(ไม่ระบุบัญชี)", "(no account)"), qty: Number(r.qty) || 0, kg: Number(r.kg) || 0, sec: Number(r.sec) || 0,
     scans: Number(r.scans) || 0, days: Number(r.days) || 0,
   }));
   const tot = rows.reduce((a, r) => ({ qty: a.qty + r.qty, kg: a.kg + r.kg, sec: a.sec + r.sec }), { qty: 0, kg: 0, sec: 0 });
@@ -9553,16 +9579,16 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
   }
   function doExport() {
     const sheet = rows.map((r) => ({
-      [L("รหัส", "Code")]: r.code, [L("พนักงาน", "Employee")]: r.name, [L("จำนวน (ชิ้น)", "Pieces")]: r.qty, [L("น้ำหนัก (กก.)", "Weight (kg)")]: Math.round(r.kg * 100) / 100,
+      [L("รหัส", "Code")]: r.code, [L("บัญชีหน้าเครื่อง", "Station account")]: r.name, [L("จำนวน (ชิ้น)", "Pieces")]: r.qty, [L("น้ำหนัก (กก.)", "Weight (kg)")]: Math.round(r.kg * 100) / 100,
       [L("เวลาเดินเครื่อง (ชม.)", "Machine time (h)")]: Math.round(r.sec / 36) / 100, [L("ชิ้น/ชม.", "pcs/h")]: r.sec ? Math.round(perHour(r.qty, r.sec) * 10) / 10 : "",
       [L("กก./ชม.", "kg/h")]: r.sec ? Math.round(perHour(r.kg, r.sec) * 10) / 10 : "", [L("จำนวนสแกน", "Scans")]: r.scans, [L("วันทำงาน", "Days worked")]: r.days,
       [L("เฉลี่ย ชิ้น/วัน", "Avg pcs/day")]: r.days ? Math.round((r.qty / r.days) * 10) / 10 : "",
     }));
-    exportSheetsSafe(`employees-${todayStr()}.xlsx`, [{ name: L("รายพนักงาน", "Employees"), rows: sheet }]);
+    exportSheetsSafe(`employees-${todayStr()}.xlsx`, [{ name: L("รายเครื่อง-บัญชี", "Stations"), rows: sheet }]);
   }
   return (
     <>
-      <Card title={L("รายพนักงาน", "By employee")} right={<Btn variant="ghost" size="sm" onClick={doExport} disabled={!rows.length}><Icon name="grid" size={14} /> {L("ดาวน์โหลด Excel", "Download Excel")}</Btn>}>
+      <Card title={L("รายเครื่อง / บัญชีหน้าเครื่อง", "By station account")} right={<Btn variant="ghost" size="sm" onClick={doExport} disabled={!rows.length}><Icon name="grid" size={14} /> {L("ดาวน์โหลด Excel", "Download Excel")}</Btn>}>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
           {L(`${rangeLabel || ""} · สรุปจากฐานข้อมูลโดยตรง (เร็ว — ไม่ต้องโหลดสแกนทุกแถว) · จำนวน = ชิ้นที่บันทึก (ขั้นตอนที่ติ๊กร่วมไม่นับซ้ำ) · ชิ้น/ชม. คิดจากเวลาเดินเครื่องที่จับจากหน้าเครื่อง · แตะแถวเพื่อดูรายวัน`,
              `${rangeLabel || ""} · summarised in the database (fast) · pieces = recorded pieces (co-ticked steps not double counted) · pcs/h uses machine time captured at the station · tap a row for the daily breakdown`)}
@@ -9577,7 +9603,7 @@ function EmployeeReportView({ from, to, filters, rangeLabel }) {
               columns={[
                 { key: "code", header: L("รหัส", "Code"), sortKey: "code", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 18 },
                   cell: (r) => (r.code ? <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12.5, padding: "2px 9px", borderRadius: 999, background: "var(--accent-tint)", color: "var(--accent-dk)" }}>{r.code}</span> : <span style={{ color: "var(--muted)" }}>—</span>) },
-                { key: "name", header: L("พนักงาน", "Employee"), sortKey: "name", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.name },
+                { key: "name", header: L("บัญชีหน้าเครื่อง", "Station account"), sortKey: "name", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (r) => r.name },
                 { key: "qty", header: L("จำนวน (ชิ้น)", "Pieces"), sortKey: "qty", align: "right", tdStyle: { fontWeight: 700 }, cell: (r) => fmtNum(r.qty) },
                 { key: "kg", header: L("น้ำหนัก (กก.)", "Weight (kg)"), sortKey: "kg", align: "right", tdStyle: { color: "var(--accent-dk)" }, cell: (r) => fmtNum(r.kg) },
                 { key: "sec", header: L("เวลาเดินเครื่อง", "Machine time"), sortKey: "sec", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (r) => (r.sec ? fmtHrs(r.sec) : "—") },
@@ -10107,7 +10133,7 @@ function ReportPage({ goTo }) {
                     · เลข Release ซ้ำข้ามโปรเจค (ไม่ได้เลือกโปรเจค) = บอกในตัวเลือกว่ารวมหลายโปรเจค */}
                 {(() => { const relOff = view === "overview" && deptFilter !== "machine"; return (
                 <Select value={relOff ? "" : releaseFilter} onChange={(e) => setReleaseFilter(e.target.value)} disabled={relOff || (!releaseOrders.length && !releaseFilter)}
-                  placeholder={relOff ? (lang === "en" ? "Machine tab only" : "ใช้ได้เฉพาะแท็บเครื่องจักร") : releaseOrders.length ? (lang === "en" ? "All releases" : "ทุก Release") : (lang === "en" ? "No release in this period" : "ไม่มี Release ในช่วงนี้")}
+                  placeholder={relOff ? (lang === "en" ? "Machine tab only" : "ใช้ได้เฉพาะแท็บเครื่องจักร") : releaseOrders.length ? (lang === "en" ? "All releases" : "ทุก Release") : (lang === "en" ? "No scans in this period" : "ช่วงนี้ยังไม่มีการสแกน")}
                   options={releaseOrders.map((ro) => { const n = projectFilter ? 1 : (roProjCount.get(ro) || 1); return { value: ro, label: n > 1 ? `${ro} (${n} ${lang === "en" ? "projects" : "โปรเจครวมกัน"})` : ro }; })} />); })()}
               </label>
               <div className={"rf-f" + (partFilter ? " on" : "")}>
@@ -10131,7 +10157,7 @@ function ReportPage({ goTo }) {
 
       <div className="chip-row" style={{ marginBottom: 14 }}>
         {[["overview", lang === "en" ? "Overview" : "ภาพรวม"],
-          ...(canSeeEmp ? [["employee", lang === "en" ? "By employee" : "รายพนักงาน"]] : []),
+          ...(canSeeEmp ? [["employee", lang === "en" ? "By station" : "รายเครื่อง / บัญชี"]] : []),
           ["trend", lang === "en" ? "Weekly / monthly trend" : "แนวโน้มรายสัปดาห์ / รายเดือน"],
           ["finished", "Finished Part"]].map(([k, lbl]) => (
           <span key={k} className={`chip ${view === k ? "active" : ""}`} onClick={() => setView(k)}>{lbl}</span>
@@ -10145,7 +10171,7 @@ function ReportPage({ goTo }) {
         <TrendView filters={sumFilters({ projectFilter, partFilter, releaseFilter, deptFilter })} />
       ) : view === "finished" ? (
         // ★ 2026-11-11 ผู้ใช้: "แยกตัวนี้ไปเป็นหัวข้อใหม่" → Finished Part เป็นแท็บของตัวเอง (เดิมต่อท้ายหน้าภาพรวม ต้องเลื่อนลงไปไกล)
-        <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} goTo={goTo} />
+        <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} goTo={goTo} from={curRange.from} to={curRange.to} rangeLabel={`${fmtDFull(curRange.from)} – ${fmtDFull(curRange.to)}`} />
       ) : (<>
       <LoadStateBanner state={logsState} onRetry={() => setReloadTick((t) => t + 1)} />
 
@@ -10250,20 +10276,21 @@ function ReportPage({ goTo }) {
               title: lang === "en" ? "Click to see the scans behind these numbers" : "แตะเพื่อดูการสแกนที่เป็นที่มาของตัวเลขนี้",
             })}
             columns={[
-              { key: "code", header: lang === "en" ? "Machine code" : "รหัสเครื่อง", sortKey: "code",
-                tdStyle: { fontFamily: "var(--font-mono)", color: "var(--muted)", whiteSpace: "nowrap" }, cell: (m) => m.code || "—" },
-              { key: "name", header: "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
+              // ★ 2026-11-11 จัดช่องแบบเดียวกับตาราง Release × Part: รหัสกว้างเท่าเนื้อหา · ชื่อเครื่องรับที่ว่าง · ขั้นตอนกว้างเท่ากันชิดกลาง · สรุปกว้างคงที่ชิดขวา · หน่วยอยู่ที่หัวคอลัมน์
+              { key: "code", header: lang === "en" ? "Code" : "รหัส", sortKey: "code", thStyle: { width: "1%" },
+                tdStyle: { width: "1%", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12.5, whiteSpace: "nowrap", paddingRight: 22 }, cell: (m) => m.code || "—" },
+              { key: "name", header: lang === "en" ? "Machine" : "เครื่องจักร", sortKey: "name", tdStyle: { fontWeight: 600 }, cell: (m) => m.name },
               ...matrix.opNames.map((op) => ({
-                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "right",
-                cell: (m) => { const cell = m.ops[op]; return cell ? `${cell.count.toLocaleString()} ชิ้น` : <span style={{ color: "var(--surface-3)" }}>—</span>; },
+                key: `op:${op}`, header: opLabel(op, lang), sortKey: `op:${op}`, align: "center", thStyle: { width: 84, textAlign: "center" }, tdStyle: { width: 84, fontVariantNumeric: "tabular-nums" },
+                cell: (m) => { const cell = m.ops[op]; return cell ? cell.count.toLocaleString() : <span style={{ color: "#c3cfca" }}>–</span>; },
               })),
-              { key: "total", header: "รวม (ชิ้น)", sortKey: "total", align: "right", tdStyle: { fontWeight: 600, whiteSpace: "nowrap" }, cell: (m) => `${m.total.count.toLocaleString()} ชิ้น` },
-              { key: "weight", header: "น้ำหนัก (กก.)", sortKey: "weight", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m) => m.total.weight > 0 ? `${fmtNum(m.total.weight)} กก.` : "—" },
-              { key: "time", header: "เวลาเดินเครื่อง", sortKey: "time", align: "right", tdStyle: { fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
-              { key: "secPer", header: "วินาที/ชิ้น", sortKey: "secPer", align: "right", tdStyle: { fontFamily: "var(--font-mono)", color: "var(--accent-dk)", whiteSpace: "nowrap" }, cell: (m) => (m.total.seconds && m.total.timedCount) ? `${(m.total.seconds / m.total.timedCount).toFixed(1)} วิ` : "—" },
-              { key: "avgKg", header: "เฉลี่ย กก./วัน", sortKey: "avgKg", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" }, cell: (m, i, c) => c.dm ? `${fmtNum(c.dm.avg.weight)} กก.` : "—" },
-              { key: "avgPcs", header: "เฉลี่ย ชิ้น/วัน", sortKey: "avgPcs", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--accent-dk)" },
-                cell: (m, i, c) => c.dm ? <span>{fmtNum(c.dm.avg.count)} ชิ้น{c.dm.avg.seconds ? <span style={{ color: "var(--muted)", fontSize: 11 }}> · {fmtHrs(c.dm.avg.seconds)}</span> : null}</span> : "—" },
+              { key: "total", header: lang === "en" ? "Total (pcs)" : "รวม (ชิ้น)", sortKey: "total", align: "right", thStyle: { width: 100 }, tdStyle: { width: 100, fontWeight: 700, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border-soft, #eef2f0)" }, cell: (m) => m.total.count.toLocaleString() },
+              { key: "weight", header: lang === "en" ? "Weight (kg)" : "น้ำหนัก (กก.)", sortKey: "weight", align: "right", thStyle: { width: 112 }, tdStyle: { width: 112, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (m) => m.total.weight > 0 ? fmtNum(m.total.weight) : "—" },
+              { key: "time", header: lang === "en" ? "Machine time" : "เวลาเดินเครื่อง", sortKey: "time", align: "right", thStyle: { width: 112 }, tdStyle: { width: 112, fontFamily: "var(--font-mono)" }, cell: (m) => m.total.seconds ? fmtHrs(m.total.seconds) : "—" },
+              { key: "secPer", header: lang === "en" ? "Sec/pc" : "วินาที/ชิ้น", sortKey: "secPer", align: "right", thStyle: { width: 96 }, tdStyle: { width: 96, fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.total.seconds && m.total.timedCount) ? (m.total.seconds / m.total.timedCount).toFixed(1) : "—" },
+              { key: "avgKg", header: lang === "en" ? "Avg kg/day" : "เฉลี่ย กก./วัน", sortKey: "avgKg", align: "right", thStyle: { width: 112 }, tdStyle: { width: 112, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }, cell: (m, i, c) => c.dm ? fmtNum(c.dm.avg.weight) : "—" },
+              { key: "avgPcs", header: lang === "en" ? "Avg pcs/day" : "เฉลี่ย ชิ้น/วัน", sortKey: "avgPcs", align: "right", thStyle: { width: 124 }, tdStyle: { width: 124, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
+                cell: (m, i, c) => c.dm ? <span title={c.dm.avg.seconds ? (lang === "en" ? "Avg machine time/day " : "เวลาเดินเครื่องเฉลี่ย/วัน ") + fmtHrs(c.dm.avg.seconds) : undefined}>{fmtNum(c.dm.avg.count)}</span> : "—" },
             ]} />
         )}
       </Card>
