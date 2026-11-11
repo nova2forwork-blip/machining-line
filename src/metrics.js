@@ -254,19 +254,19 @@ export function finishedPiecesV4(rows) {
       finMachine.add(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`);
     }
   }
-  const byUnitOp = new Map();                     // ป้าย → (ขั้นตอน → จำนวนที่เครื่อง Finished ทำ)
+  // ★ 2026-11-11 ผู้ใช้: "ชิ้นงานมีหลายเครื่องทำ ขั้นตอนและเวลาไม่ตรงกัน = ชิ้นเดียวกัน"
+  //   เดิม: รวมทีละป้าย (ป้ายละ max ของขั้นตอน) แล้วบวกทุกป้าย → เครื่อง A ตัด 2 ชิ้นบนป้ายใบที่ 1 · เครื่อง B บาก/กัด/เจาะ 2 ชิ้นบนป้ายใบที่ 2
+  //         ได้ 2 + 2 = 4 (เกินจำนวนสั่ง → ขึ้น "สแปร์") ทั้งที่เป็น 2 ชิ้นเดิม
+  //   ใหม่: รวมทั้ง Release ต่อขั้นตอน (เครื่องที่ทำขั้นตอนเดียวกัน = คนละชิ้น บวกกัน) แล้วเอาขั้นตอนที่มากสุด — ขั้นตอนต่างกัน = ชิ้นเดียวกัน ไม่บวกซ้ำ
+  const byOp = new Map();                         // ขั้นตอน → จำนวนที่เครื่อง Finished ทำ (รวมทุกป้ายของ Release)
   for (const l of rows || []) {
     const qv = q(l);
     if (qv <= 0 || !l.part_unit_id) continue;
     if (!finMachine.has(`${l.part_unit_id}|${l.machine?.code || l.machine?.name || "?"}`)) continue;
     const op = l.operation?.name || "?";
-    const m = byUnitOp.get(l.part_unit_id) || new Map();
-    m.set(op, (m.get(op) || 0) + qv);
-    byUnitOp.set(l.part_unit_id, m);
+    byOp.set(op, (byOp.get(op) || 0) + qv);
   }
-  let sum = 0;
-  for (const m of byUnitOp.values()) sum += Math.max(0, ...m.values());
-  return sum;
+  return byOp.size ? Math.max(0, ...byOp.values()) : 0;
 }
 
 // ── 5) (ทางเลือกขั้นสูง) น้ำหนักงานที่คืบหน้าไปแล้ว (ถ่วงตามขั้นตอน) ────────

@@ -8014,6 +8014,11 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
       if (f) {
         station = Number(f.finished) || 0;
         machines = Array.isArray(f.machines) ? f.machines : [];
+        // ★ 2026-11-11 ผู้ใช้: "หลายเครื่อง ขั้นตอนไม่ตรงกัน = ชิ้นเดียวกัน" → ยอดจากฐานข้อมูลบวกแยกป้าย (ตัด 2 + บาก/กัด/เจาะ 2 = 4 → ขึ้นสแปร์)
+        //   คิดซ้ำฝั่งหน้าจอ: รวมต่อขั้นตอน (เครื่องที่ติ๊กขั้นตอนเดียวกัน = คนละชิ้น บวกกัน) แล้วเอาขั้นตอนที่มากสุด · ใช้ค่าที่น้อยกว่า (ไม่เพิ่มยอดเอง)
+        const byOp = new Map(); let hasOps = false;
+        for (const m of machines) { const fn = Number(m.finished) || 0; if (!(fn > 0)) continue; for (const o of (Array.isArray(m.ops) ? m.ops : [])) { hasOps = true; byOp.set(o, (byOp.get(o) || 0) + fn); } }
+        if (hasOps && byOp.size) station = Math.min(station, Math.max(...byOp.values()));
         lastAt = f.last_at || null;
       } else if (prog.needSql) {
         const po = prog.opProg[r.id] || [];
