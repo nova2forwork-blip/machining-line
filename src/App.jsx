@@ -12317,13 +12317,20 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     return c;
   }, [rels]);
   const curDept = dept || "all";
-  const groups = useMemo(() => (rels ? groupReleases(curDept === "all" ? rels : rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)) : null), [rels, curDept]);
+  // ★ 2026-11-11 ช่องค้นหาในตาราง Release ของโปรเจค (แบบเดียวกับหน้า Release): Release Order / Part / INV / หมายเหตุ · หลายคำ = ต้องเจอครบ · ไม่สนขีด/เว้นวรรค
+  const [relQ, setRelQ] = useState("");
+  const relNorm = (v) => String(v || "").toLowerCase().replace(/[\s\-_/.]+/g, "");
+  const relTokens = useMemo(() => relQ.trim().toLowerCase().split(/\s+/).map(relNorm).filter(Boolean), [relQ]);
+  const relHit = (r) => { if (!relTokens.length) return true; const hay = [r.release_order, r.part_master?.part_no, r.part_master?.part_name, r.part_master?.material, r.part_master?.inventory_code, r.material, r.mdf_no, r.part_master?.mdf_no, r.note].map(relNorm).join("|"); return relTokens.every((tk) => hay.includes(tk)); };
+  const groups = useMemo(() => (rels ? groupReleases((curDept === "all" ? rels : rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)).filter(relHit)) : null), [rels, curDept, relTokens]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // ค้นอยู่: ใบหลักที่โชว์ = ใบที่มีล็อตตรงคำค้น หรือเลขใบตรงคำค้นเอง (ใบที่ยังไม่ปล่อยล็อต)
+  const plansShown = useMemo(() => { if (!relTokens.length) return plans; const nums = new Set((groups || []).map((g) => roNumOf(g.releaseOrder))); return plans.filter((p) => nums.has(roNumOf(p.ro)) || relTokens.every((tk) => relNorm(p.ro).includes(tk))); }, [plans, groups, relTokens]);   // eslint-disable-line react-hooks/exhaustive-deps
   const curTab = curDept === "all" ? { ...DEPT_ALL, label: "" } : (DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0]);
   // ★ 2026-11-04 ผู้ใช้: "เอาเป็นตารางเดียวกัน ที่เป็นดรอปลงมา เพราะอยู่ใน P หลัก" — ใบหลัก (P-241) 1 แถว กาง ▸ ดูล็อต (P-241.1 / .2) ใต้แถว
   //   ล็อตที่ไม่มีใบหลัก (ปล่อยแบบเดิม) = แถวปกติ · เรียงที่ชั้นบนสุด แล้วล็อตเรียงตามเลขใต้ใบหลัก
   const togglePlan = (g) => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; });
   const planLeft = usePlanLeft(plans, rels);
-  const treeRows = useMemo(() => buildReleaseTree(groups, plans.map((p) => ({ ...p, projectCode: p.projectCode || project.code })), {
+  const treeRows = useMemo(() => buildReleaseTree(groups, plansShown.map((p) => ({ ...p, projectCode: p.projectCode || project.code })), {
     includeEmpty: curDept === "all", sort, open: openPlans,
     acc: {
       date: (g) => new Date(g.date).getTime() || 0,
@@ -12332,7 +12339,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
       finished: (g) => computeGroupProgress(g.releases, stats, opProg, g.releases.reduce((s2, r) => s2 + (stats[r.id]?.total ?? r.qty), 0)).finished,
       progress: (g) => { const t = g.releases.reduce((s2, r) => s2 + (stats[r.id]?.total ?? r.qty), 0); return t > 0 ? computeGroupProgress(g.releases, stats, opProg, t).finished / t : 0; },
     },
-  }).map((g) => (g.childOf || g.isPlan || g.projectCode ? g : { ...g, projectCode: project.code })), [groups, plans, curDept, sort, stats, opProg, openPlans, project.code]);
+  }).map((g) => (g.childOf || g.isPlan || g.projectCode ? g : { ...g, projectCode: project.code })), [groups, plansShown, curDept, sort, stats, opProg, openPlans, project.code]);
 
   // เจาะเข้า Release Order → แสดง Part + รายละเอียด (เหมือนหน้า Release Production)
   if (viewGroup) {
@@ -12394,14 +12401,26 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
           "⚠ This project is closed (done) — you can still create work, but machine terminals can't record it until the project is reopened")}</div>
       ) : null}
       <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} withAll />
-      <Card title={groups ? `Release ${curTab.label} (${treeRows.filter((r) => !r.childOf).length})` : "Release ทั้งหมด"}>
+      <Card title={groups ? `Release ${curTab.label} (${treeRows.filter((r) => !r.childOf).length})` : "Release ทั้งหมด"}
+        right={rels && rels.length ? (
+          <label className="rs-search sm">
+            <Icon name="search" size={14} />
+            <input type="search" value={relQ} onChange={(e) => setRelQ(e.target.value)} placeholder={L("ค้นหา Release / Part / INV / หมายเหตุ", "Search release / part / INV / remark")} aria-label={L("ค้นหา Release ในโปรเจคนี้", "Search releases in this project")} />
+            {relQ ? <button type="button" className="rs-x" onClick={() => setRelQ("")} aria-label={L("ล้างคำค้น", "Clear search")}>✕</button> : null}
+          </label>) : null}>
         <SortControl sort={sort} options={[
           { k: "date", label: "วันที่" }, { k: "order", label: "Release Order" }, { k: "parts", label: "Part No." },
           { k: "qty", label: "จำนวน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
         ]} />
         {groups === null ? (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
-        ) : groups.length === 0 ? (
+        ) : relTokens.length && treeRows.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="search" size={28} />
+            <div className="empty-state-title">{L(`ไม่พบ Release ที่ตรงกับ “${relQ.trim()}”`, `No releases match “${relQ.trim()}”`)}</div>
+            <div className="empty-state-sub"><button type="button" className="rs-clear" onClick={() => setRelQ("")}>{L("ล้างคำค้น", "Clear search")}</button></div>
+          </div>
+        ) : groups.length === 0 && !(relTokens.length && treeRows.length) ? (
           <div className="empty-state">
             <Icon name="box" size={32} />
             <div className="empty-state-title">{rels && rels.length

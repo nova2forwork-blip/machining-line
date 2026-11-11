@@ -1740,3 +1740,5 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .lot-pm-top { display: flex; align-items: baseline; gap: 8px; } .lot-pm-top b { font-family: var(--font-mono); color: #5b3ce0; font-size: 13px; } .lot-pm-top span { color: var(--muted); font-size: 12px; }
 .lot-pm-r { color: var(--muted); font-size: 12px; }
 .lot-pm-m ul { margin: 3px 0; padding-left: 16px; } .lot-pm-m li b { font-family: var(--font-mono); }
+.rs-search.sm { flex: 0 1 340px; min-width: 220px; width: 340px; height: 34px; font-weight: 400; }
+.rs-search.sm input { font-size: 13px; }

@@ -1335,11 +1335,11 @@ function ModCompare({ m, need, last = true }) {
   return (
     <div className="rl-cmp">
       <div className="rl-cmp-bar">
-        <span><b>{nf(nChg)}</b> เบอร์ที่ {m.ver} แก้ · จาก {nf(full.length)} เบอร์ในใบ{last ? "" : <span className="rw-muted"> · ค่าในตาราง = ณ ตอน {m.ver} (ก่อน Modify ครั้งถัดไป)</span>}</span>
+        <span><b>{`${nf(nChg)} เบอร์ที่ ${m.ver} แก้ · จาก ${nf(full.length)} เบอร์ในใบ`}</b>{last ? null : <span className="rw-muted">{` · ค่าในตาราง = ณ ตอน ${m.ver} (ก่อน Modify ครั้งถัดไป)`}</span>}</span>
         <span className="rl-cmp-seg"><button type="button" className={!onlyChg ? "on" : ""} onClick={() => setOnlyChg(false)}>ทุกเบอร์</button><button type="button" className={onlyChg ? "on" : ""} onClick={() => setOnlyChg(true)}>เฉพาะที่แก้</button></span>
       </div>
       <table className="rl-sc-table rl-cmp-t rl-cmp-full">
-        <thead><tr><th>PART NO.</th><th>รายละเอียด</th><th className="r">จำนวน</th><th className="r">ความยาว/ชิ้น (มม.)</th><th>INV CODE</th><th>{m.ver} แก้อะไร</th><th>ล็อตที่ปล่อยแล้ว</th></tr></thead>
+        <thead><tr><th>PART NO.</th><th>รายละเอียด</th><th className="r">จำนวน</th><th className="r">ความยาว/ชิ้น (มม.)</th><th>INV CODE</th><th>{`${m.ver} แก้อะไร`}</th><th>ล็อตที่ปล่อยแล้ว</th></tr></thead>
         <tbody>{shown.map(({ x, c }) => (
           <tr key={x._k} className={c ? `rl-cmp-hit ${c.cancel ? "bad" : c.add ? "new" : "chg"}` : "rl-cmp-plain"}>
             <td className="rw-mono"><b className={c && c.cancel ? "rl-cx" : ""}>{x.code}</b>{x._sub ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>

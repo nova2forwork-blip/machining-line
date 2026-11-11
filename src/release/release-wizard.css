@@ -1139,3 +1139,4 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 /* ★ 2026-11-11 การ์ดล็อตในแถบขวา: กดตรงไหนในกรอบก็เปิดล็อต */
 .rl-slot.click { cursor: pointer; transition: border-color .12s, background .12s; }
 .rl-slot.click:hover { border-color: var(--accent); background: var(--accent-tint); }
+.rl-cmp-bar > span > b { font-weight: 600; }
