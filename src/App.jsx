@@ -6316,7 +6316,7 @@ function PmDetail({ r, ms, qty, lang, nowMs }) {
               const pct = qty > 0 ? Math.min(100, (m.done / qty) * 100) : (m.done > 0 ? 100 : 0);
               return (
                 <tr key={m.machine_id || m.code}>
-                  <td data-label={L("เครื่อง", "Machine")}><span><span className={`pm-mchip ${m.st} static`}><i />{m.code || "?"}</span>{m.name ? <span className="pm-mname">{m.name}</span> : null}</span></td>
+                  <td data-label={L("เครื่อง", "Machine")}><span><span className={`pm-mchip ${m.st} static`}><i />{m.code || "?"}</span>{m.name ? <span className="pm-mname" title={m.name}>{String(m.name).replace(/^\s*CNC\s+Machine\s*/i, "") || m.name}</span> : null}</span></td>
                   <td data-label={L("ขั้นตอน", "Steps")}><span>
                     {ops.map((o) => <span key={o.name} className="pm-opc" title={`${o.name} · ${fmtNum(o.done)} ${L("ชิ้น", "pcs")}`}>{o.name}{!uniform ? <b> {fmtNum(o.done)}</b> : null}</span>)}
                     {actOps.map((n) => <span key={"a" + n} className="pm-opc" title={L("ขั้นตอนของงานที่กำลังทำ", "step of the running job")}>{n}</span>)}
