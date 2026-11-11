@@ -155,6 +155,11 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     return () => { alive = false; };
   }, [lotKey, plan.projectId]);   // eslint-disable-line react-hooks/exhaustive-deps
   const doneRow = (r) => (prod && r.id != null ? Math.min(Number(r.qty) || 0, prod.get(String(r.id)) || 0) : null);
+  // ผลิตแล้วต่อเบอร์ (รวมทุกล็อต · ไม่นับแถวที่ Modify ยกเลิก) + ยอดรวมทั้งใบ
+  const madeBy = useMemo(() => { if (!prod) return null; const m = new Map(); let d = 0, t = 0;
+    for (const L of rel.lots) for (const r of L.rows) { if (r.mod_cancelled_at) continue; const q = Number(r.qty) || 0; const x = Math.min(q, prod.get(String(r.id)) || 0); t += q; d += x; if (r.kind !== "panel") m.set(NC(r.code), (m.get(NC(r.code)) || 0) + x); }
+    return { m, d, t }; }, [prod, rel]);
+  const madeOf = madeBy ? (code) => madeBy.m.get(NC(code)) || 0 : null;
   const lotProg = (L) => {
     if (!prod) return null;
     const g = { part: [0, 0], sub: [0, 0], panel: [0, 0] };
@@ -276,7 +281,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
       </div> : null}
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} />
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} madeOf={madeOf} />
         </div>
       {sideHidden ? (
       <aside className="rl-side rl-side-mini">
@@ -291,6 +296,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rl-sbox-h"><b>สถานะใบนี้</b></div>
           {[["แผง", addrDone, nUnits, "ที่อยู่ปล่อยแล้ว"], ["ซับ", subDone, liveSubs.length, "เบอร์ปล่อยครบ"], ["พาร์ท", partDone, liveParts.length, "เบอร์ปล่อยครบ"]].filter(([, , b]) => b > 0).map(([l, a, b, s2]) => (
             <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
+          {madeBy && madeBy.t ? <div className="rl-sstat rl-sstat-made"><div className="rl-sstat-top"><span>ผลิตแล้ว <small className="rw-muted">ชิ้น · จากที่ปล่อย</small></span><b>{nf(madeBy.d)} / {nf(madeBy.t)}</b></div><div className="rl-bar"><i style={{ width: `${pct(madeBy.d, madeBy.t)}%` }} /></div><small className="rw-muted">{pct(madeBy.d, madeBy.t)}% · ดูทีละเบอร์ที่คอลัมน์ "ปล่อยแล้ว" ในตาราง</small></div> : null}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
             return !tot ? <div className="rw-muted small">ยังไม่มีของในใบ</div> : left > 0 ? <div className="rl-snote warn">ยังไม่ปล่อย {[nUnits - addrDone > 0 && `แผง ${nf(nUnits - addrDone)} ที่`, liveSubs.length - subDone > 0 && `ซับ ${nf(liveSubs.length - subDone)} เบอร์`, liveParts.length - partDone > 0 && `พาร์ท ${nf(liveParts.length - partDone)} เบอร์`].filter(Boolean).join(" · ")} <button type="button" className="rw-link" onClick={() => { setPreset(null); setBuilder(true); }}>ปล่อยต่อ →</button></div> : <div className="rl-snote ok">ปล่อยครบแล้ว — ไม่มีอะไรค้าง</div>; })()}
         </div>

@@ -1014,3 +1014,8 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-1drop-chip .rw-link { font-size: 12px; margin-left: 4px; }
 .rl-noinv { font-weight: 400; font-family: var(--font-mono); margin-top: 2px; white-space: normal; }
 .rl-noinv { display: flex; flex-direction: column; gap: 1px; } .rl-noinv-c { white-space: nowrap; }
+.rt-made { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.rt-made i { flex: 0 0 54px; height: 6px; border-radius: 99px; background: #dfe8e4; overflow: hidden; display: block; }
+.rt-made i b { display: block; height: 6px; background: #f0a020; }
+.rt-made.full { color: var(--accent-dk); font-weight: 600; } .rt-made.full i b { background: var(--accent); }
+.rl-sstat-made { border-top: 1px dashed var(--border); padding-top: 10px; } .rl-sstat-made .rl-bar i { background: #f0a020; }

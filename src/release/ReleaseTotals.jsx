@@ -19,7 +19,7 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 const hwQty = (p) => (p.u === "m." && p.mm ? p.qty / 1000 : p.qty);
 
-export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null }) {
+export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null, madeOf = null }) {
   const [grp, setGrp] = useState("part");
   const [sub, setSub] = useState({ part: "ALL", sub: "ALL", mat: "MAT", panel: "ALL", bom: "" });
   const [q, setQ] = useState("");
@@ -51,6 +51,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   const swapCell = (x, list) => { const f = fromsOf(x); return <MatEdit cur={x.code} orig={f.join(", ")} note={x.matNote} desc={x.d} withDesc list={list} label={x.code} placeholder="เบอร์ที่ใช้แทน"
     onSave={setSwap ? (v) => setSwap(f.length ? f : [x.code], v) : null} onReset={resetSwap ? () => resetSwap(f) : null} />; };
   const cur = sub[grp];
+  // ★ 2026-11-11 ผลิตไปแล้วกี่ชิ้นของที่ปล่อย (จากหน้าเครื่อง · รวมทุกล็อต) — แถบเล็กใต้ช่อง "ปล่อยแล้ว"
+  const madeEl = (code, done) => { if (!madeOf || !(done > 0)) return null; const m = madeOf(code); if (m == null) return null; const pc = Math.min(100, Math.round((m / done) * 100));
+    return <div className={`rt-made ${m >= done ? "full" : m > 0 ? "part" : "zero"}`} title={`ผลิตแล้ว ${nf(m)} จากที่ปล่อย ${nf(done)} ชิ้น (ทุกล็อต)`}><i><b style={{ width: `${pc}%` }} /></i><span>{m >= done ? "✓ " : ""}ผลิตแล้ว {nf(m)}/{nf(done)}</span></div>; };
   const pick = (g, s) => { setGrp(g); if (onTab) onTab(g); if (s) setSub((x) => ({ ...x, [g]: s })); setLimit(PAGE); setOpenMat(null); };
 
   const parts = useMemo(() => [...need.parts].sort((a, b) => ncmp(a.code, b.code)), [need]);
@@ -218,7 +221,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
                   : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
-              <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}</td>
+              <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}{r.qr ? madeEl(r.code, done) : null}</td>
               <td className="r"><b>{r.cancelled ? "" : r.qr ? (left > 0 ? nf(left) : "✓") : done ? (left > 0 ? nlen(left) : "✓") : ""}</b></td>
               <td className="rt-rem">{[r.f, r.rev ? `Rev ${r.rev}` : ""].filter(Boolean).join(" · ")}</td>
             </tr>);
@@ -246,7 +249,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               {kids ? <><td /><td /></> : null}
               <td className="rw-muted small">SET</td>
               <td>{onPlanChange && !s.cancelled ? <span className="rw-procs">{PROCS.map((k) => { const on = s.procs.includes(k); return <label key={k} className={`rw-proc ${on ? "on" : ""}`}><input type="checkbox" checked={on} onChange={(e) => setProcs([s.code], (c) => (e.target.checked ? [...c, k] : c.filter((x) => x !== k)))} />{SUB_SHORT[k]}</label>; })}</span> : s.procs.map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}{!s.procs.length ? <Pill tone="warn">ยังไม่เลือกงาน</Pill> : null}</td>
-              <td className="rl-donecell">{done ? <b>{nf(done)}</b> : null} {lotsOf(s.code)}</td>
+              <td className="rl-donecell">{done ? <b>{nf(done)}</b> : null} {lotsOf(s.code)}{madeEl(s.code, done)}</td>
               <td className="r"><b>{s.cancelled ? "" : left > 0 ? nf(left) : "✓"}</b></td>
             </tr>
             {ks.map((k) => (
