@@ -997,7 +997,8 @@ export function lotMaterials(plan, need, rows, sheetsOf, lotNo = null) {
   for (const r of live) {
     if (r.kind !== "part" || !sheetsOf(r).includes("CUTTING")) continue;
     const p = pOf.get(NC(r.code)) || { code: r.code };
-    cut.push({ ...p, code: r.code, qty: Number(r.qty), dest: "CUTTING", cancelled: false });
+    // ใบนี้ไม่มี INV ของเบอร์นี้ (BOM ที่เก็บตอนสร้างใบไม่ครบ) → ใช้ INV ที่บันทึกไว้กับแถวที่ปล่อย
+    cut.push({ ...p, ...(!p.inv && r.material ? { inv: r.material } : {}), code: r.code, qty: Number(r.qty), dest: "CUTTING", cancelled: false });
   }
   // เบอร์ที่เปลี่ยนวัสดุแล้ว (matSwap) ยังหาได้จากเบอร์เดิมใน BOM (from / froms)
   const keysOf = (x) => [x.code, x.from, ...(x.froms || [])].filter(Boolean).map(NC);
@@ -1076,7 +1077,7 @@ export function releasedOf(releases, plan) {
     }
     const L = lots.get(no) || { no, date: r.release_date, rows: [], panels: 0, subs: 0, parts: 0, qty: 0 };
     const kind = r.part_master?.kind || "part"; const code = String(r.part_master?.part_no || "").trim();
-    L.rows.push({ id: r.id, code, kind, qty: Number(r.qty) || 0, note: r.note || "", mod_version: r.mod_version || null, mod_cancelled_at: r.mod_cancelled_at || null });
+    L.rows.push({ id: r.id, code, kind, qty: Number(r.qty) || 0, note: r.note || "", material: r.material || r.part_master?.material || null, mod_version: r.mod_version || null, mod_cancelled_at: r.mod_cancelled_at || null });
     if (!L.by && r.employee?.name) L.by = r.employee.name;   // ผู้ปล่อยล็อต (ใส่ในใบปล่อย)
     if (kind === "panel") { L.panels += Number(r.qty) || 0; for (const a of addrsFromNote(r.note)) addrLot.set(a, no); }
     else {
@@ -1463,6 +1464,7 @@ export function refreshBomFromLib(plan, lib) {
   const refs = new Set();
   for (const p of Object.values(bom.panels || {})) for (const i of p.items || []) if (i[0] !== "sub") refs.add(i[1]);
   for (const x of Object.values(subs)) for (const i of [...(x.items || []), ...(x.full || [])]) if (i[0] !== "sub") refs.add(i[1]);
+  for (const c of Object.keys(parts)) refs.add(c);
   for (const c of refs) {
     const pk = findKey(parts, c); const lk = findKey(L.parts || {}, c); if (!lk) continue; const lp = L.parts[lk];
     if (!pk) { parts[lk] = { ...lp }; ch.parts.push(lk); continue; }
@@ -1471,6 +1473,8 @@ export function refreshBomFromLib(plan, lib) {
     if (lp.k === "hw" && cur.k !== "hw") { nx.k = "hw"; mod = true; }
     if (lp.u && !cur.u) { nx.u = lp.u; mod = true; }
     if (lp.mm && !cur.mm) { nx.mm = lp.mm; mod = true; }
+    // ★ 2026-11-11 ช่องที่ใบนี้ไม่มีแต่คลังมี (INV / ความยาว / สูง / Finish / วัสดุแผ่น) → เติม (ไม่ทับค่าที่มีอยู่)
+    for (const k of ["m", "l", "h", "f", "bm", "bw", "bh", "binv"]) { const v = lp[k]; if (v != null && v !== "" && (cur[k] == null || cur[k] === "")) { nx[k] = v; mod = true; } }
     if (mod) { parts[pk] = nx; ch.parts.push(pk); }
   }
   const n = ch.full.length + ch.filled.length + ch.addedSubs.length + ch.parts.length;
