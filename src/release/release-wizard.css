@@ -1087,3 +1087,20 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 
 .rl-lottag { cursor: pointer; font-family: inherit; }
 .rl-lottag:hover, .rl-lottag:focus-visible { filter: brightness(.95); text-decoration: underline; outline: none; }
+
+/* ★ 2026-11-11 ผู้ใช้: "ทำให้สวย" — แถบหมวดย่อย: Auto/Setting = สวิตช์สองฝั่ง · หมวด = เม็ดกลม + ตัวเลขในวง */
+.rt-mode { gap: 10px; padding: 9px 12px; background: var(--surface); }
+.rt-mode-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #eef3f1; border: 1px solid #dfe8e4; }
+.rt-mode-seg .rt-mode-btn { border: 0; background: transparent; color: #5a6f68; padding: 4px 14px; font-size: 12.5px; font-weight: 700; border-radius: 999px; transition: background .12s, color .12s, box-shadow .12s; }
+.rt-mode-seg .rt-mode-btn:hover:not(.on) { color: var(--text); }
+.rt-mode-seg .rt-mode-btn.on { background: #fff; color: var(--accent-dk); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.rt-mode-sep { width: 1px; height: 22px; background: #dfe8e4; }
+.rt-groups { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rt-grp-chip.tab { border-radius: 999px; border-color: #dfe8e4; background: #fff; padding: 3px 5px 3px 12px; gap: 7px; font-size: 12px; cursor: pointer; transition: border-color .12s, background .12s; }
+.rt-grp-chip.tab:hover:not(.on) { border-color: var(--accent); background: var(--accent-tint); }
+.rt-grp-chip.tab > b, .rt-grp-chip.tab .rt-grp-name { font-weight: 600; letter-spacing: .01em; color: inherit; }
+.rt-grp-chip.tab > small { min-width: 22px; text-align: center; padding: 1px 7px; border-radius: 999px; background: #eef3f1; color: #48605a; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rt-grp-chip.tab.on { background: var(--accent-dk, #1a9a6c); border-color: var(--accent-dk, #1a9a6c); color: #fff; box-shadow: 0 2px 6px rgba(26,154,108,.25); }
+.rt-grp-chip.tab.on > small { background: rgba(255,255,255,.22); color: #fff; }
+.rt-grp-chip.tab.uncat > small { background: #fdebc8; color: #8a5a00; }
+.rt-grp-chip.tab.uncat.on > small { background: rgba(255,255,255,.25); color: #fff; }

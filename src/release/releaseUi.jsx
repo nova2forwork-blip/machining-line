@@ -48,8 +48,11 @@ export function PartGroupBar({ mode, groups, catOv = {}, bom, counts, filter = "
   return (
     <div className="rt-mode" role="group" aria-label="วิธีแยกหมวดของพาร์ท">
       <span className="rt-mode-lab">หมวดย่อย:</span>
-      <button type="button" className={`rt-mode-btn ${!setting ? "on" : ""}`} onClick={() => setMode("auto")} title="ระบบแยกหมวดให้เองตามกติกาเบอร์ · เบอร์ที่มี * ไปเป็น SITE ITEM">Auto</button>
-      <button type="button" className={`rt-mode-btn ${setting ? "on" : ""}`} onClick={() => setMode("setting")} title="สร้างหมวดเอง + ตัวหน้าของเบอร์ · ไม่เข้าพวก = รอจัดเอง">Setting</button>
+      <span className="rt-mode-seg">
+        <button type="button" className={`rt-mode-btn ${!setting ? "on" : ""}`} onClick={() => setMode("auto")} title="ระบบแยกหมวดให้เองตามกติกาเบอร์ · เบอร์ที่มี * ไปเป็น SITE ITEM">Auto</button>
+        <button type="button" className={`rt-mode-btn ${setting ? "on" : ""}`} onClick={() => setMode("setting")} title="สร้างหมวดเอง + ตัวหน้าของเบอร์ · ไม่เข้าพวก = รอจัดเอง">Setting</button>
+      </span>
+      <span className="rt-mode-sep" aria-hidden="true" />
       <span className="rt-groups">
         <button type="button" className={`rt-grp-chip tab ${filter === "ALL" ? "on" : ""}`} onClick={() => onFilter && onFilter("ALL")}><b>ทั้งหมด</b><small>{nf(total)}</small></button>
         {names.map((n) => {
