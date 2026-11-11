@@ -1140,3 +1140,8 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-slot.click { cursor: pointer; transition: border-color .12s, background .12s; }
 .rl-slot.click:hover { border-color: var(--accent); background: var(--accent-tint); }
 .rl-cmp-bar > span > b { font-weight: 600; }
+
+/* ★ 2026-11-11 คำเตือนในกล่องสถานะ: ความยาวน่าสงสัย / แถวที่ปล่อยแล้วยังเป็นค่าเดิม */
+.rl-snote-act { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 5px; }
+.rl-snote-act .rw-link { font-weight: 700; }
+.rl-snote-list { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 6px; font-size: 12px; max-height: 120px; overflow: auto; }

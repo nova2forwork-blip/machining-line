@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useUndoState } from "../undo.js";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
-import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf } from "./releaseCore.js";
+import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf, suspectLen } from "./releaseCore.js";
 import { Pill, SubKids } from "./releaseUi.jsx";
 import FileBrowser from "./FileBrowser.jsx";
 import "./release-wizard.css";
@@ -145,6 +145,11 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
         </div>
         {reading ? <div className={`rw-msg ${reading.err ? "bad" : reading.warn ? "warn" : "info"}`}>{reading.err || reading.warn || `กำลังอ่าน PDF ${reading.n}/${reading.of}…`}</div> : null}
         {state.s === "err" ? <div className="rw-msg bad">✗ โหลดคลังของโปรเจคไม่ได้: {state.err}</div> : null}
+        {/* ★ 2026-11-11 ความยาวน่าสงสัยในคลัง (เลขฟุตที่ตัวอ่านรุ่นเก่าอ่านเป็นมม.) — วางแบบซ้ำที่หน้านี้แล้วบันทึก = แก้ที่ต้นทาง ใบใหม่จะได้ค่าถูก */}
+        {(() => { const sp = [...parts.filter((p) => (p.k || "part") === "part"), ...subs].filter((x) => suspectLen(x.l)); return sp.length ? (
+          <div className="rw-msg warn">⚠ <b>ความยาวน่าสงสัย {sp.length} เบอร์</b> — เป็นเลขจำนวนเต็มน้อย ๆ อาจเป็น "จำนวนฟุต" ที่อ่านผิดจากแบบ (เช่น 3'-5 1/2" → 3) · วางไฟล์แบบของเบอร์เหล่านี้อีกครั้งแล้วกดบันทึก เพื่อแก้ในคลัง
+            <div className="rw-mono small" style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: "2px 14px" }}>{sp.slice(0, 60).map((x) => <span key={x.code}>{x.code} = {x.l}</span>)}{sp.length > 60 ? <span>… อีก {sp.length - 60}</span> : null}</div>
+          </div>) : null; })()}
         {saving.err ? <div className="rw-msg bad">✗ บันทึกไม่สำเร็จ — {saving.err}</div> : null}
         {saving.done ? <div className="rw-msg ok">✓ บันทึกแล้ว{saving.errors?.length ? ` · ⚠ ${saving.errors.join(" · ")}` : ""}</div> : null}
         <div className="rw-tools">

@@ -437,6 +437,27 @@ export async function moveReleasedSheet(rows, toLabel) {
   }
   return n;
 }
+// ★ 2026-11-11 อัปเดตแถวที่ปล่อยแล้วให้ตรงใบหลัก: ความยาว + น้ำหนัก/ชิ้น (คิดใหม่จากบันทึก Material: กก./ม. × ความยาว) + วัสดุ
+//   items = ผลจาก staleReleasedRows · น้ำหนักหาไม่ได้ (INV ไม่มีในบันทึก Material) → ไม่แตะน้ำหนักเดิม แล้วรายงานกลับ
+//   วัสดุเขียนแยกอีกคำสั่ง: ถ้าฐานข้อมูลไม่อนุญาตให้แก้คอลัมน์นี้ ความยาว/น้ำหนักที่เขียนไปแล้วยังอยู่ (รายงาน matFailed)
+export async function syncReleasedRows(projectId, items, onProgress = () => {}) {
+  let wOf = () => 0; try { wOf = await weightIndex(projectId); } catch (_) { /* ไม่มีบันทึก Material */ }
+  const out = { n: 0, weight: 0, noWeight: [], matFailed: 0, errors: [] };
+  let i = 0;
+  for (const it of items || []) {
+    onProgress(`อัปเดต ${++i}/${items.length}…`);
+    const patch = {};
+    if (it.len) patch.length_mm = it.toLen;
+    if (it.kind === "part") { const w = wOf(it.toInv, it.toLen); if (w > 0) { patch.unit_weight = w; out.weight++; } else out.noWeight.push(it.code); }
+    try {
+      if (Object.keys(patch).length) await updateRow("releases", it.id, patch);
+      if (it.mat) { try { await updateRow("releases", it.id, { material: it.toInv }); } catch (_) { out.matFailed++; } }
+      out.n++;
+    } catch (e) { out.errors.push(`${it.code} (${it.lot}): ${e?.message || e}`); }
+  }
+  out.noWeight = [...new Set(out.noWeight)];
+  return out;
+}
 // ★ 2026-11-10 ยกเลิกการปล่อย (ปล่อยผิด → ปล่อยใหม่): เช็คทุกแถวก่อน — มีสแกน / บันทึกงานหน้าเครื่อง = ไม่ลบ (คืนใน blocked)
 //   check(rows) → { ok:[row], blocked:[{row, scanned, recs}] } · unrelease(rows) → จำนวนที่ลบ (ลบแถว + QR ผ่าน authz_delete_release)
 export async function checkUnrelease(rows) {
@@ -453,4 +474,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };
+export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };

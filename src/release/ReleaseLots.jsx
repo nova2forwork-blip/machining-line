@@ -10,7 +10,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { getSession } from "../auth.js";
 import {
-  NC, ncmp, nf, nlen, inchToMm, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
+  NC, ncmp, nf, nlen, inchToMm, suspectLen, staleReleasedRows, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
   otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
@@ -70,6 +70,22 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
   const [cmpOpen, setCmpOpen] = useState(() => new Set());
   const [modsOpen, setModsOpen] = useState(false);
+  // ★ 2026-11-11 (1) ความยาวน่าสงสัย (เลขฟุตที่อ่านผิดเป็นมม.) → เตือน + พาไปวางแบบแก้ · (2) แถวที่ปล่อยแล้วยังเป็นค่าเดิม → ปุ่มอัปเดตความยาว / น้ำหนัก / วัสดุ
+  const suspects = useMemo(() => [...need.parts.filter((x) => x.qr !== false), ...need.subs].filter((x) => !x.cancelled && suspectLen(x.l)).map((x) => ({ code: x.code, l: x.l })), [need]);
+  const stale = useMemo(() => staleReleasedRows(need, rel.lots), [need, rel]);
+  const [suspOpen, setSuspOpen] = useState(false);
+  const [syncBusy, setSyncBusy] = useState("");
+  async function syncReleased() {
+    if (!stale.length || !api.syncReleasedRows) return;
+    const line = (x) => `${x.code} · ${x.lot}: ${[x.len && `ยาว ${x.len.from ?? "—"} → ${x.len.to}`, x.mat && `วัสดุ ${x.mat.from || "—"} → ${x.mat.to}`].filter(Boolean).join(" · ")}`;
+    const ok = await askConfirm({ title: `อัปเดต ${stale.length} แถวที่ปล่อยแล้วให้ตรงใบหลัก?`, message: `${stale.slice(0, 12).map(line).join("\n")}${stale.length > 12 ? `\n… อีก ${stale.length - 12} แถว` : ""}\n\nจะเขียนทับในฐานข้อมูล: ความยาว · วัสดุ · น้ำหนัก/ชิ้น (คิดใหม่จากบันทึก Material)\nQR / ประวัติสแกน / จำนวน ไม่เปลี่ยน · น้ำหนักในประวัติสแกนเก่าไม่ถูกแก้ย้อนหลัง`, tone: "warn", confirmText: "อัปเดต", cancelText: "ยกเลิก" });
+    if (!ok) return;
+    try {
+      const r = await api.syncReleasedRows(plan.projectId, stale, (m) => setSyncBusy(m)); setSyncBusy("");
+      const bits = [`อัปเดต ${r.n} แถว`, r.weight ? `คิดน้ำหนักใหม่ ${r.weight} แถว` : "", r.noWeight.length ? `ไม่มีน้ำหนักในบันทึก Material: ${r.noWeight.slice(0, 5).join(", ")}${r.noWeight.length > 5 ? " …" : ""} (น้ำหนักเดิมไม่เปลี่ยน)` : "", r.matFailed ? `วัสดุเขียนไม่ได้ ${r.matFailed} แถว (ความยาว/น้ำหนักเขียนแล้ว)` : "", r.errors.length ? `ผิดพลาด ${r.errors.length}: ${r.errors[0]}` : ""].filter(Boolean);
+      onSheetMoved && onSheetMoved({ msg: bits.join(" · ") });
+    } catch (e) { setSyncBusy(""); alert("อัปเดตไม่สำเร็จ: " + (e?.message || e)); }
+  }
   // ★ 2026-11-11 ประวัติ Modify: ตารางทุกเบอร์ของ M-00k = ค่า "ณ ตอนบันทึก M นั้น" (เล่น Modify ซ้ำถึง M นั้น) — เดิมใช้ค่าปัจจุบัน ทำให้ M เก่าโชว์ค่าหลัง M ใหม่
   const needAsOf = (ver) => { const ms = plan.mods || []; const i = ms.findIndex((x) => x.ver === ver); if (i < 0 || i === ms.length - 1) return need; try { return needOf(replayMods(plan, ms.slice(0, i + 1))); } catch { return need; } };
   // ★ 2026-11-11 ป้ายม่วง M-001 ในตาราง (ModTag) กดแล้ว → เปิดประวัติ Modify ที่ M นั้น
@@ -323,6 +339,17 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
             <div key={l} className="rl-sstat"><div className="rl-sstat-top"><span>{l} <small className="rw-muted">{s2}</small></span><b>{nf(a)} / {nf(b)}</b></div><div className="rl-bar"><i style={{ width: `${pct(a, b)}%` }} /></div></div>))}
           {madeBy && madeBy.t ? <div className="rl-sstat rl-sstat-made"><div className="rl-sstat-top"><span>ผลิตแล้ว <small className="rw-muted">ชิ้น · จากที่ปล่อย</small></span><b>{nf(madeBy.d)} / {nf(madeBy.t)}</b></div><div className="rl-bar"><i style={{ width: `${pct(madeBy.d, madeBy.t)}%` }} /></div><small className="rw-muted">{pct(madeBy.d, madeBy.t)}%</small></div> : null}
           {rel.lots.length ? <button type="button" className="rl-progbtn" onClick={() => setProgOpen(true)}>ดูความคืบหน้าทีละรายการ ›</button> : null}
+          {suspects.length ? (
+            <div className="rl-snote warn">
+              <b>ความยาวน่าสงสัย {nf(suspects.length)} เบอร์</b> — เป็นเลขจำนวนเต็มน้อย ๆ อาจเป็น "จำนวนฟุต" ที่อ่านผิดจากแบบ (เช่น 3'-5 1/2" → 3)
+              <div className="rl-snote-act"><button type="button" className="rw-link" onClick={() => setSuspOpen((v) => !v)}>{suspOpen ? "ซ่อนรายการ" : "ดูรายการ"}</button><button type="button" className="rw-link" onClick={() => setModify(true)} title="เปิด Modify แล้ววางไฟล์แบบของเบอร์เหล่านี้ — แอปจะเทียบและแก้ความยาวตามแบบ">วางแบบเพื่อแก้ ›</button></div>
+              {suspOpen ? <div className="rl-snote-list">{suspects.map((x) => <span key={x.code} className="rw-mono">{x.code} = {nlen(x.l)}</span>)}</div> : null}
+            </div>) : null}
+          {stale.length && api.syncReleasedRows ? (
+            <div className="rl-snote warn">
+              <b>แถวที่ปล่อยแล้ว {nf(stale.length)} แถว ยังเป็นค่าเดิม</b> — ความยาว {nf(stale.filter((x) => x.len).length)} · วัสดุ {nf(stale.filter((x) => x.mat).length)} แถว ไม่ตรงกับใบหลัก (น้ำหนัก/ชิ้นจึงยังคิดจากค่าเดิม)
+              <div className="rl-snote-act"><button type="button" className="rw-link" disabled={!!syncBusy} onClick={syncReleased}>{syncBusy || "อัปเดตความยาว · วัสดุ · น้ำหนัก ›"}</button></div>
+            </div>) : null}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
             return !tot ? <div className="rw-muted small">ยังไม่มีของในใบ</div> : left > 0 ? <div className="rl-snote warn">ยังไม่ปล่อย {[nUnits - addrDone > 0 && `แผง ${nf(nUnits - addrDone)} ที่`, liveSubs.length - subDone > 0 && `ซับ ${nf(liveSubs.length - subDone)} เบอร์`, liveParts.length - partDone > 0 && `พาร์ท ${nf(liveParts.length - partDone)} เบอร์`].filter(Boolean).join(" · ")} <button type="button" className="rw-link" onClick={() => { setPreset(null); setBuilder(true); }}>ปล่อยต่อ →</button></div> : <div className="rl-snote ok">ปล่อยครบแล้ว</div>; })()}
         </div>

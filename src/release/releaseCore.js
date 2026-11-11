@@ -83,6 +83,29 @@ export function inchToMm(v) {
   const whole = m[1] ? parseFloat(m[1]) : 0, num = +m[2], den = +m[3]; if (!den) return null;
   return Math.round((whole + num / den) * 25.4 * 10) / 10;
 }
+// ★ 2026-11-11 ความยาวน่าสงสัย: ตัวอ่านรุ่นก่อน 10/11/2569 อ่านความยาวแบบฟุต-นิ้ว (3'-5 1/2") ได้แค่เลขฟุตตัวหน้า → เก็บเป็น 3 มม.
+//   ค่าที่เป็นจำนวนเต็ม 1–40 จึงน่าจะเป็น "จำนวนฟุต" ไม่ใช่มม. (ชิ้นงานจริงสั้นขนาดนี้และลงตัวพอดีมีน้อย) — ให้คนตรวจ ไม่แก้เอง
+export const suspectLen = (l) => { const n = Number(l); return Number.isFinite(n) && n >= 1 && n <= 40 && Math.abs(n - Math.round(n)) < 1e-9; };
+// ★ 2026-11-11 แถวที่ปล่อยแล้วซึ่งยังเก็บความยาว / วัสดุ "ค่าเดิม" ไม่ตรงกับใบหลัก (หลัง Modify / เปลี่ยนวัสดุ / แก้ความยาวที่อ่านผิด)
+//   คืน [{ id, lot, code, kind, qty, len:{from,to}|null, mat:{from,to}|null, toLen, toInv }] — พาร์ท: ความยาว + วัสดุ · ซับ: ความยาว
+export function staleReleasedRows(need, lots) {
+  const eq = (a, b) => String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+  const pBy = new Map(need.parts.map((x) => [NC(x.code), x])), sBy = new Map(need.subs.map((x) => [NC(x.code), x]));
+  const out = [];
+  for (const L of lots || []) {
+    if (L.hwOnly) continue;
+    for (const r of L.rows || []) {
+      if (r.mod_cancelled_at || r.kind === "panel") continue;
+      const sub = r.kind === "subassembly"; const p = (sub ? sBy : pBy).get(NC(r.code)); if (!p || p.cancelled) continue;
+      const toLen = Number(p.l) > 0 && !suspectLen(p.l) ? Number(p.l) : null, cur = Number(r.length_mm) || 0;   // ความยาวในใบหลักที่ยังน่าสงสัย (เลขฟุต) = ไม่เอาไปเขียนทับแถวที่ปล่อยแล้ว
+      const len = toLen != null && Math.abs(cur - toLen) > 0.05 ? { from: cur || null, to: toLen } : null;
+      const toInv = !sub && String(p.inv || "").trim() ? String(p.inv).trim().toUpperCase() : "";
+      const mat = toInv && !eq(r.material, toInv) ? { from: r.material || "", to: toInv } : null;
+      if (len || mat) out.push({ id: r.id, lot: L.no, code: r.code, kind: sub ? "sub" : "part", qty: Number(r.qty) || 0, len, mat, toLen: toLen ?? (cur || null), toInv: toInv || r.material || "", uw: r.unit_weight ?? null });
+    }
+  }
+  return out;
+}
 export async function readShopPdf(pdfjsLib, data, fileName) {
   const doc = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
   const page = await doc.getPage(1);
