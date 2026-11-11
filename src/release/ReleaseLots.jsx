@@ -630,7 +630,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
                     <td><input type="checkbox" checked={on} disabled={!!done || !!cx} onChange={(e) => toggleAddr([a], e.target.checked)} aria-label={`เลือก ${a}`} /></td>
                     <td className="rw-mono"><b className={cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : null}</td><td className="rw-mono">{u.unit}</td>
                     <td>{findKey(plan.bom.panels, u.unit) ? <Pill tone="ok">✓</Pill> : <Pill tone="warn">ไม่มี BOM</Pill>}</td>
-                    <td>{done ? <Pill tone="info">ปล่อยแล้ว {done}</Pill> : cx ? <span className="rl-cxq small">ยกเลิกแล้ว</span> : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
+                    <td>{done ? <Pill tone="info" title="ปล่อยแล้ว">{done}</Pill> : cx ? <span className="rl-cxq small">ยกเลิกแล้ว</span> : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
                   </tr>); })}</tbody>
               </>
             ) : (
