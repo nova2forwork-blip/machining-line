@@ -194,7 +194,7 @@ function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName, cov
 }
 
 // ★ 2026-11-11 ใบปะหน้า 2 แบบ: "full" = มีรายการวัตถุดิบ (แบบเดิม) · "see" = แถวเดียว SEE ATTACHED FILE (ไม่มีรายการ)
-export const coverFor = (c, mode) => (!c ? null : mode === "see" ? { ...c, items: [{ inv: "SEE ATTACHED FILE", see: true }] } : c);
+export const coverFor = (c, mode) => (!c ? null : mode === "see" ? { ...c, items: [{}, {}, {}, { inv: "SEE ATTACHED FILE", see: true }] } : c);   // แถวที่ 4 (ตามฟอร์มเดิม)
 
 // ข้อมูลใบปล่อยของล็อต (ใช้ร่วมกันทั้ง Excel และหน้าตัวอย่าง PDF) — 1 รายการ = 1 ชีต
 // only = [key ของใบ] ที่จะเอา (ไม่ส่ง = ทุกใบ) · key = sheet.k (CUTTING / BENDING / … / panel / MAT / GLASS / FIXING / OTHER)
