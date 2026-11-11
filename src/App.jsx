@@ -6896,6 +6896,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   // ★ 2026-10-19: ใบปล่อยของล็อตนี้ (Excel) — หา Release แผนของล็อต (P-007.1 → P-007) แล้วสร้างจากแผน + ที่ปล่อยจริง
   const [sheetBusy, setSheetBusy] = useState(false);
+  const [lotSide, setLotSideRaw] = useState(() => { try { return localStorage.getItem("lot-side") !== "0"; } catch { return true; } });
+  const setLotSide = (v) => { setLotSideRaw(v); try { localStorage.setItem("lot-side", v ? "1" : "0"); } catch { /* ignore */ } };
+  const [lotSheetOpen, setLotSheetOpen] = useState(false);
   const [sheetPrev, setSheetPrev] = useState(null);   // ตัวอย่างใบปล่อย (PDF / Excel)
   async function exportReleaseSheet() {
     if (sheetBusy || !hdr.ro) return;
@@ -6988,113 +6991,37 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         </div>
       </div>
 
-      <div className="grid-3" style={{ marginBottom: 16 }}>
-        <Card>
-          <div className="label-el">จำนวนรวม</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalQty)} ชิ้น</div>
-        </Card>
-        {!isAsmGroup && (
-          <Card>
-            <div className="label-el">น้ำหนักรวม</div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtNum(totalWeight)} กก.</div>
-          </Card>
-        )}
-        <Card>
-          <div className="label-el">Part No.</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{nc(releases.length)} Part</div>
-        </Card>
-        <Card>
-          <div className="label-el" style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <Icon name="check" size={12} /> เสร็จแล้ว (ภาพรวม)
-          </div>
-          {statsLoading ? (
-            <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>กำลังโหลด...</div>
-          ) : (
-            <>
-              <div style={{ fontSize: 22, fontWeight: 700, color: (totalQty > 0 && totalFinished >= totalQty) ? "var(--success)" : "var(--text)" }}>
-                {fmtNum(totalFinished)} <span style={{ fontSize: 14, fontWeight: 400, color: "var(--muted)" }}>/ {fmtNum(totalQty)} ชิ้น</span>
+      {/* ★ 2026-11-11 หน้าล็อตแบบ A: ความคืบหน้าอยู่บนสุด · ตารางพาร์ทซ้าย · แถบขวา (ใบปล่อย / Modify) พับได้ เหมือนหน้าใบหลัก */}
+      {(() => {
+        const st = { wait: [0, 0], doing: [0, 0], done: [0, 0] };
+        for (const r of releases) { const q = Number(r.qty) || 0; const pg = relProgress(r, unitStats, opProg); const k = q > 0 && pg.finished >= q ? "done" : (pg.finished > 0 || pg.inProgress > 0) ? "doing" : "wait"; st[k][0]++; st[k][1] += q; }
+        const seg = (n) => (totalQty > 0 ? `${Math.max(0, Math.min(100, (n / totalQty) * 100))}%` : "0%");
+        return (
+          <div className="lot-hero">
+            <div className="lot-hero-l">
+              <div className="lot-hero-pct"><b>{statsLoading ? "…" : `${pctOverall}%`}</b><span>{lang === "en" ? "Finished" : "เสร็จ"} {fmtNum(totalFinished)} / {fmtNum(totalQty)} {lang === "en" ? "pcs" : "ชิ้น"} · {nc(releases.length)} {lang === "en" ? "codes" : "เบอร์"}</span></div>
+              <div className="lot-hero-bar" role="img" aria-label={`${pctOverall}%`}><i className="done" style={{ width: seg(totalFinished) }} /><i className="doing" style={{ width: seg(totalInProgress) }} /></div>
+              <div className="lot-hero-leg">
+                <span><i className="wait" /> {lang === "en" ? "Not started" : "รอเริ่ม"} <b>{nc(st.wait[0])}</b> {lang === "en" ? "codes" : "เบอร์"} · {fmtNum(st.wait[1])} {lang === "en" ? "pcs" : "ชิ้น"}</span>
+                <span><i className="doing" /> {lang === "en" ? "In progress" : "กำลังทำ"} <b>{nc(st.doing[0])}</b></span>
+                <span><i className="done" /> {lang === "en" ? "Done" : "เสร็จ"} <b>{nc(st.done[0])}</b></span>
+                {stationDrove ? <span className="muted">{lang === "en" ? "* counted from machine terminals" : "* นับจากหน้าเครื่อง"}</span> : null}
               </div>
-              <ProgressBar pct={pctOverall} finished={totalFinished} total={totalQty} />
-              {!isAsmGroup && (
-                <div style={{ fontSize: 12, color: "var(--accent-dk)", fontWeight: 600, marginTop: 6 }}>
-                  น้ำหนักที่ทำแล้ว: {fmtNum(finishedWeight)} <span style={{ color: "var(--muted)", fontWeight: 400 }}>/ {fmtNum(totalWeight)} กก.</span>
-                </div>
-              )}
-              {stationDrove && (
-                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                  {lang === "en" ? "* Counts pieces the machine terminal marked Finished (each machine’s own route)" : "* นับชิ้นที่หน้าเครื่องกด Finished (ตามรูทของเครื่อง)"}
-                </div>
-              )}
-              {totalInProgress > 0 && (
-                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                  กำลังทำ: {fmtNum(totalInProgress)} ชิ้น
-                </div>
-              )}
-            </>
-          )}
-        </Card>
-        {hdr.ro && (
-          <Card className="span-2"
-            title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>{lang === "en" ? "Modify history" : "ประวัติการแก้ไข (Modify)"}
-              {modReady && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 700, padding: "1px 8px", borderRadius: 7, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)" }}>{lang === "en" ? "now" : "ตอนนี้"} {curVersion}</span>}</span>}
-            right={modReady ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>{modList.length} {lang === "en" ? "time(s)" : "ครั้ง"}{nCancelled ? (lang === "en" ? ` · ${nCancelled} cancelled` : ` · ยกเลิก ${nCancelled}`) : ""}</span>
-                <Btn variant="ghost" size="sm" onClick={() => exportMod("ALL")} disabled={modExporting} title={lang === "en" ? "One Excel file: every M (incl. cancelled) + all changes + current parts + QR" : "ไฟล์ Excel เดียว: ทุก M (รวมที่ยกเลิก) + รายการแก้ทั้งหมด + Part ปัจจุบัน + QR"}>
-                  <Icon name="grid" size={13} /> {lang === "en" ? "Export all M" : "Export ทุก M"}
-                </Btn>
-              </span>) : null}>
-            {!modInfo ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</div>
-              : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? (lang === "en" ? "Modify isn't installed — run migration-release-modify.sql in Supabase" : "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase") : (lang === "en" ? "Couldn't load history" : "โหลดประวัติไม่สำเร็จ")}</div>
-              : (
-                <>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{lang === "en" ? "What changed · in which M · click an M for details · previous values are kept as evidence" : "แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้"}</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 236, overflow: "auto" }}>
-                    {modList.map((m) => {
-                      const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));
-                      const pns = [...new Set((m.items || []).map((i) => i.part_no))];
-                      const rv = m.reverted;
-                      return (
-                        <div key={m.id} className={"relmod-hrow" + (rv ? " cancelled" : "")} onClick={() => setModView(m.version)}>
-                          <span className={rv ? "relmod-strike" : ""}><ModVerPill v={m.version} gray={!!rv} /></span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {rv ? <span className="relmod-xchip">{lang === "en" ? "Cancelled" : "ยกเลิกแล้ว"}</span> : (m.version === curVersion ? <span className="relmod-nowchip">{lang === "en" ? "now" : "ตอนนี้"}</span> : null)}
-                              {types.map((t) => <ModChip key={t} type={t} />)}<span className={rv ? "relmod-strike-txt" : ""}>{pns.join(", ")}</span>
-                            </div>
-                            <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {nc(pns.length)} Part · {m.actor_name || "-"} · {m.reason}</div>
-                            {rv && <div style={{ fontSize: 11.5, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⊘ {lang === "en" ? "Cancelled" : "ยกเลิก"} <b>{fmtYmd(revDocDate(rv))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(rv.at)} · {rv.actor_name || "-"}{rv.mode === "rollback" ? (lang === "en" ? ` · rolled back to ${rv.target_version || M0}` : ` · ย้อนกลับเป็น ${rv.target_version || M0}`) : ""} · {rv.reason}</div>}
-                          </div>
-                          <button type="button" className="relmod-dl" title={lang === "en" ? `Export ${m.version} (Excel)` : `Export ${m.version} (Excel)`} disabled={modExporting}
-                            onClick={(e) => { e.stopPropagation(); exportMod(m.version); }}><Icon name="grid" size={13} /></button>
-                          <span style={{ color: "var(--muted-2)" }}>›</span>
-                        </div>
-                      );
-                    })}
-                    <div className="relmod-hrow" onClick={() => setModView(M0)}>
-                      <ModVerPill v={M0} gray />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{lang === "en" ? "Original — before any change" : "ต้นฉบับ — ก่อนการแก้ไข"}</div>
-                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{(() => { const rd = releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]; return rd ? <>📅 {lang === "en" ? "released" : "ปล่อยงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(rd)}</b> · </> : null; })()}{modInfo.origin ? `🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
-                      </div>
-                      <button type="button" className="relmod-dl" title={`Export ${M0} (Excel)`} disabled={modExporting}
-                        onClick={(e) => { e.stopPropagation(); exportMod(M0); }}><Icon name="grid" size={13} /></button>
-                      <span style={{ color: "var(--muted-2)" }}>›</span>
-                    </div>
-                  </div>
-                </>
-              )}
-          </Card>
-        )}
-      </div>
+            </div>
+            <div className="lot-hero-r">
+              <div><span>{lang === "en" ? "Total qty" : "จำนวนรวม"}</span><b>{fmtNum(totalQty)}</b></div>
+              <div><span>Part No.</span><b>{nc(releases.length)}</b></div>
+              {!isAsmGroup ? <div><span>{lang === "en" ? "Weight done (kg)" : "น้ำหนักที่ทำแล้ว (กก.)"}</span><b>{fmtNum(finishedWeight)} <small>/ {fmtNum(totalWeight)}</small></b></div> : null}
+            </div>
+          </div>);
+      })()}
 
-      {/* (ผู้ใช้ 2026-09-24: เอาการ์ด "ความคืบหน้าตามขั้นตอน (งานหน้าเครื่อง)" ออก — ดูรายเครื่องในตาราง Part แทน) */}
-
-      {projectId && hdr.ro ? (
+      <div className={`lot-split ${lotSide ? "" : "side-off"}`}>
+        <div className="lot-main">
+      {lotSheetOpen && projectId && hdr.ro ? (
         <Suspense fallback={null}>
           <LotSheetInlineLazy api={realReleaseApi} projectId={projectId} ro={hdr.ro} releases={releases} userName={user?.name || ""} onOpenPrint={exportReleaseSheet} />
         </Suspense>) : null}
-
       <Card title={lang === "en" ? "Details of each Part in this lot" : "รายละเอียดแต่ละ Part ในล็อตนี้"}
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -7267,6 +7194,78 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>หมายเหตุทั้งหมด: {[...notes].join(" · ")}</div>
       )}
 
+        </div>
+        {lotSide ? (
+        <aside className="lot-side">
+          <button type="button" className="lot-side-btn" onClick={() => setLotSide(false)} title={lang === "en" ? "Fold this panel — wider table" : "พับแถบนี้ — ให้ตารางกว้างเต็มจอ"}>{lang === "en" ? "Fold panel ›" : "พับแถบนี้ ›"}</button>
+          {projectId && hdr.ro ? (
+          <Card title={lang === "en" ? "Lot release sheet" : "ใบปล่อยของล็อต"}>
+            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10 }}>{lang === "en" ? "Cover sheet (Instruction No. / remark) · editable yellow cells · print / PDF / Excel" : "ใบปะหน้า (Instruction No. / หมายเหตุ) · ช่องเหลืองแก้ได้ · พิมพ์ / PDF / Excel"}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Btn variant={lotSheetOpen ? "primary" : "ghost"} size="sm" onClick={() => setLotSheetOpen((v) => !v)}>{lotSheetOpen ? (lang === "en" ? "Hide sheet" : "ซ่อนใบปล่อย") : (lang === "en" ? "View / edit sheet" : "ดู / แก้ใบปล่อย")}</Btn>
+              <Btn variant="ghost" size="sm" onClick={exportReleaseSheet} disabled={sheetBusy}><Icon name="printer" size={13} /> {lang === "en" ? "Print / PDF / Excel" : "พิมพ์ / PDF / Excel"}</Btn>
+            </div>
+          </Card>) : null}
+        {hdr.ro && (
+          <Card
+            title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>{lang === "en" ? "Modify history" : "ประวัติการแก้ไข (Modify)"}
+              {modReady && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 700, padding: "1px 8px", borderRadius: 7, background: "rgba(109,74,255,.10)", color: MOD_PURPLE, border: "1px solid rgba(109,74,255,.35)" }}>{lang === "en" ? "now" : "ตอนนี้"} {curVersion}</span>}</span>}
+            right={modReady ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>{modList.length} {lang === "en" ? "time(s)" : "ครั้ง"}{nCancelled ? (lang === "en" ? ` · ${nCancelled} cancelled` : ` · ยกเลิก ${nCancelled}`) : ""}</span>
+                <Btn variant="ghost" size="sm" onClick={() => exportMod("ALL")} disabled={modExporting} title={lang === "en" ? "One Excel file: every M (incl. cancelled) + all changes + current parts + QR" : "ไฟล์ Excel เดียว: ทุก M (รวมที่ยกเลิก) + รายการแก้ทั้งหมด + Part ปัจจุบัน + QR"}>
+                  <Icon name="grid" size={13} /> {lang === "en" ? "Export all M" : "Export ทุก M"}
+                </Btn>
+              </span>) : null}>
+            {!modInfo ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{lang === "en" ? "Loading…" : "กำลังโหลด..."}</div>
+              : !modReady ? <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{modInfo.reason === "not_installed" ? (lang === "en" ? "Modify isn't installed — run migration-release-modify.sql in Supabase" : "ยังไม่ได้ติดตั้งส่วน Modify — รัน migration-release-modify.sql ใน Supabase") : (lang === "en" ? "Couldn't load history" : "โหลดประวัติไม่สำเร็จ")}</div>
+              : (
+                <>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{lang === "en" ? "What changed · in which M · click an M for details · previous values are kept as evidence" : "แก้อะไร · ใน M ไหน · กดดูรายละเอียดแต่ละ M ได้ · ของเดิมเก็บเป็นหลักฐาน ลบทับไม่ได้"}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 236, overflow: "auto" }}>
+                    {modList.map((m) => {
+                      const types = ["qty", "inv", "cancel", "transfer"].filter((t) => (m.items || []).some((i) => i.type === t));
+                      const pns = [...new Set((m.items || []).map((i) => i.part_no))];
+                      const rv = m.reverted;
+                      return (
+                        <div key={m.id} className={"relmod-hrow" + (rv ? " cancelled" : "")} onClick={() => setModView(m.version)}>
+                          <span className={rv ? "relmod-strike" : ""}><ModVerPill v={m.version} gray={!!rv} /></span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {rv ? <span className="relmod-xchip">{lang === "en" ? "Cancelled" : "ยกเลิกแล้ว"}</span> : (m.version === curVersion ? <span className="relmod-nowchip">{lang === "en" ? "now" : "ตอนนี้"}</span> : null)}
+                              {types.map((t) => <ModChip key={t} type={t} />)}<span className={rv ? "relmod-strike-txt" : ""}>{pns.join(", ")}</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📅 <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(modDocDate(m))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(m.created_at)} · {(m.items || []).length} {lang === "en" ? "change(s)" : "รายการ"} · {nc(pns.length)} Part · {m.actor_name || "-"} · {m.reason}</div>
+                            {rv && <div style={{ fontSize: 11.5, color: "#b91c1c", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⊘ {lang === "en" ? "Cancelled" : "ยกเลิก"} <b>{fmtYmd(revDocDate(rv))}</b> · {lang === "en" ? "entered" : "ลงแอป"} {fmtDT(rv.at)} · {rv.actor_name || "-"}{rv.mode === "rollback" ? (lang === "en" ? ` · rolled back to ${rv.target_version || M0}` : ` · ย้อนกลับเป็น ${rv.target_version || M0}`) : ""} · {rv.reason}</div>}
+                          </div>
+                          <button type="button" className="relmod-dl" title={lang === "en" ? `Export ${m.version} (Excel)` : `Export ${m.version} (Excel)`} disabled={modExporting}
+                            onClick={(e) => { e.stopPropagation(); exportMod(m.version); }}><Icon name="grid" size={13} /></button>
+                          <span style={{ color: "var(--muted-2)" }}>›</span>
+                        </div>
+                      );
+                    })}
+                    <div className="relmod-hrow" onClick={() => setModView(M0)}>
+                      <ModVerPill v={M0} gray />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{lang === "en" ? "Original — before any change" : "ต้นฉบับ — ก่อนการแก้ไข"}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{(() => { const rd = releases.map((r) => String(r.release_date || "").slice(0, 10)).filter(Boolean).sort()[0]; return rd ? <>📅 {lang === "en" ? "released" : "ปล่อยงาน"} <b style={{ color: "var(--text)", fontWeight: 600 }}>{fmtYmd(rd)}</b> · </> : null; })()}{modInfo.origin ? `🔒 ${lang === "en" ? "kept as evidence" : "เก็บเป็นหลักฐาน"}` : (lang === "en" ? "Never modified — current values are the original" : "ยังไม่เคย Modify — ค่าปัจจุบันคือต้นฉบับ")} · {lang === "en" ? "click to view" : "กดดูค่าต้นฉบับ"}</div>
+                      </div>
+                      <button type="button" className="relmod-dl" title={`Export ${M0} (Excel)`} disabled={modExporting}
+                        onClick={(e) => { e.stopPropagation(); exportMod(M0); }}><Icon name="grid" size={13} /></button>
+                      <span style={{ color: "var(--muted-2)" }}>›</span>
+                    </div>
+                  </div>
+                </>
+              )}
+          </Card>
+        )}
+        </aside>
+        ) : (
+        <aside className="lot-side lot-side-mini">
+          <button type="button" className="lot-side-open" onClick={() => setLotSide(true)} title={lang === "en" ? "Show release sheet / Modify" : "แสดงแถบ ใบปล่อย / Modify"}>‹<span>{lang === "en" ? "Sheet · Modify" : "ใบปล่อย · Modify"}</span></button>
+        </aside>
+        )}
+      </div>
       {viewPart && <PartProgressModal release={viewPart} user={user} goTo={goTo} onClose={() => { setViewPart(null); loadStats(); }} />}
       {editing && (
         <ReleaseEditModal

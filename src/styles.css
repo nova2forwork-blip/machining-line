@@ -1674,3 +1674,28 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 
 /* เลขเบอร์ / จำนวน (เดิมฟอนต์ mono) — ตัวเลขกว้างเท่ากันให้ตารางตรงคอลัมน์ */
 .rw-mono, .rw-num, td.r, .mono { font-variant-numeric: tabular-nums; }
+
+/* ★ 2026-11-11 หน้าล็อตแบบ A */
+.lot-hero { background: var(--surface); border-radius: 18px; padding: 18px 22px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 24px; align-items: center; margin-bottom: 12px; box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.04)); }
+.lot-hero-l { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lot-hero-pct { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.lot-hero-pct b { font-size: 40px; line-height: 1; font-weight: 700; }
+.lot-hero-pct span { font-size: 15px; color: var(--muted); }
+.lot-hero-bar { display: flex; height: 14px; border-radius: 99px; overflow: hidden; background: #cbd8d2; }
+.lot-hero-bar i.done { background: var(--accent); } .lot-hero-bar i.doing { background: #f0a020; }
+.lot-hero-leg { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; }
+.lot-hero-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; }
+.lot-hero-leg i.wait { background: #cbd8d2; } .lot-hero-leg i.doing { background: #f0a020; } .lot-hero-leg i.done { background: var(--accent); }
+.lot-hero-leg .muted { color: var(--muted); font-size: 12px; }
+.lot-hero-r { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.lot-hero-r > div { background: var(--surface-2); border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.lot-hero-r span { font-size: 12px; color: var(--muted); } .lot-hero-r b { font-size: 21px; } .lot-hero-r small { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.lot-split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+.lot-split.side-off { grid-template-columns: minmax(0, 1fr) 56px; }
+.lot-main { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.lot-side { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+.lot-side-btn { height: 38px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.lot-side-btn:hover { border-color: var(--accent); color: var(--accent-dk); }
+.lot-side-open { width: 48px; min-height: 180px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); cursor: pointer; font: inherit; font-size: 18px; color: var(--accent-dk); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; }
+.lot-side-open span { writing-mode: vertical-rl; font-size: 12.5px; font-weight: 600; color: var(--text); }
+@media (max-width: 1100px) { .lot-hero, .lot-split, .lot-split.side-off { grid-template-columns: 1fr; } .lot-side { position: static; max-height: none; } .lot-side-open { min-height: 44px; width: auto; flex-direction: row; padding: 0 14px; } .lot-side-open span { writing-mode: horizontal-tb; } }
