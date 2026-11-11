@@ -403,7 +403,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
       <div className="rt-tools">
         <div className="rt-title">
           <b>{curSheet ? curSheet.label : grp === "bom" ? `BOM · ${bomSel === "__ALL__" ? "ทุกแบบแผง" : bomSel}` : T.label}</b>
-          <span>{curSheet ? curSheet.th : grp === "bom" ? `แตกซับทุกชั้นเหมือนชีต BOM P-142 ใน Excel — ซับ 1st พื้นเทา · ซับ 2nd พื้นเขียว` : grp === "part" ? "พาร์ททุกเบอร์ · จัดกลุ่มตามหมวด · พิมพ์ค้นหา → ติ๊กเลือก → ย้ายไปหมวด / ปล่อย" : "ซับทุกใบ — ซับที่อยู่หลายใบนับครั้งเดียว"}</span>
+          <span>{curSheet ? curSheet.th : grp === "bom" ? `แตกซับทุกชั้นเหมือนชีต BOM P-142 ใน Excel — ซับ 1st พื้นเทา · ซับ 2nd พื้นเขียว` : grp === "part" ? "" : "ซับทุกใบ — ซับที่อยู่หลายใบนับครั้งเดียว"}</span>
         </div>
         <input className="input rw-search" style={{ marginTop: 0 }} placeholder={grp === "bom" ? "ค้นหาเบอร์ / รายละเอียด" : grp === "panel" ? "ค้นหาที่อยู่ / Unit" : grp === "mat" ? "ค้นหารหัสวัตถุดิบ / เบอร์พาร์ท" : "ค้นหาเบอร์ / รายละเอียด"} value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} aria-label="ค้นหาในตาราง" />
         {grp === "part" ? <label className="rt-bulk">ใบงาน <select className="select" value={partDest} onChange={(e) => { setPartDest(e.target.value); setLimit(PAGE); }} aria-label="กรองตามใบงาน"><option value="ALL">ทั้งหมด</option>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></label> : null}

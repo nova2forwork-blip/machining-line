@@ -83,7 +83,7 @@ export function PartGroupBar({ mode, groups, catOv = {}, bom, counts, filter = "
             </>
           )}
         </span>) : null}
-      {hint ? <span className="rw-muted small rt-mode-hint">{setting ? `ตั้งหมวดเอง: เบอร์ที่ขึ้นต้นด้วย "ตัวหน้า" ของหมวดไหนเข้าหมวดนั้นอัตโนมัติ (ตัวหน้ายาวสุดชนะ · * ชนะทุกตัว) · ไม่เข้าพวก = "${UNCAT}" รอจัดเอง (คอลัมน์ "หมวด" หรือค้นหา → ติ๊ก → ย้ายไปหมวด)` : "แยกตามกติกาเบอร์ · เบอร์ที่มี * = SITE ITEM"}</span> : null}
+      {hint && setting ? <span className="rw-muted small rt-mode-hint">{setting ? `ตั้งหมวดเอง: เบอร์ที่ขึ้นต้นด้วย "ตัวหน้า" ของหมวดไหนเข้าหมวดนั้นอัตโนมัติ (ตัวหน้ายาวสุดชนะ · * ชนะทุกตัว) · ไม่เข้าพวก = "${UNCAT}" รอจัดเอง (คอลัมน์ "หมวด" หรือค้นหา → ติ๊ก → ย้ายไปหมวด)` : "แยกตามกติกาเบอร์ · เบอร์ที่มี * = SITE ITEM"}</span> : null}
     </div>
   );
 }
