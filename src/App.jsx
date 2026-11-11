@@ -7166,14 +7166,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 "Click a machine chip or “▸ N machines” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
             )}
             {canEdit && sel.size ? (
-              <div className="pm-tbar" style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", position: "sticky", top: 0, zIndex: 5, background: "var(--surface)", padding: "8px 0", boxShadow: "0 6px 10px -8px rgba(0,0,0,.25)" }}>
-                <span className="pm-tbar-count">เลือก <b>{nc(sel.size)}</b> แถว</span>
-                {sheetOpts.length ? <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>ย้ายไปใบ <select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
-                  : <span className="muted" style={{ fontSize: 12 }}>{selKinds.size > 1 ? "ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด" : ""}</span>}
-                {canDelete ? <Btn variant="danger" size="sm" onClick={unreleaseSel} disabled={!!bulkBusy} title="ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้">ยกเลิกการปล่อย {nc(sel.size)} แถว</Btn>
-                  : <span className="muted" style={{ fontSize: 12 }}>ยกเลิกการปล่อย = แอดมิน</span>}
-                <Btn variant="ghost" size="sm" onClick={() => setSel(new Set())} disabled={!!bulkBusy}>✕ ล้างที่เลือก</Btn>
-                {bulkBusy ? <span className="muted" style={{ fontSize: 12 }}>{bulkBusy}</span> : null}
+              <div className="lot-bulk">
+                <span className="lot-bulk-n"><b>{nc(sel.size)}</b> {lang === "en" ? "selected" : "แถวที่เลือก"}</span>
+                <span className="lot-bulk-sep" aria-hidden="true" />
+                {sheetOpts.length ? <label className="lot-bulk-move"><span>{lang === "en" ? "Move to sheet" : "ย้ายไปใบ"}</span><select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
+                  : selKinds.size > 1 ? <span className="lot-bulk-hint">ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด</span> : null}
+                {canDelete ? <button type="button" className="lot-bulk-undo" onClick={unreleaseSel} disabled={!!bulkBusy} title="ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้">{lang === "en" ? "Undo release" : "ยกเลิกการปล่อย"}</button>
+                  : <span className="lot-bulk-hint">ยกเลิกการปล่อย = แอดมิน</span>}
+                {bulkBusy ? <span className="lot-bulk-hint">{bulkBusy}</span> : null}
+                <button type="button" className="lot-bulk-x" onClick={() => setSel(new Set())} disabled={!!bulkBusy} aria-label={lang === "en" ? "Clear selection" : "ล้างที่เลือก"} title={lang === "en" ? "Clear selection" : "ล้างที่เลือก"}>✕</button>
               </div>) : null}
             <DataTable id="lot-parts" columns={cols} rows={viewRows} rowKey={(r) => r.id}
               sort={sort} sortAccessors={sortAccessors} rowCtx={rctx} orderApiRef={colApi}

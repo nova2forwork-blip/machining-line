@@ -2745,6 +2745,7 @@ registerI18n({
     "แถวที่เลือกอยู่ในใบนี้อยู่แล้ว": "The selected rows are already on this sheet",
     "ยกเลิกการปล่อยไม่ได้": "Cannot undo release",
     "เลือก": "Selected",
+    "ล้างที่เลือก": "Clear selection",
     "แถว": "rows",
   },
   tpls: [
