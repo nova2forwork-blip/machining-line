@@ -112,8 +112,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     const e = usedIn.get(NC(code)); if (!e || !e.size) return <span className="rw-muted">—</span>;
     const list = [...e.entries()].sort((a, b) => ncmp(a[0], b[0]));
     const tip = list.map(([u, g]) => `${u} (${g.n} แผง) · ${nlen(Math.round(g.pcs * 100) / 100)} ชิ้น · อยู่ใน ${[...g.paths].join(" | ")}`).join("\n");
-    return <span className="rt-usedin" title={tip}>{list.slice(0, 1).map(([u, g]) => <span key={u} className="rt-usedchip rw-mono">{u}<small> ×{nlen(Math.round(g.pcs * 100) / 100)}</small></span>)}{list.length > 1 ? <small className="rt-usedmore"> +{list.length - 1}</small> : null}
-      {list.length > 1 ? <span className="rt-usedpop">{list.map(([u, g]) => <span key={u} className="rt-usedchip rw-mono">{u}<small> ×{nlen(Math.round(g.pcs * 100) / 100)}</small></span>)}</span> : null}</span>;
+    return <span className="rt-usedin" title={list.length > 1 ? undefined : tip}>{list.slice(0, 1).map(([u, g]) => <span key={u} className="rt-usedchip rw-mono">{u}<small> ×{nlen(Math.round(g.pcs * 100) / 100)}</small></span>)}{list.length > 1 ? <small className="rt-usedmore"> +{list.length - 1}</small> : null}
+      {list.length > 1 ? <span className="rt-usedpop">{list.map(([u, g]) => <span key={u} className="rt-usedline"><span className="rt-usedchip rw-mono">{u}<small> ×{nlen(Math.round(g.pcs * 100) / 100)}</small></span><small className="rw-muted">{g.n} แผง · อยู่ใน {[...g.paths].join(" | ")}</small></span>)}</span> : null}</span>;
   };
   // Auto / Setting ของ Total Part
   const setting = plan.partMode === "setting";
