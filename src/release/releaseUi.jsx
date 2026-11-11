@@ -151,8 +151,7 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   return (
     <span className="rt-matcur">
       {orig ? <><s className="rl-old rw-mono" title="ตามแบบ">{orig}</s> → </> : null}
-      <b className={`rw-mono ${orig ? "rl-new" : ""}`}>{cur || <span className="rw-muted">—</span>}</b>
-      {orig ? <> <Pill tone="mod" title={note || "เปลี่ยนวัสดุจากแบบ"}>เปลี่ยน</Pill></> : null}
+      <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? (note || "เปลี่ยนวัสดุจากแบบ") : undefined}>{cur || <span className="rw-muted">—</span>}</b>
       {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น)" onClick={start}>✎</button> : null}
       {orig && onReset ? <button type="button" className="rw-link rt-matbtn" title="กลับไปใช้ตามแบบ" onClick={onReset}>↺</button> : null}
       {orig && note ? <div className="rw-muted small">{note}</div> : null}
