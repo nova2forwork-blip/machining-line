@@ -1803,3 +1803,19 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .rp-ops-h { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 4px; }
 .rp-op { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 12px; border-radius: 999px; background: var(--surface-2, #f3f6f5); font-size: 12.5px; }
 .rp-op span { color: var(--muted); } .rp-op b { font-size: 14px; font-variant-numeric: tabular-nums; } .rp-op small { color: var(--muted); font-size: 11.5px; }
+
+/* ★ 2026-11-11 ผู้ใช้: "ออกแบบตัวนี้ใหม่" (แถวตัวกรองของรายงาน) — แคปซูล: ชื่อตัวกรองอยู่ในกรอบเดียวกับค่า · ไม่ยืดเต็มจอ · ที่กรองอยู่ = เขียว */
+@media (min-width: 641px) {
+  .rf-row-f { align-items: center; }
+  .rf-row-f .rf-lbl { padding-bottom: 0; }
+  .rf-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .rf-f { flex: 0 1 330px; min-width: 230px; flex-direction: row; align-items: center; gap: 0; height: 40px; padding: 0 6px 0 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2, #f3f6f5); transition: border-color .12s, background .12s, box-shadow .12s; }
+  .rf-f:hover { border-color: #c5d3cd; }
+  .rf-f:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-tint); }
+  .rf-f .rf-fl { flex: none; white-space: nowrap; font-size: 12px; font-weight: 700; padding-right: 10px; margin-right: 2px; border-right: 1px solid var(--border); line-height: 18px; }
+  .rf-f > :not(.rf-fl) { flex: 1 1 auto; min-width: 0; }
+  .rf-f .select, .rf-f .input { height: 36px; border: 0 !important; background-color: transparent !important; box-shadow: none !important; padding-left: 10px; font-size: 13.5px; border-radius: 999px; outline: none; }
+  .rf-f.on { border-color: var(--accent); background: var(--accent-tint); }
+  .rf-f.on .select, .rf-f.on .input { font-weight: 600; color: var(--accent-dk); }
+  .rf-clear { border-radius: 999px; border-color: transparent; background: none; }
+}
