@@ -1161,3 +1161,10 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-floorset { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid #d7e2de; background: #fafcfb; font-size: 13px; }
 .rt-floormx td, .rt-floormx th { text-align: right; }
 .rt-floormx td:nth-child(2), .rt-floormx th:nth-child(2) { text-align: left; }
+
+/* ★ 2026-11-11 แก้ในตาราง (แบบ B) */
+.rt-edwrap { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.rt-edin { width: 84px; text-align: right; font-weight: 700; }
+.rt-edin.chg { background: #eaf2ff; border-color: #2f62c9; box-shadow: 0 0 0 1px #2f62c9; }
+.rt-edin.bad { background: #fdecec; border-color: #c0392b; }
+.rt-edbar { background: #173a7a; }

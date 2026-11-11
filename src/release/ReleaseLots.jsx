@@ -118,6 +118,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const lotsRef = useRef(null);   // ★ 2026-11-04 ล็อตที่ปล่อยแล้ว ย้ายขึ้นไว้ใต้ KPI (เดิมอยู่ใต้ Total ต้องเลื่อนไกล)
   const [builder, setBuilder] = useState(openBuilder);
   const [preset, setPreset] = useState(null);   // เลือกจากตาราง Total แล้วกด "ปล่อยที่เลือก"
+  const [inlineInit, setInlineInit] = useState(null);   // ★ 2026-11-11 ที่แก้ค้างจาก "แก้ในตาราง" → เปิด Modify พร้อมรายการ
   const [modify, setModify] = useState(false);   // true = Modify (มีเลข M) · "add" = เพิ่มรายการใหม่เฉย ๆ (ไม่นับ Modify)
   // ★ 2026-10-26 ล็อตที่เปิด: เข้ามาครั้งแรก = ล็อตล่าสุดเปิดค้างไว้ · จำที่ผู้ใช้เปิด/ปิดไว้ต่อ Release (localStorage) · ปล่อยล็อตใหม่ = เปิดล็อตใหม่ให้
   const openKey = `mls-lot-open:${plan.id || plan.ro}`;
@@ -322,7 +323,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
       </div> : null}
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} madeOf={madeOf} onRowProgress={rowProgress} />
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} madeOf={madeOf} onRowProgress={rowProgress} onInlineModify={api.modifyRelease ? (init) => { setInlineInit(init); setModify(true); } : null} />
         </div>
       {sideHidden ? (
       <aside className="rl-side rl-side-mini">
@@ -443,8 +444,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
 
 
       {modify ? (
-        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => { setModify(false); setInboxFiles(null); }} addOnly={modify === "add"} initialFiles={inboxFiles}
-          onSaved={async (np, mod) => { setModify(false); if (onModified) await onModified(np, mod); }}
+        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => { setModify(false); setInboxFiles(null); setInlineInit(null); }} addOnly={modify === "add"} initialFiles={inboxFiles} init={modify === true ? inlineInit : null}
+          onSaved={async (np, mod) => { setModify(false); setInlineInit(null); if (onModified) await onModified(np, mod); }}
           onAdded={(np, n) => { setModify(false); if (onPlanChange) onPlanChange(np); }} />
       ) : null}
 
@@ -733,17 +734,17 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 // ══ Modify Release (แผงด้านขวา) ══
 //   แก้ยอดต้องใช้ / ยกเลิกเบอร์ / ยกเลิกที่อยู่ (แผงที่ยังไม่ปล่อย) / เพิ่มเบอร์ใหม่ — 1 ครั้ง = 1 เลข M (M-001 …)
 //   ของที่ปล่อยไปแล้วเกินยอดใหม่ → ลด/ยกเลิกในล็อตให้เอง (ล็อตล่าสุดก่อน) ผ่าน Modify เดิมของระบบ · จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง
-function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null }) {
+function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null }) {
   // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
   const [tab, setTab] = useState(addOnly ? "add" : "part");
   const [q, setQ] = useState("");
   const [onlyChg, setOnlyChg] = useState(false);
-  const [chg, setChg] = useUndoState({}, { label: "Modify: จำนวน / ยกเลิก" });
+  const [chg, setChg] = useUndoState(() => (init && init.chg) || {}, { label: "Modify: จำนวน / ยกเลิก" });
   useEffect(() => pushUndoGate(), []);                 // "part|CODE" → { type: "qty"|"cancel", qty }
   const [addrs, setAddrs] = useUndoState(() => new Set(), { label: "Modify: ยกเลิกที่อยู่" });  // ที่อยู่ที่จะยกเลิก
   const [adds, setAdds] = useUndoState([], { label: "Modify: เพิ่มเบอร์", coalesceMs: 800 });
   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify: วางแบบพาร์ท Rev ใหม่ที่ INV.CODE ต่างจากเดิม → เสนอเป็นรายการ "เปลี่ยนวัสดุ" (ติ๊กออกได้) · บันทึกเป็น matOv ของแผน
-  const [matChg, setMatChg] = useState([]);   // ★ เปลี่ยนจากแบบ: [{ id, code, kind:"part"|"sub", field:"mat"|"len", from, to, file, on }]
+  const [matChg, setMatChg] = useState(() => (init && init.matChg) || []);   // ★ เปลี่ยนจากแบบ: [{ id, code, kind:"part"|"sub", field:"mat"|"len", from, to, file, on }]
   const [found, setFound] = useState([]);     // ★ 2026-11-10 สรุปทุกอย่างที่เทียบเจอจากแบบที่วาง (โชว์รวมที่เดียว) [{ code, what, from, to, where, tone }]
   const [bscope, setBscope] = useState("sub");          // แก้ BOM ลูกของ: ซับ / แผง
   const [bowner, setBowner] = useState("");
