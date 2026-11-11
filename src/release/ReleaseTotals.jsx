@@ -276,7 +276,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                   onSave={setMatOv ? (v) => setMatOv(codes, v) : null} onReset={resetMatOv && ovd.length ? () => resetMatOv(ovd) : null} />; })()}
                 {!m.inv ? <div><span className="rl-cxq small">ไม่มี INV</span></div> : null}</td>
               <td className="rl-desc"><span>{m.d}</span></td>
-              <td className="r rw-num">{nf(m.stock)}{m.src === "code" ? <div><Pill tone="muted" title="ไม่มีใน BOM — อ่านความยาวจากรหัส INV">จากรหัส</Pill></div> : m.src === "default" ? <div><Pill tone="warn" title="ไม่รู้ความยาวเส้น — คิดที่ 6,000">ไม่ทราบ</Pill></div> : null}</td>
+              <td className="r rw-num"><span title={m.src === "code" ? "ไม่มีใน BOM — อ่านความยาวจากรหัส INV" : undefined}>{nf(m.stock)}</span>{m.src === "default" ? <div><Pill tone="warn" title="ไม่รู้ความยาวเส้น — คิดที่ 6,000">ไม่ทราบ</Pill></div> : null}</td>
               <td><button type="button" className="rt-uses" onClick={() => setOpenMat(open ? null : key)} aria-expanded={open}>{nf(m.parts.length)} เบอร์ · {nf(m.pcs)} ชิ้น {open ? "▴" : "▾"}</button>
                 {m.over ? <div><Pill tone="bad">ยาวกว่าเส้น {nf(m.over)} ชิ้น</Pill></div> : null}{m.noLen ? <div><Pill tone="warn">ไม่มีความยาว {nf(m.noLen)} ชิ้น</Pill></div> : null}</td>
               <td className="r rw-num">{nf(m.len / 1000, 1)}</td>
