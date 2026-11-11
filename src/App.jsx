@@ -6565,6 +6565,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const okRows = [], blocked = [];
     try {
       for (const r of selRows) {
+        // ★ 2026-11-11 ผู้ใช้: "เบอร์ที่เสร็จแล้ว ให้ยกเลิกปล่อยไม่ได้" → มีชิ้นเสร็จแล้ว = กันไว้ก่อนเลย (ไม่ต้องรอตรวจประวัติสแกน)
+        const dn = doneOfRow(r);
+        if (dn > 0) { blocked.push(`${r.part_master?.part_no} (เสร็จแล้ว ${nc(dn)} ชิ้น)`); continue; }
         const [units, recs] = await Promise.all([listRows("part_units", { filters: { release_id: r.id }, strict: true }), countReleaseStationRecords(r.id)]);
         const scanned = units.filter((u) => u.status !== "released").length;
         if (scanned > 0 || recs > 0) blocked.push(`${r.part_master?.part_no} (สแกนแล้ว ${nc(scanned)}${recs ? ` · บันทึกงาน ${nc(recs)}` : ""})`); else okRows.push(r);
@@ -6773,6 +6776,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   //    ให้ตรงกับการ์ด "เสร็จแล้ว (ภาพรวม)" ด้านบน · เดิมแถวอ่านเฉพาะ unitStats (สแกนออฟฟิศ)
   //    งานที่บันทึกจากหน้าเครื่อง (machine_records) จึงไม่ขึ้นในตาราง — โชว์ 0 ทั้งที่ยอดรวมเห็นแล้ว
   const rowProg = (r) => relProgress(r, unitStats, opProg);   // done = จำนวนจริงที่เสร็จ (รวมสแปร์)
+  const doneOfRow = (r) => { try { const p = rowProg(r); return Number(p.done ?? p.finished) || 0; } catch { return 0; } };
+  const selDone = selRows.filter((r) => doneOfRow(r) > 0);   // แถวที่เลือกซึ่งมีชิ้นเสร็จแล้ว → ยกเลิกการปล่อยไม่ได้
 
   // ── ตัวช่วยเรียงตาราง (ใช้ทั้งแสดงผลบนจอและ export Excel ให้ลำดับตรงกันเป๊ะ) ──
   // ความยาว material (หน้าเครื่อง) ต่อ release — รวมค่าที่ใช้จริง (ไม่ซ้ำ) เป็นข้อความ
@@ -7171,7 +7176,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 <span className="lot-bulk-sep" aria-hidden="true" />
                 {sheetOpts.length ? <label className="lot-bulk-move"><span>{lang === "en" ? "Move to sheet" : "ย้ายไปใบ"}</span><select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
                   : selKinds.size > 1 ? <span className="lot-bulk-hint">ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด</span> : null}
-                {canDelete ? <button type="button" className="lot-bulk-undo" onClick={unreleaseSel} disabled={!!bulkBusy} title="ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้">{lang === "en" ? "Undo release" : "ยกเลิกการปล่อย"}</button>
+                {canDelete ? <><button type="button" className="lot-bulk-undo" onClick={unreleaseSel} disabled={!!bulkBusy || (selDone.length > 0 && selDone.length === selRows.length)} title={selDone.length && selDone.length === selRows.length ? (lang === "en" ? "Finished parts cannot be un-released" : "เบอร์ที่เสร็จแล้ว ยกเลิกการปล่อยไม่ได้") : "ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้"}>{lang === "en" ? "Undo release" : "ยกเลิกการปล่อย"}</button>
+                  {selDone.length ? <span className="lot-bulk-hint">{lang === "en" ? `${nc(selDone.length)} finished — cannot be un-released` : `เสร็จแล้ว ${nc(selDone.length)} เบอร์ — ยกเลิกการปล่อยไม่ได้`}</span> : null}</>
                   : <span className="lot-bulk-hint">ยกเลิกการปล่อย = แอดมิน</span>}
                 {bulkBusy ? <span className="lot-bulk-hint">{bulkBusy}</span> : null}
                 <button type="button" className="lot-bulk-x" onClick={() => setSel(new Set())} disabled={!!bulkBusy} aria-label={lang === "en" ? "Clear selection" : "ล้างที่เลือก"} title={lang === "en" ? "Clear selection" : "ล้างที่เลือก"}>✕</button>
