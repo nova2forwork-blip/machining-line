@@ -7849,7 +7849,7 @@ function ReleasePage({ user, goTo }) {
           rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? setPlanView({ plan: g.plan, openBuilder: false }) : setViewGroup(g)) })}
           empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"ปล่อยงานใหม่\" เพื่อเริ่ม")}
           columns={[
-            { key: "lots", header: "ล็อต", cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; })} L={(th, en) => (getLang() === "en" ? en : th)} /> : null },
+            { key: "lots", header: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; })} L={(th, en) => (getLang() === "en" ? en : th)} /> : null },
             { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
             { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} left={planLeftAll} L={(th, en) => (getLang() === "en" ? en : th)} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
@@ -12357,7 +12357,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             }}
             rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? setPlanView({ plan: g.plan, openBuilder: false }) : setViewGroup(g)) })}
             columns={[
-              { key: "lots", header: "ล็อต", cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => togglePlan(g)} L={L} /> : null },
+              { key: "lots", header: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => togglePlan(g)} L={L} /> : null },
               { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
               { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} left={planLeft} L={L} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
               { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
