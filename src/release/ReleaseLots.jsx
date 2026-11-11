@@ -1335,7 +1335,7 @@ function ModCompare({ m, need }) {
           <tr key={x._k} className={c ? `rl-cmp-hit ${c.cancel ? "bad" : c.add ? "new" : "chg"}` : "rl-cmp-plain"}>
             <td className="rw-mono"><b className={c && c.cancel ? "rl-cx" : ""}>{x.code}</b>{x._sub ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
             <td className="rl-desc"><span>{x.d || descOf(x.code)}</span></td>
-            <td className="r rw-num">{c && c.cancel ? <><s className="rl-old">{nn(c.cancel.before)}</s> → <b className="rl-errtxt">ยกเลิก</b></> : c && c.qty ? <BA it={c.qty} /> : c && c.add ? <><span className="rw-muted">—</span> → <b className="rl-new">{nn(c.add.after)}</b></> : x.qty == null ? "—" : nf(x.qty)}</td>
+            <td className="r rw-num">{c && c.cancel ? <><s className="rl-old">{nn(c.cancel.before)}</s> → <b className="rl-errtxt">ยกเลิก</b></> : c && c.qty ? <BA it={c.qty} /> : c && c.add ? <b className="rl-new">{nn(c.add.after)}</b> : x.qty == null ? "—" : nf(x.qty)}</td>
             <td className="r rw-num">{c && c.len ? <BA it={c.len} fmt={(v) => (v == null || v === "" ? "—" : String(v))} /> : x.l == null ? "-" : nlen(x.l)}</td>
             <td className="rw-mono">{c && c.mat ? <BA it={c.mat} fmt={(v) => v || "—"} /> : x._sub ? "" : x.inv || x.m || "-"}</td>
             <td className="small">{c ? <b>{whatOf(c)}</b> : null}</td>
