@@ -35,7 +35,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onSheetMoved = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onSheetMoved = null, onOpenPart = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   // ★ 2026-11-10 ปล่อยผิดใบ (งานพับไปอยู่ MACHINING PART) → ย้ายหมวดของเบอร์ที่ปล่อยแล้ว: แก้ "ใบ: …" ในแถวที่ปล่อย + หมวดในแผน (QR เดิมใช้ต่อ)
   async function moveReleased(codes, cat) {
@@ -73,6 +73,15 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     window.addEventListener("rl-open-mod", on); return () => window.removeEventListener("rl-open-mod", on);
   }, []);
   const [progOpen, setProgOpen] = useState(false);   // ★ 2026-11-11 ป็อปอัพ "ทำไปแค่ไหนแล้ว" ทั้ง Release (แบบที่ 3)
+  // ★ 2026-11-11 กดแถวในตาราง "ของในใบ" → ความคืบหน้าของเบอร์นั้น: ปล่อยในล็อตเดียว = ป็อปอัพแยกขั้นตอน (ตัวเดียวกับหน้าล็อต) · หลายล็อต = ป็อปอัพทั้งใบ กรองเฉพาะเบอร์นี้
+  const [rowMsg, setRowMsg] = useState("");
+  useEffect(() => { if (!rowMsg) return undefined; const t = setTimeout(() => setRowMsg(""), 3500); return () => clearTimeout(t); }, [rowMsg]);
+  const rowProgress = (code, kind) => {
+    const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
+    if (!hit.length) { setRowMsg(`${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
+    if (hit.length === 1 && onOpenPart && onOpenPart(hit[0].id)) return;
+    setProgOpen(String(code));
+  };
   const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
   const [lotsAll, setLotsAll] = useState(false);
   // ★ 2026-11-10 แถบขวาพับได้: "auto" = พับเองตอนดูแท็บ BOM (ตารางกว้าง) · "show" / "hide" = ผู้ใช้เลือก (จำไว้)
@@ -292,7 +301,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           <div className="rw-empty"><Icon name="box" size={26} /><b>ยังไม่ได้ปล่อยล็อต</b><span>กด "ปล่อยล็อตใหม่" แล้วเลือกพาร์ท / ซับ / แผงที่จะปล่อยรอบนี้ และใบงานที่ส่งไป</span><button type="button" className="btn btn-accent btn-sm" onClick={() => setBuilder(true)}><Icon name="plus" size={14} /> ปล่อยล็อตใหม่</button></div>
         )}
       </div> : null}
-      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} madeOf={madeOf} />
+      <TotalsSection plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} onPlanChange={onPlanChange} onRelease={(pick, done) => { setPreset({ ...pick, done }); setBuilder(true); }} onMoveReleased={api.moveReleasedSheet && onPlanChange ? moveReleased : null} onTab={setTab} madeOf={madeOf} onRowProgress={rowProgress} />
         </div>
       {sideHidden ? (
       <aside className="rl-side rl-side-mini">
@@ -351,7 +360,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       </aside>
       )}
       </div>
-      {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
+      {rowMsg ? <div className="rl-rowmsg" role="status">{rowMsg}</div> : null}
+      {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} initQ={typeof progOpen === "string" ? progOpen : ""} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
         <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
@@ -1417,7 +1427,7 @@ function ModEditor({ m, need, doneOf = () => 0, onCancel, onSave }) {
 
 // ★ 2026-11-11 ป็อปอัพความคืบหน้าทั้ง Release: การ์ดสรุป (ทั้งใบ / ตามใบงาน / ตามล็อต) + ตารางรายการ เรียงจากที่ทำได้น้อยสุด
 //   ผลิตแล้ว = ยอดจากหน้าเครื่อง (prod: release_id → ชิ้น) · ไม่นับแถวที่ Modify ยกเลิก · เบอร์เดียวกันหลายล็อตรวมกัน
-function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
+function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, initQ = "" }) {
   const [big, setBig] = useState(false);   // ขยายเต็มจอ
   // ★ 2026-11-11 ลากขอบซ้าย / ขวา / ล่าง / มุมล่าง เพื่อย่อ-ขยาย (ป็อปอัพอยู่กลางจอ → ลากขอบข้าง = กว้างขึ้นสองฝั่ง) · จำขนาดไว้
   const [size, setSize] = useState(() => { try { return JSON.parse(localStorage.getItem("rl-pop-size") || "null"); } catch { return null; } });
@@ -1434,8 +1444,8 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); document.body.style.userSelect = ""; try { localStorage.setItem("rl-pop-size", JSON.stringify(last)); } catch { /* ignore */ } };
     document.body.style.userSelect = "none"; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
-  const [flt, setFlt] = useState("left");
-  const [q, setQ] = useState("");
+  const [flt, setFlt] = useState(initQ ? "all" : "left");
+  const [q, setQ] = useState(initQ);
   const data = useMemo(() => {
     const items = new Map(), sheets = new Map(), lots = [];
     for (const L of rel.lots) {

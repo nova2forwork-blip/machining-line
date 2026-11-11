@@ -7476,6 +7476,7 @@ function useReleasePlans(projectId = null) {
 function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null }) {
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
+  const [partView, setPartView] = useState(null);   // ★ 2026-11-11 กดแถวในใบหลัก → ความคืบหน้าแยกขั้นตอน (ป็อปอัพเดียวกับหน้าล็อต)
   const applyPlan = (p) => {
     setView((v) => (v ? { ...v, plan: p } : v));
     setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
@@ -7492,6 +7493,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
+        onOpenPart={(id) => { const r = (releases || []).find((x) => String(x.id) === String(id)); if (!r) return false; setPartView(r); return true; }}
         onOpenLot={onOpenGroup ? (lotNo) => {
           // ★ 2026-11-04 เปิดหน้าล็อต (ReleaseGroupDetail) จากหน้าใบหลัก — กด "กลับ" แล้วกลับมาที่ใบหลัก
           const k = String(lotNo || "").trim().toUpperCase().replace(/\s+/g, "");
@@ -7522,6 +7524,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           mlsToast(rows.length ? `ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง${hw ? ` · เบิกอุปกรณ์ ${nc(hw)} รายการ (ใบเบิก)` : ""}` : `บันทึกใบเบิกอุปกรณ์ ${lotNo} แล้ว — ${nc(hw)} รายการ (ไม่มี QR)`, "success");
           await onReload();
         }} />
+      {partView ? <PartProgressModal release={partView} user={user} goTo={goTo} onClose={() => setPartView(null)} /> : null}
     </Suspense>
   );
 }

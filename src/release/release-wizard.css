@@ -1104,3 +1104,14 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-grp-chip.tab.on > small { background: rgba(255,255,255,.22); color: #fff; }
 .rt-grp-chip.tab.uncat > small { background: #fdebc8; color: #8a5a00; }
 .rt-grp-chip.tab.uncat.on > small { background: rgba(255,255,255,.25); color: #fff; }
+
+/* ★ 2026-11-11 กดแถวดูความคืบหน้า */
+.rl-rowmsg { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 90; background: #1f2937; color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.rt-allparts tbody tr[title]:hover > td, .rt-t tbody tr[title]:hover > td { box-shadow: inset 0 0 0 9999px rgba(26,154,108,.05); }
+/* ★ 2026-11-11 ผู้ใช้: "เพิ่มกรอบให้ใหญ่ขึ้นอีก" — เม็ดหมวด + สวิตช์ Auto/Setting สูงขึ้น ตัวใหญ่ขึ้น */
+.rt-grp-chip.tab { padding: 6px 8px 6px 16px; gap: 9px; font-size: 13.5px; min-height: 36px; }
+.rt-grp-chip.tab > b, .rt-grp-chip.tab .rt-grp-name { font-size: 13.5px; }
+.rt-grp-chip.tab > small { min-width: 26px; padding: 2px 9px; font-size: 12px; }
+.rt-mode-seg { padding: 4px; }
+.rt-mode-seg .rt-mode-btn { padding: 6px 18px; font-size: 13.5px; }
+.rt-mode-sep { height: 28px; }
