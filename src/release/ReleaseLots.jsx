@@ -365,7 +365,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
         <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
-        <div className="rl-dr-head"><div className="rl-dr-title"><h2>ประวัติ Modify · {plan.ro}</h2></div><button type="button" className="rl-x" onClick={() => setModsOpen(false)} aria-label="ปิด">×</button></div>
+        <div className="rl-dr-head"><div className="rl-dr-title"><h2>ประวัติ Modify · {plan.ro}</h2><span className="rw-muted small">แถวที่มีสี = เบอร์ที่ Modify แก้ · ค่าเดิมขีดฆ่า → ค่าใหม่</span></div><button type="button" className="rl-x" onClick={() => setModsOpen(false)} aria-label="ปิด">×</button></div>
         <div className="rl-modsdr-body">
           <div className="rw-sec-head"><div><p>จำนวนเดิมขีดฆ่า → จำนวนใหม่ · เบอร์/ที่อยู่ที่ยกเลิกเป็น<b className="rl-cx">สีแดง</b> · ของที่ปล่อยแล้วแก้ในล็อตด้วย (QR ที่ยกเลิกเก็บเป็นหลักฐาน)</p></div></div>
           <div className="rl-mods">
@@ -1305,11 +1305,49 @@ function ModCompare({ m, need }) {
       lots: (it.lots || []).map((l) => `${l.lot}: ${l.cancel ? `${nf(l.before)} → ยกเลิก` : `${nf(l.before)} → ${nf(l.after)}`}`).join(" · "), derived: it.derived,
       tone: it.type === "cancel" || it.type === "addr" ? "bad" : it.type === "add" ? "new" : "chg" })),
   ];
+  // ★ 2026-11-11 ผู้ใช้: "ให้ไฮไลต์เบอร์ที่แก้ จะได้ดูง่าย ทำเป็น popup เหมือน M-000" → ตารางทุกเบอร์ในใบ (เหมือนป็อปอัพต้นฉบับ) · แถวที่ M นี้แตะ = ไฮไลต์ + ค่าเดิมขีดฆ่า → ค่าใหม่
+  const [onlyChg, setOnlyChg] = useState(false);
+  const chg = new Map();   // "p|CODE" / "s|CODE" → { qty, mat, len, add, cancel, lots }
+  for (const it of m.items) {
+    if (it.kind === "panel" || it.kind === "hw" || it.type === "addr") continue;
+    const k = (it.kind === "sub" ? "s|" : "p|") + NC(it.code); const c = chg.get(k) || chg.set(k, { lots: [] }).get(k);
+    if (it.type === "add") c.add = it; else if (it.type === "cancel") c.cancel = it; else if (it.type === "qty") c.qty = it; else if (it.type === "mat") c.mat = it; else if (it.type === "len") c.len = it;
+    for (const l of it.lots || []) c.lots.push(`${l.lot}: ${l.cancel ? `${nf(l.before)} → ยกเลิก` : `${nf(l.before)} → ${nf(l.after)}`}`);
+  }
+  const all = [...need.parts.map((x) => ({ ...x, _k: "p|" + NC(x.code), _sub: false })), ...need.subs.map((x) => ({ ...x, _k: "s|" + NC(x.code), _sub: true }))];
+  const seen = new Set(all.map((x) => x._k));
+  for (const [k, c] of chg) if (!seen.has(k)) { const it = c.add || c.cancel || c.qty || c.mat || c.len; all.push({ code: it.code, d: "", qty: null, l: null, _k: k, _sub: k[0] === "s", _gone: true }); }
+  const full = all.map((x) => ({ x, c: chg.get(x._k) || null })).sort((a, b) => (a.x._sub ? 1 : 0) - (b.x._sub ? 1 : 0) || ncmp(a.x.code, b.x.code));
+  const shown = onlyChg ? full.filter((r) => r.c) : full;
+  const nChg = full.filter((r) => r.c).length;
+  const others = rows.filter((r) => !chg.has((r.where === "ซับ" ? "s|" : "p|") + NC(r.code)) || (r.where !== "ซับ" && r.where !== "พาร์ท"));
+  const BA = ({ it, fmt = nn }) => <><s className="rl-old">{fmt(it.before)}</s> → <b className="rl-new">{fmt(it.after)}</b></>;
+  const whatOf = (c) => [c.add && "เพิ่มเบอร์ใหม่", c.cancel && "ยกเลิกเบอร์", c.qty && "จำนวน", c.mat && "วัสดุ (INV)", c.len && "ความยาว"].filter(Boolean).join(" · ");
   return (
     <div className="rl-cmp">
+      <div className="rl-cmp-bar">
+        <span><b>{nf(nChg)}</b> เบอร์ที่ {m.ver} แก้ · จาก {nf(full.length)} เบอร์ในใบ</span>
+        <span className="rl-cmp-seg"><button type="button" className={!onlyChg ? "on" : ""} onClick={() => setOnlyChg(false)}>ทุกเบอร์</button><button type="button" className={onlyChg ? "on" : ""} onClick={() => setOnlyChg(true)}>เฉพาะที่แก้</button></span>
+      </div>
+      <table className="rl-sc-table rl-cmp-t rl-cmp-full">
+        <thead><tr><th>PART NO.</th><th>รายละเอียด</th><th className="r">จำนวน</th><th className="r">ความยาว/ชิ้น (มม.)</th><th>INV CODE</th><th>{m.ver} แก้อะไร</th><th>ล็อตที่ปล่อยแล้ว</th></tr></thead>
+        <tbody>{shown.map(({ x, c }) => (
+          <tr key={x._k} className={c ? `rl-cmp-hit ${c.cancel ? "bad" : c.add ? "new" : "chg"}` : "rl-cmp-plain"}>
+            <td className="rw-mono"><b className={c && c.cancel ? "rl-cx" : ""}>{x.code}</b>{x._sub ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
+            <td className="rl-desc"><span>{x.d || descOf(x.code)}</span></td>
+            <td className="r rw-num">{c && c.cancel ? <><s className="rl-old">{nn(c.cancel.before)}</s> → <b className="rl-errtxt">ยกเลิก</b></> : c && c.qty ? <BA it={c.qty} /> : c && c.add ? <><span className="rw-muted">—</span> → <b className="rl-new">{nn(c.add.after)}</b></> : x.qty == null ? "—" : nf(x.qty)}</td>
+            <td className="r rw-num">{c && c.len ? <BA it={c.len} fmt={(v) => (v == null || v === "" ? "—" : String(v))} /> : x.l == null ? "-" : nlen(x.l)}</td>
+            <td className="rw-mono">{c && c.mat ? <BA it={c.mat} fmt={(v) => v || "—"} /> : x._sub ? "" : x.inv || x.m || "-"}</td>
+            <td className="small">{c ? <b>{whatOf(c)}</b> : null}</td>
+            <td className="small rw-muted">{c && c.lots.length ? c.lots.join(" · ") : c ? "—" : ""}</td>
+          </tr>))}
+        </tbody>
+      </table>
+      {others.length ? <>
+      <div className="rl-cmp-sub">แก้ BOM / ที่อยู่แผง / อุปกรณ์</div>
       <table className="rl-sc-table rl-cmp-t">
         <thead><tr><th>เบอร์</th><th>รายละเอียด</th><th>อยู่ที่</th><th>แก้อะไร</th><th className="r">ก่อน</th><th /><th>หลัง</th><th>ล็อตที่ปล่อยแล้ว</th></tr></thead>
-        <tbody>{rows.map((r, i) => (
+        <tbody>{others.map((r, i) => (
           <tr key={i} className={`rl-cmp-${r.tone}`}>
             <td className="rw-mono"><b>{r.code}</b>{r.derived ? <span className="rw-muted small"> (ผลจากแก้ BOM)</span> : null}</td>
             <td className="rl-desc"><span>{descOf(r.code)}</span></td>
@@ -1321,7 +1359,7 @@ function ModCompare({ m, need }) {
             <td className="small rw-muted">{r.lots || "—"}</td>
           </tr>))}
         </tbody>
-      </table>
+      </table></> : null}
       <div className="rw-muted small">{m.sheet ? `ใบ Modify: ${m.sheet.roRaw || m.sheet.file || ""}${m.sheet.issuedBy ? ` · ออกโดย ${m.sheet.issuedBy}` : ""} · ` : ""}เขียว = เพิ่ม · ม่วง = แก้ · แดง = ยกเลิก</div>
     </div>
   );

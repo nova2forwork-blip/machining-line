@@ -1115,3 +1115,23 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-mode-seg { padding: 4px; }
 .rt-mode-seg .rt-mode-btn { padding: 6px 18px; font-size: 13.5px; }
 .rt-mode-sep { height: 28px; }
+
+/* ★ 2026-11-11 ประวัติ Modify = ป็อปอัพกลางจอ (เดิมลิ้นชักขวา) + ตารางทุกเบอร์ ไฮไลต์แถวที่แก้ */
+.rl-drawer.rl-modsdr { top: 5vh; bottom: auto; left: 0; right: 0; margin: 0 auto; width: min(1240px, calc(100vw - 32px)); max-height: 90vh; border: 0; border-radius: 20px; overflow: hidden; animation: none; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+@media (max-width: 900px) { .rl-drawer.rl-modsdr { top: 0; width: 100vw; max-height: 100vh; border-radius: 0; } }
+.rl-modsdr .rl-dr-title { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; flex: 1; }
+.rl-modsdr-body .rw-sec-head p { max-width: none; }
+.rl-cmp-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 4px 0 8px; font-size: 13px; }
+.rl-cmp-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #eef3f1; border: 1px solid #dfe8e4; }
+.rl-cmp-seg button { border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 700; color: #5a6f68; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+.rl-cmp-seg button.on { background: #fff; color: #5b3ce0; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.rl-cmp-full { width: 100%; }
+.rl-cmp-full tbody tr.rl-cmp-plain td { color: #6b7a75; }
+.rl-cmp-full tbody tr.rl-cmp-plain td b { font-weight: 600; color: #48605a; }
+.rl-cmp-full tbody tr.rl-cmp-hit td { background: #f1ecff; color: var(--text); }
+.rl-cmp-full tbody tr.rl-cmp-hit td:first-child { box-shadow: inset 4px 0 0 #8f74ff; }
+.rl-cmp-full tbody tr.rl-cmp-hit.new td { background: #e6f7ee; }
+.rl-cmp-full tbody tr.rl-cmp-hit.new td:first-child { box-shadow: inset 4px 0 0 #1f9d74; }
+.rl-cmp-full tbody tr.rl-cmp-hit.bad td { background: #fdeaea; }
+.rl-cmp-full tbody tr.rl-cmp-hit.bad td:first-child { box-shadow: inset 4px 0 0 #b91c1c; }
+.rl-cmp-sub { margin: 14px 0 4px; font-size: 12.5px; font-weight: 700; color: #48605a; }
