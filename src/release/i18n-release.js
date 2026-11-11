@@ -1809,6 +1809,7 @@ registerI18n({
     "ยังไม่ได้แก้อะไร": "Nothing changed yet",
     "บันทึกการแก้": "Save changes",
     "เหตุผล *": "Reason *",
+    "พาร์ทเหล่านี้ไม่มีรหัสวัตถุดิบ (INV.CODE) — ใส่ได้ที่ Total Part ช่อง MATERIAL (✎) หรือแก้ในคลังซับ/พาร์ท": "These parts have no material code (INV.CODE) — set it in Total Part, MATERIAL column (✎), or in the sub/part library",
     "ไม่ใส่": "None",
     "แบบเต็ม": "Full",
     "แบบสั้น": "Short",
