@@ -6272,17 +6272,21 @@ function PmChips({ ms, qty, open, onToggle, lang }) {
   const en = lang === "en";
   if (!ms.length) return <span className="pm-none">{en ? "no machine yet" : "ยังไม่มีเครื่อง"}</span>;
   const stop = (e) => { e.stopPropagation(); onToggle(); };
+  // ★ 2026-11-11 ผู้ใช้: "ถ้าแสดงเครื่องครบ ไม่ต้องมี 2 เครื่อง · ให้แสดงเครื่องที่เหลือที่ไม่ได้แสดง" → โชว์ชิปไม่เกิน 3 เครื่อง · ที่เหลือ = "+n เครื่อง"
+  const PM_MAX = 3;
+  const shown = ms.length > PM_MAX ? ms.slice(0, PM_MAX) : ms;
+  const rest = ms.slice(shown.length);
   return (
     <>
-      {ms.map((m) => (
+      {shown.map((m) => (
         <button type="button" key={m.machine_id || m.code} className={`pm-mchip ${m.st}`} onClick={stop}
           title={`${m.code || "?"} · ${PM_ST[m.st]} · ${fmtNum(m.done)}/${fmtNum(qty)}`}>
           <i />{m.code || "?"}
         </button>
       ))}
       <button type="button" className={"pm-toggle" + (open ? " open" : "")} onClick={stop}
-        aria-expanded={open} title={en ? "Show / hide each machine" : "เปิด/ปิด รายละเอียดแต่ละเครื่อง"}>
-        <span className="ar">▶</span>{open ? (en ? "hide" : "ซ่อน") : null}{/* ★ 2026-11-11 ชิปเครื่องโชว์ครบทุกเครื่องอยู่แล้ว → ไม่ต้องบอก "N เครื่อง" ซ้ำ */}
+        aria-expanded={open} title={(rest.length ? rest.map((m) => m.code || "?").join(", ") + " · " : "") + (en ? "Show / hide each machine" : "เปิด/ปิด รายละเอียดแต่ละเครื่อง")}>
+        <span className="ar">▶</span>{open ? (en ? "hide" : "ซ่อน") : rest.length ? (en ? `+${rest.length} more` : `+${rest.length} เครื่อง`) : null}
       </button>
     </>
   );
