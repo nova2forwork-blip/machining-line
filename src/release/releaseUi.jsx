@@ -161,3 +161,7 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
       {orig && note ? <div className="rw-muted small">{note}</div> : null}
     </span>);
 }
+
+// ★ 2026-11-11 ผู้ใช้: "และให้กดไปได้ด้วย" → ป้ายเลขล็อต (P-007.1) กดแล้วเปิดล็อตนั้น — ส่ง event ให้หน้า Release เปิดเอง (แบบเดียวกับ ModTag)
+export const LotTag = ({ no }) => <button type="button" className="rw-pill info rl-lottag" title={`ปล่อยแล้ว — กดเปิดล็อต ${no}`}
+  onClick={(e) => { e.stopPropagation(); try { window.dispatchEvent(new CustomEvent("rl-open-lot", { detail: String(no) })); } catch { /* ignore */ } }}>{no} ›</button>;

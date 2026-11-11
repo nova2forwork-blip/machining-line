@@ -8,7 +8,7 @@ import "./i18n-release.js";
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf } from "./releaseCore.js";
-import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit } from "./releaseUi.jsx";
+import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
@@ -331,7 +331,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             <td className="rw-mono"><b className={cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : null}</td>
             <td className="rw-mono">{u.unit}</td>
             <td>{findKey(plan.bom.panels, u.unit) ? <Pill tone="ok">✓</Pill> : <Pill tone="warn">ไม่มี BOM</Pill>}</td>
-            <td>{lot ? <Pill tone="info" title="ปล่อยแล้ว">{lot}</Pill> : cx ? <span className="rl-cxq small">ยกเลิกแล้ว</span> : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
+            <td>{lot ? <LotTag no={lot} /> : cx ? <span className="rl-cxq small">ยกเลิกแล้ว</span> : <span className="rw-muted small">ยังไม่ปล่อย</span>}</td>
           </tr>); })}</tbody>
       </table>);
   }

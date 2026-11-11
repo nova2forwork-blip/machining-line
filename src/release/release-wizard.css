@@ -1084,3 +1084,6 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 /* ★ 2026-11-11 ป็อป "ใช้ในแผง": บรรทัดละแผง + รายละเอียด (แทน tooltip ของเบราว์เซอร์ที่ซ้อนทับ) */
 .rt-usedin:hover .rt-usedpop, .rt-usedin:focus-within .rt-usedpop { flex-direction: column; flex-wrap: nowrap; max-width: 460px; }
 .rt-usedline { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 400; }
+
+.rl-lottag { cursor: pointer; font-family: inherit; }
+.rl-lottag:hover, .rl-lottag:focus-visible { filter: brightness(.95); text-decoration: underline; outline: none; }

@@ -96,6 +96,11 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [open, setOpenRaw] = useState(() => (onOpenLot ? null : (() => { try { const v = localStorage.getItem(openKey); if (v !== null) return v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo; } catch { /* ignore */ } return null; })()));
   const [lotQ, setLotQ] = useState("");   // ★ ค้นหาในล็อตที่เปิด (เบอร์ / รายละเอียด / ที่อยู่ / INV)
   const setOpen = (v) => { setOpenRaw(v); setLotQ(""); try { localStorage.setItem(openKey, v || ""); } catch { /* ignore */ } };
+  // ★ 2026-11-11 ป้ายเลขล็อตในตารางแผง (LotTag) กดแล้ว → เปิดล็อตนั้น (หน้าล็อต ถ้ามี · ไม่มี = กางในหน้านี้)
+  useEffect(() => {
+    const on = (e) => { const no = String(e.detail || ""); if (!no) return; const L = rel.lots.find((x) => x.no === no); if (onOpenLot && !(L && L.hwOnly)) onOpenLot(no); else setOpen(no); };
+    window.addEventListener("rl-open-lot", on); return () => window.removeEventListener("rl-open-lot", on);
+  });
   const nLotsRef = useRef(rel.lots.length);
   useEffect(() => {
     const prev = nLotsRef.current; nLotsRef.current = rel.lots.length;
