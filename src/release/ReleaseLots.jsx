@@ -800,13 +800,17 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const lotTouched = [...ops.lotOps.entries()].map(([lot, list]) => ({ lot, n: list.length, qr: list.reduce((s, o) => s + (o.type === "cancel" ? o.before - o.after : o.n), 0) }));
   const needAdmin = ops.lotOps.size > 0 && user && user.role && user.role !== "admin";
   const matOn = matChg.filter((x) => x.on);
+  const isMatRow = (f) => f.what === "วัสดุ (INV)" || f.what === "ความยาว" || f.what === "ความยาวซับ";
+  const askRow = (f) => !!f.act || (isMatRow(f) && matChg.some((x) => (x.id || `${NC(x.code)}|${x.field || "mat"}`) === `${NC(f.code)}|${f.what === "วัสดุ (INV)" ? "mat" : "len"}`));
+  const undecided = addOnly ? 0 : found.filter((f) => askRow(f) && !f.dec).length;
   const nChange = realChanges.length + addrs.size + adds.length + edits.length + matOn.length;
   const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
   const blockers = addOnly ? [
     !adds.length && "ยังไม่ได้เพิ่มอะไร",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
   ].filter(Boolean) : [
-    !nChange && "ยังไม่ได้แก้อะไร",
+    undecided > 0 && `ยังไม่ได้เลือก ${undecided} จุดในตาราง "เทียบกับแบบ" (ใช้ตามแบบ / คงเดิม)`,
+    !nChange && !undecided && "ยังไม่ได้แก้อะไร",
     !reason.trim() && "ใส่เหตุผล (เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B)",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
     verErr,
@@ -935,12 +939,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         items.forEach((it, idx) => {
           if (it[4] === "ยกเลิก") return; const c = NC(it[1]); seen.add(c); const k = `${scope}|${ok}|${idx}`; const e = pdfQ.get(c);
           const where = `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`;
-          if (!e) { bChg[k] = { type: "cancel" }; nc++; foundL.push({ code: it[1], what: "ลูกถูกเอาออก", from: `${nf(Number(it[2]))}/ชุด`, to: "ยกเลิก", where, tone: "bad" }); }
-          else if (Math.abs(e.qty - Number(it[2])) > 1e-9) { bChg[k] = { type: "qty", qty: String(e.qty) }; nq++; foundL.push({ code: it[1], what: "จำนวนลูก/ชุด", from: nf(Number(it[2]), 2), to: nf(e.qty, 2), where, tone: "chg" }); }
+          if (!e) { nc++; foundL.push({ act: { t: "bchg", k, v: { type: "cancel" } }, code: it[1], what: "ลูกถูกเอาออก", from: `${nf(Number(it[2]))}/ชุด`, to: "ยกเลิก", where, tone: "bad" }); }
+          else if (Math.abs(e.qty - Number(it[2])) > 1e-9) { nq++; foundL.push({ act: { t: "bchg", k, v: { type: "qty", qty: String(e.qty) } }, code: it[1], what: "จำนวนลูก/ชุด", from: nf(Number(it[2]), 2), to: nf(e.qty, 2), where, tone: "chg" }); }
         });
-        for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { bAdds.push({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; foundL.push({ code: e.code, what: "ลูกใหม่", from: "—", to: `${nf(e.qty, 2)}/ชุด`, where: `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`, tone: "new" }); }
+        for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { const na1 = ({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; foundL.push({ act: { t: "badd", a: na1 }, code: e.code, what: "ลูกใหม่", from: "—", to: `${nf(e.qty, 2)}/ชุด`, where: `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`, tone: "new" }); }
         // ความยาวซับตามหัวกระดาษ
-        if (scope === "sub") { const cs = need.subs.find((x) => NC(x.code) === NC(ok)); const Ls = parseFloat(d.title?.LENGTH); if (cs && Number.isFinite(Ls) && Ls > 0 && (cs.l == null || Math.abs(Ls - Number(cs.l)) > 0.05)) { const ent = { id: `${NC(ok)}|len`, code: ok, kind: "sub", field: "len", from: cs.l ?? "—", to: Ls, file: d.file, on: true }; setMatChg((m) => [...m.filter((x) => x.id !== ent.id), ent]); foundL.push({ code: ok, what: "ความยาวซับ", from: cs.l ?? "—", to: Ls, where: "ซับ", tone: "chg" }); } }
+        if (scope === "sub") { const cs = need.subs.find((x) => NC(x.code) === NC(ok)); const Ls = parseFloat(d.title?.LENGTH); if (cs && Number.isFinite(Ls) && Ls > 0 && (cs.l == null || Math.abs(Ls - Number(cs.l)) > 0.05)) { const ent = { id: `${NC(ok)}|len`, code: ok, kind: "sub", field: "len", from: cs.l ?? "—", to: Ls, file: d.file, on: false }; setMatChg((m) => [...m.filter((x) => x.id !== ent.id), ent]); foundL.push({ code: ok, what: "ความยาวซับ", from: cs.l ?? "—", to: Ls, where: "ซับ", tone: "chg" }); } }
         const sum = [nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน";
         drops[NC(ok)] = sum;
         notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${sum}`);
@@ -981,11 +985,11 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           if (got.length) {
             // ★ 2026-11-11 ผู้ใช้: "งานจริงความยาวไม่เปลี่ยน เปลี่ยนแค่ MATERIAL" → ความยาวที่ต่างจากในใบ = ไม่ติ๊กให้เอง (ต้องติ๊กเองถ้าจะเปลี่ยนจริง) · วัสดุยังติ๊กให้เหมือนเดิม
             //   เดิมติ๊กให้ทั้งคู่ → วางแบบเพื่อเปลี่ยนวัสดุ แล้วความยาวในใบถูกแก้ตามหัวกระดาษไปด้วยโดยไม่ตั้งใจ (74.6 → 75)
-            const ents = got.map((g) => ({ id: `${NC(cur.code)}|${g.field}`, code: cur.code, kind: d.kind, file: d.file, on: true, ...g }));   // ★ 2026-11-11 (รอบ 2) ผู้ใช้เลือก "ใช้ความยาวจากช่อง A (มม.)" → ความยาวตามแบบติ๊กให้เหมือนวัสดุ · ติ๊กออกได้ถ้าไม่เอา
+            const ents = got.map((g) => ({ id: `${NC(cur.code)}|${g.field}`, code: cur.code, kind: d.kind, file: d.file, on: false, ...g }));   // ★ 2026-11-11 (รอบ 2) ผู้ใช้เลือก "ใช้ความยาวจากช่อง A (มม.)" → ความยาวตามแบบติ๊กให้เหมือนวัสดุ · ติ๊กออกได้ถ้าไม่เอา
             setMatChg((m) => [...m.filter((x) => !ents.some((y) => y.id === (x.id || `${NC(x.code)}|${x.field || "mat"}`))), ...ents]);
             got.forEach((g) => foundL.push({ code: cur.code, what: g.field === "len" ? "ความยาว" : "วัสดุ (INV)", from: g.from, to: g.to, where: d.kind === "sub" ? "ซับ" : "พาร์ท", tone: "chg" }));
             drops[NC(d.code)] = got.map((g) => (g.field === "len" ? `ยาว → ${g.to}` : `วัสดุ → ${g.to}`)).join(" · ");
-            notes.push(`${d.code}: ${got.map((g) => `${g.field === "len" ? "ความยาว" : "วัสดุ"} ${g.from} → ${g.to}`).join(" · ")} (ติ๊กออกได้ในตาราง "เทียบกับแบบ")`); continue;
+            notes.push(`${d.code}: ${got.map((g) => `${g.field === "len" ? "ความยาว" : "วัสดุ"} ${g.from} → ${g.to}`).join(" · ")} (เลือก ใช้ตามแบบ / คงเดิม ในตาราง "เทียบกับแบบ")`); continue;
           }
           drops[NC(d.code)] = "ตรงเดิม"; foundL.push({ code: d.code, what: "ตรงกับใบเดิม", from: "", to: "", where: d.kind === "sub" ? "ซับ" : "พาร์ท", tone: "same" });
           notes.push(`${d.code}: ตรงกับใบเดิม (ความยาว / วัสดุไม่เปลี่ยน)`); continue;
@@ -1000,7 +1004,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       } else if (scope && !ok) { drops[NC(d.code)] = `${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`; notes.push(`${d.code}: ${scope === "panel" ? "แบบแผง" : "ซับ"}นี้ไม่อยู่ในใบ`); }
       else notes.push(`อ่านไม่ออก: ${d.file}`);
     }
-    if (foundL.length) setFound((f) => [...f.filter((x) => !foundL.some((y) => y.code === x.code && y.what === x.what && y.where === x.where)), ...foundL]);
+    // ★ 2026-11-11 ผู้ใช้: "ตอน Modify ให้ถามก่อนว่าจะเอาแบบไหน หลังอัพ PDF" → จุดที่แบบต่างจากเดิม (วัสดุ · ความยาว · จำนวนลูก · ลูกถูกเอาออก · ลูกใหม่) ยังไม่ถูกใช้
+    //   จนกว่าจะเลือกทีละจุดในตาราง "เทียบกับแบบ" ว่า ใช้ตามแบบ / คงเดิม (dec) · วางไฟล์เดิมซ้ำ = คงคำตอบเดิมไว้
+    if (foundL.length) setFound((f) => { const same = (x, y) => y.code === x.code && y.what === x.what && y.where === x.where; return [...f.filter((x) => !foundL.some((y) => same(x, y))), ...foundL.map((y) => { const o = f.find((x) => same(x, y) && String(x.to) === String(y.to)); return o && o.dec ? { ...y, dec: o.dec } : y; })]; });
     if (Object.keys(drops).length) setDropped((o) => ({ ...o, ...drops }));
     if (Object.keys(bChg).length) setBchg((o) => ({ ...o, ...bChg }));
     if (bAdds.length) setBadds((a) => [...a.filter((x) => !bAdds.some((y) => y.scope === x.scope && NC(y.owner) === NC(x.owner) && NC(y.code) === NC(x.code))), ...bAdds]);
@@ -1047,20 +1053,33 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     </div>) : null;
   const togChg = (id, on) => setMatChg((m) => m.map((y) => ((y.id || `${NC(y.code)}|${y.field || "mat"}`) === id ? { ...y, on } : y)));
   const chgOf = (f) => matChg.find((x) => (x.id || `${NC(x.code)}|${x.field || "mat"}`) === `${NC(f.code)}|${f.what === "วัสดุ (INV)" ? "mat" : "len"}`);
+  const decide = (idxs, use) => {
+    const rows = idxs.map((i) => found[i]).filter((f) => f && askRow(f));
+    for (const f of rows) {
+      if (f.act && f.act.t === "bchg") setBchg((o) => { const r = { ...o }; if (use) r[f.act.k] = f.act.v; else delete r[f.act.k]; return r; });
+      else if (f.act && f.act.t === "badd") { const a = f.act.a; setBadds((l) => { const rest = l.filter((x) => !(x.scope === a.scope && NC(x.owner) === NC(a.owner) && NC(x.code) === NC(a.code))); return use ? [...rest, a] : rest; }); }
+      else { const c = chgOf(f); if (c) togChg(c.id || `${NC(c.code)}|${c.field || "mat"}`, use); }
+    }
+    const set = new Set(idxs); setFound((l) => l.map((f, i) => (set.has(i) && askRow(f) ? { ...f, dec: use ? "use" : "keep" } : f)));
+  };
+  const askIdx = found.map((f, i) => (askRow(f) ? i : -1)).filter((i) => i >= 0);
   const matChgEl = found.length && !addOnly ? (
     <div className="rl-found">
-      <div className="rl-found-h"><b>เทียบกับแบบที่วาง</b><span className="rw-muted small">{found.filter((f) => f.tone !== "same").length} จุดที่เปลี่ยน · {found.filter((f) => f.tone === "same").length} แบบตรงเดิม · ติ๊กออก = ไม่เอาจุดนั้น</span><button type="button" className="rw-link small" onClick={() => setFound([])}>ซ่อนตาราง</button></div>
+      <div className="rl-found-h"><b>เทียบกับแบบที่วาง</b><span className="rw-muted small">{found.filter((f) => f.tone !== "same").length} จุดที่ต่างจากเดิม · {found.filter((f) => f.tone === "same").length} แบบตรงเดิม</span>
+        {undecided ? <Pill tone="warn">ยังไม่ได้เลือก {undecided} จุด</Pill> : askIdx.length ? <Pill tone="ok">เลือกครบแล้ว</Pill> : null}
+        {askIdx.length ? <><button type="button" className="btn btn-ghost btn-sm" onClick={() => decide(askIdx, true)}>ใช้ตามแบบทั้งหมด</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => decide(askIdx, false)}>คงเดิมทั้งหมด</button></> : null}
+        <button type="button" className="rw-link small" onClick={() => setFound((l) => l.filter((f) => askRow(f) && !f.dec))}>ซ่อนที่เลือกแล้ว</button></div>
       <div className="rl-found-tw"><table className="rl-sc-table rl-cmp-t">
-        <thead><tr><th style={{ width: 30 }} /><th>เบอร์</th><th>อยู่ที่</th><th>เปลี่ยนอะไร</th><th className="r">เดิม</th><th /><th>ตามแบบ</th></tr></thead>
-        <tbody>{found.map((f, i) => { const c = (f.what === "วัสดุ (INV)" || f.what === "ความยาว" || f.what === "ความยาวซับ") ? chgOf(f) : null; return (
-          <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone}`}>
-            <td>{c ? <input type="checkbox" checked={c.on} onChange={(e) => togChg(c.id || `${NC(c.code)}|${c.field || "mat"}`, e.target.checked)} aria-label={`ใช้ ${f.what} ของ ${f.code}`} /> : f.tone === "same" ? <span className="rw-muted">=</span> : <span className="rw-ok">✓</span>}</td>
-            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && (c.field === "len") && !c.on ? <span className="rw-muted"> · ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามตารางในแบบ)</span> : null}{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ปรับเป็นค่าช่อง A ของตาราง (${c.to} มม.) แทนค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
-            <td className="r rw-mono">{f.from !== "" ? <s className="rl-old">{String(f.from)}</s> : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
-            <td className="rw-mono"><b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b></td>
+        <thead><tr><th style={{ width: 190 }}>จะเอาแบบไหน</th><th>เบอร์</th><th>อยู่ที่</th><th>ต่างตรงไหน</th><th className="r">เดิม</th><th /><th>ตามแบบ</th></tr></thead>
+        <tbody>{found.map((f, i) => { const c = isMatRow(f) ? chgOf(f) : null; const ask = askRow(f); return (
+          <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone} ${ask && !f.dec ? "rl-ask" : ""}`}>
+            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span> : f.tone === "same" ? <span className="rw-muted">=</span> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ ใส่ให้แล้ว</span>}</td>
+            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ค่าช่อง A ของตาราง (${c.to} มม.) ละเอียดกว่าค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
+            <td className="r rw-mono">{f.from !== "" ? (f.dec === "keep" ? <b>{String(f.from)}</b> : <s className="rl-old">{String(f.from)}</s>) : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
+            <td className="rw-mono">{f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
           </tr>); })}</tbody>
       </table></div>
-      <div className="rw-muted small">ลูกใน BOM / จำนวน / ยกเลิก ปรับต่อได้ที่แท็บ ซับ · BOM แผง · พาร์ท · เบอร์ใหม่ใส่จำนวนที่แท็บ "เพิ่มเบอร์ใหม่" · ความยาว / วัสดุ = ใบปล่อยล็อตถัดไปใช้ค่าใหม่ (ล็อตที่ปล่อยแล้วไม่เปลี่ยน)</div>
+      <div className="rw-muted small">จุดที่ต่างจากเดิมยังไม่ถูกใช้จนกว่าจะเลือก · เลือกแล้วเปลี่ยนใจได้ · เบอร์ใหม่ / Site Item ใส่ให้แล้ว แก้จำนวนที่แท็บ "เพิ่มเบอร์ใหม่" · ความยาว / วัสดุ = ใบปล่อยล็อตถัดไปใช้ค่าใหม่ (ล็อตที่ปล่อยแล้วไม่เปลี่ยน)</div>
     </div>) : null;
   const pdfMsgEl = pdfMsg ? (
     <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
