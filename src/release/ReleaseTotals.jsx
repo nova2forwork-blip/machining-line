@@ -12,6 +12,7 @@ import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
+import { SheetView } from "./ReleaseSheet.jsx";
 
 const PAGE = 300;
 const sheetOf = (k) => SHEETS.find((s) => s.k === k) || MAT_SHEETS.find((s) => s.k === k) || { k, tab: k, label: k, th: PART_CATS.includes(k) ? (QR_CATS.has(k) ? "ผลิตเอง · มี QR · ส่งไปใบ MACHINING PART / BENDING / STEEL ได้" : k === "SUB-ASSEMBLY PART" ? "ซับทั้งหมด (รายละเอียดดูที่ Total Sub-Assembly)" : k === "SITE ITEM" ? "รายการเบอร์ * ที่ส่งไปประกอบที่ไซต์" : "ใบเบิก · ไม่มี QR") : "" };
@@ -95,6 +96,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     onPlanChange({ ...plan, units: units.map((u) => { if (!ks.has(addrKey(u.addr))) return u; const { floor: _f, ...rest } = u; return f ? { ...rest, floor: f } : rest; }) }); };
   // ★ 2026-11-11 แบบ B "ตารางเดียว แก้ในช่อง": เปิดโหมดแก้ → พิมพ์จำนวน / ความยาวในช่องได้เลย (เหมือน Excel)
   //   ที่แก้ค้างไว้นับรวมที่แถบล่าง → "บันทึกเป็น M-00x" เปิดหน้า Modify เดิมพร้อมรายการที่แก้ (ใส่เหตุผล · ตรวจยอดที่ทำไปแล้ว · ยืนยัน)
+  // ★ 2026-11-11 มุมมอง: แบบเดิม (ค่าเริ่ม) / แบบใหม่ (ตารางเดียว แก้ในช่อง · ทดลอง) — จำไว้ในเครื่อง
+  const [viewB, setViewB] = useState(() => { try { return localStorage.getItem("mls-rel-view") === "b"; } catch { return false; } });
+  const pickView = (b) => { setViewB(b); try { localStorage.setItem("mls-rel-view", b ? "b" : "a"); } catch { /* ข้าม */ } };
   const [editOn, setEditOn] = useState(false);
   const [ed, setEd] = useState({});   // "part|CODE" / "sub|CODE" → { qty?, len? } (ข้อความที่พิมพ์)
   const editing = editOn && !!onInlineModify && !fq;
@@ -431,7 +435,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   return (
     <div className="card rw-card rt" ref={rootRef} onScrollCapture={checkTop}>
       {scrolled ? <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑</button> : null}
-      <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย</p></div></div>
+      <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>{viewB ? "ตารางเดียวทุกเบอร์ · คลิกช่องเพื่อแก้ แล้วบันทึกเป็น Modify ทีเดียว" : "กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย"}</p></div>
+        <div className="rs2-view" role="group" aria-label="มุมมองตาราง"><button type="button" className={viewB ? "" : "on"} aria-pressed={!viewB} onClick={() => pickView(false)}>แบบเดิม</button><button type="button" className={viewB ? "on" : ""} aria-pressed={viewB} onClick={() => pickView(true)}>แบบใหม่ <small>ทดลอง</small></button></div></div>
+      {viewB ? <SheetView plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} madeOf={madeOf} onInlineModify={onInlineModify} onRelease={onRelease} onRowProgress={onRowProgress} /> : (<>
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>
           <span className="rt-head-t">BOM</span>
@@ -473,7 +479,6 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         {grp === "part" ? <label className="rt-bulk">ใบงาน <select className="select" value={partDest} onChange={(e) => { setPartDest(e.target.value); setLimit(PAGE); }} aria-label="กรองตามใบงาน"><option value="ALL">ทั้งหมด</option>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></label> : null}
         {grp === "bom" ? <select className="select rt-bomsel" value={bomSel} onChange={(e) => { setSub((x) => ({ ...x, bom: e.target.value })); setLimit(PAGE); }} aria-label="เลือกแบบแผง"><option value="__ALL__">ทุกแบบแผง ({nf(bomTypes.length)})</option>{bomTypes.map((t) => <option key={t.unit} value={t.unit}>{t.unit} · {nf(t.n)} แผง{t.has ? "" : " · ไม่มี BOM"}</option>)}</select> : null}
         {grp === "sub" ? <label className="rw-check"><input type="checkbox" checked={kids} onChange={(e) => setKids(e.target.checked)} /> แสดงพาร์ทลูก (แบบ Excel)</label> : null}
-        {onInlineModify && (grp === "part" || grp === "sub") ? <button type="button" className={`btn btn-sm ${editing ? "btn-accent" : "btn-ghost"}`} aria-pressed={editing} disabled={!!fq} title={fq ? "กลับไปแท็บ รวมทุกชั้น ก่อนแก้" : "พิมพ์แก้จำนวน / ความยาวในช่องได้เลย แล้วบันทึกเป็น Modify ทีเดียว"} onClick={() => setEditOn((v) => !v)}>{editing ? "✓ กำลังแก้ในตาราง" : "✎ แก้ในตาราง"}</button> : null}
         <span className="rw-muted small">แสดง {nf(shown)} จาก {nf(total)}</span>
       </div>
       {(grp === "part" || grp === "sub" || grp === "panel") && (hasFloors || grp === "panel") ? (
@@ -511,6 +516,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
       {total > shown ? <div className="rt-more"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit((n) => n + PAGE)}>แสดงเพิ่ม ({nf(Math.min(PAGE, total - shown))})</button></div> : null}
         </>
       )}
+      </>)}
     </div>
   );
 }

@@ -1168,3 +1168,47 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rt-edin.chg { background: #eaf2ff; border-color: #2f62c9; box-shadow: 0 0 0 1px #2f62c9; }
 .rt-edin.bad { background: #fdecec; border-color: #c0392b; }
 .rt-edbar { background: #173a7a; }
+
+/* ★ 2026-11-11 "ของในใบ" มุมมองใหม่ (แบบ B) */
+.rs2-view { display: inline-flex; border: 1px solid #cfdcd6; border-radius: 10px; overflow: hidden; align-self: center; }
+.rs2-view button { font: inherit; font-weight: 700; font-size: 13px; padding: 8px 14px; min-height: 38px; border: 0; background: #fff; color: #24352f; cursor: pointer; }
+.rs2-view button + button { border-left: 1px solid #cfdcd6; }
+.rs2-view button.on { background: #1a9a6c; color: #fff; }
+.rs2-view small { font-weight: 500; opacity: .85; }
+.rs2 { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.rs2-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rs2-chip { font: inherit; font-weight: 700; font-size: 13px; min-height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid #cfdcd6; background: #fff; color: #24352f; cursor: pointer; }
+.rs2-chip small { font-weight: 500; color: #5a6f68; }
+.rs2-chip.on { background: #1b1f1d; border-color: #1b1f1d; color: #fff; }
+.rs2-chip.on small { color: #d8dedb; }
+.rs2-q { flex: 1 1 220px; min-height: 38px; border-radius: 999px; }
+.rs2-paste { border: 1px dashed #9db6ee; background: #f4f8ff; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.rs2-paste textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+.rs2-paste-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rs2-card { border: 1px solid #d7e2de; border-radius: 12px; overflow: hidden; background: #fff; }
+.rs2-tw { max-height: 62vh; overflow: auto; border: 0; border-radius: 0; }
+.rs2-table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 13.5px; }
+.rs2-table th { position: sticky; top: 0; z-index: 1; text-align: left; font-size: 12px; font-weight: 700; color: #5a6f68; padding: 9px 12px; border-bottom: 1px solid #d7e2de; background: #f7faf8; white-space: nowrap; }
+.rs2-table th.r, .rs2-table td.r { text-align: right; }
+.rs2-table td { padding: 0; height: 42px; border-bottom: 1px solid #edf1ef; border-right: 1px solid #f2f5f3; white-space: nowrap; }
+.rs2-v { display: block; padding: 9px 12px; }
+.rs2-desc .rs2-v { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #46574f; }
+.rs2-code { font: inherit; font-weight: 700; display: block; width: 100%; height: 42px; padding: 0 12px; text-align: left; border: 0; background: transparent; color: #0b6b4b; cursor: pointer; }
+.rs2-code:hover { text-decoration: underline; }
+.rs2-cell { font: inherit; display: block; width: 100%; height: 42px; padding: 0 12px; text-align: inherit; border: 0; background: transparent; color: inherit; cursor: cell; }
+.rs2-cell:hover { box-shadow: inset 0 0 0 2px #9db6ee; }
+.rs2-cell.ed { background: #eaf2ff; box-shadow: inset 0 0 0 2px #2f62c9; }
+.rs2-cell.sus { background: #fff3d1; box-shadow: inset 0 0 0 2px #b97700; }
+.rs2-cell .rl-old { margin-right: 6px; font-size: 12px; }
+.rs2-sus { color: #6b4300; font-weight: 700; }
+.rs2-in { width: calc(100% - 8px); margin: 0 4px; height: 34px; font-weight: 700; text-align: inherit; border: 2px solid #2f62c9; }
+.rs2-table tr.lock td { background: #f5f7f6; color: #5a6f68; }
+.rs2-table tr.cx td { background: #fdf3f2; color: #8a4a44; text-decoration: line-through; }
+.rs2-tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 999px; text-decoration: none; }
+.rs2-tag.g { background: #d6efe4; color: #07553b; } .rs2-tag.bl { background: #dde8ff; color: #173a7a; } .rs2-tag.gy { background: #e6e9e4; color: #3f4741; } .rs2-tag.am { background: #ffe9b8; color: #6b4300; }
+.rs2-tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 12px; background: #eceee9; border-top: 1px solid #d7e2de; }
+.rs2-tab { font: inherit; font-weight: 700; font-size: 13px; min-height: 40px; padding: 0 16px; border: 1px solid #cfdcd6; border-top: 0; border-radius: 0 0 10px 10px; background: transparent; cursor: pointer; color: #24352f; align-self: flex-start; }
+.rs2-tab small { font-weight: 500; color: #5a6f68; }
+.rs2-tab.on { background: #fff; color: #07553b; box-shadow: inset 0 -3px 0 #1a9a6c; }
+.rs2-tab.all { margin-left: 10px; }
+.rs2-hint { padding: 9px 14px; }
