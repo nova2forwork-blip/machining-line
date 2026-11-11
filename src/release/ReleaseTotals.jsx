@@ -435,9 +435,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   return (
     <div className="card rw-card rt" ref={rootRef} onScrollCapture={checkTop}>
       {scrolled ? <button type="button" className="rt-totop" onClick={toTop} title="ขึ้นบนสุดของตาราง" aria-label="ขึ้นบนสุดของตาราง">↑</button> : null}
-      <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>{viewB ? "ตารางเดียวทุกเบอร์ · คลิกช่องเพื่อแก้ แล้วบันทึกเป็น Modify ทีเดียว" : "กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย"}</p></div>
+      <div className="rw-sec-head"><div><h2>ของในใบ</h2><p>{viewB ? "แท็บ Total Part / Sub-Assembly เป็นตารางแบบใหม่ — คลิกช่องเพื่อแก้ แล้วบันทึกเป็น Modify ทีเดียว · แท็บอื่นเหมือนเดิม" : "กดแท็บเพื่อสลับ · ติ๊กเบอร์ → ย้ายหมวด / ปล่อย"}</p></div>
         <div className="rs2-view" role="group" aria-label="มุมมองตาราง"><button type="button" className={viewB ? "" : "on"} aria-pressed={!viewB} onClick={() => pickView(false)}>แบบเดิม</button><button type="button" className={viewB ? "on" : ""} aria-pressed={viewB} onClick={() => pickView(true)}>แบบใหม่ <small>ทดลอง</small></button></div></div>
-      {viewB ? <SheetView plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} madeOf={madeOf} onInlineModify={onInlineModify} onRelease={onRelease} onRowProgress={onRowProgress} /> : (<>
+
       <div className="rt-heads" role="tablist" aria-label="Total">
         <button type="button" role="tab" aria-selected={grp === "bom"} className={`rt-head bom ${grp === "bom" ? "on" : ""}`} onClick={() => pick("bom")}>
           <span className="rt-head-t">BOM</span>
@@ -454,6 +454,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         {TOTALS.filter((g) => g.k === "mat").map(headBtn)}
       </div>
 
+      {viewB && (grp === "part" || grp === "sub") ? <SheetView kind={grp} plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} madeOf={madeOf} onInlineModify={onInlineModify} onRelease={onRelease} onRowProgress={onRowProgress} /> : (<>
       {grp === "part" && onPlanChange ? (
         <PartGroupBar mode={plan.partMode} groups={plan.partGroups} catOv={plan.catOv} bom={plan.bom} counts={catCount} filter={partGrp}
           onFilter={(g) => { setPartGrp(g); setLimit(PAGE); }}

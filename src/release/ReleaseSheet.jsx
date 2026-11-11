@@ -8,7 +8,7 @@ import { rowsOfType } from "./ReleaseBom.jsx";
 
 const LABEL = { qty: "จำนวน", inv: "วัสดุ", len: "ความยาว" };
 
-export function SheetView({ plan, need, rel, doneOf, leftOf, madeOf = null, onInlineModify = null, onRelease = null, onRowProgress = null }) {
+export function SheetView({ kind = null, plan, need, rel, doneOf, leftOf, madeOf = null, onInlineModify = null, onRelease = null, onRowProgress = null }) {
   const [filt, setFilt] = useState("all");
   const [q, setQ] = useState("");
   const [floorSel, setFloorSel] = useState(null);
@@ -21,7 +21,7 @@ export function SheetView({ plan, need, rel, doneOf, leftOf, madeOf = null, onIn
   const nMods = (plan.mods || []).length;
   useEffect(() => { setEd({}); setCur(null); }, [nMods, plan.ro]);
 
-  const rows = useMemo(() => [...need.parts.map((x) => ({ ...x, kind: "part" })), ...need.subs.map((x) => ({ ...x, kind: "sub" }))].sort((a, b) => ncmp(a.code, b.code)), [need]);
+  const rows = useMemo(() => [...(kind === "sub" ? [] : need.parts.map((x) => ({ ...x, kind: "part" }))), ...(kind === "part" ? [] : need.subs.map((x) => ({ ...x, kind: "sub" })))].sort((a, b) => ncmp(a.code, b.code)), [need, kind]);
   const units = plan.units || [];
   const liveUnits = useMemo(() => units.filter((u) => !need.cancelledAddr[addrKey(u.addr)]), [units, need]);
   const floors = useMemo(() => floorsOf(liveUnits), [liveUnits]);
@@ -46,10 +46,10 @@ export function SheetView({ plan, need, rel, doneOf, leftOf, madeOf = null, onIn
   const locked = (r) => !!r.cancelled || (made(r) != null && r.qty > 0 && made(r) >= r.qty);
   const edList = useMemo(() => {
     const out = [];
-    for (const [k, v] of Object.entries(ed)) { const r = rows.find((x) => kOf(x) === k); if (!r || r.cancelled) continue;
+    for (const [k, v] of Object.entries(ed)) { const i = k.indexOf("|"); const kd = k.slice(0, i); const r0 = (kd === "sub" ? need.subs : need.parts).find((x) => x.code === k.slice(i + 1)); const r = r0 ? { ...r0, kind: kd } : null; if (!r || r.cancelled) continue;
       for (const f of ["qty", "inv", "len"]) if (v[f] !== undefined) out.push({ kind: r.kind, code: r.code, f, from: curOf(r, f), to: v[f] }); }
     return out;
-  }, [ed, rows]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ed, need]);   // eslint-disable-line react-hooks/exhaustive-deps
   const edited = (r) => !!ed[kOf(r)];
   const sus = (r) => r.kind === "part" && !r.cancelled && suspectLen(r.l) && ed[kOf(r)]?.len === undefined;
 
