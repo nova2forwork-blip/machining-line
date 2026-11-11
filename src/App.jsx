@@ -7018,8 +7018,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </div>
             </div>
             <div className="lot-hero-r">
-              <div><span>{lang === "en" ? "Total qty" : "จำนวนรวม"}</span><b>{fmtNum(totalQty)}</b></div>
-              <div><span>Part No.</span><b>{nc(releases.length)}</b></div>
+              {/* ★ 2026-11-11 ผู้ใช้: "เพิ่ม รูปสอง" (การ์ด Total qty / Total weight / Part No. แบบหน้าเดิม) → เพิ่ม "น้ำหนักรวม" + หน่วย */}
+              <div><span>{lang === "en" ? "Total qty" : "จำนวนรวม"}</span><b>{fmtNum(totalQty)} <small>{lang === "en" ? "pcs" : "ชิ้น"}</small></b></div>
+              {!isAsmGroup ? <div><span>{lang === "en" ? "Total weight" : "น้ำหนักรวม"}</span><b>{fmtNum(totalWeight)} <small>{lang === "en" ? "kg" : "กก."}</small></b></div> : null}
+              <div><span>Part No.</span><b>{nc(releases.length)} <small>Part</small></b></div>
               {!isAsmGroup ? <div><span>{lang === "en" ? "Weight done (kg)" : "น้ำหนักที่ทำแล้ว (กก.)"}</span><b>{fmtNum(finishedWeight)} <small>/ {fmtNum(totalWeight)}</small></b></div> : null}
             </div>
           </div>);
