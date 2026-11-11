@@ -100,7 +100,6 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       setOpenRaw(v === null ? newestNo : v === "" ? null : rel.lots.some((l) => l.no === v) ? v : newestNo);
     } else setOpen(newestNo);   // ปล่อยล็อตใหม่ → เปิดล็อตใหม่
   }, [rel.lots.length]);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { document.body.style.overflow = builder || modify ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [builder, modify]);
   // BOM ที่ยังไม่มีในแผนนี้ → ดึงจาก Release อื่นของโปรเจคเดียวกันให้เอง (เฉพาะที่ว่าง)
   const gaps = useMemo(() => bomGaps(plan), [plan]);
   const [pulled, setPulled] = useState([]);
@@ -143,6 +142,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const descMap = useMemo(() => new Map([...need.parts, ...need.subs].map((x) => [NC(x.code), x.d])), [need]);
   const descOf = (code) => descMap.get(NC(code)) || "";
   const [fixLot, setFixLot] = useState(null);   // ★ 2026-11-10 แก้ล็อตที่ปล่อยผิด (ย้ายใบ / ยกเลิกการปล่อย) — เปิดจากแถบล็อตด้านบน ไม่ต้องเลื่อนลงไปหา
+  useEffect(() => { document.body.style.overflow = builder || modify || progOpen || modsOpen || fixLot ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [builder, modify, progOpen, modsOpen, fixLot]);   // ล็อกจอข้างหลังตอนมีป็อปอัพ / แผงข้าง
   const [sheetPrev, setSheetPrev] = useState(null);   // ตัวอย่างใบปล่อย (PDF / Excel) ของล็อต
   // ★ ความคืบหน้าต่อล็อต: ยอดที่ทำแล้วต่อแถว release (get_release_modify_info) — โหลดเบื้องหลัง · ไม่ได้ = ไม่โชว์
   const lotKey = rel.lots.map((l) => `${l.no}:${l.rows.length}:${l.qty}`).join("|");
