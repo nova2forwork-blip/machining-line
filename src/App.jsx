@@ -7104,10 +7104,10 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               tdStyle: { whiteSpace: "nowrap" },
               cell: (r, i, c) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : <ProgressBar pct={c.pct} finished={c.done} total={c.total} /> },
             ...(!isAsmGroup ? [
-              { key: "uw", header: lang === "en" ? "Weight/pc (kg)" : "น้ำหนัก/ชิ้น (กก.)", sortKey: "uw", align: "right", cell: (r) => r.unit_weight ? fmtNum(r.unit_weight) : "-" },
-              { key: "tw", header: lang === "en" ? "Total weight (kg)" : "น้ำหนักรวม (กก.)", sortKey: "tw", align: "right", cell: (r) => r.unit_weight ? fmtNum(r.qty * r.unit_weight) : "-" },
+              { key: "uw", header: lang === "en" ? "Wt/pc (kg)" : "นน./ชิ้น (กก.)", sortKey: "uw", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.unit_weight ? fmtNum(r.unit_weight) : "-" },
+              { key: "tw", header: lang === "en" ? "Total wt (kg)" : "นน.รวม (กก.)", sortKey: "tw", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.unit_weight ? fmtNum(r.qty * r.unit_weight) : "-" },
             ] : []),
-            { key: "len", header: lang === "en" ? "Length/pc (mm)" : "ความยาว/ชิ้น (มม.)", sortKey: "len", align: "right", cell: (r) => r.length_mm ? fmtNum(r.length_mm) : "-" },
+            { key: "len", header: lang === "en" ? "Len/pc (mm)" : "ยาว/ชิ้น (มม.)", sortKey: "len", align: "right", thStyle: { width: "1%" }, tdStyle: { width: "1%", whiteSpace: "nowrap" }, cell: (r) => r.length_mm ? fmtNum(r.length_mm) : "-" },
             { key: "material", header: "INV Code", sortKey: "material", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => r.part_master?.material || r.material || "-" },
             { key: "matlen", header: lang === "en" ? "Mat. Length (mm)" : "Mat. Length (มม.)", sortKey: "matlen", align: "right", tdStyle: { whiteSpace: "nowrap" },
               cell: (r) => statsLoading ? <span style={{ color: "var(--muted)", fontSize: 12 }}>...</span> : matLenText(r) },
