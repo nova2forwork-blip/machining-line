@@ -2840,5 +2840,6 @@ registerI18n({
     ["{1} ใบ", "{1} label(s)"],
     ["↻ ตามที่เคยพิมพ์ {1} เบอร์", "↻ {1} as last printed"],
     ["กราฟเส้น {1} จุด", "Line chart, {1} points"],
+    ["แบบไม่ได้แก้ความยาว — ในใบเป็นค่าที่แปลงจากนิ้ว ({1}) · ช่อง A ในแบบระบุเป็นมม. = {2}", "The drawing length is unchanged — the release holds the value converted from inches ({1}) · column A on the drawing gives {2} mm"],
   ],
 });

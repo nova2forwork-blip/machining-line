@@ -10,7 +10,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { getSession } from "../auth.js";
 import {
-  NC, ncmp, nf, nlen, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
+  NC, ncmp, nf, nlen, inchToMm, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
   otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
@@ -947,7 +947,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           const t = d.title || {}; const inv = String(t["INV.CODE"] || "").trim().toUpperCase(); const L = parseFloat(t.LENGTH);
           const got = [];
           if (cur && d.kind === "part") { const curInv = String(cur.inv || "").trim().toUpperCase(); if (inv && inv !== "-" && inv !== curInv) got.push({ field: "mat", from: curInv || "—", to: inv }); }
-          if (cur && Number.isFinite(L) && L > 0 && (cur.l == null || Math.abs(L - Number(cur.l)) > 0.05)) got.push({ field: "len", from: cur.l ?? "—", to: L });
+          // ★ 2026-11-11 หัวกระดาษ US มีความยาว 2 ช่อง: LENGTH เป็นนิ้ว (ปัดทีละ 1/16") กับ A เป็นมม. (ค่าจริง) — ใบที่ลงไว้ก่อนอ่านช่อง A ได้ เก็บค่าที่แปลงจากนิ้ว (2 15/16" = 74.6)
+          //   แบบเดิมแผ่นเดิม อ่านใหม่ได้ 75 → ไม่ใช่ "แบบเปลี่ยนความยาว" แต่เป็นค่าเดียวกันที่ละเอียดกว่า → บอกให้ชัด (sameDim) จะได้ไม่เข้าใจว่าแบบแก้
+          if (cur && Number.isFinite(L) && L > 0 && (cur.l == null || Math.abs(L - Number(cur.l)) > 0.05)) { const fromIn = t.LENGTH_IN ? inchToMm(t.LENGTH_IN) : null; got.push({ field: "len", from: cur.l ?? "—", to: L, sameDim: fromIn != null && cur.l != null && Math.abs(Number(cur.l) - fromIn) < 0.06, inch: t.LENGTH_IN || "" }); }
           if (got.length) {
             // ★ 2026-11-11 ผู้ใช้: "งานจริงความยาวไม่เปลี่ยน เปลี่ยนแค่ MATERIAL" → ความยาวที่ต่างจากในใบ = ไม่ติ๊กให้เอง (ต้องติ๊กเองถ้าจะเปลี่ยนจริง) · วัสดุยังติ๊กให้เหมือนเดิม
             //   เดิมติ๊กให้ทั้งคู่ → วางแบบเพื่อเปลี่ยนวัสดุ แล้วความยาวในใบถูกแก้ตามหัวกระดาษไปด้วยโดยไม่ตั้งใจ (74.6 → 75)
@@ -1025,7 +1027,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <tbody>{found.map((f, i) => { const c = (f.what === "วัสดุ (INV)" || f.what === "ความยาว" || f.what === "ความยาวซับ") ? chgOf(f) : null; return (
           <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone}`}>
             <td>{c ? <input type="checkbox" checked={c.on} onChange={(e) => togChg(c.id || `${NC(c.code)}|${c.field || "mat"}`, e.target.checked)} aria-label={`ใช้ ${f.what} ของ ${f.code}`} /> : f.tone === "same" ? <span className="rw-muted">=</span> : <span className="rw-ok">✓</span>}</td>
-            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && (c.field === "len") && !c.on ? <span className="rw-muted"> · ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามแบบ)</span> : null}</td>
+            <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && (c.field === "len") && !c.on ? <span className="rw-muted"> · ไม่เปลี่ยน (ติ๊กถ้าจะใช้ค่าตามแบบ)</span> : null}{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ในใบเป็นค่าที่แปลงจากนิ้ว (${c.inch}) · ช่อง A ในแบบระบุเป็นมม. = ${c.to}`}</div> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? <s className="rl-old">{String(f.from)}</s> : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
             <td className="rw-mono"><b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b></td>
           </tr>); })}</tbody>
