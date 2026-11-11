@@ -904,6 +904,22 @@ export async function getReleaseMachineProgress(releaseId) {
   return Array.isArray(arr) ? arr : [];
 }
 
+// ★ 2026-11-11 ชนิดป้าย QR ต่อ Release (unit = รายชิ้น 1 OF N · lot = รวมล็อต) — บันทึกตอนกดพิมพ์ (migration-label-scope.sql)
+//   scopes = { <release_id>: "unit" | "lot" } · ยังไม่ได้รัน SQL → { ok:false, reason:"not_installed" } (แอปจำในเครื่องนี้แทน)
+let _labelScopeMissing = false;
+export async function saveReleaseLabelScopes(scopes) {
+  const keys = Object.keys(scopes || {});
+  if (!keys.length) return { ok: true, updated: 0 };
+  if (_labelScopeMissing) return { ok: false, reason: "not_installed" };
+  const { data, error } = await supabase.rpc("release_set_label_scope", { p_token: authToken(), p_scopes: scopes });
+  if (error) {
+    if (isMissingFnErr(error)) { _labelScopeMissing = true; return { ok: false, reason: "not_installed" }; }
+    console.warn("release_set_label_scope error", error);
+    return { ok: false, reason: "error", message: error.message };
+  }
+  return data && typeof data === "object" ? data : { ok: true };
+}
+
 // ความยาว material (หน้าเครื่อง) ที่ใช้จริง ต่อ Release — จาก machine_records.material_length_mm
 // คืน { <release_id>: [ ความยาว, ... ] } (ค่าไม่ซ้ำ) · ดู release_material_lengths RPC
 export async function getReleaseMaterialLengths(releaseIds) {

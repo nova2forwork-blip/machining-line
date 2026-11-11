@@ -14,6 +14,7 @@ import {
   createReleaseBatch, releaseOrderExists, upsertEmployee, getProjectSummary, getProjectStationProgress, getPartSummary, getEmployees,
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
+  saveReleaseLabelScopes,
   listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
   getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches, assemblyChildParents, assemblyParentsOf,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
@@ -8367,6 +8368,18 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
   // ค้นหาใหม่ → ล้างการตั้งค่าแยกรายเบอร์
   useEffect(() => { setScopeOverride({}); setLotFilter(""); setScopePick(new Set()); }, [committedKey]);
+  // ★ 2026-11-11 จำชนิดป้ายที่เคยพิมพ์ของแต่ละเบอร์: ฐานข้อมูล (releases.label_scope · ทุกเครื่องเห็นตรงกัน — ต้องรัน migration-label-scope.sql)
+  //   + สำรองในเครื่องนี้ (localStorage) · โหลดป้ายชุดใหม่ → ตั้งสวิตช์ของแต่ละเบอร์ตามที่เคยพิมพ์ (เดิมกลับเป็น 1 OF N ทุกครั้ง)
+  const savedScopeOf = (rid) => { const db = relById.get(rid)?.label_scope; if (db === "unit" || db === "lot") return db; try { const m = JSON.parse(localStorage.getItem("mls-label-scope") || "{}"); return m[rid] === "unit" || m[rid] === "lot" ? m[rid] : null; } catch { return null; } };
+  const [scopeRestored, setScopeRestored] = useState(0);   // จำนวนเบอร์ที่ตั้งตามที่เคยพิมพ์ (ไว้บอกผู้ใช้)
+  useEffect(() => {
+    if (!units.length) { setScopeRestored(0); return; }
+    const ov = {}; let n = 0;
+    for (const rid of new Set(units.map((u) => u.release_id))) { const sv = savedScopeOf(rid); if (!sv) continue; n++; if (sv !== labelScope) ov[rid] = sv; }
+    setScopeRestored(n);
+    if (Object.keys(ov).length) { setScopeOverride(ov); setScopeEpoch((x) => x + 1); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [units]);
 
   // เลือกทุกใบที่แสดงโดยอัตโนมัติ (ตอนค้นหา/เปลี่ยนชนิดป้ายหลัก)
   useEffect(() => {
@@ -8469,6 +8482,12 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       };
     });
     printLabels(chosen, { widthMm: w, heightMm: h, mode: printMode, title: "Part labels", showCode });
+    // ★ 2026-11-11 จำชนิดป้ายของเบอร์ที่เพิ่งพิมพ์ (ในเครื่องนี้ทันที + ฐานข้อมูลถ้าติดตั้งแล้ว — ไม่สำเร็จ = เงียบ ไม่กระทบการพิมพ์)
+    try {
+      const sc = {}; for (const u of picked) sc[u.release_id] = scopeOf(u.release_id);
+      try { const m = JSON.parse(localStorage.getItem("mls-label-scope") || "{}"); const all = { ...m, ...sc }; const ks = Object.keys(all); if (ks.length > 4000) ks.slice(0, ks.length - 4000).forEach((k) => delete all[k]); localStorage.setItem("mls-label-scope", JSON.stringify(all)); } catch { /* ignore */ }
+      saveReleaseLabelScopes(sc).then((r) => { if (r && r.ok) setReleases((rs) => rs.map((x) => (sc[x.id] ? { ...x, label_scope: sc[x.id] } : x))); }).catch(() => {});
+    } catch { /* ignore */ }
   }
 
   function doSearch() { setCommittedKey(activeIdsKey); setSearchNonce((n) => n + 1); }   // กดค้นหา = โหลด/แสดง QR ตามตัวกรองปัจจุบัน (กดซ้ำ = โหลดใหม่)
@@ -8569,6 +8588,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                   <div className="qs-sum">
                     <span className="qs-dot unit" />1 OF N <b>{fmtNum(lotCountByScope.unit)}</b> เบอร์ · <b>{fmtNum(nUnitLabels)}</b> ใบ
                     <span className="qs-dot lot" style={{ marginLeft: 12 }} />ทั้งล็อต <b>{fmtNum(lotCountByScope.lot)}</b> เบอร์ · <b>{fmtNum(lotCountByScope.lot)}</b> ใบ
+                    {scopeRestored > 0 ? <span className="qs-mem" title="ชนิดป้ายของเบอร์เหล่านี้ตั้งตามที่เคยพิมพ์ครั้งก่อน — เปลี่ยนได้ที่สวิตช์">↻ ตามที่เคยพิมพ์ {fmtNum(scopeRestored)} เบอร์</span> : null}
                   </div>
                   {multi && lotReps.length > 8 ? (
                     <label className="rs-search sm qs-find">
@@ -9886,7 +9906,7 @@ function ReportPage({ goTo }) {
     const processed = processedWeight(filteredLogs);
     const distinctUnits = distinctUnitCount(filteredLogs);
     const matrix = machineOpMatrix(filteredLogs, opOrder); // ตารางแยกน้ำหนักของเครื่อง × ขั้นตอน
-    const partMatrix = partOpMatrix(filteredLogs, opOrder, new Map((allRels || []).map((r) => [String(r.id), Number(r.qty) || 0]))); // ตารางแยก Part No. × ขั้นตอน · จำนวนสั่ง = ไว้ตัดยอดต่อป้าย QR
+    const partMatrix = partOpMatrix(filteredLogs, opOrder, new Map((allRels || []).map((r) => [String(r.id), Number(r.qty) || 0])), new Map((allRels || []).filter((r) => r.label_scope).map((r) => [String(r.id), r.label_scope]))); // ตารางแยก Part No. × ขั้นตอน · จำนวนสั่ง = ไว้ตัดยอดต่อป้าย QR
     // กราฟ "By operation" — จำนวน/น้ำหนักต่อขั้นตอน ดึงจาก matrix (รู้จัก co-tick + เรียงตาม seq แล้ว)
     const chartData = matrix.opNames.map((op) => {
       let count = 0, weight = 0;

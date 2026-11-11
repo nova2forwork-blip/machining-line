@@ -181,7 +181,7 @@ export function machineOpMatrix(logs, opOrder) {
 //     parts: [{ partNo, partName, total:{count,weight}, ops:{ opName:{count,weight} } }],
 //     opNames: [ชื่อขั้นตอนทั้งหมดที่พบ เรียงแล้ว],
 //   }
-export function partOpMatrix(logs, opOrder, qtyByRelease = null) {
+export function partOpMatrix(logs, opOrder, qtyByRelease = null, scopeByRelease = null) {
   // แยกราย (Release + Part) → รู้ว่า Part ไหนมาจาก Release ไหน · เก็บ finished แยกด้วย
   // ★ จำนวนต่อขั้นตอน = "ชิ้นที่ผ่านขั้นตอนนั้น" แบบรู้จัก co-tick (1 สแกนติ๊กหลายขั้น = ตัวหลักมีจำนวน · ที่ติ๊กร่วม = 0)
   //   จับ 1 สแกน (ตัวหลัก quantity>0 + ตัวติ๊กร่วม quantity 0 ที่ตามมา ชิ้น+สถานะเดียวกัน) แล้วเครดิตจำนวนให้ทุกขั้นตอนในสแกนนั้น
@@ -214,7 +214,8 @@ export function partOpMatrix(logs, opOrder, qtyByRelease = null) {
     // ★ รอบ 11 (B1): "เสร็จ (ชิ้น)" = กติกาเดียวกับหน้า Release (release_finished_pieces v4)
     //   ต่อป้าย: เครื่องที่กด Finished กับป้ายนั้นแล้ว → รวมจำนวนต่อขั้นตอน (ข้ามเครื่อง) → ขั้นตอนที่มากสุด
     //   เดิมบวกจำนวนทุกแถว Finished ทุกเครื่อง/ทุกรอบ → ตัด+เจาะแยกเครื่องกด Finished = นับ 2 เท่า · รอบ In Process ไม่นับ
-    entry.total.finished = finishedPiecesV4(kv.rows, qtyByRelease && kv.releaseId != null ? qtyByRelease.get(String(kv.releaseId)) || 0 : 0);
+    entry.total.finished = finishedPiecesV4(kv.rows, qtyByRelease && kv.releaseId != null ? qtyByRelease.get(String(kv.releaseId)) || 0 : 0,
+      scopeByRelease && kv.releaseId != null ? scopeByRelease.get(String(kv.releaseId)) || null : null);
 
     // 2) จำนวนต่อขั้นตอน — จับ 1 สแกน แล้วเครดิตจำนวนหลักให้ทุกขั้นตอนในสแกนนั้น
     const asc = [...kv.rows].sort((a, b) => String(a.scanned_at || "").localeCompare(String(b.scanned_at || "")));
@@ -247,7 +248,7 @@ export function partOpMatrix(logs, opOrder, qtyByRelease = null) {
 }
 
 // ชิ้นที่เสร็จ (กติกา v4) จากชุด log ของ Release เดียว — ดู migration-audit-round11.sql (release_finished_pieces)
-export function finishedPiecesV4(rows, orderQty = 0) {
+export function finishedPiecesV4(rows, orderQty = 0, labelScope = null) {
   const finMachine = new Set();                   // `${ป้าย}|${เครื่อง}` ที่กด Finished แล้ว
   for (const l of rows || []) {
     if (String(l.status || "").toLowerCase() === "finished" && l.part_unit_id) {
@@ -276,7 +277,8 @@ export function finishedPiecesV4(rows, orderQty = 0) {
   if (!byOp.size) return 0;
   const opView = Math.max(0, ...byOp.values());
   const N = Number(orderQty) || 0, k = byUnitOp.size;
-  const cap = N > 0 ? Math.max(1, N - (k - 1)) : Infinity;
+  // ชนิดป้ายที่บันทึกตอนพิมพ์ (releases.label_scope) มาก่อนการเดา: unit = ใบละ 1 ชิ้น · lot = ใบเดียวแทนได้ทั้งล็อต
+  const cap = labelScope === "unit" ? 1 : N > 0 ? (labelScope === "lot" ? N : Math.max(1, N - (k - 1))) : Infinity;
   let labelView = 0;
   for (const m of byUnitOp.values()) labelView += Math.min(cap, Math.max(0, ...m.values()));
   return Math.min(opView, labelView);
