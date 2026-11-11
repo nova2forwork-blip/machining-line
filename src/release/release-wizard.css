@@ -1058,3 +1058,5 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-pop-h .rl-pop-max { margin-left: auto; font-size: 15px; } .rl-pop-h .rl-pop-max + .rl-x { margin-left: 0; }
 .rl-pop::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px; border-right: 2px solid var(--muted-2); border-bottom: 2px solid var(--muted-2); border-radius: 0 0 6px 0; pointer-events: none; opacity: .7; }
 .rl-pop.big::after { display: none; }
+/* ★ 2026-11-11 ตาราง Total สูงตามจอ (เดิมตายตัว 560px — จอใหญ่เหลือที่ว่างข้างล่าง) */
+.rt-tw { max-height: max(560px, calc(100vh - 230px)); }
