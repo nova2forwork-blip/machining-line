@@ -1073,6 +1073,7 @@ table.pgrid td.pgrid-routing { padding: 5px 6px; vertical-align: middle; }
   .data-table.responsive-cards td[data-label=""]::before { content: none; }
   .data-table.responsive-cards td[colspan] { display: block; text-align: center; padding: 20px 0; }
   .data-table.responsive-cards td[colspan]::before { content: none; }
+  .data-table.responsive-cards td:empty { display: none; }   /* ★ 2026-11-11 คอลัมน์ "ล็อต" ว่างในแถวที่ไม่ใช่ใบหลัก */
 }
 
 /* ── Label print: search bar + cascading filters ─────────────────────────── */
