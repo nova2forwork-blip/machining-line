@@ -1714,3 +1714,21 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .lot-bulk-x { margin-left: auto; width: 36px; height: 36px; border-radius: 10px; border: 0; background: rgba(255,255,255,.12); color: #fff; font-size: 14px; cursor: pointer; }
 .lot-bulk-x:hover { background: rgba(255,255,255,.24); }
 .lot-bulk button:disabled, .lot-bulk select:disabled { opacity: .5; cursor: default; }
+
+/* ★ 2026-11-11 แถบค้นหา Release (เดสก์ท็อป) — แถวเดียว */
+.rs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rs-search { flex: 1 1 320px; min-width: 240px; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2, #f3f6f5); color: var(--muted); transition: border-color .12s, background .12s, box-shadow .12s; }
+.rs-search:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-tint); }
+.rs-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 14px; color: var(--text); }
+.rs-search input::-webkit-search-cancel-button { display: none; }
+.rs-x { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 13px; padding: 2px 4px; }
+.rs-x:hover { color: var(--text); }
+.rs-sel { height: 40px; max-width: 260px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font: inherit; font-size: 13.5px; color: var(--text); cursor: pointer; }
+.rs-dates { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.rs-dates input { border: 0; outline: 0; background: transparent; font: inherit; font-size: 13.5px; color: var(--text); width: 128px; }
+.rs-dl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.rs-dash { color: var(--muted); }
+.rs-sel.on, .rs-dates.on { border-color: var(--accent); background: var(--accent-tint); }
+.rs-sel:focus-visible, .rs-dates:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); outline: none; }
+.rs-clear { height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: none; font: inherit; font-size: 13px; font-weight: 600; color: var(--accent-dk); cursor: pointer; }
+.rs-clear:hover { background: var(--accent-tint); }

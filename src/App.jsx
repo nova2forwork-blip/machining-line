@@ -7812,7 +7812,7 @@ function ReleasePage({ user, goTo }) {
           onOpenPlan={(plan) => setPlanView({ plan })} />
       </Suspense>
 
-      <Card title="ค้นหา Release">
+      <Card title={phone ? "ค้นหา Release" : undefined}>
         {(() => {
           const fFrom = (
             <Field label="จากวันที่">
@@ -7840,10 +7840,28 @@ function ReleasePage({ user, goTo }) {
               </FilterFold>
             </>
           ) : (
-            <div className="grid-2">{fFrom}{fTo}{fProj}{fSearch}</div>
+            // ★ 2026-11-11 ผู้ใช้: "ออกแบบใหม่" → แถวเดียว: ช่องค้นหา (กว้างสุด) · โปรเจค · ช่วงวันที่ · ล้าง (เดิม 4 ช่องใหญ่ 2 แถว กินที่)
+            <div className="rs-bar">
+              <label className="rs-search">
+                <Icon name="search" size={15} />
+                <input type="search" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} placeholder="ค้นหา Release / Part / INV / รหัสโปรเจค / หมายเหตุ — เช่น P-009 · AN04-001" aria-label="ค้นหา Release / Part / INV / รหัสโปรเจค / หมายเหตุ" />
+                {orderSearch ? <button type="button" className="rs-x" onClick={() => setOrderSearch("")} aria-label="ล้างคำค้น">✕</button> : null}
+              </label>
+              <select className={"rs-sel" + (projectFilter ? " on" : "")} value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} aria-label="โปรเจค">
+                <option value="">ทุกโปรเจค</option>
+                {projects.map((p) => <option key={p.code} value={p.code}>{p.code} — {p.name}</option>)}
+              </select>
+              <span className={"rs-dates" + (fromDate || toDate ? " on" : "")}>
+                <span className="rs-dl">วันที่</span>
+                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} aria-label="จากวันที่" />
+                <span className="rs-dash">–</span>
+                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} aria-label="ถึงวันที่" />
+              </span>
+              {hasFilter ? <button type="button" className="rs-clear" onClick={clearFilters}>ล้างตัวกรอง</button> : null}
+            </div>
           );
         })()}
-        {hasFilter && (
+        {hasFilter && phone && (
           <div style={{ marginTop: 4 }}>
             <Btn variant="ghost" size="sm" onClick={clearFilters}><Icon name="close" size={13} /> ล้างตัวกรอง</Btn>
           </div>
