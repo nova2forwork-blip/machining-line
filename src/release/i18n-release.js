@@ -1809,6 +1809,7 @@ registerI18n({
     "ยังไม่ได้แก้อะไร": "Nothing changed yet",
     "บันทึกการแก้": "Save changes",
     "เหตุผล *": "Reason *",
+    "ขยายเต็มจอ": "Maximise", "ย่อหน้าต่าง": "Restore size",
     "รายละเอียดแต่ละรายการ": "Details of each item", "สถานะ": "Status", "ยังค้าง": "Pending work", "ใบงาน": "Sheet", "ล็อต": "Lot",
     "ดูความคืบหน้าทีละรายการ ›": "Progress by item ›",
     "ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต": "Made = counted at machine terminals · released items only · all lots",

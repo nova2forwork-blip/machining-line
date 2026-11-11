@@ -1406,6 +1406,7 @@ function ModEditor({ m, need, doneOf = () => 0, onCancel, onSave }) {
 // ★ 2026-11-11 ป็อปอัพความคืบหน้าทั้ง Release: การ์ดสรุป (ทั้งใบ / ตามใบงาน / ตามล็อต) + ตารางรายการ เรียงจากที่ทำได้น้อยสุด
 //   ผลิตแล้ว = ยอดจากหน้าเครื่อง (prod: release_id → ชิ้น) · ไม่นับแถวที่ Modify ยกเลิก · เบอร์เดียวกันหลายล็อตรวมกัน
 function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
+  const [big, setBig] = useState(false);   // ขยายเต็มจอ (นอกจากนี้ลากมุมขวาล่างย่อ/ขยายเองได้)
   const [flt, setFlt] = useState("left");
   const [q, setQ] = useState("");
   const data = useMemo(() => {
@@ -1439,8 +1440,8 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot }) {
   return (
     <>
       <div className="rl-back" onClick={onClose} />
-      <div className="rl-pop" role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`}>
-        <div className="rl-pop-h"><h2>Release {plan.ro} ทำไปแค่ไหนแล้ว</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
+      <div className={`rl-pop ${big ? "big" : ""}`} role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`}>
+        <div className="rl-pop-h"><h2>Release {plan.ro} ทำไปแค่ไหนแล้ว</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x rl-pop-max" onClick={() => setBig((v) => !v)} aria-label={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"} title={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"}>{big ? "❐" : "□"}</button><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
         {!prod ? <div className="rw-msg warn">ยังโหลดยอดผลิตไม่ได้ (หรือยังไม่ได้ติดตั้งส่วน Modify) — ตัวเลขผลิตแล้วจะเป็น 0</div> : null}
         <div className="rl-pop-body">
           <div className="rl-pp-cards">
