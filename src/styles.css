@@ -1662,6 +1662,9 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .prj-st.ok { background: var(--accent-tint); color: var(--accent-dk); }
 .prj-st.warn { background: rgba(245,158,11,.14); color: #a16207; }
 .prj-chev-btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 2px 9px; font: inherit; font-size: 12px; font-weight: 700; color: var(--accent-dk); cursor: pointer; white-space: nowrap; }
+.prj-chev-all { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 1px 8px; font: inherit; font-size: 11.5px; font-weight: 700; color: var(--accent-dk); cursor: pointer; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+.prj-chev-all:hover:not(:disabled), .prj-chev-all.on { border-color: var(--accent); background: var(--accent-tint); }
+.prj-chev-all:disabled { opacity: .45; cursor: default; }
 .prj-chev-btn:hover, .prj-chev-btn.on { border-color: var(--accent); background: var(--accent-tint); }
 
 /* ★ 2026-11-04 สถานี = บัญชีล็อกอิน */

@@ -7443,6 +7443,15 @@ function PlanLotsBtn({ g, open, onToggle, L }) {
     <button type="button" className={`prj-chev-btn ${open ? "on" : ""}`} aria-expanded={open} title={L(open ? "พับล็อต" : "ดูล็อตในใบนี้", open ? "Hide lots" : "Show lots")}
       onClick={(e) => { e.stopPropagation(); onToggle(); }}>{open ? "▾" : "▸"} {L(`${g.children.length} ล็อต`, `${g.children.length} lot${g.children.length === 1 ? "" : "s"}`)}</button>);
 }
+// ★ 2026-11-11 ผู้ใช้: "เพิ่มปุ่มเปิด-ปิดล็อตทั้งหมด" → หัวคอลัมน์ "ล็อต" = ปุ่มกาง / พับ ทุกใบในตาราง
+function LotsAllBtn({ rows, openPlans, setOpenPlans, en }) {
+  const keys = (rows || []).filter((r) => r.isPlan && r.children && r.children.length).map((r) => r.openKey);
+  const allOpen = keys.length > 0 && keys.every((k) => openPlans.has(k));
+  const tip = en ? (allOpen ? "Collapse all lots" : "Expand all lots") : (allOpen ? "พับล็อตทั้งหมด" : "กางล็อตทั้งหมด");
+  return (
+    <button type="button" className={`prj-chev-all ${allOpen ? "on" : ""}`} disabled={!keys.length} title={tip} aria-label={tip} aria-pressed={allOpen}
+      onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setOpenPlans(allOpen ? new Set() : new Set(keys)); }}>{allOpen ? "▾" : "▸"} {en ? "Lots" : "ล็อต"}</button>);
+}
 function PlanOrderCell({ g, left, L }) {
   const st = left.get(g.openKey);
   // แตะแถว = เปิดใบหลัก · ปุ่ม ▸ (คอลัมน์แรก) = กาง/พับดูล็อต
@@ -7855,7 +7864,7 @@ function ReleasePage({ user, goTo }) {
           rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? setPlanView({ plan: g.plan, openBuilder: false }) : setViewGroup(g)) })}
           empty={loading ? "…" : (hasFilter ? "ไม่พบ Release ตามเงื่อนไขที่ค้นหา" : "ยังไม่มี Release — กด \"ปล่อยงานใหม่\" เพื่อเริ่ม")}
           columns={[
-            { key: "lots", header: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; })} L={(th, en) => (getLang() === "en" ? en : th)} /> : null },
+            { key: "lots", header: <LotsAllBtn rows={relTree} openPlans={openPlans} setOpenPlans={setOpenPlans} en={getLang() === "en"} />, dataLabel: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; })} L={(th, en) => (getLang() === "en" ? en : th)} /> : null },
             { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
             { key: "project", header: "โปรเจค", sortKey: "project", cell: (g) => g.projectCode },
             { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} left={planLeftAll} L={(th, en) => (getLang() === "en" ? en : th)} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
@@ -12363,7 +12372,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             }}
             rowProps={(g) => ({ className: "release-row" + (g.isPlan ? " prj-plan-row" : g.childOf ? " prj-lot-row" : ""), onClick: () => (g.isPlan ? setPlanView({ plan: g.plan, openBuilder: false }) : setViewGroup(g)) })}
             columns={[
-              { key: "lots", header: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => togglePlan(g)} L={L} /> : null },
+              { key: "lots", header: <LotsAllBtn rows={treeRows} openPlans={openPlans} setOpenPlans={setOpenPlans} en={getLang() === "en"} />, dataLabel: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => togglePlan(g)} L={L} /> : null },
               { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
               { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} left={planLeft} L={L} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
               { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
