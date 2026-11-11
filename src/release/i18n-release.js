@@ -1659,6 +1659,7 @@ registerI18n({
     "สถานะใบนี้": "Status",
     "ปล่อยต่อ →": "Release the rest →",
     "ปล่อยครบแล้ว — ไม่มีอะไรค้าง": "Fully released — nothing pending",
+    "ปล่อยครบแล้ว": "Fully released",
     "ยังไม่มีของในใบ": "No items yet",
     "ล็อตที่ปล่อย": "Released lots",
     "เปิด": "Open",
