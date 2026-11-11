@@ -1060,3 +1060,9 @@ tr:hover .rt-matbtn, .rt-matbtn:focus { opacity: 1; }
 .rl-pop.big::after { display: none; }
 /* ★ 2026-11-11 ตาราง Total สูงตามจอ (เดิมตายตัว 560px — จอใหญ่เหลือที่ว่างข้างล่าง) */
 .rt-tw { max-height: max(560px, calc(100vh - 230px)); }
+.rl-pop { resize: none; }
+.rl-pop-rz { position: absolute; z-index: 3; touch-action: none; }
+.rl-pop-rz.w, .rl-pop-rz.e { top: 0; bottom: 14px; width: 8px; cursor: ew-resize; } .rl-pop-rz.w { left: 0; } .rl-pop-rz.e { right: 0; }
+.rl-pop-rz.s { left: 14px; right: 14px; bottom: 0; height: 8px; cursor: ns-resize; }
+.rl-pop-rz.sw, .rl-pop-rz.se { bottom: 0; width: 16px; height: 16px; } .rl-pop-rz.sw { left: 0; cursor: nesw-resize; } .rl-pop-rz.se { right: 0; cursor: nwse-resize; }
+.rl-pop-rz:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
