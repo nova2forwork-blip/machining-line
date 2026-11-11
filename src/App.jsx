@@ -8477,131 +8477,79 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         <Card title={`ป้ายที่จะพิมพ์ (${fmtNum(displayed.length)})`} right={
           <Btn size="sm" onClick={toggleAll}>{selCount === displayed.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}</Btn>
         }>
-          <Field label={multi ? "ชนิดป้าย (ตั้งทุกเบอร์)" : "ชนิดป้าย"}>
-            <div className="chip-row">
-              <span className={`chip ${!mixed && lotCountByScope.unit > 0 ? "active" : ""}`} onClick={() => setLabelScope("unit")}>ป้ายรายชิ้น · รันเบอร์ 1 OF N (ชิ้นใหญ่)</span>
-              <span className={`chip ${!mixed && lotCountByScope.lot > 0 ? "active" : ""}`} onClick={() => setLabelScope("lot")}>ป้ายรวมล็อต · 1 ใบต่อพาร์ท (ชิ้นเล็ก)</span>
-              {mixed && <span className="chip active" style={{ cursor: "default" }}>{`แบบผสม · 1 OF N ${fmtNum(lotCountByScope.unit)} เบอร์ / รวมล็อต ${fmtNum(lotCountByScope.lot)} เบอร์`}</span>}
-            </div>
-          </Field>
-
-          {/* ★ เลือกชนิดป้ายแยกรายเบอร์ แบบ 2 ฝั่ง — ซ้าย = 1 OF N (รายชิ้น) · ขวา = ทั้งล็อต (ใบเดียว)
-              แตะเบอร์ = ติ๊กเลือก (หลายเบอร์ได้) → "ย้ายที่เลือก" · ลูกศรท้ายแถว = ย้ายเบอร์นั้นทันที
-              เบอร์ที่อยู่ฝั่งหนึ่งแล้วจะไม่ขึ้นในอีกฝั่ง */}
-          {multi && (() => {
+          {/* ★ 2026-11-11 ผู้ใช้: "ออกแบบใหม่" → เดิม: ชิป 2 ปุ่ม + รายการ 2 ฝั่งย้ายไปมา + คำอธิบายยาว
+              ใหม่: รายการเดียว — แต่ละเบอร์มีสวิตช์ [1 OF N | ทั้งล็อต] ของตัวเอง · หัวกล่อง = ตั้งทุกเบอร์ + ค้นหา + สรุป · ติ๊กหลายเบอร์แล้วตั้งทีเดียวได้ */}
+          {(() => {
             const f = lotFilter.trim().toLowerCase();
-            const match = (r) => { if (!f) return true; const pt = partById.get(r.part_master_id); const rl = relById.get(r.release_id); return `${pt?.part_no || ""} ${rl?.release_order || ""}`.toLowerCase().includes(f); };
-            const unitSide = lotReps.filter((r) => scopeOf(r.release_id) === "unit");
-            const lotSide = lotReps.filter((r) => scopeOf(r.release_id) === "lot");
-            const unpick = (ids) => setScopePick((o) => { const n = new Set(o); ids.forEach((id) => n.delete(id)); return n; });
-            const moveMany = (rows, scope) => { rows.forEach((r) => setLotScope(r.release_id, scope)); unpick(rows.map((r) => r.release_id)); };
-            // ★ เรียกเป็นฟังก์ชัน (ไม่ใช่ <Component/>) — กันรีเมานต์ทุกครั้งที่ย้ายเบอร์ (สกอลไม่เด้งกลับบน)
-            const side = ({ key, title, hint, rows, to, arrow, tone }) => {
-              const shown = rows.filter(match);
-              const picked = shown.filter((r) => scopePick.has(r.release_id));
-              const allPicked = shown.length > 0 && picked.length === shown.length;
-              const togglePick = (r, idx, ev) => {
-                const last = lastPickRef.current[key];
-                setScopePick((o) => {
-                  const n = new Set(o);
-                  const on = !o.has(r.release_id);
-                  // Shift+คลิก = เลือก/ยกเลิกทั้งช่วงจากแถวล่าสุดถึงแถวนี้
-                  if (ev?.shiftKey && last != null && last < shown.length) {
-                    const [i0, i1] = last < idx ? [last, idx] : [idx, last];
-                    shown.slice(i0, i1 + 1).forEach((x) => (on ? n.add(x.release_id) : n.delete(x.release_id)));
-                  } else if (on) n.add(r.release_id); else n.delete(r.release_id);
-                  return n;
-                });
-                lastPickRef.current[key] = idx;
-              };
-              const toggleAllPick = () => setScopePick((o) => {
-                const n = new Set(o);
-                shown.forEach((r) => (allPicked ? n.delete(r.release_id) : n.add(r.release_id)));
+            const infoOf = (r) => { const pt = partById.get(r.part_master_id); const rl = relById.get(r.release_id) || {}; return { no: pt?.part_no || "-", ro: rl.release_order || "", qty: Number(rl.qty) || 0 }; };
+            const shown = lotReps.filter((r) => { if (!f) return true; const x = infoOf(r); return `${x.no} ${x.ro}`.toLowerCase().includes(f); });
+            const picked = shown.filter((r) => scopePick.has(r.release_id));
+            const allPicked = shown.length > 0 && picked.length === shown.length;
+            const setMany = (rows, scope) => { rows.forEach((r) => setLotScope(r.release_id, scope)); setScopePick(new Set()); };
+            const togglePick = (r, idx, ev) => {
+              const last = lastPickRef.current.one;
+              setScopePick((o) => {
+                const n = new Set(o); const on = !o.has(r.release_id);
+                if (ev?.shiftKey && last != null && last < shown.length) { const [i0, i1] = last < idx ? [last, idx] : [idx, last]; shown.slice(i0, i1 + 1).forEach((x) => (on ? n.add(x.release_id) : n.delete(x.release_id))); }
+                else if (on) n.add(r.release_id); else n.delete(r.release_id);
                 return n;
               });
-              const arrowBtn = (r) => (
-                <button type="button" onClick={(e) => { e.stopPropagation(); moveMany([r], to); }}
-                  title={arrow === "→" ? "ย้ายเบอร์นี้ไปฝั่ง ทั้งล็อต" : "ย้ายเบอร์นี้ไปฝั่ง 1 OF N"}
-                  style={{ border: "1px solid var(--line, #e5e7eb)", background: "var(--surface, #fff)", borderRadius: 8, width: 30, height: 26, cursor: "pointer", color: "var(--accent)", fontWeight: 800, flexShrink: 0 }}>{arrow}</button>
-              );
-              return (
-                <div key={key} style={{ flex: "1 1 300px", minWidth: 0, border: "1px solid var(--line, #e5e7eb)", borderRadius: 12, background: "var(--surface, #fff)", display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line, #e5e7eb)", background: tone, borderRadius: "12px 12px 0 0" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{title}{" "}<span style={{ color: "var(--muted)", fontWeight: 600 }}>{`(${fmtNum(rows.length)} เบอร์)`}</span></div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{hint}</div>
-                      </div>
-                      <Btn size="sm" variant="ghost" disabled={!shown.length} onClick={() => moveMany(shown, to)}>
-                        {arrow === "→" ? `ย้าย${f ? "ที่ค้นเจอ" : "ทั้งหมด"} →` : `← ย้าย${f ? "ที่ค้นเจอ" : "ทั้งหมด"}`}
-                      </Btn>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: shown.length ? "pointer" : "default", flex: 1 }}>
-                        <input type="checkbox" checked={allPicked} disabled={!shown.length} onChange={toggleAllPick} style={{ accentColor: "var(--accent)", width: 16, height: 16 }} />
-                        {picked.length ? `เลือกแล้ว ${fmtNum(picked.length)} เบอร์` : "เลือกทั้งหมด"}
-                      </label>
-                      <Btn size="sm" variant="accent" disabled={!picked.length} onClick={() => moveMany(picked, to)}>
-                        {arrow === "→" ? `ย้ายที่เลือก (${fmtNum(picked.length)}) →` : `← ย้ายที่เลือก (${fmtNum(picked.length)})`}
-                      </Btn>
-                    </div>
-                  </div>
-                  <div style={{ maxHeight: 300, overflowY: "auto", padding: 6 }}>
-                    {shown.length === 0 && (
-                      <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "18px 6px" }}>
-                        {rows.length ? "ไม่พบเบอร์ที่ค้นหา" : "— ยังไม่มีเบอร์ฝั่งนี้ —"}
-                      </div>
-                    )}
-                    {shown.map((r, idx) => {
-                      const pt = partById.get(r.part_master_id); const rl = relById.get(r.release_id) || {};
-                      const on = scopePick.has(r.release_id);
-                      return (
-                        <div key={r.release_id} role="checkbox" aria-checked={on} tabIndex={0}
-                          onClick={(e) => togglePick(r, idx, e)}
-                          onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); togglePick(r, idx, e); } }}
-                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderBottom: "1px dashed var(--line, #eee)", borderRadius: 6, cursor: "pointer", userSelect: "none", background: on ? "rgba(16,185,129,.12)" : "transparent" }}>
-                          {arrow === "←" && arrowBtn(r)}
-                          <input type="checkbox" checked={on} readOnly tabIndex={-1} style={{ accentColor: "var(--accent)", width: 16, height: 16, pointerEvents: "none", flexShrink: 0 }} />
-                          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
-                            <b style={{ fontFamily: "var(--font-mono)" }}>{pt?.part_no || "-"}</b>
-                            <span style={{ color: "var(--muted)" }}>{rl.release_order ? ` · ${rl.release_order}` : ""} × {nc(rl.qty)}</span>
-                          </span>
-                          {arrow === "→" && arrowBtn(r)}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
+              lastPickRef.current.one = idx;
             };
+            const nUnitLabels = lotReps.filter((r) => scopeOf(r.release_id) === "unit").reduce((a, r) => a + infoOf(r).qty, 0);
+            const allUnit = !mixed && lotCountByScope.unit > 0, allLot = !mixed && lotCountByScope.lot > 0;
             return (
-              <div className="qr-lot-scope" style={{ margin: "8px 0 10px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>แยกรายเบอร์ — แตะเบอร์เพื่อติ๊กเลือก (หลายเบอร์ได้) แล้วกด "ย้ายที่เลือก" · ลูกศร = ย้ายทันที</span>
-                  {lotReps.length > 8 && (
-                    <input className="input" value={lotFilter} onChange={(e) => setLotFilter(e.target.value)}
-                      placeholder="ค้นหาเบอร์ (ทั้ง 2 ฝั่ง)..." style={{ maxWidth: 260 }} />
-                  )}
+              <div className="qs">
+                <div className="qs-head">
+                  <div className="qs-all">
+                    <span className="qs-lab">{multi ? "ชนิดป้าย · ทุกเบอร์" : "ชนิดป้าย"}</span>
+                    <span className="qs-seg big">
+                      <button type="button" className={allUnit ? "on unit" : ""} onClick={() => setLabelScope("unit")} title="ป้าย 1 ใบต่อ 1 ชิ้น เลขวิ่ง 1 OF N (ชิ้นใหญ่)">1 OF N · รายชิ้น</button>
+                      <button type="button" className={allLot ? "on lot" : ""} onClick={() => setLabelScope("lot")} title="ป้ายเดียวแทนทั้งล็อต สแกนแล้วกรอกจำนวน (ชิ้นเล็ก)">ทั้งล็อต · ใบเดียว</button>
+                    </span>
+                  </div>
+                  <div className="qs-sum">
+                    <span className="qs-dot unit" />1 OF N <b>{fmtNum(lotCountByScope.unit)}</b> เบอร์ · <b>{fmtNum(nUnitLabels)}</b> ใบ
+                    <span className="qs-dot lot" style={{ marginLeft: 12 }} />ทั้งล็อต <b>{fmtNum(lotCountByScope.lot)}</b> เบอร์ · <b>{fmtNum(lotCountByScope.lot)}</b> ใบ
+                  </div>
+                  {multi && lotReps.length > 8 ? (
+                    <label className="rs-search sm qs-find">
+                      <Icon name="search" size={14} />
+                      <input type="search" value={lotFilter} onChange={(e) => setLotFilter(e.target.value)} placeholder="ค้นหาเบอร์..." aria-label="ค้นหาเบอร์" />
+                      {lotFilter ? <button type="button" className="rs-x" onClick={() => setLotFilter("")} aria-label="ล้างคำค้น">✕</button> : null}
+                    </label>) : null}
                 </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  {side({ key: "u", title: "1 OF N · รายชิ้น", hint: "ได้ป้ายครบทุกชิ้น (ชิ้นใหญ่)", rows: unitSide, to: "lot", arrow: "→", tone: "rgba(16,185,129,.08)" })}
-                  {side({ key: "l", title: "ทั้งล็อต · ใบเดียว", hint: "1 ใบต่อเบอร์ โชว์จำนวนทั้งล็อต (ชิ้นเล็ก)", rows: lotSide, to: "unit", arrow: "←", tone: "rgba(59,91,219,.07)" })}
-                </div>
-              </div>
-            );
+                {multi ? (
+                  <>
+                    <div className={"qs-bulk" + (picked.length ? " on" : "")}>
+                      <label className="qs-chk"><input type="checkbox" checked={allPicked} disabled={!shown.length} onChange={() => setScopePick((o) => { const n = new Set(o); shown.forEach((r) => (allPicked ? n.delete(r.release_id) : n.add(r.release_id))); return n; })} />{picked.length ? `เลือก ${fmtNum(picked.length)} เบอร์` : `เลือกทั้งหมด${f ? "ที่ค้นเจอ" : ""}`}</label>
+                      {picked.length ? (
+                        <>
+                          <span className="qs-lab">ตั้งที่เลือกเป็น</span>
+                          <button type="button" className="qs-set unit" onClick={() => setMany(picked, "unit")}>1 OF N</button>
+                          <button type="button" className="qs-set lot" onClick={() => setMany(picked, "lot")}>ทั้งล็อต</button>
+                          <button type="button" className="rs-x" onClick={() => setScopePick(new Set())} aria-label="ล้างที่เลือก" title="ล้างที่เลือก">✕</button>
+                        </>) : <span className="qs-tip">กดสวิตช์ท้ายแถวเพื่อเปลี่ยนทีละเบอร์ · ติ๊กหลายเบอร์ (Shift = ทั้งช่วง) เพื่อตั้งพร้อมกัน</span>}
+                    </div>
+                    <div className="qs-list">
+                      {shown.length === 0 ? <div className="qs-empty">ไม่พบเบอร์ที่ค้นหา</div> : shown.map((r, idx) => {
+                        const x = infoOf(r); const sc = scopeOf(r.release_id); const on = scopePick.has(r.release_id);
+                        return (
+                          <div key={r.release_id} className={`qs-row ${sc}${on ? " picked" : ""}`} role="checkbox" aria-checked={on} tabIndex={0}
+                            onClick={(e) => togglePick(r, idx, e)} onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); togglePick(r, idx, e); } }}>
+                            <input type="checkbox" checked={on} readOnly tabIndex={-1} />
+                            <span className="qs-no"><b>{x.no}</b><small>{x.ro ? `${x.ro} · ` : ""}{nc(x.qty)} ชิ้น</small></span>
+                            <span className="qs-n" title="จำนวนป้ายที่จะได้">{sc === "unit" ? nc(x.qty) : 1} ใบ</span>
+                            <span className="qs-seg" onClick={(e) => e.stopPropagation()}>
+                              <button type="button" className={sc === "unit" ? "on unit" : ""} onClick={() => setLotScope(r.release_id, "unit")} title="ป้ายรายชิ้น 1 OF N" aria-label={`${x.no} ป้ายรายชิ้น 1 OF N`}>1 OF N</button>
+                              <button type="button" className={sc === "lot" ? "on lot" : ""} onClick={() => setLotScope(r.release_id, "lot")} title="ป้ายรวมทั้งล็อต ใบเดียว" aria-label={`${x.no} ป้ายรวมทั้งล็อต`}>ทั้งล็อต</button>
+                            </span>
+                          </div>);
+                      })}
+                    </div>
+                  </>) : null}
+              </div>);
           })()}
-
-          <div style={{ fontSize: 12, color: "var(--muted)", margin: "6px 2px 12px", lineHeight: 1.6 }}>
-            {mixed
-              ? `แบบผสม — ${fmtNum(lotCountByScope.unit)} เบอร์ได้ป้ายรายชิ้น 1 OF N ครบทุกชิ้น · ${fmtNum(lotCountByScope.lot)} เบอร์ได้ป้ายรวมล็อต 1 ใบ (โชว์จำนวนทั้งล็อต)`
-              : lotCountByScope.unit > 0
-              ? (multi
-                  ? `ป้ายรายชิ้น (รันเบอร์) — ทุกพาร์ทที่เลือก (${fmtNum(lotReps.length)} พาร์ท) จะได้ป้ายครบทุกชิ้น เลขวิ่ง 1 OF N แยกตามแต่ละพาร์ท`
-                  : "พิมพ์ป้าย 1 ใบต่อ 1 ชิ้น เลขวิ่ง 1 OF N — ติดสติกเกอร์รายชิ้น")
-              : (multi
-                  ? `ป้ายรวมล็อต — ${fmtNum(lotReps.length)} พาร์ท ได้ 1 ใบต่อพาร์ท (สแกน 1 ครั้งแล้วกรอกจำนวน)`
-                  : "พิมพ์ป้ายเดียวแทนทั้งล็อต — สแกน 1 ครั้งที่หน้าเครื่องแล้วกรอกจำนวนที่ทำ")}
-          </div>
           {displayed.length > 1500 && (
             <div style={{ fontSize: 12, color: "var(--warn, #b45309)", margin: "-4px 2px 10px", fontWeight: 600 }}>
               ⚠ ป้ายรายชิ้นรวม {fmtNum(displayed.length)} ใบ — พิมพ์เยอะมาก อาจใช้เวลาโหลด/พิมพ์นาน (เลือกเฉพาะพาร์ทที่ต้องการได้)

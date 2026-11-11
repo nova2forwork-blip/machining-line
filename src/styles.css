@@ -1754,3 +1754,30 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 @media (max-width: 640px) { .qf-bar { grid-template-columns: 1fr; } }
 .qf-bar .field > *:last-child, .qf-bar .field select { margin-bottom: 0; }
 .qf-bar .field select, .qf-bar .field .mcs-btn, .qf-bar .field button.select { height: 42px; }
+
+/* ★ 2026-11-11 หน้าพิมพ์ QR: เลือกชนิดป้ายแบบรายการเดียว (สวิตช์ต่อเบอร์) */
+.qs { border: 1px solid var(--border); border-radius: 14px; margin: 0 0 14px; overflow: hidden; background: var(--surface); }
+.qs-head { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; padding: 12px 14px; background: var(--surface-2, #f3f6f5); }
+.qs-all { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.qs-lab { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.qs-sum { flex: 1; min-width: 220px; font-size: 12.5px; color: var(--muted); white-space: nowrap; } .qs-sum b { color: var(--text); }
+.qs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 99px; margin-right: 6px; } .qs-dot.unit { background: #10b981; } .qs-dot.lot { background: #6366f1; }
+.qs-find { flex: 0 1 240px; width: 240px; min-width: 160px; background: var(--surface); }
+.qs-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #e9efec; flex-shrink: 0; }
+.qs-seg button { border: 0; background: transparent; font: inherit; font-size: 11.5px; font-weight: 700; color: #6b7a75; padding: 3px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; transition: background .12s, color .12s; }
+.qs-seg button:hover:not(.on) { color: var(--text); }
+.qs-seg button.on.unit { background: #10b981; color: #fff; } .qs-seg button.on.lot { background: #6366f1; color: #fff; }
+.qs-seg.big button { font-size: 13px; padding: 6px 16px; }
+.qs-bulk { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12.5px; min-height: 42px; }
+.qs-bulk.on { background: var(--accent-tint); }
+.qs-chk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; cursor: pointer; } .qs-chk input, .qs-row input { accent-color: var(--accent); width: 16px; height: 16px; }
+.qs-tip { color: var(--muted); font-size: 12px; }
+.qs-set { border: 0; border-radius: 999px; padding: 5px 14px; font: inherit; font-size: 12.5px; font-weight: 700; color: #fff; cursor: pointer; } .qs-set.unit { background: #10b981; } .qs-set.lot { background: #6366f1; } .qs-set:hover { filter: brightness(.94); }
+.qs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 14px; max-height: 320px; overflow-y: auto; padding: 4px 10px 8px; }
+.qs-row { display: flex; align-items: center; gap: 9px; padding: 7px 6px; border-bottom: 1px solid var(--border-soft, #eef2f0); border-radius: 8px; cursor: pointer; user-select: none; }
+.qs-row:hover { background: var(--surface-2, #f3f6f5); } .qs-row.picked { background: var(--accent-tint); }
+.qs-row input { pointer-events: none; flex-shrink: 0; }
+.qs-no { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; } .qs-no b { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .qs-no small { font-size: 11.5px; color: var(--muted); }
+.qs-n { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.qs-row.unit .qs-n { color: #047857; } .qs-row.lot .qs-n { color: #4338ca; }
+.qs-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: 12.5px; padding: 18px 6px; }
