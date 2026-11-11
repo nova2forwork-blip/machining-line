@@ -6282,7 +6282,7 @@ function PmChips({ ms, qty, open, onToggle, lang }) {
       ))}
       <button type="button" className={"pm-toggle" + (open ? " open" : "")} onClick={stop}
         aria-expanded={open} title={en ? "Show / hide each machine" : "เปิด/ปิด รายละเอียดแต่ละเครื่อง"}>
-        <span className="ar">▶</span>{open ? (en ? "hide" : "ซ่อน") : (en ? `${ms.length} machine${ms.length > 1 ? "s" : ""}` : `${ms.length} เครื่อง`)}
+        <span className="ar">▶</span>{open ? (en ? "hide" : "ซ่อน") : null}{/* ★ 2026-11-11 ชิปเครื่องโชว์ครบทุกเครื่องอยู่แล้ว → ไม่ต้องบอก "N เครื่อง" ซ้ำ */}
       </button>
     </>
   );
@@ -7167,8 +7167,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </div>
             )}
             {pmReady && (
-              <div className="pm-hint">{LL("กดชิปเครื่อง หรือ “▸ N เครื่อง” ใต้เบอร์ = เปิดดูรายละเอียดของแต่ละเครื่อง · กดที่อื่นในแถว = เปิดความคืบหน้าเหมือนเดิม",
-                "Click a machine chip or “▸ N machines” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
+              <div className="pm-hint">{LL("กดชิปเครื่อง หรือ “▸” ใต้เบอร์ = เปิดดูรายละเอียดของแต่ละเครื่อง · กดที่อื่นในแถว = เปิดความคืบหน้าเหมือนเดิม",
+                "Click a machine chip or “▸” under the part no. to see each machine · click elsewhere on the row = progress popup as before")}</div>
             )}
             {canEdit && sel.size ? (
               <div className="lot-bulk">
