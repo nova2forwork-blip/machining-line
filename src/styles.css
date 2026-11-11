@@ -1781,3 +1781,14 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .qs-n { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 .qs-row.unit .qs-n { color: #047857; } .qs-row.lot .qs-n { color: #4338ca; }
 .qs-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: 12.5px; padding: 18px 6px; }
+
+/* ★ 2026-11-11 การ์ดป้าย QR: QR ซ้าย · เบอร์/เลขชิ้นขวา · รหัสเต็มบรรทัดล่าง */
+.qr-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.qr-grid.with-code { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.unit-check.qr-tile { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "qr info" "code code"; align-items: center; gap: 6px 10px; padding: 10px 10px 10px 30px; text-align: left; cursor: pointer; }
+.unit-check.qr-tile > input { position: absolute; top: 8px; left: 8px; margin: 0; accent-color: var(--accent); }
+.unit-check.qr-tile > svg { grid-area: qr; width: 64px; height: 64px; flex-shrink: 0; display: block; }
+.qr-tile-info { grid-area: info; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.qr-tile-info b { font-size: 13px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.qr-tile-info span { font-size: 11.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.qr-tile-code { grid-area: code; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); background: rgba(0,0,0,.04); border-radius: 6px; padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; letter-spacing: .01em; }

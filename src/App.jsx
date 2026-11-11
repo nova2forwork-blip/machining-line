@@ -8614,18 +8614,21 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
 
           {/* ── ตาราง QR เลื่อนได้ (มีสกอลบาร์ด้านข้าง) ───────────────────── */}
           <div ref={gridRef} className="qr-grid-scroll">
-            <div className="qr-grid">
+            <div className={"qr-grid" + (showCode ? " with-code" : "")}>
               {displayed.slice(0, 600).map((u) => {
                 const part = partById.get(u.part_master_id);
                 const tot = relById.get(u.release_id)?.qty;
                 const tag = scopeOf(u.release_id) === "lot" ? (tot != null ? `${tot} PCS` : "") : (u.unit_no != null && tot != null ? `${u.unit_no} OF ${tot}` : "");
                 return (
-                  <label key={u.id} className={`unit-check ${selected.has(u.id) ? "checked" : ""}`} style={{ alignItems: "center", textAlign: "center", gap: 6 }}>
-                    <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ accentColor: "var(--accent)", alignSelf: "flex-start" }} />
+                  // ★ 2026-11-11 ผู้ใช้: "แสดงรหัสใต้ QR แล้วดูไม่รู้เรื่อง" → การ์ดป้ายจัดเป็นตาราง: QR ซ้าย · เบอร์ + เลขชิ้นขวา · รหัสเต็มอยู่บรรทัดล่างยาวทั้งการ์ด (เดิมรหัสถูกบีบเป็นแท่งแนวตั้ง ตัดทีละ 4 ตัว)
+                  <label key={u.id} className={`unit-check qr-tile ${selected.has(u.id) ? "checked" : ""}${showCode ? " with-code" : ""}`}>
+                    <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} />
                     <QRCodeSVG id={`pq-${u.id}`} value={u.qr_code} size={82} fgColor="#000000" bgColor="#ffffff" />
-                    {part?.part_no ? <span style={{ fontSize: 12, fontWeight: 600 }}>{part.part_no}</span> : null}
-                    {tag ? <span style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 600 }}>{tag}</span> : null}
-                    {showCode ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--muted)", wordBreak: "break-all" }}>{u.qr_code}</span> : null}
+                    <span className="qr-tile-info">
+                      {part?.part_no ? <b>{part.part_no}</b> : null}
+                      {tag ? <span>{tag}</span> : null}
+                    </span>
+                    {showCode ? <span className="qr-tile-code" title={u.qr_code}>{u.qr_code}</span> : null}
                   </label>
                 );
               })}
