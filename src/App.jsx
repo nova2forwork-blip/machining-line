@@ -10096,7 +10096,8 @@ function ReportPage({ goTo }) {
       <div className="chip-row" style={{ marginBottom: 14 }}>
         {[["overview", lang === "en" ? "Overview" : "ภาพรวม"],
           ...(canSeeEmp ? [["employee", lang === "en" ? "By employee" : "รายพนักงาน"]] : []),
-          ["trend", lang === "en" ? "Weekly / monthly trend" : "แนวโน้มรายสัปดาห์ / รายเดือน"]].map(([k, lbl]) => (
+          ["trend", lang === "en" ? "Weekly / monthly trend" : "แนวโน้มรายสัปดาห์ / รายเดือน"],
+          ["finished", "Finished Part"]].map(([k, lbl]) => (
           <span key={k} className={`chip ${view === k ? "active" : ""}`} onClick={() => setView(k)}>{lbl}</span>
         ))}
       </div>
@@ -10106,6 +10107,9 @@ function ReportPage({ goTo }) {
           rangeLabel={`${fmtDFull(curRange.from)} – ${fmtDFull(curRange.to)}`} />
       ) : view === "trend" ? (
         <TrendView filters={sumFilters({ projectFilter, partFilter, releaseFilter, deptFilter })} />
+      ) : view === "finished" ? (
+        // ★ 2026-11-11 ผู้ใช้: "แยกตัวนี้ไปเป็นหัวข้อใหม่" → Finished Part เป็นแท็บของตัวเอง (เดิมต่อท้ายหน้าภาพรวม ต้องเลื่อนลงไปไกล)
+        <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} />
       ) : (<>
       <LoadStateBanner state={logsState} onRetry={() => setReloadTick((t) => t + 1)} />
 
@@ -10272,11 +10276,6 @@ function ReportPage({ goTo }) {
           onOpenMachine={(m) => { setDrill(null); setScanMachine({ machine: m, from: curRange.from, to: curRange.to }); }} />
       )}
 
-      {/* ── Finished Part (รวมมาไว้ในหน้า Report) ──────────────────────────── */}
-      <div className="section-heading" style={{ margin: "26px 2px 12px", fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-        {lang === "en" ? "Finished Parts — completed pieces" : "Finished Part — ชิ้นงานที่เสร็จสมบูรณ์"}
-      </div>
-      <FinishedPartSection releases={allRels} projectFilter={projectFilter} partFilter={partFilter} releaseFilter={releaseFilter} />
       </>
       ) : (
         <AssemblyReportView from={curRange.from} to={curRange.to} parentKind={deptFilter === "packing" ? "package" : deptFilter === "panel" ? "panel" : "subassembly"} projectFilter={projectFilter} partFilter={partFilter} goTo={goTo} />
