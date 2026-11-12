@@ -469,7 +469,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               {m.k === "MAT" ? m.tab : m.label} <small>{nf(head.mat[m.k] || 0)}</small>
             </button>))}
         </div>) : null}
-      {grp === "bom" ? <BomView plan={plan} need={need} /> : (
+      {grp === "bom" ? <BomView plan={plan} need={need} rel={rel} onSaveDirect={onPlanChange ? async (np) => { await onPlanChange(np); } : null} onModify={onInlineModify} /> : (
         <>
       <div className="rt-tools">
         <div className="rt-title">

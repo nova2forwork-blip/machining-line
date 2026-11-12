@@ -736,7 +736,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 //   ของที่ปล่อยไปแล้วเกินยอดใหม่ → ลด/ยกเลิกในล็อตให้เอง (ล็อตล่าสุดก่อน) ผ่าน Modify เดิมของระบบ · จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง
 function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null }) {
   // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
-  const [tab, setTab] = useState(addOnly ? "add" : "part");
+  const [tab, setTab] = useState(addOnly ? "add" : init && init.bchg ? (init.bscope === "panel" ? "bom" : "sub") : "part");
   const [q, setQ] = useState("");
   const [onlyChg, setOnlyChg] = useState(false);
   const [chg, setChg] = useUndoState(() => (init && init.chg) || {}, { label: "Modify: จำนวน / ยกเลิก" });
@@ -746,9 +746,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify: วางแบบพาร์ท Rev ใหม่ที่ INV.CODE ต่างจากเดิม → เสนอเป็นรายการ "เปลี่ยนวัสดุ" (ติ๊กออกได้) · บันทึกเป็น matOv ของแผน
   const [matChg, setMatChg] = useState(() => (init && init.matChg) || []);   // ★ เปลี่ยนจากแบบ: [{ id, code, kind:"part"|"sub", field:"mat"|"len", from, to, file, on }]
   const [found, setFound] = useState([]);     // ★ 2026-11-10 สรุปทุกอย่างที่เทียบเจอจากแบบที่วาง (โชว์รวมที่เดียว) [{ code, what, from, to, where, tone }]
-  const [bscope, setBscope] = useState("sub");          // แก้ BOM ลูกของ: ซับ / แผง
-  const [bowner, setBowner] = useState("");
-  const [bchg, setBchg] = useUndoState({}, { label: "Modify: BOM ลูก", coalesceMs: 800 });                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
+  const [bscope, setBscope] = useState((init && init.bscope) || "sub");          // แก้ BOM ลูกของ: ซับ / แผง
+  const [bowner, setBowner] = useState((init && init.bowner) || "");
+  const [bchg, setBchg] = useUndoState(() => (init && init.bchg) || {}, { label: "Modify: BOM ลูก", coalesceMs: 800 });                 // "scope|owner|idx" → { type:"qty"|"cancel"|"replace", qty, newCode }
   const [badds, setBadds] = useUndoState([], { label: "Modify: เพิ่มลูกใน BOM", coalesceMs: 800 });               // ลูกที่เพิ่มเข้า BOM ซับ/แผง
   const [bform, setBform] = useState({ kind: "part", code: "", qty: "", d: "" });
   const blankForm = { kind: "part", code: "", d: "", qty: "", l: "", inv: "", dest: "CUTTING", procs: "ยิง", u: "pcs." };

@@ -5,8 +5,9 @@
 //   SUM QTY = จำนวนต่อชุด × (ซับชั้นบน ๆ) × จำนวนแผงแบบนั้น (ตรงกับ Sum Quantity ใน Excel)
 //   เศษ: ไล่ตัดตามลำดับแผงในใบนี้ — เบอร์ MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือ ≥ ความยาวที่ต้องตัด (+รอยตัด) ก่อนเปิดเส้นใหม่ · เศษ ≥ 500 มม. เก็บไว้ใช้ต่อ
 // ══════════════════════════════════════════════════════════════════════════
-import { Fragment, useMemo, useState } from "react";
-import { NC, ncmp, nf, nlen, findKey, stockLen, KERF, addrKey, destLabel } from "./releaseCore.js";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { NC, ncmp, nf, nlen, findKey, stockLen, KERF, addrKey, destLabel, needOf, nextModNo, modVer } from "./releaseCore.js";
+import { askConfirm } from "../confirm.jsx";
 import { Pill, ModQty, SUB_SHORT, ModTag } from "./releaseUi.jsx";
 
 const PAGE = 300;
@@ -17,27 +18,29 @@ const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().inc
 export function rowsOfType(plan, unit) {
   const pk = findKey(plan.bom.panels, unit); if (!pk) return [];
   const out = [];
-  const walk = (items, path, mult, seen) => {
-    for (const it of items || []) {
+  // ★ 2026-11-12 แต่ละแถวรู้ว่าอยู่ในรายการของใคร (own = แผง/ซับเจ้าของ · oi = ลำดับในรายการ) — ใช้แก้จำนวนต่อชุดในตาราง BOM
+  const walk = (items, path, mult, seen, scope, owner) => {
+    (items || []).forEach((it, oi) => {
+      const own = { scope, owner, oi };
       const [t, c, qq] = it;
       const cx = (it[4] || "") === "ยกเลิก"; const ed = { cx, ver: it[5] || "", q0: it[6] != null && it[6] !== qq ? it[6] : null, to: cx ? it[7] || "" : "", add: it[8] === "add" };
       if (cx) {   // ลูกที่ถูก Modify ยกเลิก/แทนที่ — โชว์สีแดง ไม่นับยอด ไม่แตกต่อ
         const k = t === "sub" ? findKey(plan.bom.subs, c) : findKey(plan.bom.parts, c); const dd = (t === "sub" ? plan.bom.subs : plan.bom.parts)[k] || {};
-        out.push({ i: out.length, path, depth: path.length, code: c, kind: t === "sub" ? "sub" : dd.k === "hw" ? "hw" : "part", d: dd.d || "", l: dd.l ?? null, h: null, f: dd.f || "", m: t === "sub" ? "" : dd.m || "", q: it[6] != null ? it[6] : qq, per: 0, uom: "pcs.", ...ed });
-        continue;
+        out.push({ i: out.length, path, depth: path.length, code: c, kind: t === "sub" ? "sub" : dd.k === "hw" ? "hw" : "part", d: dd.d || "", l: dd.l ?? null, h: null, f: dd.f || "", m: t === "sub" ? "" : dd.m || "", q: it[6] != null ? it[6] : qq, per: 0, uom: "pcs.", own, ...ed });
+        return;
       }
       if (t === "sub") {
         const sk = findKey(plan.bom.subs, c); const sd = sk ? plan.bom.subs[sk] : {};
-        out.push({ i: out.length, path, depth: path.length, code: c, kind: "sub", d: sd.d || "", l: sd.l ?? null, h: null, f: sd.f || "", m: "", q: qq, per: mult * qq, ...ed });
-        if (sk && !seen.has(sk)) walk(sd.items, [...path, c], mult * qq, new Set([...seen, sk]));
+        out.push({ i: out.length, path, depth: path.length, code: c, kind: "sub", d: sd.d || "", l: sd.l ?? null, h: null, f: sd.f || "", m: "", q: qq, per: mult * qq, own, ...ed });
+        if (sk && !seen.has(sk)) walk(sd.items, [...path, c], mult * qq, new Set([...seen, sk]), "sub", sk);
       } else {
         const pd = plan.bom.parts[findKey(plan.bom.parts, c)] || {};
         const hw = pd.k === "hw";
-        out.push({ i: out.length, path, depth: path.length, code: c, kind: hw ? "hw" : "part", d: pd.d || "", l: pd.l ?? null, h: pd.h ?? null, f: pd.f || "", m: hw ? "" : pd.m || "", ml: pd.ml ?? null, inv: pd.binv || "", q: qq, per: mult * qq, uom: hw ? pd.u || "pcs." : "pcs.", ...ed });
+        out.push({ i: out.length, path, depth: path.length, code: c, kind: hw ? "hw" : "part", d: pd.d || "", l: pd.l ?? null, h: pd.h ?? null, f: pd.f || "", m: hw ? "" : pd.m || "", ml: pd.ml ?? null, inv: pd.binv || "", q: qq, per: mult * qq, uom: hw ? pd.u || "pcs." : "pcs.", own, ...ed });
       }
-    }
+    });
   };
-  walk(plan.bom.panels[pk].items, [], 1, new Set());
+  walk(plan.bom.panels[pk].items, [], 1, new Set(), "panel", pk);
   return out;
 }
 
@@ -55,7 +58,47 @@ const wasteLines = (c) => {
   const out = []; for (let i = 0; i < parts.length; i += 6) out.push(parts.slice(i, i + 6).join(", ") + (i + 6 < parts.length ? "," : ""));
   return out.map((t, i) => <div key={i} style={{ whiteSpace: "nowrap" }}>{t}</div>);
 };
-export function BomView({ plan, need }) {
+export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify = null }) {
+  // ★ 2026-11-12 ผู้ใช้: "BOM ให้แก้ได้ · ตอนบันทึกให้เลือกเป็น M หรือไม่ M ก็ได้"
+  //   คลิกช่อง "ต่อชุด" / QUANTITY → พิมพ์ทับ · ที่แก้ค้างนับที่แถบล่าง → [บันทึก (ไม่นับ Modify)] แก้ BOM ตรง ๆ  หรือ  [บันทึกเป็น M-00x] เปิดหน้า Modify (แท็บ BOM) พร้อมรายการ
+  //   ไม่นับ Modify ได้เฉพาะเมื่อยอดใหม่ไม่ต่ำกว่าที่ปล่อยไปแล้ว — ต่ำกว่า = ต้องเป็น M (ระบบลด/ยกเลิกในล็อตให้)
+  const canEdit = !!(onSaveDirect || onModify);
+  const [bed, setBed] = useState({});      // "scope|owner|oi" → qty (ตัวเลข)
+  const [bcur, setBcur] = useState(null);  // ช่องที่กำลังพิมพ์
+  const [bbusy, setBbusy] = useState(false);
+  useEffect(() => { setBed({}); setBcur(null); }, [(plan.mods || []).length, plan.ro]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const okey = (r) => (r.own ? `${r.own.scope}|${r.own.owner}|${r.own.oi}` : "");
+  const ownItem = (k) => { const [sc, ow, oi] = k.split("|"); const col = sc === "panel" ? plan.bom.panels : plan.bom.subs; const o = col[ow]; return o && o.items ? o.items[Number(oi)] : null; };
+  const bedits = useMemo(() => Object.entries(bed).map(([k, q]) => { const it = ownItem(k); if (!it) return null; const [scope, owner, oi] = k.split("|");
+    return { scope, owner, idx: Number(oi), type: "qty", kind: it[0], code: it[1], before: it[2], qty: q, orig: it[6] != null ? it[6] : it[2] }; }).filter(Boolean), [bed, plan.bom]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const setQ1 = (r, raw) => { const k = okey(r); if (!k) return; const n = Number(String(raw ?? "").replace(/,/g, "").trim());
+    setBed((b) => { const o = { ...b }; if (String(raw ?? "").trim() === "" || !Number.isFinite(n) || n < 0 || Math.abs(n - Number(r.q)) < 1e-9) delete o[k]; else o[k] = Math.round(n * 1000) / 1000; return o; }); };
+  const qCell = (r, unitN) => {
+    const k = okey(r); const pv = k ? bed[k] : undefined; const chg = pv !== undefined;
+    const shownQ = r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null && !chg ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : <>{chg ? <s className="rl-old">{nlen(r.q)}</s> : null}{nlen(chg ? pv : r.q)}</>;
+    if (!canEdit || r.cx || !k) return shownQ;
+    const id = `${k}|${unitN || ""}`;
+    if (bcur === id) return <span className="bm-edhold"><span className="bm-ghost" aria-hidden="true">{shownQ}</span><input autoFocus className="input bm-in" defaultValue={chg ? pv : r.q} inputMode="decimal" aria-label={`จำนวนต่อชุด ${r.code}`}
+      onFocus={(e) => e.target.select()} onBlur={(e) => { setQ1(r, e.target.value); setBcur((c) => (c === id ? null : c)); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pv : r.q); e.target.blur(); } }} /></span>;
+    return <button type="button" className={`bm-qbtn ${chg ? "ed" : ""}`} onClick={() => setBcur(id)} aria-label={`จำนวนต่อชุด ${r.code}`} title={r.own.scope === "sub" ? `แก้จำนวนต่อชุดในซับ ${r.own.owner} — มีผลทุกแผงที่ใช้ซับนี้` : `แก้จำนวนต่อแผง ${r.own.owner}`}>{shownQ}</button>;
+  };
+  async function saveDirect() {
+    if (!onSaveDirect || !bedits.length || bbusy) return;
+    const bom = { ...plan.bom, panels: { ...plan.bom.panels }, subs: { ...plan.bom.subs } };
+    for (const e of bedits) { const col = e.scope === "panel" ? bom.panels : bom.subs; const o = col[e.owner]; if (!o) continue;
+      if (o === (e.scope === "panel" ? plan.bom.panels : plan.bom.subs)[e.owner]) col[e.owner] = { ...o, items: (o.items || []).map((x) => [...x]) };
+      const it = col[e.owner].items[e.idx]; if (it) it[2] = e.qty; }
+    const np = { ...plan, bom, bomFix: [...(plan.bomFix || []), { at: new Date().toISOString(), items: bedits.map((e) => ({ scope: e.scope, owner: e.owner, code: e.code, from: e.before, to: e.qty })) }] };
+    const n0 = needOf(plan), n1 = needOf(np); const relQ = (c) => (rel && rel.byCode.get(NC(c)) ? rel.byCode.get(NC(c)).qty : 0);
+    const diff = []; const low = [];
+    for (const key of ["subs", "parts"]) for (const r1 of n1[key]) { const r0 = n0[key].find((x) => NC(x.code) === NC(r1.code)); const a = r0 ? r0.qty : 0; if (Math.abs(a - r1.qty) < 1e-9) continue; diff.push(`${r1.code} ${nlen(a)} → ${nlen(r1.qty)}`); if (r1.qty < relQ(r1.code)) low.push(`${r1.code} (ปล่อยแล้ว ${nf(relQ(r1.code))} · ยอดใหม่ ${nlen(r1.qty)})`); }
+    for (const key of ["subs", "parts"]) for (const r0 of n0[key]) if (!n1[key].some((x) => NC(x.code) === NC(r0.code)) && r0.qty) { diff.push(`${r0.code} ${nlen(r0.qty)} → 0`); if (relQ(r0.code) > 0) low.push(`${r0.code} (ปล่อยแล้ว ${nf(relQ(r0.code))} · ยอดใหม่ 0)`); }
+    if (low.length) { await askConfirm({ title: "บันทึกแบบไม่นับ Modify ไม่ได้", message: `ยอดใหม่ต่ำกว่าที่ปล่อยไปแล้ว:\n${low.join("\n")}\n\nใช้ "บันทึกเป็น ${modVer(nextModNo(plan))}" แทน — ระบบจะลด/ยกเลิกในล็อตให้และเก็บประวัติ`, tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
+    const ok = await askConfirm({ title: `แก้ BOM ${bedits.length} จุด โดยไม่นับ Modify?`, message: [...bedits.map((e) => `• ${e.code} ใน${e.scope === "panel" ? "แผง" : "ซับ"} ${e.owner}: ต่อชุด ${nlen(e.before)} → ${nlen(e.qty)}`), "", diff.length ? `ยอดต้องใช้ทั้งใบที่เปลี่ยน: ${diff.slice(0, 12).join(" · ")}${diff.length > 12 ? " …" : ""}` : "ยอดต้องใช้ทั้งใบไม่เปลี่ยน", "", "ไม่มีเลข M · ไม่ลงประวัติ Modify · ใช้กับล็อตที่ปล่อยต่อจากนี้"].join("\n"), tone: "warn", confirmText: "บันทึก", cancelText: "กลับไปแก้" });
+    if (!ok) return;
+    setBbusy(true); try { await onSaveDirect(np); setBed({}); } finally { setBbusy(false); }
+  }
   const [sel, setSel] = useState("");          // "" = แบบแรก · "__ALL__" = ทุกแบบ
   const [view, setView] = useState("tree");
   const [q, setQ] = useState("");
@@ -184,14 +227,14 @@ export function BomView({ plan, need }) {
             <div key={r.i} className={`bm-row bm-sub d${Math.min(r.depth, 2)}`} style={{ marginLeft: r.depth * 22 }}>
               <div className="bm-main"><button type="button" className="bm-tg" onClick={() => setClosed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; })} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button><b className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</b><Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? (r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>) : null}{destOf(r).map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}<span className="bm-d">{r.d}</span></div>
               <span className="bm-n r">{nlen(r.l)}</span><span className="bm-mat" />
-              <span className="bm-q r"><small>ต่อชุด</small> {r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : nlen(r.q)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(r.per * cur.n)}</b> <small>SET</small></span>
+              <span className="bm-q r"><small>ต่อชุด</small> {qCell(r, cur.unit)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(r.per * cur.n)}</b> <small>SET</small></span>
             </div>);
           return (
             <div key={r.i} className={`bm-row bm-part ${r.kind}`} style={{ marginLeft: r.depth * 22 + 24 }}>
               <div className="bm-main"><span className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</span>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? (r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>) : null}{r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{destOf(r).map((k) => <Pill key={k} tone="part">{destLabel(k)}</Pill>)}<span className="bm-d">{r.d}</span></div>
               <span className="bm-n r">{nlen(r.l)}</span>
               <span className="bm-mat"><span className="rw-mono rt-inv">{r.m}</span> {cutChip(r)}</span>
-              <span className="bm-q r"><small>ต่อชุด</small> {r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : nlen(r.q)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b> <small>{r.uom}</small></span>
+              <span className="bm-q r"><small>ต่อชุด</small> {qCell(r, cur.unit)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b> <small>{r.uom}</small></span>
             </div>);
         })}
       </div>);
@@ -227,7 +270,7 @@ export function BomView({ plan, need }) {
             <td className={`rw-mono rt-inv ${r.cut?.reuse ? "rt-waste" : ""}`}>{r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.m}</td>
             <td className="rt-waste">{r.cut?.reuse ? "wast" : ""}</td>
             <td className={`r rw-num ${r.cut?.reuse ? "rt-waste" : ""}`} title={r.cut?.reuse ? r.cut.src : ""}>{r.cut?.reuse ? wasteLines(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
-            <td className="r rw-num">{r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} /> : nlen(r.q)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td>
+            <td className="r rw-num">{qCell(r, r.unit + "#" + i)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td>
             <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
               {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
               {f.from.length ? <div className="small rt-waste" title="เศษที่ใช้ตัดแถวนี้ มาจากเส้นเต็มของแถวนี้">← เศษจาก {f.from.join(", ")}</div> : null}
@@ -284,6 +327,15 @@ export function BomView({ plan, need }) {
             {body}
             {v !== "tree" && count > shown ? <div className="rt-more"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit((n) => n + PAGE)}>แสดงเพิ่ม ({nf(Math.min(PAGE, count - shown))})</button></div> : null}
             <div className="rt-note bm-note">เศษ: ไล่ตัดตามลำดับแผงในใบนี้ · MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือพอ (ยาว + รอยตัด {KERF} มม.) ก่อนเปิดเส้นใหม่ · เศษ ≥ {MIN_OFFCUT} มม. เก็บไว้ใช้ต่อ — เป็นการคำนวณเบื้องต้น ไม่ได้ตัดสต็อกจริง</div>
+            {canEdit && v !== "merge" && !bedits.length ? <div className="rw-muted small bm-edhint">คลิกตัวเลข <b>ต่อชุด</b>{v === "table" ? " (QUANTITY)" : ""} เพื่อแก้ · Enter = ตกลง · Esc = ยกเลิก · ลูกในซับ = แก้ที่เดียวมีผลทุกแผงที่ใช้ซับนั้น · เพิ่ม / ยกเลิก / เปลี่ยนเบอร์ลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
+            {bedits.length ? (
+              <div className="rt-pickbar rt-edbar" role="region" aria-label="BOM ที่แก้ค้างไว้">
+                <span><b>แก้ BOM {nf(bedits.length)} จุด · ยังไม่ได้บันทึก</b>
+                  <small>{bedits.slice(0, 3).map((e) => `${e.code} ใน${e.scope === "panel" ? "แผง" : "ซับ"} ${e.owner} ต่อชุด ${nlen(e.before)} → ${nlen(e.qty)}`).join(" · ")}{bedits.length > 3 ? ` · อีก ${bedits.length - 3}` : ""}</small></span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setBed({}); setBcur(null); }}>ยกเลิกที่แก้</button>
+                {onSaveDirect ? <button type="button" className="btn btn-sm bm-nom" disabled={bbusy} onClick={saveDirect} title="แก้ BOM ตรง ๆ — ไม่มีเลข M · ไม่ลงประวัติ Modify">{bbusy ? "กำลังบันทึก…" : "บันทึก (ไม่นับ Modify)"}</button> : null}
+                {onModify ? <button type="button" className="btn btn-accent" onClick={() => { const bchg = {}; for (const e of bedits) bchg[`${e.scope}|${e.owner}|${e.idx}`] = { type: "qty", qty: String(e.qty) }; onModify({ bchg, bscope: bedits[0].scope, bowner: bedits[0].owner }); }}>บันทึกเป็น {modVer(nextModNo(plan))} →</button> : null}
+              </div>) : null}
           </>
         ) : <div className="rw-muted small rt-empty">ยังไม่มีแผงในใบนี้</div>}
       </section>
