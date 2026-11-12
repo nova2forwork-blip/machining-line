@@ -69,9 +69,10 @@ export function SheetView({ kind = null, plan, need, rel, doneOf, leftOf, madeOf
     if (f === "qty" && fq) { const n = Math.round((fq.get(NC(r.code)) || 0) * 100) / 100; return <span className="rs2-v" title={`ชั้น ${floor || "ไม่ระบุ"} ใช้ ${nlen(n)} · ทั้งใบ ${nlen(r.qty)}`}><b>{nlen(n)}</b> <small className="rw-muted">/ {nlen(r.qty)}</small></span>; }
     if (!can) return <span className="rs2-v">{f === "inv" && r.kind === "sub" ? <span className="rw-muted">—</span> : fmt(f, c0)}</span>;
     orderRef.current.push(id);
-    if (cur === id) return <input autoFocus className="input rs2-in" defaultValue={chg ? pv : c0} inputMode={f === "inv" ? "text" : "decimal"} aria-label={`${LABEL[f]} ${r.code}`}
+    // ★ 2026-11-12 ผู้ใช้: "กดเข้าไปแก้แล้วมันยืด" → ช่องพิมพ์ลอยทับช่องเดิม (ไม่ดันความกว้างคอลัมน์) · ข้อความเดิมซ่อนไว้ข้างใต้เพื่อคงขนาด
+    if (cur === id) return <span className="rs2-edhold"><span className="rs2-cell rs2-ghost" aria-hidden="true">{chg ? <s className="rl-old">{fmt(f, c0)}</s> : null}<b>{fmt(f, chg ? pv : c0)}</b></span><input autoFocus className="input rs2-in" defaultValue={chg ? pv : c0} inputMode={f === "inv" ? "text" : "decimal"} aria-label={`${LABEL[f]} ${r.code}`}
       onFocus={(e) => e.target.select()} onBlur={(e) => commit(r, f, e.target.value)}
-      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pv : c0); e.target.blur(); } else if (e.key === "Tab") { e.preventDefault(); nextRef.current = e.shiftKey ? -1 : 1; e.target.blur(); } }} />;
+      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pv : c0); e.target.blur(); } else if (e.key === "Tab") { e.preventDefault(); nextRef.current = e.shiftKey ? -1 : 1; e.target.blur(); } }} /></span>;
     const s = f === "len" && sus(r);
     return <button type="button" className={`rs2-cell ${chg ? "ed" : ""} ${s ? "sus" : ""}`} onClick={() => setCur(id)} aria-label={`${LABEL[f]} ${r.code}`} title={s ? "ความยาวน่าสงสัย (อาจอ่านมาแค่หลักฟุต) — กดเพื่อแก้" : "กดเพื่อแก้"}>
       {chg ? <s className="rl-old">{fmt(f, c0)}</s> : null}<b>{fmt(f, chg ? pv : c0)}</b>{s ? <small className="rs2-sus"> ตรวจ</small> : null}</button>;
