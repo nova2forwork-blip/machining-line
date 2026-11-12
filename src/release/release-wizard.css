@@ -1235,3 +1235,7 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .bm-edhint { padding: 6px 2px; }
 .rt-edbar .bm-nom { background: transparent; color: #fff; border: 1px solid #9db6ee; }
 .rt-edbar .bm-nom:hover { background: rgba(255,255,255,.12); }
+
+.bm-qbtn:not(.num) { text-align: left; }
+.bm-in:not(.num) { text-align: left; min-width: 120px !important; }
+.rl-desc .bm-qbtn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
