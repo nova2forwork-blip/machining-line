@@ -306,25 +306,31 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     const vis = rows.filter((r) => keep(r) && (Q || !hidden(r)));
     count = rows.length; shown = vis.length;
     const direct = vis.filter((r) => !r.depth && r.kind !== "sub");
+    // ★ 2026-11-12 ผู้ใช้: "ตารางนี้ยังไม่แก้" → โครงสร้างเป็นตารางแบบชีต Excel เหมือนตารางเต็ม (คอลัมน์เดิม · พับ/ขยายซับได้ · คลิกช่องเพื่อแก้)
+    const tg = (key) => setClosed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
     body = (
-      <div className="bm-tree">
-        {vis.filter((r) => r.kind === "sub" || r.depth > 0).length || direct.length ? null : <div className="rw-muted small rt-empty">ไม่พบรายการ</div>}
-        {vis.map((r) => {
-          const key = `${cur.unit}|${[...r.path, r.code].join(">")}`; const shut = closed.has(key);
-          if (r.kind === "sub") return (
-            <div key={r.i} className={`bm-row bm-sub d${Math.min(r.depth, 2)}`} style={{ marginLeft: r.depth * 22 }}>
-              <div className="bm-main"><button type="button" className="bm-tg" onClick={() => setClosed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; })} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button><b className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</b><Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? (r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>) : null}{destOf(r).map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}<span className="bm-d">{r.d}</span></div>
-              <span className="bm-n r">{nlen(r.l)}</span><span className="bm-mat" />
-              <span className="bm-q r"><small>ต่อชุด</small> {qCell(r, cur.unit)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(r.per * cur.n)}</b> <small>SET</small></span>
-            </div>);
-          return (
-            <div key={r.i} className={`bm-row bm-part ${r.kind}`} style={{ marginLeft: r.depth * 22 + 24 }}>
-              <div className="bm-main"><span className={`rw-mono ${r.cx ? "rl-cx" : ""}`}>{r.code}</span>{r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? (r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>) : null}{r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{destOf(r).map((k) => <Pill key={k} tone="part">{destLabel(k)}</Pill>)}<span className="bm-d">{r.d}</span></div>
-              <span className="bm-n r">{nlen(r.l)}</span>
-              <span className="bm-mat"><span className="rw-mono rt-inv">{r.m}</span> {cutChip(r)}</span>
-              <span className="bm-q r"><small>ต่อชุด</small> {qCell(r, cur.unit)}</span><span className="bm-s r"><small>รวม</small> <b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b> <small>{r.uom}</small></span>
-            </div>);
-        })}
+      <div className="bm-tree table-wrap rt-tw">
+        {vis.length ? (
+        <table className="rt-xl bm-treet" onClick={(e) => { if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
+          <thead><tr><th>เบอร์</th><th>รายละเอียด</th><th>ส่งไปใบ</th><th className="r">ยาว</th><th>MATERIAL</th><th>เศษ</th><th className="r">ต่อชุด</th><th className="r">รวม (× {nf(cur.n)} แผง)</th><th>หน่วย</th></tr></thead>
+          <tbody>{vis.map((r, i) => {
+            const key = `${cur.unit}|${[...r.path, r.code].join(">")}`; const shut = closed.has(key); const sub = r.kind === "sub"; const u = cur.unit + "#t" + i;
+            const tag = r.cx ? <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill> : r.add ? (r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>) : null;
+            return (
+              <tr key={r.i} className={`${sub ? "sub" : ""} ${r.depth || sub ? (r.depth % 2 ? "g2" : "g1") : ""} ${r.cx ? "cx" : ""}`}>
+                <td className={`mono code ${sub ? "sub" : r.depth ? "kid" : ""}`} style={{ paddingLeft: 8 + r.depth * 18 + (sub ? 0 : 22) }}>
+                  {sub ? <button type="button" className="bm-tg" onClick={() => tg(key)} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button> : null}
+                  {eCell(r, "code", u, <span className={r.cx ? "rl-cx" : ""}>{r.code}</span>)} {sub ? <Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill> : r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{tag}</td>
+                <td className="desc">{eCell(r, "d", u, <span>{r.d}</span>)}</td>
+                <td>{destOf(r).map((k) => <Pill key={k} tone={sub ? "sub" : "part"}>{sub ? SUB_SHORT[k] || k : destLabel(k)}</Pill>)}</td>
+                <td className="r">{eCell(r, "l", u, nlen(r.l))}</td>
+                <td className={`c ${sub ? "subm" : ""}`}>{sub ? "SUB" : eCell(r, "m", u, r.m)}</td>
+                <td>{sub ? null : cutChip(r)}</td>
+                <td className="r">{qCell(r, u)}</td>
+                <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b></td>
+                <td>{sub ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase()}</td>
+              </tr>); })}</tbody>
+        </table>) : <div className="rw-muted small rt-empty">ไม่พบรายการ</div>}
       </div>);
   } else if (v === "merge") {
     const keys = { code: (e) => e.code, d: (e) => e.d, l: (e) => e.l ?? -1, m: (e) => e.m, total: (e) => e.total, uses: (e) => e.uses.size, reuse: (e) => e.reuse };
@@ -433,11 +439,10 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
               {v === "table" ? <button type="button" className={`btn btn-sm ${wasteOn ? "btn-accent" : "btn-ghost"}`} aria-pressed={wasteOn} onClick={() => setWasteOn(!wasteOn)} title="แสดง / ซ่อนคอลัมน์ WAST · ความยาวเศษ · เส้นเต็ม ↔ เศษ">{wasteOn ? "▾" : "▸"} การคำนวณเศษ</button> : null}
               <button type="button" className="btn btn-ghost btn-sm bm-xls" onClick={exportXlsx} disabled={xlsBusy} title={`ดาวน์โหลด BOM ${ALL ? "ทุกแบบแผง" : cur?.unit || ""} เป็น Excel — ชีต: ตารางเต็ม · รวมเบอร์ · โครงสร้าง (ทุกแถว ไม่ตามคำค้นหา)`}>{xlsBusy ? "กำลังสร้าง…" : "⬇ Excel"}</button>
             </div>
-            {v === "tree" ? <div className="bm-cols"><span>เบอร์ / รายละเอียด / ส่งไปใบ</span><span className="r">ยาว</span><span>MATERIAL · เศษ</span><span className="r">ต่อชุด</span><span className="r">รวม (× {nf(cur.n)} แผง)</span></div> : null}
-            {body}
+                        {body}
             {v !== "tree" && count > shown ? <div className="rt-more"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit((n) => n + PAGE)}>แสดงเพิ่ม ({nf(Math.min(PAGE, count - shown))})</button></div> : null}
             <div className="rt-note bm-note">เศษ: ไล่ตัดตามลำดับแผงในใบนี้ · MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือพอ (ยาว + รอยตัด {KERF} มม.) ก่อนเปิดเส้นใหม่ · เศษ ≥ {MIN_OFFCUT} มม. เก็บไว้ใช้ต่อ — เป็นการคำนวณเบื้องต้น ไม่ได้ตัดสต็อกจริง</div>
-            {canEdit && v !== "merge" && !bedits.length ? <div className="rw-muted small bm-edhint">{v === "table" ? <>คลิกช่องเพื่อแก้: <b>PART NO. · DESCRIPTION · LENGTH · FINISH · MATERIAL · QUANTITY</b> (WAST / MATERIAL LENGTH / SUM คำนวณให้เอง)</> : <>คลิกตัวเลข <b>ต่อชุด</b> เพื่อแก้ · แก้ช่องอื่นได้ที่มุมมอง <b>ตารางเต็ม</b></>} · Enter = ตกลง · Esc = ยกเลิก · ข้อมูลของเบอร์ (รายละเอียด / ยาว / FINISH / MATERIAL) แก้ที่เดียวมีผลทุกแผง · เพิ่ม / ยกเลิกลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
+            {canEdit && v !== "merge" && !bedits.length ? <div className="rw-muted small bm-edhint">{v === "table" ? <>คลิกช่องเพื่อแก้: <b>Code · Description · L · Finish · Material · Quantity</b> (Wast / Material Length / Sum คำนวณให้เอง)</> : <>คลิกช่องเพื่อแก้: <b>เบอร์ · รายละเอียด · ยาว · MATERIAL · ต่อชุด</b> (FINISH แก้ที่ตารางเต็ม)</>} · Enter = ตกลง · Esc = ยกเลิก · ข้อมูลของเบอร์ (รายละเอียด / ยาว / FINISH / MATERIAL) แก้ที่เดียวมีผลทุกแผง · เพิ่ม / ยกเลิกลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
             {bedits.length ? (
               <div className="rt-pickbar rt-edbar" role="region" aria-label="BOM ที่แก้ค้างไว้">
                 <span><b>แก้ BOM {nf(bedits.length)} จุด · ยังไม่ได้บันทึก</b>
