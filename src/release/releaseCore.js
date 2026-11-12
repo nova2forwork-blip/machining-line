@@ -1432,7 +1432,8 @@ export function pullBomFromPlans(plan, others) {
   return { plan: filled.length ? { ...plan, bom, bomFrom: { ...(plan.bomFrom || {}), ...Object.fromEntries(filled.map((f) => [f.code, f.from])) } } : plan, filled };
 }
 export const modVer = (n) => "M-" + String(n).padStart(3, "0");
-export function nextModNo(plan, dbNext = 0) { return Math.max(dbNext || 0, ...((plan.mods || []).map((m) => m.no + 1)), 1); }
+// ★ 2026-11-12 M ที่ย้อน (Ctrl+Z) แล้ว ไม่ใช้เลขซ้ำ — นับ modUndone ด้วย (เดิมย้อน M ที่ไม่แตะล็อตแล้ว M ถัดไปได้เลขเดิม ประวัติ "ย้อนแล้ว" ชนเลข)
+export function nextModNo(plan, dbNext = 0) { return Math.max(dbNext || 0, ...[...(plan.mods || []), ...(plan.modUndone || [])].map((m) => (Number(m.no) || 0) + 1), 1); }
 // ล็อตนี้ถูก Modify อะไรบ้าง (จากประวัติในแผน) → Map code → { orig, cur, ver, cancel }
 export function lotModMap(plan, lotNo) {
   const m = new Map();

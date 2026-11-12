@@ -95,6 +95,11 @@ export function useUndoState(initial, { label = "", coalesceMs = 0 } = {}) {
 //   ★ 2026-11-12 ขั้นพิเศษ (เช่น บันทึกเป็น M): record(ค่าเดิม, ค่าใหม่, step) · step = { undo: async () => true/false, redo?: async () => true/false }
 //     ย้อนขั้นนี้ = เรียก step.undo() (ถามยืนยัน / ยกเลิกในฐานข้อมูลเอง · คืน false = ไม่ได้ย้อน → ขั้นยังอยู่) · ไม่มี step.redo = ทำซ้ำไม่ได้
 //     ขั้นพิเศษไม่รวมกับขั้นอื่น (coalesce) · ระหว่างกำลังย้อนขั้นพิเศษ กด Ctrl+Z/Y ซ้ำไม่มีผล
+// ★ 2026-11-12 เก็บประวัติไว้ข้ามการปิด/เปิดหน้า (ค้างจากรอบก่อน: Ctrl+Z หายหลังเข้าไปดูล็อต)
+//   หน้าใบหลักถูกปิดตอนเปิดหน้าล็อต → เดิมประวัติหายทั้งหมด · ตอนนี้ hist.keep(key, ค่าที่แสดงอยู่) ตอนออก
+//   แล้ว hist.resume(key, ค่าที่โหลดมาใหม่) ตอนกลับ = ใช้ประวัติเดิมต่อ ถ้าค่าไม่เปลี่ยนระหว่างไม่อยู่ (เปลี่ยน เช่น ย้ายใบในหน้าล็อต → เริ่มใหม่ กันย้อนทับของใหม่)
+const kept = new Map();      // key → { H, v } · เก็บล่าสุด 10 อัน
+const stableJson = (x) => JSON.stringify(x, (k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).sort().reduce((o, kk) => { o[kk] = v[kk]; return o; }, {}) : v));
 export function useUndoHistory(apply, label = "", coalesceMs = 1000) {
   const h = useRef({ past: [], future: [], last: 0, cur: undefined, busy: false });
   const ap = useRef(apply); ap.current = apply;
@@ -131,7 +136,21 @@ export function useUndoHistory(apply, label = "", coalesceMs = 1000) {
     H.last = step ? 0 : now; H.future = []; H.cur = next;
   }, [a, coalesceMs]);
   const reset = useCallback(() => { h.current = { past: [], future: [], last: 0, cur: undefined, busy: false }; }, []);
-  return { record, reset };
+  const keep = useCallback((key, value) => {
+    if (key == null) return;
+    const H = h.current;
+    kept.delete(key);
+    if (!H.past.length && !H.future.length) return;
+    kept.set(key, { H, v: stableJson(value) });
+    while (kept.size > 10) kept.delete(kept.keys().next().value);
+  }, []);
+  const resume = useCallback((key, value) => {
+    const k = key == null ? null : kept.get(key);
+    if (key != null) kept.delete(key);
+    if (k && !k.H.busy && k.v === stableJson(value)) { h.current = k.H; k.H.last = 0; touch(a); return true; }
+    reset(); return false;
+  }, [a, reset]);
+  return { record, reset, keep, resume };
 }
 
 // ข้อความบอกว่าย้อนอะไร (แผน Release) — เทียบฟิลด์ที่ต่างกัน

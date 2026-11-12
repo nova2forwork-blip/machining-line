@@ -7613,7 +7613,8 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   //   ปล่อยล็อต = งานในฐานข้อมูล → ล้างประวัติ (ยกเลิกล็อตด้วยปุ่มของมันเอง) · Modify (บันทึกเป็น M) = ขั้นพิเศษ ย้อนได้ (2026-11-12)
   const hist = useUndoHistory(applyPlan, planChangeLabel);
   const planId = view?.plan?.id;
-  useEffect(() => { hist.reset(); }, [planId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // ★ 2026-11-12 เปิดหน้าล็อตแล้วกลับ = หน้านี้ถูกปิด/เปิดใหม่ → เก็บประวัติ Ctrl+Z ไว้ แล้วใช้ต่อถ้าใบไม่เปลี่ยนระหว่างอยู่หน้าล็อต (เดิมหายหมด)
+  useEffect(() => { hist.resume(planId, planRef.current); return () => hist.keep(planId, planRef.current); }, [planId]);   // eslint-disable-line react-hooks/exhaustive-deps
   const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
   // ขั้น "บันทึกเป็น M" ในประวัติ Ctrl+Z: ย้อน = ยกเลิก M (ฐานข้อมูล + ใบหลัก) · ทำซ้ำได้เฉพาะ M ที่ไม่ได้แก้ในล็อต
   const showPlan = (p) => { clearTimeout(timer.current); pending.current = null; planRef.current = p; setView((v) => (v && v.plan && v.plan.id === p.id ? { ...v, plan: p } : v)); setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x))); };
@@ -12435,14 +12436,16 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     try {
       const [projects, parts] = await Promise.all([listRows("projects", { order: "code" }), listRows("part_master", { order: "part_no" })]);
       setLists({ projects: projects || [], parts: parts || [] });
-    } catch { setLists({ projects: [project], parts: [] }); }
+    } catch (e) { setLists({ projects: [project], parts: [] }); mlsToast("โหลดรายการโปรเจค / Part สำหรับสร้างงานไม่สำเร็จ: " + (e?.message || e), "warning"); }
   }, [project]);
   useEffect(() => { loadLists(); }, [loadLists]);
 
+  const [loadErr, setLoadErr] = useState("");   // ★ 2026-11-12 โหลดไม่สำเร็จ → ขึ้นบนหน้า + ลองใหม่
   const load = useCallback(async () => {
     let all;
     try { all = await getReleasesFull(); }
-    catch (e) { mlsToast("โหลดรายการ Release ไม่สำเร็จ: " + (e?.message || e), "error"); return; }   // ★ ตรวจรอบ 3
+    catch (e) { const m = String(e?.message || e); setLoadErr(m); mlsToast("โหลดรายการ Release ไม่สำเร็จ: " + m, "error"); return; }   // ★ ตรวจรอบ 3
+    setLoadErr("");
     const mine = all.filter((r) => r.part_master?.project_id === project.id);
     setRels(mine);
     const ids = mine.map((r) => r.id);
@@ -12451,7 +12454,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
       // โหลดทั้งสแกนสำนักงาน + งานหน้าเครื่อง เพื่อคำนวณ %เสร็จ ให้ตรงกับหน้าอื่น
       Promise.all([getUnitStatsChunked(ids), getReleaseOpProgressFin(ids)])
         .then(([s, op]) => { setStats(s); setOpProg(op || {}); setStatsReady(true); })
-        .catch(() => setStatsReady(true));
+        .catch((e) => { setStatsReady(true); mlsToast("โหลดความคืบหน้า (% เสร็จ) ไม่สำเร็จ — ตัวเลขเสร็จแล้วอาจไม่ตรง: " + (e?.message || e), "warning"); });
     } else { setStats({}); setOpProg({}); setStatsReady(true); }
   }, [project.id]);
   useEffect(() => { load(); }, [load]);
@@ -12567,7 +12570,15 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
           { k: "date", label: "วันที่" }, { k: "order", label: "Release Order" }, { k: "parts", label: "Part No." },
           { k: "qty", label: "จำนวน" }, { k: "finished", label: "เสร็จแล้ว" }, { k: "progress", label: "ความคืบหน้า" }, { k: "weight", label: "น้ำหนักรวม" },
         ]} />
-        {groups === null ? (
+        {groups === null && loadErr ? (
+          // ★ 2026-11-12 โหลดไม่สำเร็จ = บอกบนหน้า + ปุ่มลองใหม่ (เดิมขึ้น "กำลังโหลด..." ค้างตลอด มีแค่ toast แวบเดียว)
+          <div className="empty-state">
+            <Icon name="warn" size={28} />
+            <div className="empty-state-title">{L("โหลดรายการ Release ไม่สำเร็จ", "Couldn't load releases")}</div>
+            <div className="empty-state-sub">{loadErr}</div>
+            <div className="empty-state-sub"><button type="button" className="rs-clear" onClick={() => { setLoadErr(""); load(); }}>{L("ลองใหม่", "Retry")}</button></div>
+          </div>
+        ) : groups === null ? (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>กำลังโหลด...</div>
         ) : relTokens.length && treeRows.length === 0 ? (
           <div className="empty-state">
