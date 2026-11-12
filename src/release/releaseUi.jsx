@@ -1,5 +1,5 @@
 // ชิ้นส่วนหน้าจอที่ใช้ร่วมกัน (หน้า Release · ตัวสร้างล็อต · Modify · Total)
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm.jsx";
 import { NC, findKey, nlen, nf, PART_CATS, UNCAT, seedPartGroups, partGroupsOf } from "./releaseCore.js";
 
@@ -144,8 +144,17 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   const [f, setF] = useState({ to: "", d: "", ml: "", r: "" });
   const lid = "mat-dl-" + String(label || cur || "x").replace(/[^A-Za-z0-9_-]/g, "");
   const start = () => { setF({ to: orig ? cur : "", d: orig ? desc : "", ml: orig && len ? String(len) : "", r: note || "" }); setOpen(true); };
+  // ★ 2026-11-12 ผู้ใช้: "กดผิดมาแก้ แล้วไปกดช่องอื่น ให้ออกจากตรงนี้" → คลิกนอกกล่อง = ปิด (ไม่บันทึก) · Esc ก็ปิด
+  const box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const out = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", out, true); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", out, true); document.removeEventListener("keydown", esc); };
+  }, [open]);
   if (open) return (
-    <span className="rt-matedit" onClick={(e) => e.stopPropagation()}>
+    <span className="rt-matedit" ref={box} onClick={(e) => e.stopPropagation()}>
       <input className="input rw-cell rw-mono" autoFocus list={lid} value={f.to} placeholder={placeholder} onChange={(e) => setF({ ...f, to: e.target.value.toUpperCase() })}
         onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter" && f.to.trim()) { onSave({ ...f, to: f.to.trim() }); setOpen(false); } }} aria-label={`วัสดุใหม่ ${label}`} />
       <datalist id={lid}>{list.filter((x) => x !== (orig || cur)).map((x) => <option key={x} value={x} />)}</datalist>
