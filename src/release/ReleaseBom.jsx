@@ -73,35 +73,40 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
   const clearEd = () => { setBed({}); setAed({}); setBcur(null); };
   useEffect(() => { clearEd(); }, [(plan.mods || []).length, plan.ro]);   // eslint-disable-line react-hooks/exhaustive-deps
   const okey = (r) => (r.own ? `${r.own.scope}|${r.own.owner}|${r.own.oi}` : "");
-  const akey = (r) => `${r.kind === "sub" ? "sub" : "part"}|${NC(r.code)}`;
+  // ★ 2026-11-12 (รอบ 3) ผู้ใช้: "ให้แก้ตารางทั้งหมดได้เลย" → เพิ่ม รายละเอียดแผง · Rev · H · L วัตถุดิบ (ความยาวเส้น) · U.M. (สกรู/ยาง)
+  const akey = (r, f) => (f === "pd" ? `panel|${NC(r.unit)}` : `${r.kind === "sub" ? "sub" : "part"}|${NC(r.code)}`);
+  const AF = { d: "d", l: "l", f: "f", m: "m", rev: "rev", h: "h", ml: "ml", um: "u", pd: "d" };   // ช่องบนจอ → ฟิลด์ในข้อมูล BOM
+  const NUMF = new Set(["q", "l", "h", "ml"]);
   const ITEM_F = new Set(["q", "code"]);
-  const FL = { q: "ต่อชุด", code: "เบอร์", d: "รายละเอียด", l: "ความยาว", f: "FINISH", m: "MATERIAL" };
+  const FL = { q: "ต่อชุด", code: "เบอร์", d: "รายละเอียด", l: "ความยาว", f: "FINISH", m: "MATERIAL", rev: "Rev", h: "H", ml: "L วัตถุดิบ", um: "U.M.", u: "U.M.", pd: "รายละเอียดแผง" };
   const ownItem = (k) => { const [sc, ow, oi] = k.split("|"); const col = sc === "panel" ? plan.bom.panels : plan.bom.subs; const o = col[ow]; return o && o.items ? o.items[Number(oi)] : null; };
-  const attrOf = (ak) => { const i = ak.indexOf("|"); const kd = ak.slice(0, i), c = ak.slice(i + 1); const col = kd === "sub" ? plan.bom.subs : plan.bom.parts; const k = findKey(col, c); return { kd, k, e: k ? col[k] : null }; };
-  const curVal = (r, f) => (f === "q" ? r.q : f === "code" ? r.code : f === "d" ? r.d || "" : f === "l" ? r.l ?? "" : f === "f" ? r.f || "" : r.m || "");
-  const pend = (r, f) => (ITEM_F.has(f) ? bed[okey(r)]?.[f] : aed[akey(r)]?.[f]);
+  const attrOf = (ak) => { const i = ak.indexOf("|"); const kd = ak.slice(0, i), c = ak.slice(i + 1); const col = kd === "panel" ? plan.bom.panels : kd === "sub" ? plan.bom.subs : plan.bom.parts; const k = findKey(col, c); return { kd, k, e: k ? col[k] : null }; };
+  const curVal = (r, f) => ({ q: r.q, code: r.code, d: r.d || "", l: r.l ?? "", f: r.f || "", m: r.m || "", rev: r.rev || "", h: r.h ?? "", ml: r.ml ?? "", um: r.uom || "", pd: r.pdesc || "" })[f];
+  const pend = (r, f) => (ITEM_F.has(f) ? bed[okey(r)]?.[f] : aed[akey(r, f)]?.[AF[f]]);
   const parse = (f, raw) => { const t = String(raw ?? "").trim();
     if (f === "q") { const n = Number(t.replace(/,/g, "")); return t !== "" && Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : undefined; }
-    if (f === "l") { const n = Number(t.replace(/,/g, "")); return t !== "" && Number.isFinite(n) && n > 0 ? n : undefined; }
+    if (f === "l" || f === "h" || f === "ml") { const n = Number(t.replace(/,/g, "")); return t !== "" && Number.isFinite(n) && n > 0 ? n : undefined; }
     if (f === "code" || f === "m") return t ? t.toUpperCase() : undefined;
     if (f === "d") return t || undefined;
+    if (f === "rev") return t.toUpperCase();
+    if (f === "um") return t ? t.toLowerCase().replace(/^(pcs|m|set|ea)$/, "$1.") : undefined;
     return t; };   // FINISH เว้นว่างได้
   const setVal = (r, f, raw) => { const v = parse(f, raw); const c0 = curVal(r, f);
     const same = v === undefined || (typeof v === "number" ? Math.abs(v - Number(c0)) < 1e-9 : String(v) === String(c0).trim() || (f === "code" && NC(v) === NC(c0)));
-    const isItem = ITEM_F.has(f); const k = isItem ? okey(r) : akey(r); const set = isItem ? setBed : setAed;
-    set((b) => { const nx = { ...(b[k] || {}) }; if (same) delete nx[f]; else nx[f] = v; const o = { ...b }; if (Object.keys(nx).length) o[k] = nx; else delete o[k]; return o; }); };
-  const canF = (r, f) => canEdit && !r.cx && (ITEM_F.has(f) ? !!r.own : true) && !(f === "m" && r.kind !== "part") && !(r.kind === "sub" && f === "m");
-  const fmtF = (f, v) => (f === "q" || f === "l" ? (v === "" || v == null ? "—" : nlen(v)) : v === "" || v == null ? "—" : String(v));
+    const isItem = ITEM_F.has(f); const k = isItem ? okey(r) : akey(r, f); const set = isItem ? setBed : setAed; const fk = isItem ? f : AF[f];
+    set((b) => { const nx = { ...(b[k] || {}) }; if (same) delete nx[fk]; else nx[fk] = v; const o = { ...b }; if (Object.keys(nx).length) o[k] = nx; else delete o[k]; return o; }); };
+  const canF = (r, f) => canEdit && (f === "pd" || !r.cx) && (ITEM_F.has(f) ? !!r.own : true) && !((f === "m" || f === "h" || f === "ml") && r.kind !== "part") && !(f === "um" && r.kind !== "hw");
+  const fmtF = (f, v) => (NUMF.has(f) ? (v === "" || v == null ? "—" : nlen(v)) : v === "" || v == null ? "—" : String(v));
   const eCell = (r, f, uniq, shown) => {
     if (!canF(r, f)) return shown;
     const pv = pend(r, f); const chg = pv !== undefined; const c0 = curVal(r, f);
-    const disp = chg ? <>{f === "d" ? null : <s className="rl-old">{fmtF(f, c0)}</s>}<b>{fmtF(f, pv)}</b></> : shown;
-    const id = `${f}|${okey(r) || akey(r)}|${uniq}`; const lab = `${FL[f]} ${r.code}`;
-    if (bcur === id) return <span className="bm-edhold"><span className="bm-ghost" aria-hidden="true">{disp}</span><input autoFocus className={`input bm-in ${f === "q" || f === "l" ? "num" : ""}`} defaultValue={chg ? pv : c0} inputMode={f === "q" || f === "l" ? "decimal" : "text"} aria-label={lab}
+    const disp = chg ? <>{f === "d" || f === "pd" ? null : <s className="rl-old">{fmtF(f, c0)}</s>}<b>{fmtF(f, pv)}</b></> : shown;
+    const id = `${f}|${okey(r) || akey(r, f)}|${uniq}`; const lab = `${FL[f]} ${f === "pd" ? r.unit : r.code}`;
+    if (bcur === id) return <span className="bm-edhold"><span className="bm-ghost" aria-hidden="true">{disp}</span><input autoFocus className={`input bm-in ${NUMF.has(f) ? "num" : ""}`} defaultValue={chg ? pv : c0} inputMode={NUMF.has(f) ? "decimal" : "text"} aria-label={lab}
       onFocus={(e) => e.target.select()} onBlur={(e) => { setVal(r, f, e.target.value); setBcur((c) => (c === id ? null : c)); }}
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pv : c0); e.target.blur(); } }} /></span>;
-    const tip = ITEM_F.has(f) ? (r.own.scope === "sub" ? `แก้ในซับ ${r.own.owner} — มีผลทุกแผงที่ใช้ซับนี้` : `แก้ในแผง ${r.own.owner}`) : `แก้ข้อมูลของเบอร์ ${r.code} — มีผลทุกแผง / ทุกซับที่ใช้เบอร์นี้`;
-    return <button type="button" className={`bm-qbtn ${f === "q" || f === "l" ? "num" : ""} ${chg ? "ed" : ""}`} onClick={() => setBcur(id)} aria-label={lab} title={tip}>{disp}</button>;
+    const tip = ITEM_F.has(f) ? (r.own.scope === "sub" ? `แก้ในซับ ${r.own.owner} — มีผลทุกแผงที่ใช้ซับนี้` : `แก้ในแผง ${r.own.owner}`) : f === "pd" ? `แก้รายละเอียดของแบบแผง ${r.unit}` : `แก้ข้อมูลของเบอร์ ${r.code} — มีผลทุกแผง / ทุกซับที่ใช้เบอร์นี้`;
+    return <button type="button" className={`bm-qbtn ${NUMF.has(f) ? "num" : ""} ${chg ? "ed" : ""}`} onClick={() => setBcur(id)} aria-label={lab} title={tip}>{disp}</button>;
   };
   const qCell = (r, unitN) => eCell(r, "q", unitN, r.cx ? <span className="rl-cxq">{nlen(r.q)}</span> : r.q0 != null ? <ModQty orig={r.q0} cur={r.q} ver={r.ver} /> : nlen(r.q));
   // รายการที่แก้ค้าง (แบนเป็นบรรทัดเดียวกัน)
@@ -112,7 +117,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       if (v.code !== undefined) out.push({ ...base, f: "code", from: it[1], to: v.code, q: v.q });
       if (v.q !== undefined) out.push({ ...base, f: "q", from: it[2], to: v.q, qty: v.q }); }
     for (const [ak, v] of Object.entries(aed)) { const { kd, k, e } = attrOf(ak); if (!e) continue;
-      for (const f of ["d", "l", "f", "m"]) if (v[f] !== undefined) out.push({ attr: true, kd, key: k, code: k, f, from: f === "l" ? e.l ?? "" : e[f] || "", to: v[f], hw: e.k === "hw" }); }
+      for (const f of ["d", "l", "f", "m", "rev", "h", "ml", "u"]) if (v[f] !== undefined) out.push({ attr: true, kd, key: k, code: k, f: kd === "panel" && f === "d" ? "pd" : f, fld: f, from: e[f] ?? "", to: v[f], hw: e.k === "hw" }); }
     return out;
   }, [bed, aed, plan.bom]);   // eslint-disable-line react-hooks/exhaustive-deps
   const lineOf = (e) => (e.attr ? `${e.code} ${FL[e.f]} ${fmtF(e.f, e.from)} → ${fmtF(e.f, e.to)}` : `${e.f === "code" ? `${e.from} → ${e.to}` : `${e.code} ต่อชุด ${nlen(e.from)} → ${nlen(e.to)}`} ใน${e.scope === "panel" ? "แผง" : "ซับ"} ${e.owner}`);
@@ -121,11 +126,11 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     const bom = { ...plan.bom, panels: { ...plan.bom.panels }, subs: { ...plan.bom.subs }, parts: { ...plan.bom.parts } };
     const errs = []; const cloned = new Set();
     const own = (scope, owner) => { const col = scope === "panel" ? bom.panels : bom.subs; if (!col[owner]) return null; const ck = scope + "|" + owner; if (!cloned.has(ck)) { col[owner] = { ...col[owner], items: (col[owner].items || []).map((x) => [...x]) }; cloned.add(ck); } return col[owner]; };
-    const ent = (kd, key) => { const col = kd === "sub" ? bom.subs : bom.parts; const ck = "e|" + kd + "|" + key; if (!cloned.has(ck)) { col[key] = { ...col[key] }; cloned.add(ck); } return col[key]; };
+    const ent = (kd, key) => { const col = kd === "panel" ? bom.panels : kd === "sub" ? bom.subs : bom.parts; const ck = "e|" + kd + "|" + key; if (!cloned.has(ck)) { col[key] = { ...col[key] }; cloned.add(ck); } return col[key]; };
     for (const e of list) {
       if (e.attr) {
         if ((e.f === "m" || e.f === "l") && e.kd === "part" && ((e.f === "m" && (plan.matOv || {})[e.code]) || (e.f === "l" && (plan.lenOv || {})[e.code]))) { errs.push(`${e.code}: ${FL[e.f]}ถูกเปลี่ยนใน Modify แล้ว — แก้ต่อต้องเป็น M`); continue; }
-        const x = ent(e.kd, e.key); if (e.f === "l") x.l = e.to; else x[e.f] = e.to; continue; }
+        const x = ent(e.kd, e.key); x[e.fld || e.f] = e.to; continue; }
       const o = own(e.scope, e.owner); const it = o && o.items[e.idx]; if (!it) continue;
       if (e.f === "q") it[2] = e.to;
       else if (e.f === "code") {
@@ -152,9 +157,9 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
   }
   async function saveAsM() {
     if (!onModify || !bedits.length) return;
-    const direct = bedits.filter((e) => e.attr && (e.f === "d" || e.f === "f" || (e.f === "l" && e.hw)));
+    const direct = bedits.filter((e) => e.attr && !((e.f === "m" && e.kd === "part") || (e.f === "l" && !e.hw && e.kd !== "panel")));
     if (direct.length) {
-      const ok = await askConfirm({ title: "บางอย่างไม่อยู่ใน Modify", message: [`${direct.map((e) => lineOf(e)).join("\n")}`, "", `รายละเอียด / FINISH${direct.some((e) => e.f === "l") ? " / ความยาวสกรู-ยาง" : ""} ไม่มีในใบ Modify — จะบันทึกตรงไปก่อน (ไม่นับ M) แล้วเปิดหน้า ${modVer(nextModNo(plan))} สำหรับที่เหลือ`].join("\n"), tone: "warn", confirmText: "ตกลง ทำต่อ", cancelText: "กลับไปแก้" });
+      const ok = await askConfirm({ title: "บางอย่างไม่อยู่ใน Modify", message: [`${direct.map((e) => lineOf(e)).join("\n")}`, "", `${[...new Set(direct.map((e) => FL[e.f]))].join(" / ")} ไม่มีในใบ Modify — จะบันทึกตรงไปก่อน (ไม่นับ M) แล้วเปิดหน้า ${modVer(nextModNo(plan))} สำหรับที่เหลือ`].join("\n"), tone: "warn", confirmText: "ตกลง ทำต่อ", cancelText: "กลับไปแก้" });
       if (!ok) return;
       const { np } = buildDirect(direct); if (onSaveDirect) { setBbusy(true); try { await onSaveDirect(np); } finally { setBbusy(false); } }
     }
@@ -353,7 +358,9 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
   } else if (v === "table") {
     // ตารางแบบชีต BOM ใน Excel: Panel | Description | Quantity | U.M. | Rev | SUB-01 | SUB-02 | Code | Description | L | H | Finish | Material | L | Quantity | Sum | U.M.
     //   การคำนวณเศษ (WAST · ความยาวเศษ · เส้นเต็ม ↔ เศษ) ย่อ/ขยายได้ — ย่อไว้ = แถวเตี้ยเท่า Excel · ตัดจากเศษ = ป้าย OFF แดงที่ Material
-    const keys = { unit: (r) => r.unit, code: (r) => r.code, d: (r) => r.d, l: (r) => r.l ?? -1, f: (r) => r.f, m: (r) => r.m, ml: (r) => r.cut?.stock ?? r.ml ?? -1, q: (r) => r.q, sum: (r) => r.sum, off: (r) => r.cut?.reuse || 0 };
+    // ★ 2026-11-12 ผู้ใช้: "ให้ sort หัวตารางได้" → ทุกคอลัมน์กดเรียงได้
+    const keys = { unit: (r) => r.unit, pd: (r) => r.pdesc, n: (r) => r.n, rev: (r) => r.rev, s1: (r) => r.path[0] || (r.kind === "sub" && !r.depth ? r.code : ""), s2: (r) => r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
+      code: (r) => r.code, d: (r) => r.d, l: (r) => r.l ?? -1, h: (r) => r.h ?? -1, f: (r) => r.f, m: (r) => r.m, ml: (r) => r.cut?.stock ?? r.ml ?? -1, q: (r) => r.q, sum: (r) => r.sum, um: (r) => r.kind === "sub" ? "SET" : r.uom, off: (r) => r.cut?.reuse || 0 };
     const rows = sorter(flat.filter((r) => has(Q, r.code, r.d, r.m, r.unit, ...r.path)), keys);
     count = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     let g = 0, lastTop = null;
@@ -364,7 +371,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
-        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
+        <thead><tr><Th k="unit">Panel</Th><Th k="pd">Description</Th><Th k="n" r>Quantity</Th><th>U.M.</th><Th k="rev">Rev</Th><Th k="s1">SUB-01</Th><Th k="s2">SUB-02</Th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><Th k="h" r>H</Th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><Th k="um">U.M.</Th>
           {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
@@ -372,12 +379,12 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
           return (<Fragment key={r.unit + r.i + "-" + i}>
           {newPanel ? <tr className="xl-pgap"><td colSpan={nCols}><b>{r.unit}</b><span>{r.pdesc}</span><small>{nf(r.n)} แผง</small></td></tr> : null}
           <tr className={`${shade[i]} ${r.kind === "sub" ? "sub" : ""} ${r.cx ? "cx" : ""}`}>
-            <td className="pn">{r.unit}</td><td className="pd">{r.pdesc}</td><td className="r">{nf(r.n)}</td><td>SET</td>
-            <td className="rev">{r.rev || ""}</td>
+            <td className="pn">{r.unit}</td><td className="pd">{eCell(r, "pd", u, r.pdesc)}</td><td className="r">{nf(r.n)}</td><td>SET</td>
+            <td className="rev">{eCell(r, "rev", u, r.rev || "")}</td>
             <td className="mono">{r.path[0] || (r.kind === "sub" && !r.depth ? r.code : "")}</td><td className="mono">{r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : "")}</td>
             <td className={`mono code ${r.kind === "sub" ? "sub" : inSub ? "kid" : ""}`}>{eCell(r, "code", u, <span className={r.cx ? "rl-cx" : ""}>{r.code}</span>)}{r.cx ? <> <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill></> : r.add ? <> {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>}</> : null}</td>
             <td className="desc">{eCell(r, "d", u, <span>{r.d}</span>)}</td>
-            <td className="r">{eCell(r, "l", u, nlen(r.l))}</td><td className="r">{nlen(r.h)}</td>
+            <td className="r">{eCell(r, "l", u, nlen(r.l))}</td><td className="r">{eCell(r, "h", u, nlen(r.h))}</td>
             <td>{eCell(r, "f", u, r.f)}</td>
             {/* ★ 2026-11-12 ผู้ใช้: "การใช้เศษตารางไม่เหมือนเดิม" → ขยายเศษ = แบบเดิม: Material ตัวแดง · WAST · Material Length = ความยาวเศษที่ใช้ (แดง) · ย่อ = แบบ Excel: ป้าย OFF + ความยาวเส้น */}
             <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
@@ -385,8 +392,8 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off
               // ★ 2026-11-12 ผู้ใช้ (ภาพ Excel): "มันต้องเป็นแบบนี้" → เส้นเต็ม = ความยาวเส้น (ดำ) · ใช้เศษ = ความยาวเศษ (แดง) เช่น 2300(1), 2100(1) · ใช้ทั้งคู่ = เส้นเต็มก่อน แล้วตามด้วยเศษ
               ? <>{r.cut.fresh ? <span className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}), </span> : null}<span className="rt-waste">{wasteLines(r.cut)}</span></>
-              : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
-            <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{um(r)}</td>
+              : eCell(r, "ml", u, r.cut ? nlen(r.cut.stock) : nlen(r.ml))}</td>
+            <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{eCell(r, "um", u, um(r))}</td>
             {wasteOn ? <>
               <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
                 {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
@@ -445,7 +452,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
                         {body}
             {v !== "tree" && count > shown ? <div className="rt-more"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit((n) => n + PAGE)}>แสดงเพิ่ม ({nf(Math.min(PAGE, count - shown))})</button></div> : null}
             <div className="rt-note bm-note">เศษ: ไล่ตัดตามลำดับแผงในใบนี้ · MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือพอ (ยาว + รอยตัด {KERF} มม.) ก่อนเปิดเส้นใหม่ · เศษ ≥ {MIN_OFFCUT} มม. เก็บไว้ใช้ต่อ — เป็นการคำนวณเบื้องต้น ไม่ได้ตัดสต็อกจริง</div>
-            {canEdit && v !== "merge" && !bedits.length ? <div className="rw-muted small bm-edhint">{v === "table" ? <>คลิกช่องเพื่อแก้: <b>Code · Description · L · Finish · Material · Quantity</b> (Wast / Material Length / Sum คำนวณให้เอง)</> : <>คลิกช่องเพื่อแก้: <b>เบอร์ · รายละเอียด · ยาว · MATERIAL · ต่อชุด</b> (FINISH แก้ที่ตารางเต็ม)</>} · Enter = ตกลง · Esc = ยกเลิก · ข้อมูลของเบอร์ (รายละเอียด / ยาว / FINISH / MATERIAL) แก้ที่เดียวมีผลทุกแผง · เพิ่ม / ยกเลิกลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
+            {canEdit && v !== "merge" && !bedits.length ? <div className="rw-muted small bm-edhint">{v === "table" ? <>คลิกช่องเพื่อแก้: <b>Description (แผง) · Rev · Code · Description · L · H · Finish · Material · L (ความยาวเส้น) · Quantity · U.M. (สกรู/ยาง)</b> · ที่แก้ไม่ได้: Panel / Quantity แผง (มาจากแท็บ ASSEMBLY) · SUB-01 / SUB-02 (โครงสร้าง — ✎ Modify) · Sum / Wast (คำนวณเอง) · กดหัวคอลัมน์เพื่อเรียง</> : <>คลิกช่องเพื่อแก้: <b>เบอร์ · รายละเอียด · ยาว · MATERIAL · ต่อชุด</b> (FINISH แก้ที่ตารางเต็ม)</>} · Enter = ตกลง · Esc = ยกเลิก · ข้อมูลของเบอร์ (รายละเอียด / ยาว / FINISH / MATERIAL) แก้ที่เดียวมีผลทุกแผง · เพิ่ม / ยกเลิกลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
             {bedits.length ? (
               <div className="rt-pickbar rt-edbar" role="region" aria-label="BOM ที่แก้ค้างไว้">
                 <span><b>แก้ BOM {nf(bedits.length)} จุด · ยังไม่ได้บันทึก</b>
