@@ -47,7 +47,7 @@ export function rowsOfType(plan, unit) {
 // ★ เส้นเต็ม ↔ เศษ: แถวที่ตัดจากเศษ → บอกว่าเศษมาจากเส้นเต็มของแถวไหน · แถวที่เปิดเส้นเต็ม → บอกว่าเศษที่เหลือไปใช้ที่แถวไหน
 const cutFlow = (c) => {
   if (!c) return { from: [], to: [] };
-  const fmt = (m) => [...m.entries()].map(([k, n]) => `${k === c.label ? "เส้นเต็มของแถวนี้เอง" : k} (${nf(n)})`);
+  const fmt = (m) => [...m.entries()].map(([k, n]) => `${k === c.label ? "แถวนี้" : k}${n > 1 ? ` ×${nf(n)}` : ""}`);
   return { from: c.reuse ? fmt(c.srcs) : [], to: fmt(c.outs) };
 };
 const groupLens = (arr) => { const m = new Map(); for (const v of arr) m.set(v, (m.get(v) || 0) + 1); return [...m.entries()].sort((a, b) => b[0] - a[0]).map(([l, n]) => `${nf(l)}(${n})`).join(", "); };
@@ -273,7 +273,7 @@ export function BomView({ plan, need, ed }) {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
         <thead><tr><Th k="unit">Panel</Th><Th k="pd">Description</Th><Th k="n" r>Quantity</Th><th>U.M.</th><Th k="rev">Rev</Th><Th k="s1">SUB-01</Th><Th k="s2">SUB-02</Th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><Th k="h" r>H</Th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><Th k="um">U.M.</Th>
-          {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
+          {wasteOn ? <th title="ชิ้นนี้ตัดจากไหน: เส้นเต็ม หรือเศษของแถวไหน">ที่มา</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
           const newPanel = !sort.k && (i === 0 || vis[i - 1].unit !== r.unit);
@@ -297,9 +297,9 @@ export function BomView({ plan, need, ed }) {
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{eCell(r, "um", u, um(r))}</td>
             {wasteOn ? <>
               <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
-                {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
-                {f.from.length ? <div className="small rt-waste">← เศษจาก {f.from.join(", ")}</div> : null}
-                {f.to.length ? <div className="small rw-muted">→ เศษไปใช้ที่ {f.to.join(", ")}</div> : null}
+                {/* ★ 2026-11-12 ผู้ใช้: "เอาไปใช้ที่ไหนไม่ต้องบอก บอกแค่เอามาจากไหน ให้สั้น ๆ" */}
+                {r.cut?.fresh ? <div className="small">เส้นเต็ม{r.cut.fresh > 1 ? ` ×${nf(r.cut.fresh)}` : ""}</div> : null}
+                {f.from.length ? <div className="small rt-waste">เศษจาก {f.from.join(", ")}</div> : null}
               </>); })()}</td></> : null}
           </tr></Fragment>); })}</tbody>
         <tfoot><tr><td colSpan={nCols}>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
