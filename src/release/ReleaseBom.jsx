@@ -339,11 +339,17 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     const um = (r) => (r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase());
     const nCols = wasteOn ? 20 : 17;
     body = (
-      <div className="table-wrap rw-tw rt-tw"><table className="rt-xl">
+      <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
+        // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
+        if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
         <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th><Th k="ml" r>L</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
           {wasteOn ? <><Th k="off">WAST</Th><th className="r">ความยาวเศษที่ใช้</th><th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th></> : null}</tr></thead>
-        <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse; return (
-          <tr key={r.unit + r.i + "-" + i} className={`${shade[i]} ${r.kind === "sub" ? "sub" : ""} ${r.cx ? "cx" : ""}`}>
+        <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
+          // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
+          const newPanel = !sort.k && (i === 0 || vis[i - 1].unit !== r.unit);
+          return (<Fragment key={r.unit + r.i + "-" + i}>
+          {newPanel ? <tr className="xl-pgap"><td colSpan={nCols}><b>{r.unit}</b><span>{r.pdesc}</span><small>{nf(r.n)} แผง</small></td></tr> : null}
+          <tr className={`${shade[i]} ${r.kind === "sub" ? "sub" : ""} ${r.cx ? "cx" : ""}`}>
             <td className="pn">{r.unit}</td><td className="pd">{r.pdesc}</td><td className="r">{nf(r.n)}</td><td>SET</td>
             <td className="rev">{r.rev || ""}</td>
             <td className="mono">{r.path[0] || (r.kind === "sub" && !r.depth ? r.code : "")}</td><td className="mono">{r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : "")}</td>
@@ -362,7 +368,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
                 {f.from.length ? <div className="small rt-waste">← เศษจาก {f.from.join(", ")}</div> : null}
                 {f.to.length ? <div className="small rw-muted">→ เศษไปใช้ที่ {f.to.join(", ")}</div> : null}
               </>); })()}</td></> : null}
-          </tr>); })}</tbody>
+          </tr></Fragment>); })}</tbody>
         <tfoot><tr><td colSpan={nCols}>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
       </table></div>);
   }

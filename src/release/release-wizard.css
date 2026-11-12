@@ -1262,3 +1262,17 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .rt-xl tfoot td { background: #fafafa; color: #5a6f68; font-size: 12px; white-space: normal; }
 .rt-xl .bm-flow { white-space: normal; min-width: 240px; }
 .xl-off { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: #fde2e2; color: #c00000; font-size: 11px; font-weight: 800; }
+
+.rt-xl tr.xl-pgap td { background: #fff !important; border-left: 0; border-right: 0; border-top: 14px solid #fff; border-bottom: 2px solid #1a9a6c; padding: 4px 8px; height: auto; color: #0b5e43; }
+.rt-xl tbody tr.xl-pgap:first-child td { border-top-width: 2px; }
+.rt-xl tr.xl-pgap b { font-size: 14px; margin-right: 10px; }
+.rt-xl tr.xl-pgap span { color: #46574f; margin-right: 10px; }
+.rt-xl tr.xl-pgap small { color: #5a6f68; }
+.rt-xl tbody tr.xl-pgap:hover td { background: #fff; }
+.rt-xl td:has(.bm-qbtn) { cursor: cell; }
+.rt-xl td:has(.bm-qbtn):hover { box-shadow: inset 0 0 0 2px #9db6ee; }
+.rt-xl td:has(.bm-qbtn.ed) { background: #eaf2ff !important; box-shadow: inset 0 0 0 2px #2f62c9; }
+.rt-xl .bm-qbtn:hover { box-shadow: none; }
+.rt-xl td:has(.bm-edhold) { padding: 0; position: relative; }
+.rt-xl td .bm-edhold { position: static; display: block; padding: 3px 8px; }
+.rt-xl td .bm-edhold .bm-in { inset: 1px; }
