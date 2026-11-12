@@ -63,6 +63,14 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ── state ──
   const [step, setStep] = useState(0);
   const [hdr, setHdr] = useState(() => ({ projectId: initialProjectId || (projects.length === 1 ? projects[0].id : ""), ro: "", date: todayYmd(), note: "", mod: "" }));
+  // ★ 2026-11-12 (เล็กน้อย): กด + สร้างโปรเจคใหม่ → โปรเจคที่เพิ่งสร้างถูกเลือกให้เลย (เดิมยังเป็น "— เลือกโปรเจค —")
+  const askedNew = useRef(null);
+  const needProject = onNeedProject ? () => { askedNew.current = new Set(projects.map((p) => p.id)); onNeedProject(); } : null;
+  useEffect(() => {
+    if (!askedNew.current) return;
+    const fresh = projects.find((p) => !askedNew.current.has(p.id));
+    if (fresh) { askedNew.current = null; setHdr((h) => ({ ...h, projectId: fresh.id })); }
+  }, [projects]);
   // ── โหมดของใบนี้: "panel" = ลงที่อยู่แผง + อัพ PDF แผง (เดิม) · "items" = ปล่อยเฉพาะซับ/พาร์ท เลือกจากคลังของโปรเจค (ไม่มีแผง) ──
   const [mode, setMode] = useState("panel");
   const [picks, setPicks] = useState([]);                // โหมด items: [{ code, kind:"sub"|"part", qty }]
@@ -144,6 +152,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const roNorm = normalizeRO(hdr.ro);
   const roErr = !hdr.ro.trim() ? "ยังไม่ใส่เลข Release"
     : !RELEASE_ORDER_RE.test(roNorm) ? (/\.\d+$/.test(hdr.ro.trim()) ? 'ห้ามลงท้าย ".ตัวเลข" — สงวนไว้ให้ล็อต (เช่น P-142.1)' : 'ต้องเป็นรูปแบบ "P-ตัวเลข" เช่น P-142 (ต่อท้าย "(…)" ได้)')
+    : /^P-0+(\s|$|\()/i.test(roNorm) ? "เลข Release ต้องมากกว่า 0 (P-000 ใช้ไม่ได้)"   // ★ 2026-11-12 เดิมรับ "0" เป็น P-000
     : ctx.orders.some((o) => roKey(o.code) === roKey(roNorm) || inPlan(o.code, roNorm)) ? `${roNorm} มีอยู่แล้วในโปรเจคนี้ — ใช้เลขอื่น หรือเปิดใบเดิมแล้วปล่อยล็อตเพิ่ม` : "";
   const hdrErr = roErr || (!hdr.projectId ? "ยังไม่เลือกโปรเจค" : !hdr.date ? "ยังไม่เลือกวันที่" : "");
   const nextRo = useMemo(() => {
@@ -254,18 +263,20 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       const o = await readOrderFile(f);
       if (!o.items.length) { setOrderMsg({ bad: `อ่าน ${f.name} ไม่ได้รายการ — ${o.warn.join(" · ") || "ไม่พบตาราง Item / Part No. / Qty (ใช่ฟอร์ม Release for Production / Order ไหม)"}` }); return; }
       setOrder(o); setOrderHw([]);
-      const patch = {};
+      const patch = {}; let multiHit = null;
       if (o.ro && !hdr.ro.trim()) patch.ro = o.ro;
       if (!hdr.projectId && o.projectCode) {
         const pc = NC(o.projectCode); const full = NC(o.projectFull || "");
         const hit = projects.filter((p) => { const c = NC(p.code); return c === full || c === pc || c.startsWith(pc + "-") || c.startsWith(pc); });
         if (hit.length === 1) patch.projectId = hit[0].id;
+        else if (hit.length > 1) multiHit = hit;
       }
       if (o.zone && !hdr.note.trim()) patch.note = o.zone;
       if (Object.keys(patch).length) setHdr((h) => ({ ...h, ...patch }));
       const notes = [`${o.file}: ${o.roRaw || o.ro || "ไม่มีเลข Release"} · ${o.items.length} รายการ`];
       if (o.ro && hdr.ro.trim() && roKey(hdr.ro) !== roKey(o.ro)) notes.push(`เลขในใบปะหน้าเป็น ${o.ro} แต่ช่อง Release เป็น ${normalizeRO(hdr.ro)} — ตรวจด้วย`);
-      if (o.projectCode && !patch.projectId && !hdr.projectId) notes.push(`หาโปรเจค ${o.projectFull || o.projectCode} ในระบบไม่เจอ — เลือกเอง`);
+      // ★ 2026-11-12 เจอหลายโปรเจค (รหัสเดียวกันหลายตึก / ขึ้นต้นเหมือนกัน) ≠ ไม่เจอ → บอกให้ถูก ให้เลือกตึกเอง
+      if (o.projectCode && !patch.projectId && !hdr.projectId) notes.push(multiHit ? `⚠ ${o.projectFull || o.projectCode} ตรงกับ ${multiHit.length} โปรเจค (${multiHit.slice(0, 4).map((p) => `${p.code}${p.name ? " " + p.name : ""}`).join(" · ")}${multiHit.length > 4 ? " …" : ""}) — เลือกโปรเจค / ตึกเอง` : `⚠ หาโปรเจค ${o.projectFull || o.projectCode} ในระบบไม่เจอ — เลือกเอง`);
       if (o.warn.length) notes.push(o.warn.join(" · "));
       setOrderMsg({ ok: notes });
     } catch (e) { setOrderMsg({ bad: "อ่านใบปะหน้าไม่ได้: " + (e?.message || e) }); }
@@ -496,7 +507,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
               {order.note ? <div className="rw-muted small">NOTE: {order.note}</div> : null}
             </div>
           )}
-          {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>✓ {t}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
+          {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>{/^⚠/.test(String(t)) ? t : <>✓ {t}</>}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
           <div className="rw-mode" role="radiogroup" aria-label="โหมดการปล่อยงาน">
             <button type="button" role="radio" aria-checked={!itemsMode} className={`rw-mode-opt ${!itemsMode ? "on" : ""}`} onClick={() => setMode("panel")}>
               <b>🏢 ปล่อยแผง (มีที่อยู่)</b><small>ลง Address &amp; Unit + อัพ PDF แบบแผง → ระบบแตกเป็นซับ / พาร์ท ให้เอง</small>
@@ -520,7 +531,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
                   <option value="">— เลือกโปรเจค —</option>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
                 </select>
-                {onNeedProject ? <button type="button" className="btn btn-ghost btn-sm" onClick={onNeedProject} title="เพิ่มโปรเจคใหม่"><Icon name="plus" size={14} /></button> : null}
+                {needProject ? <button type="button" className="btn btn-ghost btn-sm" onClick={needProject} title="เพิ่มโปรเจคใหม่"><Icon name="plus" size={14} /></button> : null}
               </div>
             </div>
             <div className="field"><div className="label-el">หมายเหตุหัวใบ</div><input className="input" value={hdr.note} placeholder="เช่น L25" onChange={(e) => setHdr({ ...hdr, note: e.target.value })} /><div className="rw-hint">ต่อท้ายเลข Release ในหัวกระดาษ</div></div>

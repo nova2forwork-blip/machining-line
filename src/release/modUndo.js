@@ -11,7 +11,7 @@ export function modUndoStep({ prev, np, mod, api, user = null, showPlan, onReloa
   const fresh = (p) => ({ ...p, _at: getAt() || p._at });
   return {
     undo: async () => {
-      const ok = await askConfirm({ title: `ย้อน ${mod.ver}?`, tone: lots.length ? "danger" : "warn", confirmText: `ย้อน ${mod.ver}`, cancelText: "ไม่ย้อน",
+      const ok = await askConfirm({ title: `ย้อน ${mod.ver}?`, tone: lots.length ? "danger" : "warn", confirmText: `ย้อน ${mod.ver}`, cancelText: "ไม่ย้อน", focusCancel: true,
         message: [`ใบ ${prev.ro} กลับเป็นก่อน ${mod.ver} (ยอดต้องใช้ · BOM · วัสดุ · ความยาว · ประวัติ Modify)`,
           lots.length ? `ล็อตที่ ${mod.ver} แก้: ${lots.join(", ")} → ยกเลิก ${mod.ver} ในล็อตด้วย (QR ที่ยกเลิกกลับมาใช้ได้ · หน้าล็อตขึ้นว่า “ยกเลิกแล้ว” · เลข ${mod.ver} ไม่ใช้ซ้ำ)`
             : `${mod.ver} ไม่ได้แก้ล็อตที่ปล่อยแล้ว — แก้แค่ใบหลัก · Ctrl+Y ทำซ้ำได้`,

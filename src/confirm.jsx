@@ -98,10 +98,11 @@ export function ConfirmHost() {
           </div>
         ) : (
         <div className="mls-confirm-actions">
-          <button type="button" className="mls-confirm-btn cancel" onClick={() => done(false)}>
+          {/* ★ 2026-11-12 focusCancel = เรื่องที่ย้อนกลับยาก (เช่น ย้อน M) → โฟกัสปุ่มยกเลิก · Enter ทันที = ไม่ทำ */}
+          <button type="button" className="mls-confirm-btn cancel" onClick={() => done(false)} autoFocus={!!o.focusCancel}>
             {o.cancelText || "ยกเลิก"}
           </button>
-          <button type="button" className={`mls-confirm-btn ok tone-${tone}`} onClick={() => done(true)} autoFocus>
+          <button type="button" className={`mls-confirm-btn ok tone-${tone}`} onClick={() => done(true)} autoFocus={!o.focusCancel}>
             {o.confirmText || "ตกลง"}
           </button>
         </div>

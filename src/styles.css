@@ -1508,7 +1508,7 @@ table.pgrid tr.mat-row-existing td.pgrid-idx { color: var(--muted); }
   }
 }
 /* toast: สีตามชนิด (ok/err ถูกแปลงเป็น success/error แล้ว) — พื้นอ่อนช่วยให้เห็นว่าเป็นข้อความผิดพลาด */
-.mls-toast.error { background: #fff5f5; }
+.mls-toast.error { background: #fdeaea; color: #8f1d1d; border-left-width: 5px; font-weight: 600; }   /* ★ 2026-11-12 เตือนให้เห็นชัดว่าเป็น error */
 .mls-toast.warn { background: #fffaf0; }
 
 /* ── รอบ 13 (2026-09-25) ───────────────────────────────────────────────── */

@@ -59,7 +59,20 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   // ★ เปลี่ยนวัสดุ — matOv (พาร์ทงานตัด → INV ใหม่) · matSwap (กระจก / อุปกรณ์ / อื่นๆ → เบอร์อื่นแทน)
   const who = () => { try { const u = getSession() || {}; return u.name || u.full_name || u.code || ""; } catch { return ""; } };
   const stamp = (v) => ({ to: String(v.to || "").trim().toUpperCase(), ...(v.d ? { d: v.d } : {}), ...(Number(v.ml) > 0 ? { ml: Number(v.ml) } : {}), r: v.r || "", at: new Date().toISOString(), by: who() });
-  const setMatOv = onPlanChange ? (codes, v) => onPlanChange({ ...plan, matOv: { ...(plan.matOv || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } }) : null;
+  // ★ 2026-11-12 (เล็กน้อย): ช่องวัสดุ Enter = บันทึกทันที (ต่างจากช่องอื่นที่รอแถบบันทึก) → เบอร์ที่ไม่รู้จัก / สั้นผิดปกติ = ถามก่อน · บันทึกแล้วบอก
+  const toastMat = (t) => { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text: t, tone: "success" } })); } catch { /* ignore */ } };
+  const matOk = async (codes, v, list, what) => {
+    const to = String(v.to || "").trim().toUpperCase(); if (!to) return false;
+    const known = (list || []).some((x) => NC(typeof x === "string" ? x : x.inv || x.code || "") === NC(to));
+    if (known && to.length >= 4) return true;
+    return askConfirm({ title: `ใช้ ${to} เป็น${what}?`, message: `${to} ${to.length < 4 ? "สั้นผิดปกติ" : "ไม่มีในรายการวัสดุของใบนี้"} — พิมพ์ผิดหรือเปล่า?
+${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้ ${to} ทันที (บันทึกเลย · Ctrl+Z ย้อนได้)`, tone: "warn", confirmText: `ใช้ ${to}`, cancelText: "กลับไปแก้", focusCancel: true });
+  };
+  const setMatOv = onPlanChange ? async (codes, v) => {
+    if (!(await matOk(codes, v, invList, "วัสดุ"))) return;
+    onPlanChange({ ...plan, matOv: { ...(plan.matOv || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } });
+    toastMat(`เปลี่ยนวัสดุ ${codes.slice(0, 3).join(", ")}${codes.length > 3 ? " …" : ""} → ${String(v.to).trim().toUpperCase()} แล้ว (บันทึกแล้ว · Ctrl+Z ย้อนได้)`);
+  } : null;
   const resetMatOv = onPlanChange ? (codes) => { const m = { ...(plan.matOv || {}) }; for (const c of codes) delete m[c]; onPlanChange({ ...plan, matOv: m }); } : null;
   const setSwap = onPlanChange ? (codes, v) => onPlanChange({ ...plan, matSwap: { ...(plan.matSwap || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } }) : null;
   const resetSwap = onPlanChange ? (codes) => { const m = { ...(plan.matSwap || {}) }; for (const c of codes) delete m[c]; onPlanChange({ ...plan, matSwap: m }); } : null;
@@ -247,6 +260,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     const idxP = new Map(all.map((r, k) => [r, k])); const inf = new Map(); for (const r of all) { const hd = !r.qr ? hwDone.get(NC(r.code)) : null; const hdQ = hd ? (r.u === "m." && r.mm ? hd.qty / 1000 : hd.qty) : 0;
       inf.set(r, { hd, left: r.qr ? leftOf(r.code, r.qty) : Math.max(0, Math.round((r.qty - hdQ) * 100) / 100), done: r.qr ? doneOf(r.code) : hdQ, o: otherOf(rel, r.code) }); }
     const K = (r) => ({ ...r, kind: r.k === "hw" ? "hw" : "part" });
+    // ★ 2026-11-12 (เล็กน้อย): "ปล่อยแล้ว" กับ "เหลือ" (ที่ office ดูบ่อยสุด) มาต่อจาก TOTAL QTY — เดิมอยู่ขวาสุด ต้องเลื่อนแนวนอน · ลากจัดเองได้เหมือนเดิม (↺ = กลับลำดับนี้)
+    const P_ORDER = ["chk", "no", "code", "d", "l", "qty", "done", "left", "inv", "used", "cat", "rem"];
     const pCols = [
       { k: "chk", h: <Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" />, th: { style: { width: 34 } }, td: (r) => <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td> },
       { k: "no", h: "NO.", th: { className: "r" }, td: (r, i) => <td className="r rw-num">{i + 1}</td>, sort: (r) => idxP.get(r) },
@@ -269,7 +284,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
       { k: "rem", h: "REMARK", sort: (r) => r.f, td: (r, i) => <td className="rt-rem">{E(K(r), "f", "p" + i, r.f || "")}{r.rev ? <> · {E({ ...r, kind: "part" }, "rev", "p" + i, `Rev ${r.rev}`)}</> : null}</td> },
     ];
     table = (
-      <XTable id="rel-part" lock={1} className="data-table rw-table rt-table rt-allparts" cols={pCols} rows={all} limit={Math.max(limit, 1200)} rowKey={(r, i) => r.code + i}
+      <XTable id="rel-part" lock={1} className="data-table rw-table rt-table rt-allparts" cols={P_ORDER.map((k) => pCols.find((c) => c.k === k)).filter(Boolean)} rows={all} limit={Math.max(limit, 1200)} rowKey={(r, i) => r.code + i}
         trProps={(r) => ({ className: r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && inf.get(r).left <= 0 ? "rt-full" : "" })}
         group={(r) => ({ key: r.cat, render: (n) => <tr key={"g" + r.cat} className="rt-grp"><td colSpan={n}><b>{r.cat || "ไม่มีหมวด"}</b> <span className="rw-muted small">{nf(byCat.get(r.cat))} เบอร์{!r.qr ? " · ใบเบิก · ไม่มี QR" : ""}</span>{r.cat === UNCAT ? <Pill tone="warn">รอจัดหมวด</Pill> : !PART_CATS.includes(r.cat) ? <Pill tone="mod">หมวดที่ตั้งเอง</Pill> : null}</td></tr> })} />);
   } else if (grp === "sub") {

@@ -443,7 +443,8 @@ function Toaster() {
       // ★ รอบ 12 (D): บางจุดส่ง "ok"/"err"/"warning" → เดิมไม่มีสี + error หายเร็ว · แปลงเป็นชื่อมาตรฐาน
       const raw = e.detail.tone || "info";
       const tone = { ok: "success", err: "error", danger: "error", warning: "warn" }[raw] || raw;
-      setItems((s) => [...s, { id, text: e.detail.text, tone }]);
+      // ★ 2026-11-12 ข้อความเดียวกันซ้ำ (โหลดซ้ำ / StrictMode / หลายจุดแจ้งเรื่องเดียว) = ใบเดียว ต่อเวลาให้ · ค้างได้ไม่เกิน 4 ใบ (เก่าสุดออกก่อน)
+      setItems((s) => [...s.filter((x) => !(x.text === e.detail.text && x.tone === tone)), { id, text: e.detail.text, tone }].slice(-4));
       const ttl = tone === "error" ? 6500 : tone === "warn" ? 4500 : 3400;
       setTimeout(() => setItems((s) => s.filter((x) => x.id !== id)), ttl);
     };
@@ -4322,7 +4323,7 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
                 <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 15, color: "var(--ink, #123)" }}>{m.bunk_no || "(ไม่มีเลขบั้ง)"}</span>
                 {meta ? <span style={{ fontSize: 12, color: "var(--muted)" }}>{meta}</span> : null}
                 <span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
-                  {b.units.length} ยูนิต · {fmt2(m.total_weight)} Lbs
+                  {b.units.length} ยูนิต · {fmt2(m.total_weight)} {wUnit === "kg" ? "kg" : "Lbs"}
                 </span>
                 <span onClick={(e) => { e.stopPropagation(); removeBunk(i); }} title="เอาบั้งนี้ออก" style={{ cursor: "pointer", color: "var(--danger-hi)", padding: "0 4px" }}>✕</span>
                 <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
@@ -7659,7 +7660,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
     if (planRef.current && planRef.current.id === p.id && planRef.current._at) p = { ...p, _at: planRef.current._at };
     // ★ 2026-11-12 ข้อ 8: modUndone (M ที่เคยถูกย้อน) มีแต่เพิ่ม — ย้อน/ทำซ้ำไปใบรุ่นก่อน (ที่ยังไม่มีบันทึกนั้น) ต้องไม่ทำให้หาย
     const keep = planRef.current?.modUndone || [];
-    if (keep.length > (p.modUndone || []).length) p = { ...p, modUndone: keep };
+    if (keep.length) { const m = new Map(); for (const x of [...keep, ...(p.modUndone || [])]) { const o = m.get(x.ver); if (!o || String(x.at || "") > String(o.at || "")) m.set(x.ver, x); } const u = [...m.values()]; if (u.length !== (p.modUndone || []).length || keep.some((x) => !(p.modUndone || []).some((y) => y.ver === x.ver))) p = { ...p, modUndone: u }; }   // รวมตามเลข M (ไม่ซ้ำ · ไม่หาย)
     planRef.current = p;
     setView((v) => (v ? { ...v, plan: p } : v));
     setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
