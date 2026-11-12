@@ -561,7 +561,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
   const pasteRef = useRef(null);
   const apply = useCallback((text, mode = "replace") => {
     const { rows, skipped } = parseUnitsPaste(text);
-    if (!rows.length) { setMsg("ไม่พบข้อมูล — ต้องมี 2 คอลัมน์ Unit กับ Address (คั่นด้วยแท็บ เหมือนก๊อปจาก Excel)"); return; }
+    if (!rows.length) { setMsg("ไม่พบข้อมูล — ต้องมี 2 คอลัมน์ Address กับ Unit (คั่นด้วยแท็บ เหมือนก๊อปจาก Excel)"); return; }
     setUnits((u) => (mode === "append" ? [...u, ...rows] : rows));
     setMsg(`✓ ${mode === "append" ? "เพิ่ม" : "ได้"} ${nf(rows.length)} แถว${skipped ? ` · ข้ามแถวว่าง ${skipped}` : ""}`);
     setPaste("");
@@ -617,9 +617,9 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
   return (
     <div className="rw-two">
       <div className="card rw-card">
-        <SecHead title="Address & Unit" sub="2 คอลัมน์: Unit (แบบแผง) + Address (ตำแหน่งติดตั้ง) · 1 แถว = แผง 1 ชิ้น = QR 1 ดวง · แผง Mockup (PMU/VMU/EMU) ติ๊กช่อง Mockup ได้ ไม่ต้องมีที่อยู่"
+        <SecHead title="Address & Unit" sub="2 คอลัมน์: Address (ตำแหน่งติดตั้ง) + Unit (แบบแผง) · 1 แถว = แผง 1 ชิ้น = QR 1 ดวง · แผง Mockup (PMU/VMU/EMU) ติ๊กช่อง Mockup ได้ ไม่ต้องมีที่อยู่"
           right={<Help label="วิธีลง"><ul><li>ก๊อป 2 คอลัมน์จาก Excel แล้ววาง (Ctrl+V) ที่ไหนก็ได้ในหน้านี้ — มีหัวตารางหรือไม่มีก็ได้ สลับคอลัมน์ได้</li><li>หรือนำเข้าไฟล์ .xlsx (ชีตชื่อ Address&amp;Units ถ้ามี) หรือ PDF (ต้องเป็น PDF ที่มีตัวอักษร ก๊อปข้อความได้ · เลือกหลายไฟล์ได้ · เพิ่มต่อท้ายของเดิม)</li><li>ที่อยู่ซ้ำ / ใช้ใน Release อื่นแล้ว / ข้อมูลไม่ครบ = บันทึกไม่ได้ · Unit รูปแบบแปลก = เตือน</li></ul></Help>} />
-        <textarea ref={pasteRef} className="input rw-paste" rows={2} value={paste} placeholder="วางจาก Excel ที่นี่ (Ctrl+V) — Unit | Address"
+        <textarea ref={pasteRef} className="input rw-paste" rows={2} value={paste} placeholder="วางจาก Excel ที่นี่ (Ctrl+V) — Address | Unit"
           onChange={(e) => setPaste(e.target.value)} onPaste={(e) => { const t = e.clipboardData?.getData("text") || ""; if (t.includes("\t")) { e.preventDefault(); apply(t); } }} />
         {paste.trim() ? <div className="rw-row"><button type="button" className="btn btn-accent btn-sm" onClick={() => apply(paste)}>ใช้ข้อมูลนี้ (แทนที่)</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => apply(paste, "append")}>เพิ่มต่อท้าย</button></div> : null}
         <div className="rw-tools">
@@ -637,15 +637,15 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
         {units.length ? (
           <div className="table-wrap rw-tw">
             <table className="data-table rw-table">
-              <thead><tr><th style={{ width: 44 }}>#</th><th>Unit</th><th>Address</th><th style={{ width: 96 }} title="ชั้นที่ติดตั้ง เช่น L13 · LOB (ไม่บังคับ) — ใช้แยกตารางตามชั้นในใบหลัก">ชั้น</th><th title="แผง Mockup (PMU / VMU / EMU) ไม่ต้องมีที่อยู่">Mockup</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Address</th><th>Unit</th><th style={{ width: 96 }} title="ชั้นที่ติดตั้ง เช่น L13 · LOB (ไม่บังคับ) — ใช้แยกตารางตามชั้นในใบหลัก">ชั้น</th><th title="แผง Mockup (PMU / VMU / EMU) ไม่ต้องมีที่อยู่">Mockup</th><th>ตรวจ</th><th style={{ width: 50 }} /></tr></thead>
               <tbody>
                 {view.map((i) => { const r = units[i]; const is = ui.row[i] || []; const bad = is.some((x) => x[0] === "bad");
                   return (
                     <tr key={i} className={bad ? "rw-rowbad" : is.length ? "rw-rowwarn" : ""}>
                       <td className="rw-num">{i + 1}</td>
-                      <td><input className="input rw-cell rw-mono" value={r.unit} onChange={(e) => setCell(i, "unit", e.target.value)} aria-label={`Unit แถว ${i + 1}`} /></td>
                       <td>{r.mock ? <span className="rw-mock-addr" title="ที่อยู่สมมติ — ระบบออกให้ ใช้แทนที่อยู่จริงของแผง Mockup"><b>MOCKUP</b> {mockType(r.unit)} <label className="rw-mock-qty" title="จำนวนแผง Mockup แบบนี้ (ปล่อยเหมือนกัน ใช้ PDF ชุดเดียว · 1 QR ต่อแผง)">× <input className="input rw-cell" type="number" min="1" max="999" step="1" inputMode="numeric" value={r.qty || 1} onChange={(e) => setQty(i, e.target.value)} aria-label={`จำนวน Mockup แถว ${i + 1}`} /></label> <i className="rw-mono">{mockQty(r) > 1 ? `${String(r.addr || "").replace(/-\d+$/, "")}-1…${mockQty(r)}` : r.addr}</i></span>
                         : <input className="input rw-cell rw-mono" value={r.addr} onChange={(e) => setCell(i, "addr", e.target.value)} aria-label={`Address แถว ${i + 1}`} />}</td>
+                      <td><input className="input rw-cell rw-mono" value={r.unit} onChange={(e) => setCell(i, "unit", e.target.value)} aria-label={`Unit แถว ${i + 1}`} /></td>
                       <td><input className="input rw-cell rw-mono" value={r.floor || ""} placeholder="—" onChange={(e) => setCell(i, "floor", e.target.value)} aria-label={`ชั้น แถว ${i + 1}`} /></td>
                       <td style={{ textAlign: "center" }}><input type="checkbox" checked={!!r.mock} onChange={() => toggleMock(i)} aria-label={`Mockup แถว ${i + 1}`} /></td>
                       <td>{is.length ? is.map(([t, m], k) => <Pill key={k} tone={t === "bad" ? "bad" : "warn"}>{m}</Pill>) : (cnt.find((c) => c.unit === r.unit)?.has ? <Pill tone="ok">✓ มี BOM</Pill> : <Pill tone="muted">รอ PDF</Pill>)}</td>
@@ -656,7 +656,7 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
             {(onlyBad ? badIdx.length : units.length) > 400 ? <div className="rw-muted small" style={{ padding: 10 }}>แสดง 400 แถวแรก จาก {nf(onlyBad ? badIdx.length : units.length)}</div> : null}
           </div>
         ) : (
-          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Unit | Address จาก Excel แล้วกด Ctrl+V (มีคอลัมน์ ชั้น เป็นคอลัมน์ที่ 3 ได้) · แผง Mockup พิมพ์ชื่อ Unit (เช่น EMU-E-3036) ไม่ต้องใส่ Address</span></div>
+          <div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่มีที่อยู่</b><span>ก๊อป 2 คอลัมน์ Address | Unit จาก Excel แล้วกด Ctrl+V (มีคอลัมน์ ชั้น เป็นคอลัมน์ที่ 3 ได้) · แผง Mockup พิมพ์ชื่อ Unit (เช่น EMU-E-3036) ไม่ต้องใส่ Address</span></div>
         )}
       </div>
 

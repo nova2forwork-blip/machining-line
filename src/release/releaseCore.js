@@ -765,7 +765,7 @@ export function floorsOf(units) {
   const m = new Map(); for (const u of units || []) { const f = floorKey(u); m.set(f, (m.get(f) || 0) + 1); }
   return [...m.entries()].map(([f, n]) => ({ f, n })).sort((a, b) => (a.f === "" ? 1 : b.f === "" ? -1 : a.f.localeCompare(b.f, "en", { numeric: true })));
 }
-// วางจาก Excel: 2 คอลัมน์ Unit | Address (สลับลำดับได้ · มีหัวตารางได้ · คอลัมน์เดียว = ข้าม)
+// วางจาก Excel: 2 คอลัมน์ Address | Unit (สลับลำดับได้ · มีหัวตารางได้ · คอลัมน์เดียว = ข้าม)
 export function parseUnitsPaste(text) {
   const lines = String(text || "").replace(/\r/g, "").split("\n").filter((l) => l.trim());
   if (!lines.length) return { rows: [], skipped: 0 };
@@ -781,6 +781,8 @@ export function parseUnitsPaste(text) {
     const score = (i) => sample.filter((r) => unitLike(r[i])).length;
     const w = Math.max(...cells.map((r) => r.length));
     let best = 0; for (let i = 1; i < w; i++) if (score(i) > score(best)) best = i;
+    // ★ 2026-11-12 ผู้ใช้: "Address ขึ้นก่อน" → ดูไม่ออกว่าคอลัมน์ไหนเป็น Unit = ถือว่าเรียง Address | Unit (เดิม Unit | Address)
+    if (score(best) === 0 && w > 1) best = 1;
     ui = best; ai = ui === 0 ? 1 : 0;
     if (sample.length && !unitLike(cells[0][ui]) && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
   }
