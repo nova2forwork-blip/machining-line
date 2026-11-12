@@ -276,6 +276,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       // ★ 2026-11-12 ผู้ใช้: "export เป็น Excel แล้ว sort ช่อง MAT. LENGTH ไม่ได้" → เลือก "แยกแถวตามความยาว":
       //   พาร์ทที่ตัดจากหลายความยาว = 1 แถวต่อ 1 ความยาว (เส้นเต็ม / เศษแต่ละขนาด) · MAT. LENGTH เป็นตัวเลขล้วน · ชิ้น = จำนวนชิ้นของแถวนั้น (รวมคอลัมน์ได้เท่ายอดทั้งเบอร์)
       // ★ 2026-11-12 ผู้ใช้: "เอาที่มาออก · เพิ่ม ITEM หน้าสุด แผงแรก = 1 แผงที่สอง = 2" → ITEM = ลำดับแบบแผงตามตาราง (sort กลับลำดับเดิมได้)
+      const allQ = new Map(); for (const T of model.types.values()) for (const x of T.rows) { if (x.cx) continue; const k = NC(x.code); allQ.set(k, (allQ.get(k) || 0) + x.per * T.n); }
       const itemOf = new Map(); for (const r of flat) if (!itemOf.has(r.unit)) itemOf.set(r.unit, itemOf.size + 1);
       const full = flat.flatMap((r) => {
         const base = {
@@ -284,7 +285,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
           MATERIAL: r.kind === "sub" ? "" : r.m || "" };
         const note = r.cx ? (r.to ? `แทนด้วย ${r.to} ${r.ver || ""}` : `ยกเลิก ${r.ver || ""}`).trim() : r.add ? `เพิ่ม ${r.ver || ""}`.trim() : r.q0 != null ? `เดิม ${r.q0} (${r.ver || "Modify"})` : "";
         const total = r.cx ? 0 : Math.round(r.sum * 1000) / 1000;
-        const mk = (wast, ml, src, pcs) => ({ ...base, WAST: wast, "MAT. LENGTH": ml, "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": pcs, "ทั้งเบอร์": total, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
+        const mk = (wast, ml, src, pcs) => ({ ...base, WAST: wast, "MAT. LENGTH": ml, "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": pcs, "ทั้งเบอร์": total, "รวมทั้งใบ": r.cx ? 0 : Math.round((allQ.get(NC(r.code)) || 0) * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
         if (r.cx || !r.cut || !r.cut.reuse) return [mk("", r.cut ? num(r.cut.stock) : num(r.ml), r.cut ? "เส้นเต็ม" : "", total)];
         const out = [];
         if (r.cut.fresh) out.push(mk("", num(r.cut.stock), "เส้นเต็ม", r.cut.fresh));
@@ -360,18 +361,21 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     //   การคำนวณเศษ (WAST · ความยาวเศษ · เส้นเต็ม ↔ เศษ) ย่อ/ขยายได้ — ย่อไว้ = แถวเตี้ยเท่า Excel · ตัดจากเศษ = ป้าย OFF แดงที่ Material
     // ★ 2026-11-12 ผู้ใช้: "ให้ sort หัวตารางได้" → ทุกคอลัมน์กดเรียงได้
     const keys = { unit: (r) => r.unit, pd: (r) => r.pdesc, n: (r) => r.n, rev: (r) => r.rev, s1: (r) => r.path[0] || (r.kind === "sub" && !r.depth ? r.code : ""), s2: (r) => r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
-      code: (r) => r.code, d: (r) => r.d, l: (r) => r.l ?? -1, h: (r) => r.h ?? -1, f: (r) => r.f, m: (r) => r.m, ml: (r) => r.cut?.stock ?? r.ml ?? -1, q: (r) => r.q, sum: (r) => r.sum, um: (r) => r.kind === "sub" ? "SET" : r.uom, off: (r) => r.cut?.reuse || 0 };
+      code: (r) => r.code, d: (r) => r.d, l: (r) => r.l ?? -1, h: (r) => r.h ?? -1, f: (r) => r.f, m: (r) => r.m, ml: (r) => r.cut?.stock ?? r.ml ?? -1, q: (r) => r.q, sum: (r) => r.sum, all: (r) => allOf.get(NC(r.code)) || 0, um: (r) => r.kind === "sub" ? "SET" : r.uom, off: (r) => r.cut?.reuse || 0 };
     const rows = sorter(flat.filter((r) => has(Q, r.code, r.d, r.m, r.unit, ...r.path)), keys);
     count = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     let g = 0, lastTop = null;
     const shade = vis.map((r) => { if (sort.k) return ""; const top = r.unit + "|" + (r.path[0] || (r.kind === "sub" && !r.depth ? r.code : "")); if (top !== lastTop) { lastTop = top; if (top.split("|")[1]) g++; } return top.split("|")[1] ? (g % 2 ? "g1" : "g2") : ""; });
+    // ★ 2026-11-12 ผู้ใช้: "อยากได้จำนวนรวมทั้งหมดว่าเบอร์นี้มีกี่ชิ้น" → คอลัมน์ "รวมทั้งใบ" (ทุกแบบแผงในใบนี้) + ผลรวม Sum ของแถวที่แสดงท้ายตาราง
+    const allOf = new Map(); for (const T of model.types.values()) for (const x of T.rows) { if (x.cx) continue; const k = NC(x.code); allOf.set(k, (allOf.get(k) || 0) + x.per * T.n); }
+    const visSum = rows.reduce((a, r) => a + (r.cx ? 0 : r.sum), 0); const visCodes = new Set(rows.filter((r) => !r.cx).map((r) => NC(r.code)));
     const um = (r) => (r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase());
-    const nCols = wasteOn ? 19 : 17;
+    const nCols = wasteOn ? 20 : 18;
     body = (
       <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
-        <thead><tr><Th k="unit">Panel</Th><Th k="pd">Description</Th><Th k="n" r>Quantity</Th><th>U.M.</th><Th k="rev">Rev</Th><Th k="s1">SUB-01</Th><Th k="s2">SUB-02</Th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><Th k="h" r>H</Th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><Th k="um">U.M.</Th>
+        <thead><tr><Th k="unit">Panel</Th><Th k="pd">Description</Th><Th k="n" r>Quantity</Th><th>U.M.</th><Th k="rev">Rev</Th><Th k="s1">SUB-01</Th><Th k="s2">SUB-02</Th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><Th k="h" r>H</Th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><Th k="all" r>รวมทั้งใบ</Th><Th k="um">U.M.</Th>
           {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
@@ -393,7 +397,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
               // ★ 2026-11-12 ผู้ใช้ (ภาพ Excel): "มันต้องเป็นแบบนี้" → เส้นเต็ม = ความยาวเส้น (ดำ) · ใช้เศษ = ความยาวเศษ (แดง) เช่น 2300(1), 2100(1) · ใช้ทั้งคู่ = เส้นเต็มก่อน แล้วตามด้วยเศษ
               ? <>{r.cut.fresh ? <span className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}), </span> : null}<span className="rt-waste">{wasteLines(r.cut)}</span></>
               : eCell(r, "ml", u, r.cut ? nlen(r.cut.stock) : nlen(r.ml))}</td>
-            <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{eCell(r, "um", u, um(r))}</td>
+            <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td className="r xl-all" title={`${r.code} ทั้งใบ (ทุกแบบแผง)`}>{r.cx ? "" : nlen(Math.round((allOf.get(NC(r.code)) || 0) * 1000) / 1000)}</td><td>{eCell(r, "um", u, um(r))}</td>
             {wasteOn ? <>
               <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
                 {r.cut?.fresh ? <div><Pill tone="muted">เส้นเต็ม {nlen(r.cut.stock)} ×{nf(r.cut.fresh)}</Pill></div> : null}
@@ -401,7 +405,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
                 {f.to.length ? <div className="small rw-muted">→ เศษไปใช้ที่ {f.to.join(", ")}</div> : null}
               </>); })()}</td></> : null}
           </tr></Fragment>); })}</tbody>
-        <tfoot><tr><td colSpan={nCols}>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
+        <tfoot><tr><td colSpan={nCols}><b>{nf(rows.length)} บรรทัด · Sum รวม {nlen(Math.round(visSum * 1000) / 1000)}{visCodes.size === 1 ? ` · ${[...visCodes][0]} ทั้งใบ ${nlen(Math.round((allOf.get([...visCodes][0]) || 0) * 1000) / 1000)}` : ""}</b> · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
       </table></div>);
   }
 

@@ -1343,3 +1343,4 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .bm-pick { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
 .bm-pick label { font-weight: 700; font-size: 13px; }
 .bm-pickin { width: 260px; max-width: 100%; min-height: 40px; }
+.rt-xl td.xl-all { font-weight: 800; color: #0b5e43 !important; background-color: #f1f8f4; }
