@@ -280,13 +280,18 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   async function routeFiles(list) {
     const files = [...list];
     const sheets = files.filter((f) => /\.(xlsx?|xlsm)$/i.test(f.name)); const pdfFiles = files.filter((f) => /\.pdf$/i.test(f.name));
-    if (!sheets.length && !pdfFiles.length) { setOrderMsg({ bad: "วางไฟล์ใบปะหน้าเป็น PDF หรือ Excel (.xls/.xlsx) · แบบ PDF ก็วางได้" }); return; }
+    // ★ 2026-11-12 S7: ไฟล์ที่ไม่ได้ใช้ → บอกชื่อ (เดิมข้ามเงียบ ๆ)
+    const notUsed = files.filter((f) => !sheets.includes(f) && !pdfFiles.includes(f)).map((f) => `${f.name} (ไม่ใช่ PDF / Excel)`);
+    const skipNote = (more = []) => { const xs = [...notUsed, ...more]; return xs.length ? `⚠ ไม่ได้ใช้ ${xs.length} ไฟล์: ${xs.slice(0, 6).join(" · ")}${xs.length > 6 ? " …" : ""}` : ""; };
+    if (!sheets.length && !pdfFiles.length) { setOrderMsg({ bad: `วางไฟล์ใบปะหน้าเป็น PDF หรือ Excel (.xls/.xlsx) · แบบ PDF ก็วางได้${notUsed.length ? ` — ${skipNote()}` : ""}` }); return; }
     if (pdfFiles.length) setOrderMsg({ info: `กำลังอ่าน ${pdfFiles.length} ไฟล์…` });
     let all = []; try { all = pdfFiles.length ? await readPdfFiles(pdfFiles) : []; } catch (e) { setOrderMsg({ bad: "โหลดตัวอ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
-    const drawings = []; const sheetPdfs = [];
-    for (const d of all) { if (d.kind === "unknown" && d._file) sheetPdfs.push(d._file); else drawings.push(d); }
+    const drawings = []; const sheetPdfs = []; const broken = [];
+    for (const d of all) { if (d.kind === "unknown" && d._file) sheetPdfs.push(d._file); else if (d.kind === "unknown") broken.push(`${d.file} (เปิดไม่ได้ / ไฟล์เสีย)`); else drawings.push(d); }
     const panelish = drawings.filter((d) => d.kind === "panel" || d.kind === "loose"); const subpart = drawings.filter((d) => d.kind === "sub" || d.kind === "part");
     const first = sheets[0] || sheetPdfs[0];
+    const extraSheets = [...sheets, ...sheetPdfs].filter((f) => f !== first).map((f) => `${f.name} (ใบปะหน้าใช้ได้ทีละใบ)`);
+    const skipMsg = skipNote([...broken, ...extraSheets]);
     if (first) await onOrderFile([first]);
     if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
     const toItems = subpart.length && !panelish.length && !units.length;
@@ -300,9 +305,11 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
           : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) ไม่ได้ใส่ — ปล่อยแผงใช้แบบซับ / พาร์ทจาก “ซับ / พาร์ท ของโปรเจค” (ลงที่นั่นก่อน)`),
         !first && "ไม่มีใบปะหน้า — ไม่บังคับ",
       ].filter(Boolean);
+      if (skipMsg) lines.push(skipMsg);
       if (!first) setOrderMsg(subpart.length && !(toItems || itemsMode) && !panelish.length ? { bad: lines.join(" · ") } : { ok: lines });
       else setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, ...lines] } : m));
-    } else if (!first) setOrderMsg({ bad: "ไม่พบใบปะหน้าในไฟล์ที่วาง" });
+    } else if (!first) setOrderMsg({ bad: `ไม่พบใบปะหน้าในไฟล์ที่วาง${skipMsg ? ` · ${skipMsg}` : ""}` });
+    else if (skipMsg) setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, skipMsg] } : m && m.bad ? { bad: `${m.bad} · ${skipMsg}` } : { ok: [skipMsg] }));
   }
   useEffect(() => {
     if (!initialFiles || !initialFiles.length || initRef.current) return; initRef.current = true;
@@ -724,7 +731,8 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
   const fileRef = useRef(null);
   async function addFiles(list) {
     const files = [...list].filter((f) => /\.pdf$/i.test(f.name));
-    if (!files.length) return;
+    const nonPdf = [...list].filter((f) => !/\.pdf$/i.test(f.name)).map((f) => f.name);   // ★ S7: บอกไฟล์ที่ไม่ใช่ PDF (เดิมข้ามเงียบ)
+    if (!files.length) { if (nonPdf.length) setReading({ warn: `ไม่ได้ใช้ ${nonPdf.length} ไฟล์ (ไม่ใช่ PDF): ${nonPdf.slice(0, 6).join(", ")}${nonPdf.length > 6 ? " …" : ""} — ขั้นนี้รับแบบแผงเป็น PDF` }); return; }
     setReading({ n: 0, of: files.length });
     try {
       const all = await readPdfFiles(files, (n, of) => setReading({ n, of }));
@@ -732,7 +740,10 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
       const got = all.filter((d) => d.kind !== "sub" && d.kind !== "part"); const skipped = all.filter((d) => d.kind === "sub" || d.kind === "part");
       setPdfs((old) => { const names = new Set(got.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...got]; });
       const firstBad = got.find((d) => d.kind === "unknown"); setSel(firstBad ? firstBad.file : null);   // null = เปิดไฟล์แรกที่ต้องตัดสิน
-      if (skipped.length) { setReading({ warn: `ข้าม ${skipped.length} ไฟล์ (แบบซับ/พาร์ท: ${skipped.slice(0, 4).map((d) => d.code).join(", ")}${skipped.length > 4 ? " …" : ""}) — Release ลงแค่แบบแผง · แบบซับ/พาร์ทให้ลงที่หน้า "ซับ / พาร์ท ของโปรเจค" แล้วระบบดึงมาใช้เอง` }); return; }
+      const bad = all.filter((d) => d.kind === "unknown" && d.warn_read && !d._file).map((d) => d.file);
+      const extraWarn = [bad.length && `เปิดไม่ได้ / ไฟล์เสีย ${bad.length} ไฟล์: ${bad.slice(0, 6).join(", ")}`, nonPdf.length && `ไม่ใช่ PDF ${nonPdf.length} ไฟล์: ${nonPdf.slice(0, 6).join(", ")}`].filter(Boolean).join(" · ");
+      if (extraWarn && !skipped.length) { setReading({ warn: `⚠ ไม่ได้ใช้ — ${extraWarn}` }); return; }
+      if (skipped.length) { setReading({ warn: (extraWarn ? `⚠ ไม่ได้ใช้ — ${extraWarn} · ` : "") + `ข้าม ${skipped.length} ไฟล์ (แบบซับ/พาร์ท: ${skipped.slice(0, 4).map((d) => d.code).join(", ")}${skipped.length > 4 ? " …" : ""}) — Release ลงแค่แบบแผง · แบบซับ/พาร์ทให้ลงที่หน้า "ซับ / พาร์ท ของโปรเจค" แล้วระบบดึงมาใช้เอง` }); return; }
     } catch (e) { setReading({ err: "โหลดตัวอ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
     setReading(null);
   }

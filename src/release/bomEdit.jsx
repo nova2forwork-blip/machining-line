@@ -49,7 +49,18 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     if (f === "mml") return S.m[r.inv || "—"]?.to;
     return S.a[akey(r, f)]?.[AF[f]];
   };
-  const parse = (f, raw) => { const t = String(raw ?? "").trim(); const num = () => Number(t.replace(/,/g, ""));
+  // ★ 2026-11-12 S8: มีเพดาน + ไม่ปัดเงียบ · เลขไทย (๑๒๓) ใช้ได้ · ค่าผิด = บอกเหตุผล (bad) และไม่ล้างที่แก้ค้างไว้ก่อนหน้า
+  const LIM = { q: 100000, tq: 10000000, l: 30000, h: 30000, ml: 30000, mml: 30000 };
+  const thaiNum = (t) => t.replace(/[๐-๙]/g, (d) => String("๐๑๒๓๔๕๖๗๘๙".indexOf(d)));
+  const bad = (f, raw) => { const t = thaiNum(String(raw ?? "").trim()); if (!NUMF.has(f) || t === "") return "";
+    const n = Number(t.replace(/,/g, "")); if (!Number.isFinite(n)) return `${FL[f]}: “${raw}” ไม่ใช่ตัวเลข`;
+    if (n < 0) return `${FL[f]}: ติดลบไม่ได้`;
+    if ((f === "l" || f === "h" || f === "ml" || f === "mml") && n === 0) return `${FL[f]}: ต้องมากกว่า 0`;
+    if (n > LIM[f]) return `${FL[f]}: ${nlen(n)} มากเกินไป (สูงสุด ${nlen(LIM[f])}) — พิมพ์ผิดหรือเปล่า`;
+    if (f === "tq" && !Number.isInteger(n)) return `${FL[f]}: ต้องเป็นจำนวนเต็ม (${t})`;
+    return ""; };
+  const parse = (f, raw) => { const t = thaiNum(String(raw ?? "").trim()); const num = () => Number(t.replace(/,/g, ""));
+    if (NUMF.has(f) && bad(f, raw)) return undefined;
     if (f === "q") { const n = num(); return t !== "" && Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : undefined; }
     if (f === "tq") { const n = num(); return t !== "" && Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined; }
     if (f === "l" || f === "h" || f === "ml" || f === "mml") { const n = num(); return t !== "" && Number.isFinite(n) && n > 0 ? n : undefined; }
@@ -65,6 +76,8 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     return { ...s, [part]: sec };
   });
   const setVal = (r, f, raw) => {
+    const why = bad(f, raw);
+    if (why) { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text: `ไม่ได้ใส่ — ${why}`, tone: "error" } })); } catch { /* ignore */ } return; }   // ค่าผิด = คงที่แก้ค้างไว้เดิม
     const v0 = parse(f, raw); const c0 = curVal(r, f);
     const same = v0 === undefined || (typeof v0 === "number" ? Math.abs(v0 - Number(c0)) < 1e-9 : String(v0) === String(c0 ?? "").trim() || ((f === "code" || f === "rc") && NC(v0) === NC(c0)));
     const v = same ? undefined : v0;
