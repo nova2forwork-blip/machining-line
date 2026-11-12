@@ -52,6 +52,15 @@ const cutFlow = (c) => {
   return { from: c.reuse ? fmt(c.srcs) : [], to: fmt(c.outs) };
 };
 const groupLens = (arr) => { const m = new Map(); for (const v of arr) m.set(v, (m.get(v) || 0) + 1); return [...m.entries()].sort((a, b) => b[0] - a[0]).map(([l, n]) => `${nf(l)}(${n})`).join(", "); };
+// ★ 2026-11-12 ผู้ใช้: "ถ้าหลายจำนวนต้องมี () ถ้ามีอันเดียวไม่ต้องมี" → ช่อง Material Length: มีค่าเดียว = ไม่มีวงเล็บ · หลายค่า = ทุกค่ามี (จำนวน)
+//   เส้นเต็มตัวดำก่อน แล้วตามด้วยเศษตัวแดง · ขึ้นบรรทัดใหม่ทุก 6 ค่า
+const matLenCell = (c) => {
+  const items = [...(c.fresh ? [{ l: c.stock, n: c.fresh, full: true }] : []), ...[...c.lens.entries()].sort((a, b) => b[0] - a[0]).map(([l, n]) => ({ l, n, full: false }))];
+  const one = items.length === 1;
+  const el = items.map((x, i) => <span key={i} className={x.full ? "xl-fresh" : "rt-waste"}>{nf(x.l)}{one ? "" : `(${nf(x.n)})`}{i < items.length - 1 ? ", " : ""}</span>);
+  const lines = []; for (let i = 0; i < el.length; i += 6) lines.push(<div key={i} style={{ whiteSpace: "nowrap" }}>{el.slice(i, i + 6)}</div>);
+  return lines.length > 1 ? lines : el;
+};
 const wasteLens = (c) => { const e = [...c.lens.entries()].sort((a, b) => b[0] - a[0]); return e.length === 1 ? nf(e[0][0]) : e.map(([l, n]) => `${l}(${n})`).join(", "); };
 // ★ 2026-11-11 ผู้ใช้: "ให้ตัดบรรทัดละ 6" → ความยาวเศษหลายค่า ขึ้นบรรทัดใหม่ทุก 6 ค่า (บนจอ · Excel ยังเป็นบรรทัดเดียว)
 const wasteLines = (c) => {
@@ -391,7 +400,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             {wasteOn ? <td className="c xl-wastec">{off ? "wast" : ""}</td> : null}
             <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off
               // ★ 2026-11-12 ผู้ใช้ (ภาพ Excel): "มันต้องเป็นแบบนี้" → เส้นเต็ม = ความยาวเส้น (ดำ) · ใช้เศษ = ความยาวเศษ (แดง) เช่น 2300(1), 2100(1) · ใช้ทั้งคู่ = เส้นเต็มก่อน แล้วตามด้วยเศษ
-              ? <>{r.cut.fresh ? <span className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}), </span> : null}<span className="rt-waste">{wasteLines(r.cut)}</span></>
+              ? matLenCell(r.cut)
               : eCell(r, "ml", u, r.cut ? nlen(r.cut.stock) : nlen(r.ml))}</td>
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{eCell(r, "um", u, um(r))}</td>
             {wasteOn ? <>
