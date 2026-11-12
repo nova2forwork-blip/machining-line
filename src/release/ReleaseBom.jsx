@@ -17,6 +17,9 @@ const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().inc
 export function rowsOfType(plan, unit) {
   const pk = findKey(plan.bom.panels, unit); if (!pk) return [];
   const out = [];
+  // ★ 2026-11-12 ผู้ใช้: "ให้ข้อมูลลิงก์กันถูกต้อง" → BOM ใช้ค่าที่มีผลจริงเหมือน Total Part / Total Mat.: วัสดุที่เปลี่ยน (matOv) · ความยาวที่ Modify เปลี่ยน (lenOv)
+  const mOv = (c) => { const k = findKey(plan.matOv || {}, c); const o = k ? plan.matOv[k] : null; return o && String(o.to || "").trim() ? o : null; };
+  const lOv = (c) => { const k = findKey(plan.lenOv || {}, c); const o = k ? plan.lenOv[k] : null; return o && Number(o.to) > 0 ? Number(o.to) : null; };
   // ★ 2026-11-12 แต่ละแถวรู้ว่าอยู่ในรายการของใคร (own = แผง/ซับเจ้าของ · oi = ลำดับในรายการ) — ใช้แก้จำนวนต่อชุดในตาราง BOM
   const walk = (items, path, mult, seen, scope, owner) => {
     (items || []).forEach((it, oi) => {
@@ -30,12 +33,13 @@ export function rowsOfType(plan, unit) {
       }
       if (t === "sub") {
         const sk = findKey(plan.bom.subs, c); const sd = sk ? plan.bom.subs[sk] : {};
-        out.push({ i: out.length, path, depth: path.length, code: c, kind: "sub", d: sd.d || "", l: sd.l ?? null, h: null, f: sd.f || "", m: "", rev: sd.rev || "", q: qq, per: mult * qq, own, ...ed });
+        out.push({ i: out.length, path, depth: path.length, code: c, kind: "sub", d: sd.d || "", l: lOv(c) ?? sd.l ?? null, h: null, f: sd.f || "", m: "", rev: sd.rev || "", q: qq, per: mult * qq, own, ...ed });
         if (sk && !seen.has(sk)) walk(sd.items, [...path, c], mult * qq, new Set([...seen, sk]), "sub", sk);
       } else {
         const pd = plan.bom.parts[findKey(plan.bom.parts, c)] || {};
         const hw = pd.k === "hw";
-        out.push({ i: out.length, path, depth: path.length, code: c, kind: hw ? "hw" : "part", d: pd.d || "", l: pd.l ?? null, h: pd.h ?? null, f: pd.f || "", m: hw ? "" : pd.m || "", ml: pd.ml ?? null, inv: pd.binv || "", rev: pd.rev || "", q: qq, per: mult * qq, uom: hw ? pd.u || "pcs." : "pcs.", own, ...ed });
+        const mo = hw ? null : mOv(c);
+        out.push({ i: out.length, path, depth: path.length, code: c, kind: hw ? "hw" : "part", d: pd.d || "", l: lOv(c) ?? pd.l ?? null, h: pd.h ?? null, f: pd.f || "", m: hw ? "" : mo ? String(mo.to).trim().toUpperCase() : pd.m || "", ml: mo && Number(mo.ml) > 0 ? Number(mo.ml) : mo ? null : pd.ml ?? null, inv: pd.binv || "", rev: pd.rev || "", q: qq, per: mult * qq, uom: hw ? pd.u || "pcs." : "pcs.", own, ...ed });
       }
     });
   };

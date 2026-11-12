@@ -130,7 +130,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
   // แผนใหม่จากที่แก้ (ไม่ผ่าน Modify)
   const buildDirect = (lst) => {
     const bom = { ...plan.bom, panels: { ...plan.bom.panels }, subs: { ...plan.bom.subs }, parts: { ...plan.bom.parts } };
-    const errs = []; const cloned = new Set(); let adj = null; let units = null;
+    const errs = []; const cloned = new Set(); let adj = null; let units = null; let matOv = null;
     const own = (scope, owner) => { const col = scope === "panel" ? bom.panels : bom.subs; if (!col[owner]) return null; const ck = scope + "|" + owner; if (!cloned.has(ck)) { col[owner] = { ...col[owner], items: (col[owner].items || []).map((x) => [...x]) }; cloned.add(ck); } return col[owner]; };
     const ent = (kd, key) => { const col = kd === "panel" ? bom.panels : kd === "sub" ? bom.subs : bom.parts; const ck = "e|" + kd + "|" + key; if (!cloned.has(ck)) { col[key] = { ...col[key] }; cloned.add(ck); } return col[key]; };
     const setCode = (scope, owner, idx, from, to) => { const o = own(scope, owner); const it = o && o.items[idx]; if (!it) return;
@@ -139,7 +139,12 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
       it[1] = to; };
     for (const e of lst) {
       if (e.attr) {
-        if ((e.f === "m" || e.f === "l") && e.kd === "part" && ((e.f === "m" && (plan.matOv || {})[e.code]) || (e.f === "l" && (plan.lenOv || {})[e.code]))) { errs.push(`${e.code}: ${FL[e.f]}ถูกเปลี่ยนใน Modify แล้ว — แก้ต่อต้องเป็น M`); continue; }
+        // ค่าที่ถูกทับไว้ (matOv / lenOv): จาก Modify → ต้องแก้ต่อเป็น M · วัสดุที่เปลี่ยนเองด้วย ✎ (ไม่ใช่ Modify) → แก้ที่ตัวทับนั้นเลย ทุกตารางจะตรงกัน
+        const mk = findKey(plan.matOv || {}, e.code), lk = findKey(plan.lenOv || {}, e.code);
+        if (e.f === "l" && e.kd !== "panel" && lk) { errs.push(`${e.code}: ความยาวถูกเปลี่ยนใน Modify แล้ว — แก้ต่อต้องเป็น M`); continue; }
+        if ((e.f === "m" || e.f === "ml") && e.kd === "part" && mk) {
+          if (/^Modify /.test(String(plan.matOv[mk].r || ""))) { errs.push(`${e.code}: วัสดุถูกเปลี่ยนใน Modify แล้ว — แก้ต่อต้องเป็น M`); continue; }
+          matOv = matOv || { ...(plan.matOv || {}) }; matOv[mk] = { ...matOv[mk], ...(e.f === "m" ? { to: e.to } : { ml: e.to }) }; continue; }
         const x = ent(e.kd, e.key); x[e.fld || e.f] = e.to; continue; }
       if (e.tq) { adj = adj || { ...(plan.adj || {}) }; if (Math.abs(e.to - (e.base ?? -1)) < 1e-9 && !(adj[e.code] && adj[e.code].ver)) delete adj[e.code]; else adj[e.code] = { qty: e.to, ver: "" }; continue; }
       if (e.rc) { for (const o of e.occ) setCode(o.scope, o.owner, o.idx, e.from, e.to); continue; }
@@ -152,7 +157,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
       if (e.f === "q") { const o = own(e.scope, e.owner); const it = o && o.items[e.idx]; if (it) it[2] = e.to; }
       else if (e.f === "code") setCode(e.scope, e.owner, e.idx, e.from, e.to);
     }
-    const np = { ...plan, bom, ...(adj ? { adj } : {}), ...(units ? { units } : {}), bomFix: [...(plan.bomFix || []), { at: new Date().toISOString(), items: lst.map((e) => ({ what: e.f, code: e.code, ...(e.scope ? { scope: e.scope, owner: e.owner } : {}), from: e.from, to: e.to })) }] };
+    const np = { ...plan, bom, ...(adj ? { adj } : {}), ...(units ? { units } : {}), ...(matOv ? { matOv } : {}), bomFix: [...(plan.bomFix || []), { at: new Date().toISOString(), items: lst.map((e) => ({ what: e.f, code: e.code, ...(e.scope ? { scope: e.scope, owner: e.owner } : {}), from: e.from, to: e.to })) }] };
     return { np, errs };
   };
   const relQ = (c) => (rel && rel.byCode.get(NC(c)) ? rel.byCode.get(NC(c)).qty : 0);
