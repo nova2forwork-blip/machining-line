@@ -261,7 +261,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       inf.set(r, { hd, left: r.qr ? leftOf(r.code, r.qty) : Math.max(0, Math.round((r.qty - hdQ) * 100) / 100), done: r.qr ? doneOf(r.code) : hdQ, o: otherOf(rel, r.code) }); }
     const K = (r) => ({ ...r, kind: r.k === "hw" ? "hw" : "part" });
     // ★ 2026-11-12 (เล็กน้อย): "ปล่อยแล้ว" กับ "เหลือ" (ที่ office ดูบ่อยสุด) มาต่อจาก TOTAL QTY — เดิมอยู่ขวาสุด ต้องเลื่อนแนวนอน · ลากจัดเองได้เหมือนเดิม (↺ = กลับลำดับนี้)
-    const P_ORDER = ["chk", "no", "code", "d", "l", "qty", "done", "left", "inv", "used", "cat", "rem"];
+    const P_ORDER = ["chk", "no", "code", "d", "l", "qty", "left", "done", "inv", "used", "cat", "rem"];
     const pCols = [
       { k: "chk", h: <Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" />, th: { style: { width: 34 } }, td: (r) => <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td> },
       { k: "no", h: "NO.", th: { className: "r" }, td: (r, i) => <td className="r rw-num">{i + 1}</td>, sort: (r) => idxP.get(r) },

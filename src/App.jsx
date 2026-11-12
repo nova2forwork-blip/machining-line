@@ -444,7 +444,9 @@ function Toaster() {
       const raw = e.detail.tone || "info";
       const tone = { ok: "success", err: "error", danger: "error", warning: "warn" }[raw] || raw;
       // ★ 2026-11-12 ข้อความเดียวกันซ้ำ (โหลดซ้ำ / StrictMode / หลายจุดแจ้งเรื่องเดียว) = ใบเดียว ต่อเวลาให้ · ค้างได้ไม่เกิน 4 ใบ (เก่าสุดออกก่อน)
-      setItems((s) => [...s.filter((x) => !(x.text === e.detail.text && x.tone === tone)), { id, text: e.detail.text, tone }].slice(-4));
+      // ข้อความเทคนิคจากเบราว์เซอร์ → ภาษาคน
+      const text = String(e.detail.text ?? "").replace(/(TypeError: )?(Failed to fetch|NetworkError[^·]*|Load failed)/gi, "ต่อเซิร์ฟเวอร์ไม่ได้ (เน็ตหลุด?)");
+      setItems((s) => [...s.filter((x) => !(x.text === text && x.tone === tone)), { id, text, tone }].slice(-4));
       const ttl = tone === "error" ? 6500 : tone === "warn" ? 4500 : 3400;
       setTimeout(() => setItems((s) => s.filter((x) => x.id !== id)), ttl);
     };

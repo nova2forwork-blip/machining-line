@@ -31,12 +31,14 @@ export function askConfirm(opts = {}) {
 
 export function ConfirmHost() {
   const [cur, setCur] = useState(null); // { opts, resolve } | null
+  const openedAt = useRef(0);
 
   useEffect(() => {
     const on = (e) => {
       // ถ้ามีการ์ดค้างอยู่ ให้ตอบ false ให้ตัวเก่าก่อน (กันสัญญาค้าง)
       if (_pending) { try { _pending(false); } catch { /* ignore */ } }
       _pending = e.detail.resolve;
+      openedAt.current = typeof performance !== "undefined" ? performance.now() : 0;
       setCur(e.detail);
     };
     window.addEventListener("mls-confirm", on);
@@ -60,6 +62,8 @@ export function ConfirmHost() {
         // ★ 2026-10-10 ตรวจรอบ 3: Enter ค้าง (repeat จากปุ่มที่เปิดการ์ดนี้) = ไม่ยืนยัน · โฟกัสอยู่ที่ปุ่มในการ์ด (เช่น ยกเลิก)
         //   → ปล่อยให้ปุ่มนั้นคลิกเอง (เดิม Enter บนปุ่มยกเลิก = ยืนยัน)
         if (e.repeat) { e.preventDefault(); return; }
+        // ★ 2026-11-12 การ์ดที่เปิดจากการกด Enter (เช่น ช่องวัสดุ) — Enter ตัวเดียวกันยังเดินมาถึงตัวฟังนี้ (React flush effect ทันที) = เคยยืนยันเองทันที
+        if (e.timeStamp && e.timeStamp <= openedAt.current + 1) { e.preventDefault(); return; }
         const t = e.target;
         if (t && t.closest && t.closest(".mls-confirm-card button")) return;
         e.preventDefault(); done(isChoice ? primary() : true);
