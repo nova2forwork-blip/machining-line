@@ -268,14 +268,16 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       const num = (x) => (x == null || x === "" ? "" : Number(x));
       // ★ 2026-11-12 ผู้ใช้: "export เป็น Excel แล้ว sort ช่อง MAT. LENGTH ไม่ได้" → เลือก "แยกแถวตามความยาว":
       //   พาร์ทที่ตัดจากหลายความยาว = 1 แถวต่อ 1 ความยาว (เส้นเต็ม / เศษแต่ละขนาด) · MAT. LENGTH เป็นตัวเลขล้วน · ชิ้น = จำนวนชิ้นของแถวนั้น (รวมคอลัมน์ได้เท่ายอดทั้งเบอร์)
+      // ★ 2026-11-12 ผู้ใช้: "เอาที่มาออก · เพิ่ม ITEM หน้าสุด แผงแรก = 1 แผงที่สอง = 2" → ITEM = ลำดับแบบแผงตามตาราง (sort กลับลำดับเดิมได้)
+      const itemOf = new Map(); for (const r of flat) if (!itemOf.has(r.unit)) itemOf.set(r.unit, itemOf.size + 1);
       const full = flat.flatMap((r) => {
         const base = {
-          PANEL: r.unit, "จำนวนแผง": r.n, "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
+          ITEM: itemOf.get(r.unit), PANEL: r.unit, "จำนวนแผง": r.n, "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
           "PART NO.": r.code, "ประเภท": r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: r.d || "", LENGTH: num(r.l), FINISH: r.f || "",
           MATERIAL: r.kind === "sub" ? "" : r.m || "" };
         const note = r.cx ? (r.to ? `แทนด้วย ${r.to} ${r.ver || ""}` : `ยกเลิก ${r.ver || ""}`).trim() : r.add ? `เพิ่ม ${r.ver || ""}`.trim() : r.q0 != null ? `เดิม ${r.q0} (${r.ver || "Modify"})` : "";
         const total = r.cx ? 0 : Math.round(r.sum * 1000) / 1000;
-        const mk = (wast, ml, src, pcs) => ({ ...base, WAST: wast, "MAT. LENGTH": ml, "ที่มา": src, "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": pcs, "ทั้งเบอร์": total, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
+        const mk = (wast, ml, src, pcs) => ({ ...base, WAST: wast, "MAT. LENGTH": ml, "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": pcs, "ทั้งเบอร์": total, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
         if (r.cx || !r.cut || !r.cut.reuse) return [mk("", r.cut ? num(r.cut.stock) : num(r.ml), r.cut ? "เส้นเต็ม" : "", total)];
         const out = [];
         if (r.cut.fresh) out.push(mk("", num(r.cut.stock), "เส้นเต็ม", r.cut.fresh));
