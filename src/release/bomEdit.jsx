@@ -202,6 +202,14 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     const firstB = Object.keys(bchg)[0];
     onModify({ chg, bchg, matChg, ...(firstB ? { bscope: firstB.split("|")[0], bowner: firstB.split("|")[1] } : {}) });
   }
+  // ★ 2026-11-12 R8: มีที่แก้ค้าง (ยังไม่กดบันทึก) แล้วรีเฟรช / ปิดแท็บ → เบราว์เซอร์ถามก่อน (เดิมหายเงียบ)
+  const dirty = list.length > 0;
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const leave = (e) => { e.preventDefault(); e.returnValue = ""; return ""; };
+    window.addEventListener("beforeunload", leave);
+    return () => window.removeEventListener("beforeunload", leave);
+  }, [dirty]);
   const barEl = list.length ? (
     <div className="rt-pickbar rt-edbar" role="region" aria-label="ที่แก้ค้างไว้">
       <span><b>แก้ {nf(list.length)} จุด · ยังไม่ได้บันทึก</b>

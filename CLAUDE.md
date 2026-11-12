@@ -10,7 +10,7 @@
 - `local-test` ต่อ Supabase ในเครื่อง (`supabase start`, ดู `vite.config.js`) ทดสอบกับข้อมูลในเครื่องได้เต็มที่
   ห้ามต่อ Supabase ตัวจริงบนเว็บ
 - รายงานผู้ใช้: ข้อสรุปก่อน สั้นๆ และบอกชัดว่าอะไรทดสอบแล้ว / ยังไม่ได้ทดสอบ
-- ไฟล์ migration ที่ต้องรันตอนขึ้นจริง: `migration-label-scope.sql`, `migration-delete-project-fix.sql`
+- ไฟล์ migration ที่ต้องรันตอนขึ้นจริง: `migration-label-scope.sql`, `migration-delete-project-fix.sql`, `migration-critical-fixes-2026-11-12.sql`
 
 ## ทดสอบจำลอง
 พิมพ์ `/sim-test` เพื่อเรียกทีมผู้ทดสอบ 6 คน (`.claude/agents/sim*.md`, กติกาใน `.claude/sim/SETUP.md`)

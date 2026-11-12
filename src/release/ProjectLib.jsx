@@ -16,6 +16,9 @@ import "./i18n-release.js";   // คำแปลอังกฤษของห�
 const EMPTY = { panels: {}, subs: {}, parts: {} };
 
 export default function ProjectLib({ projectId, projectCode, api, user, onBack, onSaved, demoTools = null }) {
+  // ★ 2026-11-12 R5: โฟลเดอร์ PDF ของโปรเจคนี้ (รหัสซ้ำหลายตึก = แยกโฟลเดอร์)
+  const [pdfFolder, setPdfFolder] = useState("");
+  useEffect(() => { let alive = true; if (api.pdfFolderOf) api.pdfFolderOf(projectId, projectCode).then((f) => { if (alive) setPdfFolder(f); }).catch(() => {}); return () => { alive = false; }; }, [api, projectId, projectCode]);
   const [lib, setLib] = useState(null);
   const [state, setState] = useState({ s: "loading" });
   const [pdfs, setPdfs] = useState([]);
@@ -164,7 +167,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
         </div>
         {tab === "files" ? (
           <FileBrowser api={api} roots={[
-            { key: "pdf", name: "PDF แบบซับ / พาร์ท", bucket: "release-pdfs", prefix: projectCode.replace(/[^A-Za-z0-9._-]+/g, "_"), note: `ไฟล์ต้นฉบับที่อัพไว้ของโปรเจค ${projectCode} · แยก sub / part` },
+            { key: "pdf", name: "PDF แบบซับ / พาร์ท", bucket: "release-pdfs", prefix: (pdfFolder || projectCode).replace(/[^A-Za-z0-9._-]+/g, "_"), note: `ไฟล์ต้นฉบับที่อัพไว้ของโปรเจค ${projectCode} · แยก sub / part${pdfFolder && pdfFolder !== projectCode ? " · รหัสนี้มีหลายตึก — โฟลเดอร์ของตึกนี้ (ไฟล์ที่อัพก่อนแยกตึกอยู่ในโฟลเดอร์ " + projectCode + ")" : ""}` },
             { key: "photo", name: "รูปถ่าย (แพ็ก)", bucket: "packing-photos", prefix: "", note: "รูปที่ถ่ายตอนแพ็ก" },
           ]} />
         ) : (<>

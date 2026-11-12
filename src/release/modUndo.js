@@ -5,8 +5,10 @@
 import { askConfirm } from "../confirm.jsx";
 import { lotsOfMod } from "./releaseApi.js";
 
-export function modUndoStep({ prev, np, mod, api, user = null, showPlan, onReload = async () => {}, toast }) {
+// getAt = _at ของใบที่หน้าแสดงอยู่ (★ R1: แก้/ย้อนอย่างอื่นหลัง M แล้ว ฐานข้อมูลเป็นรุ่นใหม่กว่า cur — ส่งรุ่นล่าสุดไปเทียบ ไม่ชนตัวเอง)
+export function modUndoStep({ prev, np, mod, api, user = null, showPlan, onReload = async () => {}, toast, getAt = () => null }) {
   const lots = lotsOfMod(mod); let cur = np;
+  const fresh = (p) => ({ ...p, _at: getAt() || p._at });
   return {
     undo: async () => {
       const ok = await askConfirm({ title: `ย้อน ${mod.ver}?`, tone: lots.length ? "danger" : "warn", confirmText: `ย้อน ${mod.ver}`, cancelText: "ไม่ย้อน",
@@ -17,20 +19,20 @@ export function modUndoStep({ prev, np, mod, api, user = null, showPlan, onReloa
       if (!ok) return false;
       try {
         toast(`กำลังย้อน ${mod.ver}…`, "info");
-        const r = await api.undoModify({ plan: cur, prevPlan: prev, mod, by: user?.name || "" });
+        const r = await api.undoModify({ plan: fresh(cur), prevPlan: prev, mod, by: user?.name || "" });
         cur = r.np; showPlan(r.np);
         toast(`↶ ย้อน ${mod.ver} แล้ว${r.lots.length ? ` · ยกเลิกในล็อต ${r.lots.join(", ")}` : ""}${lots.length ? "" : " · Ctrl+Y = ทำซ้ำ"}`, "success");
         if (r.lots.length) await onReload();
         return true;
       } catch (e) {
         toast(`ย้อน ${mod.ver} ไม่สำเร็จ: ${e?.message || e}`, "error");
-        if (e?.partial?.length) await onReload();
+        if (e?.partial?.length || e?.code === "conflict") await onReload();
         return false;
       }
     },
     redo: lots.length ? null : async () => {
       try {
-        const p2 = { ...np, modUndone: cur.modUndone };
+        const p2 = fresh({ ...np, modUndone: cur.modUndone });
         await api.updatePlan(p2); cur = p2; showPlan(p2);
         toast(`↷ ทำซ้ำ ${mod.ver} แล้ว`, "success");
         return true;

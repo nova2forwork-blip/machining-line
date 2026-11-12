@@ -16,9 +16,10 @@ export function splitRelease(raw) {
   const t = S(raw).toUpperCase();
   const m = /^(?:([A-Z0-9]+(?:-[A-Z]{2})?)\s*-\s*)?([PM])\s*-?\s*0*(\d+)(.*)$/i.exec(t);
   if (!m) return { project: "", ro: "" };
-  const project = (m[1] || "").replace(/-[A-Z]{2}$/, "").trim();
-  if (m[2].toUpperCase() === "M") return { project, ro: "", mNo: +m[3], mVer: `M-${String(m[3]).padStart(3, "0")}` };
-  return { project, ro: normalizeRO(`P-${m[3]}${m[4] || ""}`) };
+  const full = (m[1] || "").trim();   // ★ 2026-11-12 R6: เก็บรหัสเต็ม (A10035-AU) ไว้ด้วย — เดิมตัด -AU/-US ทิ้ง แล้วจับคู่ไปตึก/ประเทศอื่นได้
+  const project = full.replace(/-[A-Z]{2}$/, "").trim();
+  if (m[2].toUpperCase() === "M") return { project, full, ro: "", mNo: +m[3], mVer: `M-${String(m[3]).padStart(3, "0")}` };
+  return { project, full, ro: normalizeRO(`P-${m[3]}${m[4] || ""}`) };
 }
 // "Barrington Plaza - (A10035-US)" → { name, code: "A10035-US" }
 const splitTitle = (raw) => { const t = S(raw); const m = /^(.*?)\s*-?\s*\(([A-Z0-9-]+)\)\s*$/i.exec(t); return m ? { name: m[1].trim(), code: m[2].toUpperCase() } : { name: t, code: "" }; };
@@ -42,7 +43,7 @@ function fromGrid(grid, fileName) {
   const rel = findLabel(/RELEASE\s*:/i);
   let roRaw = "";
   if (rel) { const cell = S(rel.r[rel.i]); const m = /RELEASE\s*:\s*(\S.*)$/i.exec(cell); roRaw = m ? m[1] : ""; if (!roRaw) for (let j = rel.i + 1; j < rel.r.length; j++) { const v = S(rel.r[j]); if (v) { roRaw = v; break; } } }
-  if (roRaw) { const sp = splitRelease(roRaw); out.roRaw = roRaw; out.ro = sp.ro; out.projectCode = sp.project; if (sp.mNo) { out.kind = "modify"; out.mNo = sp.mNo; out.mVer = sp.mVer; } }
+  if (roRaw) { const sp = splitRelease(roRaw); out.roRaw = roRaw; out.ro = sp.ro; out.projectCode = sp.project; if (sp.full && sp.full !== sp.project) out.projectFull = sp.full; if (sp.mNo) { out.kind = "modify"; out.mNo = sp.mNo; out.mVer = sp.mVer; } }
   // ใบ Modify (FM(DE)-00 "Release for Modification"): อ้างถึงใบปล่อยเดิม "In Reference to the Production Release No. | P-089"
   if (rows.some((r) => r.some((c) => /Release for Modification/i.test(S(c))))) out.kind = "modify";
   { const f = findLabel(/In Reference to the Production Release/i); if (f) { for (let j = f.i + 1; j < f.r.length; j++) { const v = S(f.r[j]); if (v) { out.refRo = normalizeRO(v) || v; break; } } if (!out.refRo) { const m = /Release No\.?\s*:?\s*(P\s*-?\s*\d+)/i.exec(S(f.r[f.i])); if (m) out.refRo = normalizeRO(m[1]); } } }

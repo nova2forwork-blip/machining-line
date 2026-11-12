@@ -839,7 +839,16 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   // เก็บแบบที่วางไว้ลงคลังโปรเจค — ไม่สำเร็จ = เตือนเฉย ๆ (Modify บันทึกไปแล้ว)
   async function keepDrawings() {
     if (!dropPdfs.current.length || !api.storeLibPdfs) return;
-    try { await api.storeLibPdfs({ projectId: plan.projectId, projectCode: plan.projectCode, pdfs: dropPdfs.current }, (m) => setBusy(m)); dropPdfs.current = []; }
+    // ★ 2026-11-12 R7: แบบที่ทุกจุดต่างถูกเลือก "คงเดิม" → ไม่เก็บทับแบบเดิมในคลัง (เดิมเก็บทับ → "ดูแบบ" เปิดแบบที่ไม่ได้ใช้)
+    //   จุดต่างของแบบ = รายการในตาราง "เทียบกับแบบ" ที่ต้องเลือก (มี dec) ของเบอร์นี้ (หรือของลูกในแผง/ซับนี้)
+    const keepOnly = (d) => {
+      const c = NC(d.code);
+      const mine = found.filter((f) => f.dec && (String(f.code || "").split(" → ").some((x) => NC(x) === c) || NC(f.where || "").split(" ").includes(c)));
+      return mine.length > 0 && mine.every((f) => f.dec === "keep");
+    };
+    const toStore = dropPdfs.current.filter((d) => !keepOnly(d));
+    if (!toStore.length) { dropPdfs.current = []; return; }
+    try { await api.storeLibPdfs({ projectId: plan.projectId, projectCode: plan.projectCode, pdfs: toStore }, (m) => setBusy(m)); dropPdfs.current = []; }
     catch (e) { console.warn("store drawings", e); try { window.alert("บันทึกแล้ว แต่เก็บไฟล์แบบลงคลังไม่สำเร็จ — ปุ่ม \"ดูแบบ\" ยังเปิดไฟล์เดิม\n" + (e?.message || e)); } catch { /* ignore */ } }
   }
   // ★ 2026-11-12 ผู้ใช้: "ไม่ใส่เหตุผล save ไม่ได้" → เหตุผลไม่บังคับ · เว้นว่าง = ระบบสรุปให้จากสิ่งที่แก้

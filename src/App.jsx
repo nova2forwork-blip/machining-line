@@ -7587,18 +7587,60 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   // ★ 2026-11-12 (ตรวจหน้า ปล่อยงาน/โปรเจค ข้อ 1, 3): แก้ใบแล้วรอ 0.8 วิ ค่อยบันทึก — ออกจากหน้า (กลับ / เปิดล็อต / พิมพ์ QR) หรือโหลดรายการใหม่ก่อนครบเวลา
   //   เดิม = ทิ้งที่แก้ (clearTimeout) / โหลดใบเก่าจากฐานข้อมูลมาทับ → ตอนนี้บันทึกที่ค้างทันที (flush) ก่อนออก / ก่อนโหลดใหม่
   const pending = useRef(null);
+  // ★ 2026-11-12 R1 R2 R8 (ทดสอบจำลอง):
+  //   R1 บันทึกทีละครั้งตามลำดับ (saving) · ส่ง _at ของใบล่าสุดที่บันทึกสำเร็จ → มีคนแก้ไปก่อน = ไม่ทับ บอก + โหลดใบล่าสุดมาแทน
+  //   R2 บันทึกไม่สำเร็จ (เน็ตหลุด / session หมด) = เก็บที่แก้ไว้ + แถบแดง "ยังไม่ได้บันทึก" + ลองใหม่เองเมื่อเน็ตกลับมา (เดิมทิ้งเงียบ ๆ หน้าจอดูเหมือนบันทึกแล้ว)
+  //   R8 รีเฟรช / ปิดแท็บ ระหว่างรอบันทึก = บันทึกทันที + เบราว์เซอร์ถามก่อนออก (เดิมหายเงียบ)
+  const saving = useRef(Promise.resolve());
+  const [saveErr, setSaveErr] = useState("");
+  const planRef = useRef(view?.plan); planRef.current = view?.plan;
   const flush = () => {
     clearTimeout(timer.current);
     const p = pending.current; pending.current = null;
-    if (!p) return Promise.resolve();
-    return realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error"));
+    if (!p) return saving.current;
+    saving.current = saving.current.then(async () => {
+      const cur = planRef.current;
+      const send = { ...p, _at: (cur && cur.id === p.id && cur._at) || p._at };
+      try {
+        await realReleaseApi.updatePlan(send);
+        for (const x of [planRef.current, pending.current]) if (x && x.id === p.id) x._at = send._at;   // แก้ต่อจากใบนี้ = ใช้รุ่นใหม่
+        setSaveErr("");
+      } catch (e) {
+        const m = String(e?.message || e);
+        if (e?.code === "conflict") {
+          if (pending.current && pending.current.id === p.id) { clearTimeout(timer.current); pending.current = null; }
+          setSaveErr("");
+          mlsToast(m, "error");
+          hist.reset();
+          try {
+            const r = await realReleaseApi.listPlans(p.projectId || null); const np = (r.plans || []).find((x) => x.id === p.id);
+            if (np) { planRef.current = np; setView((v) => (v && v.plan && v.plan.id === np.id ? { ...v, plan: np } : v)); setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x))); }
+          } catch (_) { /* โหลดไม่ได้ = ผู้ใช้รีเฟรชเอง */ }
+          return;
+        }
+        if (!pending.current) pending.current = send;   // ที่แก้ใหม่กว่า (ถ้ามี) รวมของนี้อยู่แล้ว
+        const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+        const msg = /fetch|network/i.test(m) || offline ? "เน็ตหลุด — จะลองบันทึกใหม่เองเมื่อเน็ตกลับมา" : /unauthorized|session/i.test(m) ? "session หมดอายุ — เข้าสู่ระบบใหม่ในแท็บอื่น แล้วกด “ลองบันทึกอีกครั้ง”" : m;
+        setSaveErr((old) => { if (!old) mlsToast("ยังไม่ได้บันทึกการแก้ใบ: " + msg, "error"); return msg; });
+      }
+    });
+    return saving.current;
   };
   const flushRef = useRef(flush); flushRef.current = flush;
   useEffect(() => () => { flushRef.current(); }, []);
+  useEffect(() => {
+    const online = () => { if (pending.current) flushRef.current(); };
+    const leave = (e) => { if (!pending.current && !saveErrRef.current) return; flushRef.current(); e.preventDefault(); e.returnValue = ""; return ""; };
+    const hide = () => { if (document.visibilityState === "hidden" && pending.current) flushRef.current(); };
+    window.addEventListener("online", online); window.addEventListener("beforeunload", leave); document.addEventListener("visibilitychange", hide);
+    return () => { window.removeEventListener("online", online); window.removeEventListener("beforeunload", leave); document.removeEventListener("visibilitychange", hide); };
+  }, []);
+  const saveErrRef = useRef(""); saveErrRef.current = saveErr;
   const reload = async () => { await flush(); await onReload(); };
   const [partView, setPartView] = useState(null);   // ★ 2026-11-11 กดแถวในใบหลัก → ความคืบหน้าแยกขั้นตอน (ป็อปอัพเดียวกับหน้าล็อต)
-  const planRef = useRef(view?.plan); planRef.current = view?.plan;
   const applyPlan = (p) => {
+    // ★ R1: ย้อน/ทำซ้ำ (Ctrl+Z) = ใบรุ่นเก่า แต่ฐานข้อมูลเป็นรุ่นที่หน้านี้บันทึกล่าสุด → ใช้ _at ของใบที่แสดงอยู่ (ไม่ใช่ของรุ่นเก่า)
+    if (planRef.current && planRef.current.id === p.id && planRef.current._at) p = { ...p, _at: planRef.current._at };
     // ★ 2026-11-12 ข้อ 8: modUndone (M ที่เคยถูกย้อน) มีแต่เพิ่ม — ย้อน/ทำซ้ำไปใบรุ่นก่อน (ที่ยังไม่มีบันทึกนั้น) ต้องไม่ทำให้หาย
     const keep = planRef.current?.modUndone || [];
     if (keep.length > (p.modUndone || []).length) p = { ...p, modUndone: keep };
@@ -7618,9 +7660,15 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
   // ขั้น "บันทึกเป็น M" ในประวัติ Ctrl+Z: ย้อน = ยกเลิก M (ฐานข้อมูล + ใบหลัก) · ทำซ้ำได้เฉพาะ M ที่ไม่ได้แก้ในล็อต
   const showPlan = (p) => { clearTimeout(timer.current); pending.current = null; planRef.current = p; setView((v) => (v && v.plan && v.plan.id === p.id ? { ...v, plan: p } : v)); setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x))); };
-  const modUndoStepOf = (prev, np, mod) => modUndoStep({ prev, np, mod, api: realReleaseApi, user, showPlan, onReload: reload, toast: mlsToast });
+  const modUndoStepOf = (prev, np, mod) => modUndoStep({ prev, np, mod, api: realReleaseApi, user, showPlan, onReload: reload, toast: mlsToast, getAt: () => planRef.current?._at });
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
+      {saveErr ? (
+        <div className="card" role="alert" style={{ borderColor: "var(--danger)", color: "var(--danger-hi)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          <b>⚠ ยังไม่ได้บันทึกการแก้ใบ {view.plan?.ro}</b>
+          <span style={{ flex: 1, minWidth: 200 }}>{saveErr} · ที่แก้ยังอยู่ในหน้านี้ — อย่าเพิ่งปิดหน้า</span>
+          <button type="button" className="btn btn-accent btn-sm" onClick={() => { if (!pending.current) pending.current = planRef.current; flush(); }}>ลองบันทึกอีกครั้ง</button>
+        </div>) : null}
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null} onInboxUsed={() => setView((v) => (v && v.inbox ? { ...v, inbox: null } : v))}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
         onOpenPart={(id) => { const r = (releases || []).find((x) => String(x.id) === String(id)); if (!r) return false; setPartView(r); return true; }}
@@ -7907,7 +7955,7 @@ function ReleasePage({ user, goTo }) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={refreshAfterLot} />;
   }
   if (planView) {
-    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} onOpenGroup={setViewGroup} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={refreshAfterLot} onOpenGroup={setViewGroup} />;
   }
   if (createOpen === "wizard") {
     return (
@@ -12511,7 +12559,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
     );
   }
   if (planView) {
-    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} onOpenGroup={setViewGroup} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={rels || []} plans={plans} user={user} setPlans={setPlans} onReload={refreshAfterLot} onOpenGroup={setViewGroup} />;
   }
   if (libOpen) {
     return (

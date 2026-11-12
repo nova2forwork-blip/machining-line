@@ -68,6 +68,20 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
 const PDF_BUCKET = "release-pdfs";
 const safeSeg = (x) => String(x || "").trim().replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "x";
 const libPdfPath = (projectKey, d) => `${safeSeg(projectKey)}/${d.kind === "part" ? "part" : "sub"}/${safeSeg(d.famOf || d.code)}.pdf`;   // แผ่นหลายเบอร์ (famOf) เก็บไฟล์เดียวในชื่อเบอร์ของแผ่น
+// ★ 2026-11-12 R5: โปรเจครหัสเดียวกันหลายตึก → เดิมใช้โฟลเดอร์ <รหัส> ร่วมกัน แบบตึกหนึ่งทับอีกตึก
+//   ตอนนี้: รหัสนี้มีโปรเจคเดียว = <รหัส> (เหมือนเดิม) · มีหลายโปรเจค = <รหัส>_<id 8 ตัวแรก> แยกตึก
+//   ไฟล์เก่าเปิดจาก path ที่เก็บไว้ในคลัง (pdfs[].path) จึงยังเปิดได้ตามเดิม
+const folderCache = new Map();
+export async function pdfFolderOf(projectId, projectCode) {
+  const code = String(projectCode || "").trim();
+  if (!code || !projectId) return String(projectId || code);
+  const ck = `${projectId}|${code}`; if (folderCache.has(ck)) return folderCache.get(ck);
+  let shared = false;
+  try { const all = await listRows("projects"); shared = (all || []).some((x) => x.id !== projectId && safeSeg(x.code) === safeSeg(code)); }
+  catch (_) { shared = true; }   // อ่านรายการโปรเจคไม่ได้ = แยกโฟลเดอร์ไว้ก่อน (ปลอดภัยกว่าทับ)
+  const f = shared ? `${code}_${String(projectId).slice(0, 8)}` : code;
+  folderCache.set(ck, f); return f;
+}
 async function uploadLibPdf(projectKey, d) {
   const path = libPdfPath(projectKey, d);
   const { error } = await supabase.storage.from(PDF_BUCKET).upload(path, d._file, { contentType: "application/pdf", upsert: true });
@@ -197,7 +211,8 @@ export async function listPlans(projectId = null) {
   const { data, error } = await supabase.rpc("release_plan_list", { p_token: tok(), p_project_id: projectId || null });
   if (error) { if (missingFn(error)) return { ok: false, reason: "not_installed", plans: [] }; throw error; }
   // ★ 2026-11-09 projectCode = รหัสโปรเจคปัจจุบันจาก DB (ในแผนเป็นรหัสตอนสร้าง — เปลี่ยนรหัสโปรเจคแล้วล็อตไม่เข้าใบหลัก เห็นเลขเดียวกันสองแถว)
-  const all = (data || []).map((r) => ({ ...(r.plan || {}), id: r.id, projectId: r.project_id, ro: r.release_order, status: r.status, by: (r.plan && r.plan.by) || r.created_by_name || "", ...(r.project_code ? { projectCode: r.project_code } : {}) }));
+  // ★ 2026-11-12 R1: _at = updated_at ของแถวตอนโหลด — ติดไปกับใบ (และทุกสำเนาที่แก้ต่อจากใบนี้) · updatePlan ส่งกลับไปเทียบ ไม่ตรง = มีคนแก้ไปก่อน → ไม่บันทึกทับ
+  const all = (data || []).map((r) => ({ ...(r.plan || {}), _at: r.updated_at || null, id: r.id, projectId: r.project_id, ro: r.release_order, status: r.status, by: (r.plan && r.plan.by) || r.created_by_name || "", ...(r.project_code ? { projectCode: r.project_code } : {}) }));
   // แถว LIB = คลังซับ/พาร์ทของโปรเจค (ไม่ใช่ Release) → แยกออก · แถว DRAFT = ร่าง "ปล่อยงานใหม่" ของผู้ใช้ (★ 2026-11-10) → แยกออก
   const isDraft = (p) => p.kind === "draft" || /^DRAFT:/i.test(String(p.ro));
   return { ok: true, plans: all.filter((p) => p.kind !== "lib" && String(p.ro).toUpperCase() !== "LIB" && !isDraft(p)), lib: all.find((p) => p.kind === "lib" || String(p.ro).toUpperCase() === "LIB") || null, drafts: all.filter(isDraft) };
@@ -226,9 +241,17 @@ export async function dropDraft(id) {
   if (error) { if (missingFn(error)) return; throw error; }
   return data;
 }
-async function planRpc(projectId, ro, plan, id = null) {
-  const { data, error } = await supabase.rpc("release_plan_save", { p_token: tok(), p_project_id: projectId, p_release_order: ro, p_plan: plan, p_id: id });
+async function planRpc(projectId, ro, plan, id = null, baseAt = null) {
+  const args = { p_token: tok(), p_project_id: projectId, p_release_order: ro, p_plan: plan, p_id: id };
+  let { data, error } = await supabase.rpc("release_plan_save", baseAt ? { ...args, p_base_at: baseAt } : args);
+  // ฐานข้อมูลยังไม่ได้รัน migration-critical-fixes-2026-11-12.sql (ไม่มี p_base_at) → บันทึกแบบเดิม
+  if (error && baseAt && missingFn(error)) ({ data, error } = await supabase.rpc("release_plan_save", args));
   if (error) { if (missingFn(error)) throw notInstalled(); throw error; }
+  if (data && data.ok === false && data.reason === "conflict") {
+    const t = data.updated_at ? new Date(data.updated_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "";
+    const e = new Error(`ใบ ${ro} ถูกแก้${data.updated_by_name ? `โดย ${data.updated_by_name}` : "จากที่อื่น"}${t ? ` เมื่อ ${t}` : ""} หลังจากคุณเปิดใบนี้ — ไม่ได้บันทึกทับ · โหลดใบล่าสุดให้แล้ว แก้ใหม่อีกครั้ง`);
+    e.code = "conflict"; throw e;
+  }
   if (data && data.ok === false) { const e = new Error(data.reason === "duplicate" ? `Release ${ro} มีอยู่แล้ว` : `บันทึกแผนไม่สำเร็จ (${data.reason})`); e.code = data.reason === "duplicate" ? "exists" : data.reason; throw e; }
   return data || {};
 }
@@ -245,7 +268,22 @@ export async function deletePlan(plan, { keepLots = false } = {}) {
   return true;
 }
 // แก้แผน (เช่น office เปลี่ยนงานของซับ / ใบงานพาร์ทตอนปล่อยล็อต)
-export async function updatePlan(plan) { const { id, ...body } = plan; return planRpc(plan.projectId, plan.ro, body, id); }
+// ★ 2026-11-12 R1: ส่ง plan._at (เวอร์ชันที่ใบนี้แก้ต่อมา) ไปเทียบ · สำเร็จ = อัปเดต plan._at ให้ (แก้ต่อจากใบเดิมได้โดยไม่ชนตัวเอง)
+export async function updatePlan(plan) {
+  const { id, _at, ...body } = plan;
+  const r = await planRpc(plan.projectId, plan.ro, body, id, _at || null);
+  if (r && r.updated_at) { try { plan._at = r.updated_at; } catch (_) { /* frozen */ } }
+  return r;
+}
+// เช็คก่อนแก้ล็อต (Modify / ย้อน M): ใบในฐานข้อมูลยังเป็นรุ่นที่เปิดอยู่ไหม — ไม่ใช่ = หยุดก่อนแตะล็อต
+async function assertPlanFresh(plan) {
+  if (!plan || !plan.id || !plan._at) return;
+  const r = await listPlans(plan.projectId || null);
+  const cur = (r.plans || []).find((x) => x.id === plan.id);
+  if (cur && cur._at && cur._at !== plan._at) {
+    const e = new Error(`ใบ ${plan.ro} ถูกแก้จากที่อื่นหลังจากคุณเปิดใบนี้ — ยังไม่มีอะไรถูกแก้ · โหลดใบล่าสุดให้แล้ว ทำใหม่อีกครั้ง`); e.code = "conflict"; throw e;
+  }
+}
 
 // บันทึกแผน: (1) เก็บแผน (2) สร้างเบอร์ที่ยังไม่มีใน part_master (3) ชนิดเบอร์ (4) BOM (5) ชื่อเบอร์ — ยังไม่สร้าง QR
 export async function savePlan({ plan, need, bomSave }, onProgress = () => {}, resume = null) {
@@ -344,8 +382,9 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   const pdfsOut = [];
   const upErrs = [];
   // ไฟล์เดียวกันที่แตกเป็นหลายเบอร์ (famOf) อัพครั้งเดียว
-  const upOnce = new Map(); for (const d of (pdfs || []).filter((x) => x._file)) { const k = libPdfPath(projectCode || projectId, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
-  await pool([...upOnce.values()], 4, async (ds) => { const path = await uploadLibPdf(projectCode || projectId, ds[0]); for (const d of ds) d.path = path; }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
+  const folder = await pdfFolderOf(projectId, projectCode);
+  const upOnce = new Map(); for (const d of (pdfs || []).filter((x) => x._file)) { const k = libPdfPath(folder, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
+  await pool([...upOnce.values()], 4, async (ds) => { const path = await uploadLibPdf(folder, ds[0]); for (const d of ds) d.path = path; }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
   for (const d of pdfs || []) pdfsOut.push({ file: d.file, kind: d.kind, code: d.code, ...(d.path ? { path: d.path } : {}) });
   if (upErrs.length) { const m = String(upErrs[0].e?.message || upErrs[0].e || ""); st.errors.push(/bucket|not found|404/i.test(m) ? "ยังไม่ได้รัน migration-release-pdfs.sql — ไม่ได้เก็บตัวไฟล์ PDF (ข้อมูลที่อ่านได้บันทึกแล้ว)" : `เก็บไฟล์ PDF ไม่สำเร็จ ${upErrs.length} ไฟล์ (${m.slice(0, 80)})`); }
   const subItems = { ...(old?.subItems || {}) };
@@ -360,9 +399,10 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
 export async function storeLibPdfs({ projectId, projectCode, pdfs }, onProgress = () => {}) {
   const ds = (pdfs || []).filter((d) => d && d._file && d.code && ["part", "sub", "panel"].includes(d.kind));
   if (!ds.length || !projectId) return { n: 0 };
-  const upOnce = new Map(); for (const d of ds) { const k = libPdfPath(projectCode || projectId, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
+  const folder = await pdfFolderOf(projectId, projectCode);
+  const upOnce = new Map(); for (const d of ds) { const k = libPdfPath(folder, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
   const out = [];
-  const errs = await pool([...upOnce.values()], 4, async (g) => { const path = await uploadLibPdf(projectCode || projectId, g[0]); for (const d of g) out.push({ file: d.file, kind: d.kind, code: d.code, path }); }, (n, m) => onProgress(`เก็บไฟล์แบบลงคลัง ${n}/${m}`));
+  const errs = await pool([...upOnce.values()], 4, async (g) => { const path = await uploadLibPdf(folder, g[0]); for (const d of g) out.push({ file: d.file, kind: d.kind, code: d.code, path }); }, (n, m) => onProgress(`เก็บไฟล์แบบลงคลัง ${n}/${m}`));
   if (!out.length) { const m = errs.length ? String(errs[0].e?.message || errs[0].e || "") : ""; throw new Error(m || "เก็บไฟล์แบบไม่สำเร็จ"); }
   const old = (await listPlans(projectId)).lib;
   const { id: _i, projectId: _p, ro: _r, status: _s, ...keep } = old || {};
@@ -407,6 +447,8 @@ export async function lotLimits(plan, lotNos) {
 //                (2) เก็บประวัติ M + ยอดใหม่ลงแผน
 export async function modifyRelease({ plan, mod, lotOps, docDate }, onProgress = () => {}) {
   const done = [];
+  onProgress(`ตรวจว่าใบ ${plan.ro} ยังเป็นรุ่นล่าสุด…`);
+  await assertPlanFresh(plan);   // ★ R1: สองคนบันทึก M พร้อมกัน = คนที่สองหยุดก่อนแตะล็อต (ไม่ได้เลข M ซ้ำ)
   for (const [lot, ops] of lotOps) {
     onProgress(`Modify ${lot} (${ops.length} รายการ)…`);
     const items = ops.map((o) => (o.type === "cancel" ? { release_id: o.release_id, type: "cancel", keep: o.keep || "spare" } : { release_id: o.release_id, type: "qty", dir: o.dir, n: o.n }));
@@ -442,6 +484,7 @@ const REVERT_TXT = {
 export const revertText = (r) => REVERT_TXT[r?.reason] || r?.message || r?.reason || "error";
 export async function undoModify({ plan, prevPlan, mod, by = "" }, onProgress = () => {}) {
   const lots = lotsOfMod(mod); const todo = [];
+  await assertPlanFresh(plan);   // ★ R1
   for (const lot of lots) {
     onProgress(`ตรวจล็อต ${lot}…`);
     const info = await getReleaseModifyInfo(plan.projectId, lot);
@@ -464,7 +507,7 @@ export async function undoModify({ plan, prevPlan, mod, by = "" }, onProgress = 
     done.push(t.lot);
   }
   onProgress(`คืนใบ ${plan.ro} เป็นก่อน ${mod.ver}…`);
-  const np = { ...prevPlan, id: plan.id, modUndone: [...(plan.modUndone || prevPlan.modUndone || []), { ver: mod.ver, no: mod.no, at: new Date().toISOString(), by, lots: done }] };
+  const np = { ...prevPlan, id: plan.id, _at: plan._at, modUndone: [...(plan.modUndone || prevPlan.modUndone || []), { ver: mod.ver, no: mod.no, at: new Date().toISOString(), by, lots: done }] };
   try { await updatePlan(np); }
   catch (e) {   // ★ 2026-11-12 ยกเลิกในล็อตสำเร็จแล้วแต่บันทึกใบหลักไม่ได้ → บอกให้โหลดใหม่ (ล็อตเปลี่ยนแล้ว) · กด Ctrl+Z อีกครั้งได้ (ล็อตที่ยกเลิกแล้วจะข้าม)
     const e2 = new Error(`${done.length ? `ยกเลิก ${mod.ver} ในล็อต ${done.join(", ")} แล้ว แต่` : ""}บันทึกใบ ${plan.ro} ไม่สำเร็จ (${e?.message || e}) — กด Ctrl+Z อีกครั้งเพื่อลองใหม่`);
@@ -536,4 +579,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { pdfFolderOf, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

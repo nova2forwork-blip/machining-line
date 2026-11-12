@@ -29,6 +29,15 @@ function plansUsing(d, plans) {
   return hits;
 }
 const planLabel = (p) => `${p.ro}${p.projectCode ? ` (${p.projectCode})` : ""}`;
+// ★ 2026-11-12 R6: เลข Release เดียวกันอยู่หลายโปรเจค (หลายตึก) → ให้ผู้ใช้เลือกเอง ไม่เดา
+function ChoosePlan({ j, onPick, projects = [] }) {
+  return (
+    <div className="rw-inbox-job-b">
+      <span className="rw-muted small">เลือกใบที่ใบนี้อ้างถึง: </span>
+      {j.choices.map((p) => { const pj = projects.find((x) => x.id === p.projectId); return (
+        <button key={p.id} type="button" className="btn btn-ghost btn-sm" onClick={() => onPick(p.id)}>{p.ro} · {p.projectCode || pj?.code || "?"}{pj?.name ? ` — ${pj.name}` : ""}</button>); })}
+    </div>);
+}
 
 // docs/setDocs เก็บที่หน้าแม่ (ReleasePage) — เปิดใบไปทำแล้วกดกลับมา งานที่เหลือยังอยู่
 // โปรเจคของแบบ: PROJECT NO. ในหัวกระดาษ (A10042-US) → เทียบรหัสโปรเจค · ไม่มี = ชื่อโปรเจค (BARRINGTON PLAZA) เทียบชื่อ
@@ -49,11 +58,16 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
   const [libMsg, setLibMsg] = useState({});     // job key → { busy | ok | err }
   // ★ 2026-11-12 เลข Release ซ้ำกันได้ข้ามโปรเจค (P-012 ของ A กับของ B) → จับคู่ด้วยรหัสโปรเจคในใบด้วย
   //   ในใบมีรหัสโปรเจค = ต้องตรง (ไม่ตรงเลย = ไม่จับคู่) · ไม่มีรหัส = จับได้เฉพาะเมื่อมีใบเลขนี้ใบเดียว (ซ้ำหลายโปรเจค = ไม่เดา)
-  const byRo = (ro, prjCode = "") => {
-    const hit = (plans || []).filter((p) => roKey(p.ro) === roKey(ro)); const pc = NC(prjCode || "");
-    if (pc) return hit.find((p) => NC(p.projectCode || "") === pc) || hit.find((p) => pc && NC(p.projectCode || "").startsWith(pc)) || null;
-    return hit.length === 1 ? hit[0] : null;
+  // ★ 2026-11-12 R6 (ทดสอบจำลอง): เดิมเทียบแบบขึ้นต้น (startsWith) → ใบของ A10035-AU ไปเปิด Modify ของ A10035-US ได้ · เลขซ้ำหลายโปรเจคขึ้น "ไม่พบ"
+  //   ตอนนี้: รหัสเต็มในใบ (มี -AU/-US) = ต้องตรงเป๊ะ · มีแค่รหัสฐาน (A10035) = ตรงเป๊ะ หรือ A10035-xx · เหลือใบเดียว = จับคู่ · หลายใบ (หลายตึก / หลายโปรเจค) = ให้ผู้ใช้เลือก
+  //   คืน { plan, choices }
+  const byRo = (ro, prjCode = "", prjFull = "") => {
+    const hit = (plans || []).filter((p) => roKey(p.ro) === roKey(ro)); const pc = NC(prjCode || ""), pf = NC(prjFull || "");
+    const pcOf = (p) => NC(p.projectCode || "");
+    const cand = pf ? hit.filter((p) => pcOf(p) === pf) : pc ? hit.filter((p) => pcOf(p) === pc || pcOf(p).startsWith(pc + "-")) : hit;
+    return cand.length === 1 ? { plan: cand[0], choices: [] } : { plan: null, choices: cand };
   };
+  const [roPick, setRoPick] = useState({});   // job key → plan id ที่ผู้ใช้เลือก (เลข Release ซ้ำหลายโปรเจค)
   // ★ 2026-11-10 เก็บแบบซับ/พาร์ทเข้าคลังของโปรเจคตรงจากกล่องรับเอกสาร (เหมือนวางที่ขั้น "เลือกซับ / พาร์ท")
   async function saveToLibrary(j, projectId) {
     const project = projects.find((p) => p.id === projectId); if (!project || !api?.saveLibrary || !api?.loadBomLibrary) return;
@@ -114,18 +128,24 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
     const drawings = docs.filter((x) => x.type === "drawing"); const used = new Set();
     const list = [];
     for (const s of docs.filter((x) => x.type === "modify")) {
-      const o = s.data; const plan = o.refRo ? byRo(o.refRo, o.projectCode) : null;
+      const o = s.data; const m = o.refRo ? byRo(o.refRo, o.projectCode, o.projectFull) : { plan: null, choices: [] };
+      const k = "modify:" + s.file.name; const plan = m.plan || m.choices.find((p) => p.id === roPick[k]) || null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
       const mine = drawings.filter((d) => codes.has(NC(d.data.code))); mine.forEach((d) => used.add(keyOf(d)));
       const missing = o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code)));
-      list.push({ k: "modify:" + s.file.name, sheet: s, plan, drawings: mine, missing, refRo: o.refRo });
+      list.push({ k, sheet: s, plan, choices: m.choices, drawings: mine, missing, refRo: o.refRo });
     }
     for (const s of docs.filter((x) => x.type === "order")) {
-      const o = s.data; const plan = o.ro ? byRo(o.ro, o.projectCode || o.projectFull) : null;
+      const o = s.data; const m = o.ro ? byRo(o.ro, o.projectCode, o.projectFull) : { plan: null, choices: [] };
+      const k = "order:" + s.file.name; const plan = m.plan || m.choices.find((p) => p.id === roPick[k]) || null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
       const mine = drawings.filter((d) => !used.has(keyOf(d)) && (codes.has(NC(d.data.code)) || (d.data.kind === "loose" && (d.data.site || []).some((r) => codes.has(NC(r.code)))))); mine.forEach((d) => used.add(keyOf(d)));
-      const pc = NC(o.projectCode || ""); const prj = projects.find((p) => NC(p.code) === NC(o.projectFull || "") || NC(p.code) === pc || (pc && NC(p.code).startsWith(pc)));
-      list.push({ k: "order:" + s.file.name, sheet: s, plan, project: prj, drawings: mine, missing: o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code))) });
+      // ★ R6: รหัสเต็มตรงเป๊ะก่อน · แล้วรหัสฐาน · ขึ้นต้นเหมือนกันใช้ได้เฉพาะเมื่อมีโปรเจคเดียว (หลายโปรเจค = ไม่เดา ให้เลือกตอนสร้าง)
+      const pc = NC(o.projectCode || ""), pf = NC(o.projectFull || "");
+      const pick1 = (xs) => (xs.length === 1 ? xs[0] : null);
+      const exF = pf ? projects.filter((p) => NC(p.code) === pf) : [];
+      const prj = exF.length ? pick1(exF) : pc ? (pick1(projects.filter((p) => NC(p.code) === pc)) || (pf ? null : pick1(projects.filter((p) => NC(p.code).startsWith(pc + "-"))))) : null;
+      list.push({ k, sheet: s, plan, choices: m.choices, project: prj, drawings: mine, missing: o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code))) });
     }
     const loose = drawings.filter((d) => !used.has(keyOf(d)));
     if (loose.length) {
@@ -137,7 +157,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       if (none.length) list.push({ k: "loose:none", drawings: none, loose: true, none: true, project: detect(none) });
     }
     return list;
-  }, [docs, plans, projects]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docs, plans, projects, roPick]);   // eslint-disable-line react-hooks/exhaustive-deps
   const bad = docs.filter((x) => x.type === "bad");
   const bunkDocs = docs.filter((x) => x.type === "bunk");
   const filesOf = (j) => [...new Set([...(j.sheet ? [j.sheet.file] : []), ...j.drawings.map((d) => d.file)].filter((f) => f instanceof File))];   // ไฟล์เดียวที่แตกหลายเบอร์ → ส่งไฟล์ครั้งเดียว
@@ -163,7 +183,8 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
             if (j.sheet?.type === "modify") return (
               <div key={j.k} className={`rw-inbox-job ${j.plan ? "" : "bad"}`}>
                 <div className="rw-inbox-job-h"><Pill tone="mod">ใบ Modify</Pill> <b>{o.roRaw || o.mVer}</b> <span className="rw-muted">อ้างถึง {o.refRo || "?"}{o.issuedBy ? ` · โดย ${o.issuedBy}` : ""}{o.date ? ` · ${o.date}` : ""}</span>
-                  {j.plan ? <span className="rw-ok">→ Release {planLabel(j.plan)}</span> : <span className="rl-errtxt">→ ไม่พบ Release {o.refRo || ""} ในระบบ</span>}</div>
+                  {j.plan ? <span className="rw-ok">→ Release {planLabel(j.plan)}</span> : j.choices?.length ? <span className="rl-errtxt">→ {o.refRo} มี {j.choices.length} โปรเจค — เลือกใบที่ถูก</span> : <span className="rl-errtxt">→ ไม่พบ Release {o.refRo || ""}{o.projectFull || o.projectCode ? ` ของ ${o.projectFull || o.projectCode}` : ""} ในระบบ</span>}</div>
+                {!j.plan && j.choices?.length ? <ChoosePlan j={j} onPick={(id) => setRoPick((x) => ({ ...x, [j.k]: id }))} projects={projects} /> : null}
                 <div className="rw-inbox-job-b">
                   แบบที่แก้ {o.items.length} รายการ: {o.items.map((i) => { const has = j.drawings.some((d) => NC(d.data.code) === NC(i.code)); return <Pill key={i.code} tone={has ? "ok" : "bad"}>{i.code}{i.rev ? ` REV.${i.rev}` : ""} {has ? "✓ มีแบบ" : "✗ ยังไม่มีแบบ"}</Pill>; })}
                   {j.missing.length ? <div className="rw-muted small">ยังไม่มีแบบ {j.missing.length} รายการ — วางเพิ่มได้ หรือเปิด Modify ไปก่อนแล้ววางทีหลัง</div> : null}
@@ -177,7 +198,8 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
             if (j.sheet?.type === "order") return (
               <div key={j.k} className="rw-inbox-job">
                 <div className="rw-inbox-job-h"><Pill tone="part">ใบปะหน้า</Pill> <b>{o.roRaw || o.ro || j.sheet.file.name}</b> <span className="rw-muted">{[o.projectName || o.projectCode, o.zone && `Zone ${o.zone}`, `${o.items.length} รายการ`].filter(Boolean).join(" · ")}</span>
-                  {j.plan ? <span className="rw-ok">→ มีใบ {planLabel(j.plan)} แล้ว</span> : <span className="rw-muted">→ ยังไม่มีใบนี้ — สร้างใหม่{j.project ? ` ในโปรเจค ${j.project.code}` : ""}</span>}</div>
+                  {j.plan ? <span className="rw-ok">→ มีใบ {planLabel(j.plan)} แล้ว</span> : j.choices?.length ? <span className="rl-errtxt">→ {o.ro} มีใน {j.choices.length} โปรเจค — เลือกใบที่ถูก (หรือสร้างใหม่)</span> : <span className="rw-muted">→ ยังไม่มีใบนี้ — สร้างใหม่{j.project ? ` ในโปรเจค ${j.project.code}` : ""}</span>}</div>
+                {!j.plan && j.choices?.length ? <ChoosePlan j={j} onPick={(id) => setRoPick((x) => ({ ...x, [j.k]: id }))} projects={projects} /> : null}
                 <div className="rw-inbox-job-b">{o.items.slice(0, 12).map((i) => { const has = j.drawings.some((d) => NC(d.data.code) === NC(i.code) || (d.data.kind === "loose" && (d.data.site || []).some((r) => NC(r.code) === NC(i.code)))); return <Pill key={i.code} tone={has ? "ok" : "muted"}>{i.code} ×{nlen(i.qty)}{has ? " ✓ มีแบบ" : ""}</Pill>; })}{o.items.length > 12 ? <span className="rw-muted small"> … อีก {o.items.length - 12}</span> : null}</div>
                 <div className="rw-inbox-job-a">
                   {j.plan ? <button type="button" className="btn btn-accent btn-sm" onClick={() => onAddItems(j.plan, filesOf(j))}>+ เพิ่มรายการใน {j.plan.ro} พร้อมไฟล์</button>
