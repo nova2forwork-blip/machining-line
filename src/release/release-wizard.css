@@ -1317,3 +1317,23 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .bm-treet .bm-tg { margin: 0 6px 0 0; width: 22px; height: 22px; padding: 0; border: 1px solid #b9c4bf; border-radius: 5px; background: #fff; cursor: pointer; font-size: 11px; line-height: 1; vertical-align: middle; }
 .bm-treet td .pill, .bm-treet td [class*="pill"] { vertical-align: middle; }
 .bm-treet td.code { white-space: nowrap; }
+
+/* ★ 2026-11-12 ผู้ใช้: "ทำตารางให้สวยแบบนี้" (ภาพ Total Part) → ทุกตารางในของในใบ: แถวโปร่ง · เส้นเทาอ่อน · เบอร์ตัวหนา · รายละเอียดตัวเล็กสีเทา · ตัวเลขสีเทา · MATERIAL ตัวหนา */
+.rt-xl td, .rt .table-wrap table.data-table.rt-table td { padding: 12px 12px; height: 46px; border-color: #dcdfdd; }
+.rt-xl th, .rt .table-wrap table.data-table.rt-table th, .rt table.rs2-table th { padding: 9px 12px; border-color: #c4c8c6; background: #e4e6e5; }
+.rt table.rs2-table td { height: 46px; border-color: #dcdfdd; }
+.rt table.rs2-table .rs2-v { padding: 12px 12px; }
+.rt table.rs2-table .rs2-cell, .rt table.rs2-table .rs2-code { height: 46px; padding: 0 12px; }
+.rt-xl td.mono, .rt-xl td.code { font-family: inherit; font-size: 13.5px; }
+.rt-xl td.code, .rt .rt-table td.rw-mono, .rt table.rs2-table .rs2-code { font-weight: 700; color: #1b1f1d; }
+.rt-xl td.code.sub, .rt-xl td.subm { color: #1e7b34; }
+.rt-xl td.code.kid { color: #2e9e4a; font-weight: 600; }
+.rt-xl td.desc, .rt .rt-table td.rl-desc, .rt table.rs2-table .rs2-desc .rs2-v { font-size: 12.5px; color: #46574f; letter-spacing: .01em; }
+.rt-xl td.r, .rt .rt-table td.r.rw-num { color: #46574f; }
+.rt-xl td.r b, .rt .rt-table td.r b { color: #1b1f1d; }
+.rt-xl td.c:not(.subm):not(.xl-wastec), .rt .rt-table td.rt-inv { font-weight: 700; color: #1b1f1d; }
+.rt-xl td.pd { font-size: 12.5px; }
+.rt-xl tr.g1 td { background: #f3f4f3; }
+.rt-xl tr.g2 td { background: #fafafa; }
+.rt-xl tr.xl-pgap td { height: auto; padding: 6px 12px; }
+.bm-treet td.code { padding-top: 8px; padding-bottom: 8px; }
