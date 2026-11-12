@@ -27,7 +27,9 @@ function ClickSelect({ value, options, onChange, label, title = "" }) {
   useEffect(() => { if (open && ref.current) { ref.current.focus(); try { ref.current.showPicker && ref.current.showPicker(); } catch { /* เบราว์เซอร์ที่ไม่รองรับ = แค่โฟกัส */ } } }, [open]);
   const txt = (options.find(([v]) => v === value) || [value, value])[1];
   if (!open) return <button type="button" className="bm-qbtn rt-csel" onClick={() => setOpen(true)} aria-label={label} title={title}>{txt}<span className="rt-csel-ar" aria-hidden="true">▾</span></button>;
-  return <select ref={ref} className="select rw-cellsel rt-dest" value={value} aria-label={label} onChange={(e) => { setOpen(false); if (e.target.value !== value) onChange(e.target.value); }} onBlur={() => setOpen(false)} onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}>{options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
+  // ดรอปดาวน์ลอยทับข้อความเดิมพอดีช่อง — ช่องไม่ขยายตอนเลือก
+  return <span className="rt-cselhold"><span className="bm-qbtn rt-csel bm-ghost" aria-hidden="true">{txt}<span className="rt-csel-ar">▾</span></span>
+    <select ref={ref} className="rt-cselin" value={value} aria-label={label} onChange={(e) => { setOpen(false); if (e.target.value !== value) onChange(e.target.value); }} onBlur={() => setOpen(false)} onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}>{options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></span>;
 }
 
 export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null, madeOf = null, onRowProgress = null, onInlineModify = null }) {
