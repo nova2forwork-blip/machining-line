@@ -20,6 +20,16 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 const hwQty = (p) => (p.u === "m." && p.mm ? p.qty / 1000 : p.qty);
 
+// ★ 2026-11-12 ผู้ใช้: "ตัวนี้ให้เป็นข้อความเหมือนช่องอื่น ตอนกดค่อยเป็นดรอปดาวน์" — โชว์เป็นข้อความ · กด = เปิดรายการให้เลือก
+function ClickSelect({ value, options, onChange, label, title = "" }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { if (open && ref.current) { ref.current.focus(); try { ref.current.showPicker && ref.current.showPicker(); } catch { /* เบราว์เซอร์ที่ไม่รองรับ = แค่โฟกัส */ } } }, [open]);
+  const txt = (options.find(([v]) => v === value) || [value, value])[1];
+  if (!open) return <button type="button" className="bm-qbtn rt-csel" onClick={() => setOpen(true)} aria-label={label} title={title}>{txt}<span className="rt-csel-ar" aria-hidden="true">▾</span></button>;
+  return <select ref={ref} className="select rw-cellsel rt-dest" value={value} aria-label={label} onChange={(e) => { setOpen(false); if (e.target.value !== value) onChange(e.target.value); }} onBlur={() => setOpen(false)} onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}>{options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
+}
+
 export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null, madeOf = null, onRowProgress = null, onInlineModify = null }) {
   // ★ 2026-11-11 ผู้ใช้: "ให้กดตรงแถวเพื่อดูความคืบหน้าได้เหมือนใบปล่อย" → กดที่แถว (ไม่ใช่ปุ่ม / ช่องติ๊ก / ดรอปดาวน์) = เปิดความคืบหน้าของเบอร์นั้น
   const rowClick = (code, kind) => (onRowProgress ? { onClick: (e) => { if (e.target.closest("button, input, select, a, label, textarea, .rt-matedit, .rt-usedpop")) return; onRowProgress(code, kind); }, title: "กดที่แถวเพื่อดูความคืบหน้า", style: { cursor: "pointer" } } : {});
@@ -249,10 +259,10 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               <td className="rt-inv">{r.qr ? <MatEdit cur={r.inv} orig={r.invOrig != null ? r.invOrig || "—" : ""} note={r.matNote} list={invList} withLen len={r.invOrig != null ? r.ml : ""} label={r.code}
                 onSave={setMatOv && !r.cancelled ? (v) => setMatOv([r.code], v) : null} onReset={resetMatOv ? () => resetMatOv([r.code]) : null} /> : <span className="rw-mono">{r.inv || <span className="rw-muted">—</span>}</span>}</td>
               <td className="rt-usedcell">{usedCell(r.code)}</td>
-              <td>{onPlanChange && !r.cancelled && (!done || (onMoveReleased && r.qr)) ? <select className="select rw-cellsel rt-dest" value={r.cat} onChange={(e) => setCats([r.code], e.target.value)} aria-label={`หมวด ${r.code}`} title={done ? "ปล่อยไปแล้ว — เปลี่ยนหมวดจะย้ายใบงานของที่ปล่อยแล้วด้วย (ถามยืนยัน)" : ""}>{[...new Set([r.cat, ...catOpts])].map((k) => <option key={k} value={k}>{k}</option>)}</select> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
+              <td>{onPlanChange && !r.cancelled && (!done || (onMoveReleased && r.qr)) ? <ClickSelect value={r.cat} onChange={(v) => setCats([r.code], v)} label={`หมวด ${r.code}`} title={done ? "ปล่อยไปแล้ว — เปลี่ยนหมวดจะย้ายใบงานของที่ปล่อยแล้วด้วย (ถามยืนยัน)" : "กดเพื่อเปลี่ยนหมวด"} options={[...new Set([r.cat, ...catOpts])].map((k) => [k, k])} /> : <Pill tone="muted" title={done ? "ปล่อยไปแล้ว — ย้ายหมวดไม่ได้" : ""}>{r.cat}</Pill>}
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
-                  : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
+                  : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><ClickSelect value={r.dest} onChange={(v) => setDests([r.code], v)} label={`ส่ง ${r.code} ไป`} title="กดเพื่อเปลี่ยนใบงาน" options={PART_DESTS.map((d) => [d, destLabel(d)])} /></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
               <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}{r.qr ? madeEl(r.code, done) : null}</td>
               <td className="r"><b>{r.cancelled ? "" : r.qr ? (left > 0 ? nf(left) : "✓") : done ? (left > 0 ? nlen(left) : "✓") : ""}</b></td>
               <td className="rt-rem">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "f", "p" + i, r.f || "")}{r.rev ? <> · {E({ ...r, kind: "part" }, "rev", "p" + i, `Rev ${r.rev}`)}</> : null}</td>

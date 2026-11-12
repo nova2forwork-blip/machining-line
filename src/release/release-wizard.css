@@ -1359,3 +1359,6 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .rt .rt-table td .rt-destrow { margin-top: 2px; }
 .rt .rt-table td .rw-proc { padding-top: 1px; padding-bottom: 1px; }
 .rt-xl tr.xl-pgap td { padding: 3px 10px; }
+.rt .rt-table .bm-qbtn.rt-csel { display: inline-flex; align-items: center; gap: 6px; text-align: left; font-size: 12.5px; color: #1b1f1d; }
+.rt .rt-table .rt-csel-ar { font-size: 10px; color: #8a978f; opacity: 0; }
+.rt .rt-table td:hover .rt-csel-ar { opacity: 1; }
