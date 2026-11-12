@@ -1285,3 +1285,31 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .rt-xl .xl-wpart { color: #8a4a44; font-weight: 600; font-size: 11px; }
 .rt-xl .xl-left { color: #5a6f68; font-size: 12px; }
 .rt-xl .xl-left small { font-size: 11px; color: #8a978f; }
+
+/* ★ 2026-11-12 ผู้ใช้: "ตารางทั้งหมดใน BOM · Part · Sub · Assembly · Mat ให้เหมือนตารางเต็ม แต่คอลัมน์ยังเหมือนเดิม"
+   → หน้าตาแบบชีต Excel: หัวตารางพื้นเทา · เส้นตารางทุกช่อง · แถวเตี้ย · ไม่มีแถวสลับสี (คอลัมน์ / การทำงานเดิมทุกอย่าง) */
+.rt .table-wrap table.data-table.rt-table, .rt table.rs2-table { border-collapse: collapse; font-size: 13px; }
+.rt .table-wrap table.data-table.rt-table th, .rt table.rs2-table th {
+  background: #d9d9d9; color: #1b1f1d; font-weight: 700; font-size: 12.5px; letter-spacing: 0; text-transform: none;
+  padding: 6px 8px; border: 1px solid #a6a6a6; border-radius: 0; text-align: center; white-space: nowrap; }
+.rt .table-wrap table.data-table.rt-table th .bm-th { color: inherit; font-weight: 700; justify-content: center; }
+.rt .table-wrap table.data-table.rt-table td, .rt table.rs2-table td { border: 1px solid #d0d0d0; padding: 3px 8px; font-size: 13px; vertical-align: middle; }
+.rt table.rs2-table td { padding: 0; }
+.rt table.rs2-table .rs2-v { padding: 3px 8px; }
+.rt table.rs2-table .rs2-cell, .rt table.rs2-table .rs2-code { height: 30px; padding: 0 8px; }
+.rt table.rs2-table td { height: 30px; }
+.rt .table-wrap table.data-table.rt-table tbody tr, .rt table.rs2-table tbody tr { background: #fff; }
+.rt .table-wrap table.data-table.rt-table tbody tr:hover td, .rt table.rs2-table tbody tr:hover td { background: #e8f1ff; }
+.rt .table-wrap table.data-table.rt-table tfoot td { background: #f2f2f2; border-top: 2px solid #a6a6a6; padding: 5px 8px; }
+/* หัวหมวด (Total Part) = แถบหัวแบบหัวแผงในตารางเต็ม */
+.rt .table-wrap table.data-table.rt-table tr.rt-grp td { background: #fff; border-left: 0; border-right: 0; border-top: 10px solid #fff; border-bottom: 2px solid #1a9a6c; color: #0b5e43; padding: 4px 8px; }
+.rt .table-wrap table.data-table.rt-table tbody tr.rt-grp:first-child td { border-top-width: 1px; }
+/* ซับ (Total Sub) = แถวซับเทาตัวหนา โค้ดเขียว · ลูก = โค้ดเขียวอ่อน */
+.rt .table-wrap table.data-table.rt-table tr.rt-subrow td { background: #ececec; font-weight: 700; border-top: 1px solid #a6a6a6; }
+.rt .table-wrap table.data-table.rt-table tr.rt-subrow td.rw-mono { color: #1e7b34; }
+.rt .table-wrap table.data-table.rt-table tr.rt-kid td { background: #f6f6f6; color: #46574f; padding-top: 2px; padding-bottom: 2px; }
+.rt .table-wrap table.data-table.rt-table tr.rt-kid td.rw-mono { color: #2e9e4a; }
+/* แถวที่เลือก / ปล่อยครบ / ยกเลิก ยังเห็นชัด */
+.rt .table-wrap table.data-table.rt-table tr.rl-sel td { background: #e3f4ec; }
+.rt .table-wrap table.data-table.rt-table tr.rt-full td { color: #7a857f; }
+.rt .table-wrap table.data-table.rt-table tr.rl-cancelrow td { background: #fdf3f2; }
