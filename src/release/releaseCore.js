@@ -760,7 +760,14 @@ export function unitIssues(units, usedAddr) {
 }
 // ★ 2026-11-11 ชั้นของแผง (plan.units[].floor) — แยกตารางตามชั้นเหมือนแท็บ L13 / L14 / LOB ใน Excel
 export const FLOOR_RE = /^(?:[A-Z]{0,3}[-\s]?\d{1,3}[A-Z]?|LOB|LOBBY|ROOF|RF|GF?|MZ|PODIUM)$/i;
-export const floorKey = (u) => String((u && u.floor) || "").trim().toUpperCase();
+export const floorKey = (u) => normFloor((u && u.floor) || "");   // ★ S6: "14" กับ "L14" = ชั้นเดียวกัน
+// ★ 2026-11-12 S6: ชั้นเขียนได้หลายแบบ → ตัวเดียวกัน: "1" / "01" / "L1" / "L01" / "ชั้น 1" / "Floor 1" / "Level 1" / "LV1" = "L1" · อื่น ๆ (B1 · LOB · ROOF) = ตัวพิมพ์ใหญ่ตามเดิม
+export function normFloor(v) {
+  const t = String(v ?? "").trim().toUpperCase().replace(/\s+/g, " "); if (!t) return "";
+  const m = /^(?:ชั้น|ชั้นที่|FLOOR|FLR|LEVEL|LVL|LV|L)?\s*-?\s*0*(\d{1,3})$/.exec(t);
+  return m ? `L${m[1] === "" ? "0" : m[1]}` : t;
+}
+const floorLike = (v) => FLOOR_RE.test(String(v || "").trim()) || /^(?:ชั้น|ชั้นที่|FLOOR|FLR|LEVEL|LVL)\s*\d{1,3}$/i.test(String(v || "").trim());
 export function floorsOf(units) {
   const m = new Map(); for (const u of units || []) { const f = floorKey(u); m.set(f, (m.get(f) || 0) + 1); }
   return [...m.entries()].map(([f, n]) => ({ f, n })).sort((a, b) => (a.f === "" ? 1 : b.f === "" ? -1 : a.f.localeCompare(b.f, "en", { numeric: true })));
@@ -788,17 +795,20 @@ export function parseUnitsPaste(text) {
   }
   // ★ 2026-11-11 คอลัมน์ "ชั้น" (ไม่บังคับ): หัวตาราง ชั้น/Floor/Level หรือคอลัมน์ที่ 3 ที่หน้าตาเป็นชั้น (L13 · B1 · LOB · 14)
   let fi = h.findIndex((c) => /ชั้น|floor|level|^lv/.test(c)); if (!(hu >= 0 && ha >= 0)) fi = -1;
-  if (fi < 0) { const w = Math.max(...cells.map((r) => r.length)); for (let i = 0; i < w; i++) { if (i === ui || i === ai) continue; const vals = cells.slice(start).map((r) => (r[i] || "").trim()).filter(Boolean); if (vals.length && vals.every((v) => FLOOR_RE.test(v)) && vals.some((v) => /[A-Z]/i.test(v))) { fi = i; break; } } }
+  // ★ 2026-11-12 S6: ไม่มีหัว + คอลัมน์ชั้นเป็นตัวเลขล้วน (1 2 3) หรือ "ชั้น 2" = ใช้เป็นชั้นด้วย (เดิมต้องมีตัวอักษร → ชั้นหายเงียบ)
+  const w0 = Math.max(...cells.map((r) => r.length)); const extra = [];
+  if (fi < 0) { for (let i = 0; i < w0; i++) { if (i === ui || i === ai) continue; const vals = cells.slice(start).map((r) => (r[i] || "").trim()).filter(Boolean); if (vals.length && vals.every(floorLike)) { fi = i; break; } } }
+  for (let i = 0; i < w0; i++) { if (i === ui || i === ai || i === fi) continue; if (cells.slice(start).some((r) => (r[i] || "").trim())) extra.push(i + 1); }
   const rows = []; let skipped = 0;
   for (const r of cells.slice(start)) {
     const unit = (r[ui] || "").trim().toUpperCase(), addr = (r[ai] || "").trim().toUpperCase();
-    const floor = fi >= 0 ? (r[fi] || "").trim().toUpperCase() : "";
+    const floor = fi >= 0 ? normFloor(r[fi]) : "";
     if (!unit && !addr) { skipped++; continue; }
     if (floor && !(mockType(unit) && /^\d{1,3}$/.test(addr))) { rows.push({ unit, addr, floor }); continue; }
     if (mockType(unit) && /^\d{1,3}$/.test(addr) && Number(addr) >= 1) { rows.push({ unit, addr: "", mock: true, qty: Number(addr) }); continue; }   // ★ "PMU-01 | 4" = Mockup 4 แผง
     rows.push({ unit, addr });
   }
-  return { rows, skipped };
+  return { rows, skipped, extraCols: extra };   // extraCols = คอลัมน์ (เริ่ม 1) ที่ไม่รู้ว่าเป็นอะไร → ไม่ได้ใช้ (บอกผู้ใช้)
 }
 // ★ 2026-10-16: นำเข้า Unit | Address จากไฟล์ PDF (ตารางแบบ text ไม่ใช่สแกน) → ข้อความแท็บคั่น ส่งต่อ parseUnitsPaste
 //   จัดแถวตามตำแหน่งแนวตั้ง · แถวที่มี token รูปแบบ UAxxxx = Unit, token ที่เหลือตัวแรกที่หน้าตาเป็นที่อยู่ (มีเลข/ขีด) = Address

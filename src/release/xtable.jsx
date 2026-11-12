@@ -20,7 +20,10 @@ const cmp = (a, b) => {
 };
 const withKey = (el, key) => (isValidElement(el) ? cloneElement(el, { key }) : <td key={key}>{el}</td>);
 
-export function XTable({ id, cols, rows, rowKey, trProps = null, kids = null, kidTrProps = null, group = null, after = null, limit = Infinity, note = null, foot = true, lock = 0, className = "", tableProps = {}, empty = null, sortOn = true }) {
+// ★ 2026-11-12 S5: React ใช้ตัวตารางเดิมซ้ำเมื่อสลับแท็บ (ตำแหน่งเดียวกัน คนละ id) → ลำดับคอลัมน์ที่อ่านตอนเปิดครั้งแรกรั่วไปตารางอื่น
+//   และของตารางที่จัดไว้ไม่กลับมา · key = id → เปลี่ยนตาราง = เริ่มใหม่ อ่านลำดับของตารางนั้นเอง
+export function XTable(props) { return <XTableOne key={props.id || ""} {...props} />; }
+function XTableOne({ id, cols, rows, rowKey, trProps = null, kids = null, kidTrProps = null, group = null, after = null, limit = Infinity, note = null, foot = true, lock = 0, className = "", tableProps = {}, empty = null, sortOn = true }) {
   const [order, setOrderRaw] = useState(() => loadOrder(id));
   const [sort, setSort] = useState({ k: "", d: 1 });
   const [drag, setDrag] = useState(null);

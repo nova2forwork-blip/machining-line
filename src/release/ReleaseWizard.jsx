@@ -580,10 +580,11 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
   const pdfRef = useRef(null);
   const pasteRef = useRef(null);
   const apply = useCallback((text, mode = "replace") => {
-    const { rows, skipped } = parseUnitsPaste(text);
+    const { rows, skipped, extraCols = [] } = parseUnitsPaste(text);
     if (!rows.length) { setMsg("ไม่พบข้อมูล — ต้องมี 2 คอลัมน์ Address กับ Unit (คั่นด้วยแท็บ เหมือนก๊อปจาก Excel)"); return; }
     setUnits((u) => (mode === "append" ? [...u, ...rows] : rows));
-    setMsg(`✓ ${mode === "append" ? "เพิ่ม" : "ได้"} ${nf(rows.length)} แถว${skipped ? ` · ข้ามแถวว่าง ${skipped}` : ""}`);
+    const nFl = rows.filter((r) => r.floor).length;
+    setMsg(`✓ ${mode === "append" ? "เพิ่ม" : "ได้"} ${nf(rows.length)} แถว${nFl ? ` · ชั้น ${nf(nFl)} แถว` : ""}${skipped ? ` · ข้ามแถวว่าง ${skipped}` : ""}${extraCols.length ? ` · ⚠ คอลัมน์ที่ ${extraCols.join(", ")} ไม่รู้ว่าเป็นอะไร — ไม่ได้ใช้ (ถ้าเป็นชั้น ใส่หัวตาราง “ชั้น”)` : ""}`);
     setPaste("");
   }, [setUnits]);
   // วางที่ไหนก็ได้ในหน้า (ยกเว้นวางในช่องกรอก) = แทนที่ทั้งตาราง
