@@ -51,6 +51,7 @@ const cutFlow = (c) => {
   const fmt = (m) => [...m.entries()].map(([k, n]) => `${k === c.label ? "เส้นเต็มของแถวนี้เอง" : k} (${nf(n)})`);
   return { from: c.reuse ? fmt(c.srcs) : [], to: fmt(c.outs) };
 };
+const groupLens = (arr) => { const m = new Map(); for (const v of arr) m.set(v, (m.get(v) || 0) + 1); return [...m.entries()].sort((a, b) => b[0] - a[0]).map(([l, n]) => `${nf(l)}(${n})`).join(", "); };
 const wasteLens = (c) => { const e = [...c.lens.entries()].sort((a, b) => b[0] - a[0]); return e.length === 1 ? nf(e[0][0]) : e.map(([l, n]) => `${l}(${n})`).join(", "); };
 // ★ 2026-11-11 ผู้ใช้: "ให้ตัดบรรทัดละ 6" → ความยาวเศษหลายค่า ขึ้นบรรทัดใหม่ทุก 6 ค่า (บนจอ · Excel ยังเป็นบรรทัดเดียว)
 const wasteLines = (c) => {
@@ -194,7 +195,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       types.set(unit, { unit, n, has: !!pk, desc: pk ? plan.bom.panels[pk].d || "" : "", rows, off: 0, fresh: 0 });
     }
     // ไล่ตัดตามลำดับแผง: ใช้เศษที่ MATERIAL ตรงกันก่อน
-    const pool = new Map();   // material → [{ rem, from }]
+    const pool = new Map(); const opened = [];   // material → [{ rem, from }]
     for (const u of units) {
       const T = types.get(String(u.unit).trim());
       for (const r of T.rows) {
@@ -207,10 +208,12 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
           let bi = -1;
           for (let b = 0; b < bars.length; b++) if (bars[b].rem + 1e-6 >= need1 && (bi < 0 || bars[b].rem < bars[bi].rem)) bi = b;
           if (bi >= 0) { const was = Math.round(bars[bi].rem); { const sb = bars[bi]; r.cut.srcs.set(sb.from, (r.cut.srcs.get(sb.from) || 0) + 1); if (sb.row && sb.row !== r) sb.row.cut.outs.set(r.cut.label, (sb.row.cut.outs.get(r.cut.label) || 0) + 1); } r.cut.lens.set(was, (r.cut.lens.get(was) || 0) + 1); bars[bi].rem -= need1; r.cut.reuse++; if (!r.cut.src) r.cut.src = `${bars[bi].from} (เหลือก่อนตัด ${nf(bars[bi].rem + need1)} มม.)`; T.off++; if (bars[bi].rem < MIN_OFFCUT) bars.splice(bi, 1); }
-          else { r.cut.fresh++; T.fresh++; const rem = stock - need1; if (rem >= MIN_OFFCUT) bars.push({ rem, from: `${T.unit} · ${r.code}`, row: r }); }
+          else { r.cut.fresh++; T.fresh++; const rem = stock - need1; const bar = { rem, from: `${T.unit} · ${r.code}`, row: r }; opened.push(bar); if (rem >= MIN_OFFCUT) bars.push(bar); }
         }
       }
     }
+    // ★ 2026-11-12 ผู้ใช้: "ตอนขยายให้บอกทั้งหมด" → เศษที่เหลือสุดท้ายของเส้นเต็มที่แถวนี้เปิด (ยังไม่ถูกใช้ต่อ) · < 500 มม. = เศษทิ้ง
+    for (const bar of opened) { const c = bar.row.cut; const v = Math.max(0, Math.round(bar.rem)); (v >= MIN_OFFCUT ? (c.left = c.left || []) : (c.scrap = c.scrap || [])).push(v); }
     for (const T of types.values()) {
       T.subs = new Set(T.rows.filter((r) => !r.cx && r.kind === "sub").map((r) => r.code)).size;
       T.parts = new Set(T.rows.filter((r) => !r.cx && r.kind === "part").map((r) => r.code)).size;
@@ -342,7 +345,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
-        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">WASTE</Th> : null}<Th k="ml" r>{wasteOn ? "Mat. Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
+        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">WASTE</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
           {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
@@ -360,9 +363,12 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             {/* ★ 2026-11-12 ผู้ใช้: "การใช้เศษตารางไม่เหมือนเดิม" → ขยายเศษ = แบบเดิม: Material ตัวแดง · WAST · Material Length = ความยาวเศษที่ใช้ (แดง) · ย่อ = แบบ Excel: ป้าย OFF + ความยาวเส้น */}
             <td className={`c ${r.kind === "sub" ? "subm" : ""} ${wasteOn && off && !r.cut.fresh ? "rt-waste" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
             {wasteOn ? <td className="c xl-wastec">{off ? <>WASTE{r.cut.fresh ? <small className="xl-wpart" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · จากเส้นเต็ม ${nf(r.cut.fresh)} ชิ้น`}> {nf(r.cut.reuse)}/{nf(r.cut.reuse + r.cut.fresh)}</small> : null}</> : ""}</td> : null}
-            <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off
-              // ★ 2026-11-12 ผู้ใช้: "ไม่มีเส้นเต็มเลยหรอ" → แถวที่ใช้ทั้งเส้นเต็มและเศษ โชว์ทั้งคู่: เส้นเต็ม (ดำ) + เศษ (แดง)
-              ? <>{r.cut.fresh ? <div className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}) <small>เส้นเต็ม</small></div> : null}<div className="rt-waste">{wasteLines(r.cut)}{r.cut.fresh ? <small> เศษ</small> : null}</div></>
+            <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && r.cut
+              // ★ ขยาย = บอกครบ: เส้นเต็มที่เปิด (ดำ) · เศษที่ใช้ (แดง) · เศษที่เหลือเก็บได้ / เศษทิ้ง (เทา)
+              ? <>{r.cut.fresh ? <div className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}) <small>เส้นเต็ม</small></div> : null}
+                {off ? <div className="rt-waste">{wasteLines(r.cut)} <small>ใช้เศษ</small></div> : null}
+                {r.cut.left && r.cut.left.length ? <div className="xl-left">เหลือ {groupLens(r.cut.left)} <small>เก็บได้</small></div> : null}
+                {r.cut.scrap && r.cut.scrap.length ? <div className="xl-left">ทิ้ง {groupLens(r.cut.scrap)} <small>&lt; {nf(MIN_OFFCUT)}</small></div> : null}</>
               : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{um(r)}</td>
             {wasteOn ? <>

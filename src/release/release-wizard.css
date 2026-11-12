@@ -1283,3 +1283,5 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .rt-xl .xl-fresh { color: #1b1f1d; font-weight: 600; }
 .rt-xl .xl-fresh small, .rt-xl td .rt-waste small { color: #5a6f68; font-weight: 500; font-size: 11px; }
 .rt-xl .xl-wpart { color: #8a4a44; font-weight: 600; font-size: 11px; }
+.rt-xl .xl-left { color: #5a6f68; font-size: 12px; }
+.rt-xl .xl-left small { font-size: 11px; color: #8a978f; }
