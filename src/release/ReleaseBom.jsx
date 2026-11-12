@@ -163,10 +163,12 @@ export function BomView({ plan, need, ed }) {
     //   BOM คิดตามแบบ (ต่อชุด × แผง) · ยอดที่แก้ทั้งใบไม่ได้แตกกลับเป็นต่อแผง → โชว์ ยอดตามแบบขีดฆ่า → ยอดที่ใช้จริง + เลข M
     if (ALL) for (const e of m.values()) {
       const nr = (e.kind === "sub" ? need.subs : need.parts).find((x) => NC(x.code) === NC(e.code));
-      if (nr && (nr.modVer || nr.cancelled) && Math.abs((nr.qty || 0) - e.total) > 1e-6) { e.adj = nr.qty || 0; e.adjVer = nr.cancelled || nr.modVer || ""; e.adjCancel = !!nr.cancelled; }
+      // แก้ตรงไม่นับ M ก็นับด้วย (plan.adj ที่ ver ว่าง) — ป้าย "แก้ตรง"
+      const direct = !!findKey(plan.adj || {}, e.code);
+      if (nr && (nr.modVer || nr.cancelled || direct) && Math.abs((nr.qty || 0) - e.total) > 1e-6) { e.adj = nr.qty || 0; e.adjVer = nr.cancelled || nr.modVer || "แก้ตรง"; e.adjCancel = !!nr.cancelled; }
     }
     return [...m.values()];
-  }, [scope.map((t) => t.unit).join("|"), model, need, ALL]);
+  }, [scope.map((t) => t.unit).join("|"), model, need, ALL, plan.adj]);
 
   const flat = useMemo(() => scope.flatMap((T) => T.rows.map((r) => ({ ...r, unit: T.unit, pdesc: T.desc, n: T.n, sum: r.per * T.n }))), [scope.map((t) => t.unit).join("|"), model]);
   const sorter = (rows, keys) => {
