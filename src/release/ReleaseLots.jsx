@@ -152,7 +152,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     setLibSync({ busy: true });
     try {
       const panelCodes = [...new Set((plan.units || []).map((u) => u.unit).filter(Boolean))];
-      const lib = await api.loadBomLibrary(plan.projectId, panelCodes.length ? panelCodes : null);
+      const lib = await api.loadBomLibrary(plan.projectId, panelCodes.length ? panelCodes : null, undefined, { fallback: true });
       const r = refreshBomFromLib(plan, lib);
       if (!r.n) { setLibSync({ ok: true, text: "BOM ของ Release นี้ตรงกับคลังแล้ว — ไม่มีอะไรต้องเติม" }); return; }
       const c = r.changes; const ls = (a) => a.slice(0, 5).join(", ") + (a.length > 5 ? ` …(+${a.length - 5})` : "");

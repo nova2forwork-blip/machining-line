@@ -32,7 +32,44 @@ const matKey = (v) => String(v || "").trim().toUpperCase().replace(/\s+/g, "");
 
 // BOM เดิมในระบบของโปรเจค (part_master + bom_components) → รูปแบบเดียวกับที่ได้จาก PDF
 //   onlyCodes = จำกัดเฉพาะแผงที่ใช้ในใบนี้ (ซับใต้แผงไล่ต่อให้เอง) · ไม่ส่ง = ทุกแผง/ซับ
-export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
+// ★ 2026-11-12 ผู้ใช้: หลายตึกใช้รหัสโปรเจคเดียวกัน · ปล่อยงานคนละเลข P แต่ "พาร์ทข้างในบางที่ใช้เหมือนกัน" → ใช้ข้อมูล/แบบของตึกอื่นได้เมื่อตึกนี้ยังไม่มี
+//   siblingProjects = โปรเจคอื่นที่รหัสเดียวกัน (ไม่รวมตัวเอง)
+export async function siblingProjects(projectId) {
+  if (!projectId) return [];
+  let all = []; try { all = (await listRows("projects")) || []; } catch (_) { return []; }
+  const me = all.find((x) => x.id === projectId); if (!me || !String(me.code || "").trim()) return [];
+  return all.filter((x) => x.id !== projectId && safeSeg(x.code) === safeSeg(me.code));
+}
+//   opts.fallback = ซับ / พาร์ท ที่ตึกนี้ยังไม่มีในคลัง → เอาของตึกอื่นที่รหัสเดียวกันมาใช้ (ติดป้าย from) · แบบ PDF ก็เช่นกัน
+//     ใช้ตอนปล่อยงาน / Modify เท่านั้น — หน้า "ซับ / พาร์ท ของโปรเจค" โหลดแบบไม่ fallback (กันเอาของตึกอื่นไปบันทึกเป็นของตึกนี้)
+//     แบบแผง (panels) ไม่ fallback — แผงคนละตึกอาจรหัสเดียวกันแต่ BOM ต่างกัน
+export async function loadBomLibrary(projectId, onlyCodes = null, onTick, opts = {}) {
+  const own = await loadBomLibraryOne(projectId, onlyCodes, onTick);
+  if (!opts.fallback) return own;
+  let sibs = []; try { sibs = await siblingProjects(projectId); } catch (_) { sibs = []; }
+  if (!sibs.length) return own;
+  const fb = { subs: [], parts: [], pdfs: [] };
+  for (const sp of sibs) {
+    let o; try { o = await loadBomLibraryOne(sp.id, null, undefined, true); } catch (_) { continue; }   // ตึกอื่น: เอาแค่ซับ / พาร์ท (ไม่อ่าน BOM แผง)
+    const tag = `${sp.code}${sp.name ? " " + sp.name : ""}`;
+    for (const key of ["subs", "parts"]) for (const [c, v] of Object.entries(o[key] || {})) if (!findKey(own[key], c)) { own[key][c] = { ...v, from: tag }; fb[key].push(c); }
+    const have = new Set((own.pdfs || []).map((d) => `${d.kind}|${NC(d.code)}`));
+    for (const d of o.pdfs || []) if (d && d.path && (d.kind === "sub" || d.kind === "part") && !have.has(`${d.kind}|${NC(d.code)}`)) { own.pdfs = [...(own.pdfs || []), { ...d, from: tag }]; have.add(`${d.kind}|${NC(d.code)}`); fb.pdfs.push(d.code); }
+  }
+  if (fb.subs.length || fb.parts.length || fb.pdfs.length) own.fallback = fb;
+  return own;
+}
+// แบบ PDF ในคลังของโปรเจค + ของตึกอื่นที่รหัสเดียวกัน (ของตึกนี้มาก่อน · ของตึกอื่นติด from) — ใช้กับปุ่ม "ดูแบบ"
+export async function libPdfsWithFallback(projectId) {
+  const r = await listPlans(projectId); const own = ((r && r.lib && r.lib.pdfs) || []).filter((x) => x && x.path);
+  let sibs = []; try { sibs = await siblingProjects(projectId); } catch (_) { sibs = []; }
+  const out = [...own];
+  for (const sp of sibs) {
+    try { const q = await listPlans(sp.id); for (const d of ((q && q.lib && q.lib.pdfs) || []).filter((x) => x && x.path)) out.push({ ...d, from: `${sp.code}${sp.name ? " " + sp.name : ""}` }); } catch (_) { /* ignore */ }
+  }
+  return out;
+}
+async function loadBomLibraryOne(projectId, onlyCodes = null, onTick, skipPanels = false) {
   const pms = await listRows("part_master", { filters: { project_id: projectId }, strict: true });
   const byId = new Map(pms.map((p) => [p.id, p]));
   const lib = { panels: {}, subs: {}, parts: {} };
@@ -42,7 +79,7 @@ export async function loadBomLibrary(projectId, onlyCodes = null, onTick) {
     lib.parts[code] = { d: p.part_name && p.part_name !== code ? p.part_name : "", l: p.default_length_mm ?? null, m: p.inventory_code || p.material || "", k: "part", rev: p.rev || "" };
   }
   const want = onlyCodes ? new Set(onlyCodes.map(NC)) : null;
-  const queue = pms.filter((p) => (p.kind === "panel" || p.kind === "subassembly") && (!want || want.has(NC(p.part_no))));
+  const queue = pms.filter((p) => ((p.kind === "panel" && !skipPanels) || p.kind === "subassembly") && (!want || want.has(NC(p.part_no))));
   const seen = new Set();
   while (queue.length) {
     const batch = queue.splice(0, queue.length).filter((p) => !seen.has(p.id));
@@ -579,4 +616,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { pdfFolderOf, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

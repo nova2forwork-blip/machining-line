@@ -171,7 +171,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     libReq.current = libKey;
     setLibState({ s: "loading", key: libKey });
     const codes = itemsMode ? null : libCodes;   // โหมด items = โหลดทั้งคลัง (ไว้ให้เลือก)
-    api.loadBomLibrary(hdr.projectId, codes)
+    api.loadBomLibrary(hdr.projectId, codes, undefined, { fallback: true })   // ★ 2026-11-12 ยังไม่มีในคลังตึกนี้ = ใช้ของตึกอื่นที่รหัสเดียวกัน
       .then((l) => { if (libReq.current === libKey) {
         setLib(l); setLibState({ s: "ok", key: libKey });
         // หมวด / งานซับ / ใบงาน ที่ตั้งไว้ในคลังของโปรเจค → ใช้เป็นค่าเริ่มของใบนี้ (ที่ตั้งในใบนี้แล้วไม่ทับ)
@@ -793,7 +793,7 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
         </div>
         {reading ? <div className={`rw-msg ${reading.err ? "bad" : reading.warn ? "warn" : "info"}`}>{reading.err || reading.warn || `กำลังอ่าน PDF ${reading.n}/${reading.of}…`}{reading.warn ? <button type="button" className="rw-x" style={{ marginLeft: 8 }} onClick={() => setReading(null)} aria-label="ปิด">×</button> : null}</div> : null}
         <div className="rw-tools">
-          <span className="rw-muted small"><b>ซับ / พาร์ท ของโปรเจค:</b> {libState.s === "loading" ? "กำลังโหลด…" : libState.s === "err" ? `โหลดไม่ได้ (${libState.err})` : lib ? `ซับ ${Object.keys(lib.subs).length} · พาร์ท ${nf(Object.keys(lib.parts).length)} เบอร์ — ดึงมาใช้กับแผงที่อัพให้เอง` : "ยังไม่ได้โหลด"}</span>
+          <span className="rw-muted small"><b>ซับ / พาร์ท ของโปรเจค:</b> {libState.s === "loading" ? "กำลังโหลด…" : libState.s === "err" ? `โหลดไม่ได้ (${libState.err})` : lib ? `ซับ ${Object.keys(lib.subs).length} · พาร์ท ${nf(Object.keys(lib.parts).length)} เบอร์ — ดึงมาใช้กับแผงที่อัพให้เอง${lib.fallback ? ` · ใช้ของตึกอื่นที่รหัสเดียวกัน (ตึกนี้ยังไม่มี): ซับ ${lib.fallback.subs.length} · พาร์ท ${lib.fallback.parts.length}` : ""}` : "ยังไม่ได้โหลด"}</span>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onReloadLib} disabled={libState.s === "loading"} title="โหลดซับ/พาร์ทของโปรเจคใหม่ (หลังเพิ่มที่หน้า ซับ / พาร์ท ของโปรเจค)">↻ โหลดใหม่</button>
           {pdfs.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { if (await askConfirm({ message: `เอา PDF ออกทั้งหมด ${pdfs.length} ไฟล์?`, tone: "danger", confirmText: "เอาออก", cancelText: "ยกเลิก" })) { setPdfs([]); setSel(null); } }}><Icon name="trash" size={13} /> ล้างไฟล์ทั้งหมด</button> : null}
           {demoTools?.pdfs ? demoTools.pdfs(setPdfs, setSel) : null}
@@ -1021,7 +1021,9 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
       if (!api?.saveLibrary) { setReading({ err: "ระบบนี้ยังบันทึกลงคลังจากหน้านี้ไม่ได้ — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค”" }); return; }
       // รวมกับคลังเดิม → บันทึกลงคลังของโปรเจค (เหมือนกด "บันทึก" ที่หน้า ซับ / พาร์ท ของโปรเจค) · หมวด/งานซับใช้ค่าของคลัง
       const ov = base.ov || {};
-      const merged = buildBom({ lib: base, pdfs: got, ack: {}, useLib: true });
+      // ★ 2026-11-12 ของตึกอื่นที่ยืมมาใช้ (from) ไม่บันทึกเป็นคลังของตึกนี้ — เก็บเฉพาะของตึกนี้ + ที่เพิ่งวาง
+      const ownOnly = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => !(v && v.from)));
+      const merged = buildBom({ lib: { ...base, subs: ownOnly(base.subs), parts: ownOnly(base.parts) }, pdfs: got, ack: {}, useLib: true });
       const cfg = { partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] };
       const catOfLib = makeCatOf(merged, ov.catOv || {}, cfg);
       setReading({ msg: "บันทึกลงคลังของโปรเจค…" });

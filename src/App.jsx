@@ -5075,15 +5075,18 @@ function PartProgressModal({ release, user, goTo, onClose }) {
     const w = window.open("", "_blank");   // เปิดแท็บก่อน (กันเบราว์เซอร์บล็อกป๊อปอัพ) แล้วค่อยใส่ลิงก์
     setDwg({ s: "loading", msg: "" });
     try {
-      const r = await realReleaseApi.listPlans(pid); const pdfs = ((r && r.lib && r.lib.pdfs) || []).filter((x) => x && x.path);
+      // ★ 2026-11-12 ตึกนี้ยังไม่มีแบบ → ใช้แบบของตึกอื่นที่รหัสโปรเจคเดียวกัน (ของตึกนี้มาก่อนเสมอ)
+      const pdfs = await realReleaseApi.libPdfsWithFallback(pid);
       // ★ เบอร์เดียวกันหลาย Rev → เปิด Rev ล่าสุด (B ใหม่กว่า A) · ไม่มี Rev อื่น = ไฟล์ของเบอร์ตรงตัว
-      const fam = pdfs.filter((x) => relBaseOf(x.code) === relBaseOf(partNo)).sort((a, b) => relRev(b.code).localeCompare(relRev(a.code)));
-      const hit = fam[0] || pdfs.find((x) => relNC(x.code) === relNC(partNo));
+      const mine = pdfs.filter((x) => !x.from); const pool = mine.some((x) => relBaseOf(x.code) === relBaseOf(partNo) || relNC(x.code) === relNC(partNo)) ? mine : pdfs;
+      const fam = pool.filter((x) => relBaseOf(x.code) === relBaseOf(partNo)).sort((a, b) => relRev(b.code).localeCompare(relRev(a.code)));
+      const hit = fam[0] || pool.find((x) => relNC(x.code) === relNC(partNo));
       if (!hit) { if (w) w.close(); setDwg({ s: "none", msg: `ยังไม่มีไฟล์แบบของ ${partNo} ในคลังโปรเจค` }); return; }
       const url = await realReleaseApi.getLibPdfUrl(hit.path);
       if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
       const newer = relRev(hit.code) > relRev(partNo);
-      setDwg({ s: "idle", msg: relNC(hit.code) === relNC(partNo) ? "" : newer ? `เปิดแบบ ${hit.code} — Rev ใหม่กว่าในใบ (${partNo})` : `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)` });
+      const fromTxt = hit.from ? ` · แบบจากตึกอื่นที่รหัสเดียวกัน (${hit.from}) — ตึกนี้ยังไม่มีแบบนี้ในคลัง` : "";
+      setDwg({ s: "idle", msg: (relNC(hit.code) === relNC(partNo) ? "" : newer ? `เปิดแบบ ${hit.code} — Rev ใหม่กว่าในใบ (${partNo})` : `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)`) + fromTxt });
     } catch (e) { if (w) w.close(); setDwg({ s: "err", msg: "เปิดแบบไม่ได้: " + (e?.message || e) }); }
   }
   const partName = release.part_master?.part_name || "";
