@@ -30,6 +30,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
+import { NC as relNC, baseOf as relBaseOf } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
@@ -5062,6 +5063,22 @@ function PartProgressModal({ release, user, goTo, onClose }) {
 
   const routing = release.part_master?.routing || [];
   const partNo = release.part_master?.part_no || "-";
+  // ★ 2026-11-12 ผู้ใช้: "เพิ่มปุ่มดูแบบด้วย" → เปิด PDF แบบของเบอร์นี้จากคลัง "ซับ / พาร์ท ของโปรเจค" (ไฟล์ที่อัพตอนลงแบบ)
+  const [dwg, setDwg] = useState({ s: "idle", msg: "" });
+  async function openDrawing() {
+    const pid = release.part_master?.project_id || release.project_id || null;
+    if (!pid || dwg.s === "loading") { if (!pid) setDwg({ s: "none", msg: "ไม่รู้โปรเจคของเบอร์นี้" }); return; }
+    const w = window.open("", "_blank");   // เปิดแท็บก่อน (กันเบราว์เซอร์บล็อกป๊อปอัพ) แล้วค่อยใส่ลิงก์
+    setDwg({ s: "loading", msg: "" });
+    try {
+      const r = await realReleaseApi.listPlans(pid); const pdfs = ((r && r.lib && r.lib.pdfs) || []).filter((x) => x && x.path);
+      const hit = pdfs.find((x) => relNC(x.code) === relNC(partNo)) || pdfs.find((x) => relBaseOf(x.code) === relBaseOf(partNo));
+      if (!hit) { if (w) w.close(); setDwg({ s: "none", msg: `ยังไม่มีไฟล์แบบของ ${partNo} ในคลังโปรเจค` }); return; }
+      const url = await realReleaseApi.getLibPdfUrl(hit.path);
+      if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
+      setDwg({ s: "idle", msg: hit.code !== partNo ? `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)` : "" });
+    } catch (e) { if (w) w.close(); setDwg({ s: "err", msg: "เปิดแบบไม่ได้: " + (e?.message || e) }); }
+  }
   const partName = release.part_master?.part_name || "";
 
   // สไตล์การ์ดสรุป (ใช้ซ้ำหลายจุด)
@@ -5255,7 +5272,11 @@ function PartProgressModal({ release, user, goTo, onClose }) {
         {goTo
           ? <Btn type="button" variant="ghost" onClick={() => { goTo("labels", { releaseId: release.id }); onClose(); }} style={{ color: "var(--accent-dk)" }}><Icon name="printer" size={14} /> {lang === "en" ? "Print QR" : "พิมพ์ QR"}</Btn>
           : <span />}
-        <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>
+        <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {dwg.msg ? <span style={{ fontSize: 12.5, color: dwg.s === "idle" ? "var(--muted)" : "#a15c00" }} role="status">{dwg.msg}</span> : null}
+          <Btn type="button" variant="ghost" onClick={openDrawing} disabled={dwg.s === "loading"} style={{ color: "var(--accent-dk)" }}><Icon name="folder" size={14} /> {dwg.s === "loading" ? "กำลังเปิด…" : lang === "en" ? "Drawing" : "ดูแบบ"}</Btn>
+          <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>
+        </span>
       </div>
     </Modal>
   );
