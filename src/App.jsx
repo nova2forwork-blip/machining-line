@@ -6832,8 +6832,8 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       auditRecord("delete_release", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty, project: r.part_master?.projects?.code });
       const next = releases.filter((x) => x.id !== r.id);
       setReleases(next);
-      onChanged && onChanged();               // ให้หน้ารายการหลักรีโหลดด้วย
-      if (next.length === 0) { await offerDeleteEmptyPlan(r.part_master?.project_id, r.release_order); onBack(); return; } // ลบหมดทั้งกลุ่ม → (ถามลบใบหลัก) → กลับหน้ารายการ
+      if (next.length === 0) { await offerDeleteEmptyPlan(r.part_master?.project_id, r.release_order); onChanged && onChanged(); onBack(); return; }   // ★ 2026-11-12 ถามลบใบหลักก่อน แล้วค่อยรีโหลด (รายการ / ใบหลักที่เปิดค้างจะได้ตรง)
+      onChanged && onChanged();               // ให้หน้ารายการหลักรีโหลดด้วย // ลบหมดทั้งกลุ่ม → (ถามลบใบหลัก) → กลับหน้ารายการ
       loadStats(next);
     } catch (e) {
       mlsToast("ลบไม่สำเร็จ: " + e.message, "error");
@@ -7567,20 +7567,47 @@ function PlanOrderCell({ g, left, L }) {
 function useReleasePlans(projectId = null) {
   const [plans, setPlans] = useState([]);
   const loadPlans = useCallback(async () => {
-    try { const r = await realReleaseApi.listPlans(projectId); setPlans(r.plans || []); } catch { setPlans([]); }
+    // ★ 2026-11-12 คืนรายการที่โหลดได้ (ให้หน้าใบหลักที่เปิดค้างอัปเดตตาม) · โหลดไม่ได้ = คืน null และไม่ล้างรายการเดิม (เดิมใบหลักหายเงียบ ๆ)
+    try { const r = await realReleaseApi.listPlans(projectId); const ps = r.plans || []; setPlans(ps); return ps; }
+    catch (e) { mlsToast("โหลดรายการใบหลัก (Release) ไม่สำเร็จ: " + (e?.message || e), "error"); return null; }
   }, [projectId]);
   useEffect(() => { loadPlans(); }, [loadPlans]);
   return { plans, setPlans, loadPlans };
 }
+// ★ 2026-11-12 (ตรวจหน้า ปล่อยงาน/โปรเจค ข้อ 2): หน้าล็อตแก้ใบหลักในฐานข้อมูลได้ (ย้ายไปใบอื่น → catOv / ลบล็อตสุดท้าย → ลบใบหลัก)
+//   เดิมโหลดแค่ releases → กลับไปหน้าใบหลักยังถือใบเก่า แก้ต่อแล้วบันทึกทับ · ตอนนี้โหลดใบหลักใหม่ แล้วให้หน้าใบหลักที่เปิดค้างใช้ใบล่าสุด (ใบถูกลบ = ปิด)
+function usePlanRefresh(load, loadPlans, setPlanView) {
+  return useCallback(async () => {
+    const [, ps] = await Promise.all([load(), loadPlans()]);
+    if (ps) setPlanView((v) => { if (!v || !v.plan) return v; const np = ps.find((x) => x.id === v.plan.id); return np ? { ...v, plan: np } : null; });
+  }, [load, loadPlans, setPlanView]);
+}
 function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null }) {
   const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  // ★ 2026-11-12 (ตรวจหน้า ปล่อยงาน/โปรเจค ข้อ 1, 3): แก้ใบแล้วรอ 0.8 วิ ค่อยบันทึก — ออกจากหน้า (กลับ / เปิดล็อต / พิมพ์ QR) หรือโหลดรายการใหม่ก่อนครบเวลา
+  //   เดิม = ทิ้งที่แก้ (clearTimeout) / โหลดใบเก่าจากฐานข้อมูลมาทับ → ตอนนี้บันทึกที่ค้างทันที (flush) ก่อนออก / ก่อนโหลดใหม่
+  const pending = useRef(null);
+  const flush = () => {
+    clearTimeout(timer.current);
+    const p = pending.current; pending.current = null;
+    if (!p) return Promise.resolve();
+    return realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error"));
+  };
+  const flushRef = useRef(flush); flushRef.current = flush;
+  useEffect(() => () => { flushRef.current(); }, []);
+  const reload = async () => { await flush(); await onReload(); };
   const [partView, setPartView] = useState(null);   // ★ 2026-11-11 กดแถวในใบหลัก → ความคืบหน้าแยกขั้นตอน (ป็อปอัพเดียวกับหน้าล็อต)
+  const planRef = useRef(view?.plan); planRef.current = view?.plan;
   const applyPlan = (p) => {
+    // ★ 2026-11-12 ข้อ 8: modUndone (M ที่เคยถูกย้อน) มีแต่เพิ่ม — ย้อน/ทำซ้ำไปใบรุ่นก่อน (ที่ยังไม่มีบันทึกนั้น) ต้องไม่ทำให้หาย
+    const keep = planRef.current?.modUndone || [];
+    if (keep.length > (p.modUndone || []).length) p = { ...p, modUndone: keep };
+    planRef.current = p;
     setView((v) => (v ? { ...v, plan: p } : v));
     setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
+    pending.current = p;
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => { realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error")); }, 800);
+    timer.current = setTimeout(flush, 800);
   };
   // ★ 2026-11-04 Ctrl+Z / Ctrl+Y ย้อน/ทำซ้ำการแก้แผน (หมวด / ใบงาน / วัสดุ / ยอดเบิก / ใบปล่อย …) — ย้อนแล้วบันทึกให้เลย
   //   ปล่อยล็อต = งานในฐานข้อมูล → ล้างประวัติ (ยกเลิกล็อตด้วยปุ่มของมันเอง) · Modify (บันทึกเป็น M) = ขั้นพิเศษ ย้อนได้ (2026-11-12)
@@ -7588,13 +7615,12 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   const planId = view?.plan?.id;
   useEffect(() => { hist.reset(); }, [planId]);   // eslint-disable-line react-hooks/exhaustive-deps
   const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
-  const planRef = useRef(view?.plan); planRef.current = view?.plan;
   // ขั้น "บันทึกเป็น M" ในประวัติ Ctrl+Z: ย้อน = ยกเลิก M (ฐานข้อมูล + ใบหลัก) · ทำซ้ำได้เฉพาะ M ที่ไม่ได้แก้ในล็อต
-  const showPlan = (p) => { clearTimeout(timer.current); setView((v) => (v && v.plan && v.plan.id === p.id ? { ...v, plan: p } : v)); setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x))); };
-  const modUndoStepOf = (prev, np, mod) => modUndoStep({ prev, np, mod, api: realReleaseApi, user, showPlan, onReload, toast: mlsToast });
+  const showPlan = (p) => { clearTimeout(timer.current); pending.current = null; planRef.current = p; setView((v) => (v && v.plan && v.plan.id === p.id ? { ...v, plan: p } : v)); setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x))); };
+  const modUndoStepOf = (prev, np, mod) => modUndoStep({ prev, np, mod, api: realReleaseApi, user, showPlan, onReload: reload, toast: mlsToast });
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
-      <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null}
+      <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null} onInboxUsed={() => setView((v) => (v && v.inbox ? { ...v, inbox: null } : v))}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
         onOpenPart={(id) => { const r = (releases || []).find((x) => String(x.id) === String(id)); if (!r) return false; setPartView(r); return true; }}
         onOpenLot={onOpenGroup ? (lotNo) => {
@@ -7608,26 +7634,26 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           // ★ 2026-11-09 ลบใบหลัก: ไม่มีล็อต → เลขนี้ใช้ลงใหม่ได้ · มีล็อต (เช่น สร้างใบหลักซ้ำ) → ลบเฉพาะใบหลัก ล็อต/QR อยู่ครบ
           const p = view.plan;
           if (!(await confirmDeletePlan(p, lots))) return;
-          hist.reset();
+          hist.reset(); clearTimeout(timer.current); pending.current = null;   // ใบถูกลบ → ไม่บันทึกที่ค้างกลับลงไป
           setPlans((ps) => ps.filter((x) => x.id !== p.id));
           setView(null);
-          await onReload();
+          await reload();
         }}
         onModified={async (np, mod) => {
           // ★ 2026-11-12 บันทึกเป็น M แล้วย้อนได้ด้วย Ctrl+Z (ถามก่อน · ล็อตที่ M ลด/ยกเลิก → ยกเลิก M ในล็อตด้วย) · ไม่ล้างประวัติที่แก้ก่อน M
-          clearTimeout(timer.current);
+          clearTimeout(timer.current); pending.current = null;   // ใบที่ค้างบันทึกรวมอยู่ใน M แล้ว (modifyRelease บันทึกใบใหม่ทั้งใบ)
           hist.record(planRef.current, np, modUndoStepOf(planRef.current, np, mod));
           setView((v) => (v ? { ...v, plan: np } : v));
           setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต) · Ctrl+Z = ย้อน ${mod.ver}`, "success");
-          await onReload();
+          await reload();
         }}
-        onSheetMoved={async ({ codes, toLabel, rows, msg }) => { hist.reset(); mlsToast(msg || `ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await onReload(); }}
+        onSheetMoved={async ({ codes, toLabel, rows, msg }) => { hist.reset(); mlsToast(msg || `ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await reload(); }}
         onReleased={async ({ lotNo, rows, hw = 0 }) => {
           hist.reset();
           const q = rows.reduce((a, r) => a + r.qty, 0);
           mlsToast(rows.length ? `ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง${hw ? ` · เบิกอุปกรณ์ ${nc(hw)} รายการ (ใบเบิก)` : ""}` : `บันทึกใบเบิกอุปกรณ์ ${lotNo} แล้ว — ${nc(hw)} รายการ (ไม่มี QR)`, "success");
-          await onReload();
+          await reload();
         }} />
       {partView ? <PartProgressModal release={partView} user={user} goTo={goTo} onClose={() => setPartView(null)} /> : null}
     </Suspense>
@@ -7858,6 +7884,7 @@ function ReleasePage({ user, goTo }) {
   }, [recent, deptFilter, projectFilter, fromDate, toDate, orderSearch]);
   function clearFilters() { setFromDate(""); setToDate(""); setProjectFilter(""); setOrderSearch(""); }
   const planLeftAll = usePlanLeft(plans, recent);
+  const refreshAfterLot = usePlanRefresh(load, loadPlans, setPlanView);
   // จำนวนใบต่อแผนก (ป้ายตัวเลขบนแท็บ) — นับตามตัวกรองโปรเจค/วันที่/ค้นหาเดียวกับตาราง
   const relDeptCounts = useMemo(() => {
     const src = hasFilter ? recent.filter(matchRel) : recent; const c = { all: groupReleases(src).length };
@@ -7876,7 +7903,7 @@ function ReleasePage({ user, goTo }) {
   }), [groups, plans, projectFilter, deptFilter, hasFilter, sort, openPlans, allUnitStats, allOpProg]);
 
   if (viewGroup) {
-    return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={load} />;
+    return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={refreshAfterLot} />;
   }
   if (planView) {
     return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={async () => { await Promise.all([load(), loadPlans()]); }} onOpenGroup={setViewGroup} />;
@@ -12442,7 +12469,14 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   const relNorm = (v) => String(v || "").toLowerCase().replace(/[\s\-_/.]+/g, "");
   const relTokens = useMemo(() => relQ.trim().toLowerCase().split(/\s+/).map(relNorm).filter(Boolean), [relQ]);
   const relHit = (r) => { if (!relTokens.length) return true; const hay = [r.release_order, r.part_master?.part_no, r.part_master?.part_name, r.part_master?.material, r.part_master?.inventory_code, r.material, r.mdf_no, r.part_master?.mdf_no, r.note].map(relNorm).join("|"); return relTokens.every((tk) => hay.includes(tk)); };
-  const groups = useMemo(() => (rels ? groupReleases((curDept === "all" ? rels : rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept)).filter(relHit)) : null), [rels, curDept, relTokens]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // ★ 2026-11-12 (ตรวจหน้าโปรเจค ข้อ 7): จัดกลุ่มก่อน แล้วค่อยเลือกใบที่มีเบอร์ตรงคำค้น (ทั้งใบ) — แบบเดียวกับหน้า Release (รอบ 11 A4)
+  //   เดิมกรองทีละเบอร์ก่อนจัดกลุ่ม → ค้น AN04-001 แล้วเข้าล็อตเห็นแค่ 1 เบอร์ (ยอด/สถานะผิด · "แก้หัวเอกสาร" แก้แค่เบอร์ที่เห็น → ใบแตกเป็น 2)
+  const groups = useMemo(() => {
+    if (!rels) return null;
+    const all = groupReleases(curDept === "all" ? rels : rels.filter((r) => deptOfKind(r.part_master?.kind) === curDept));
+    if (!relTokens.length) return all;
+    return all.filter((g) => g.releases.some(relHit)).map((g) => { const hits = g.releases.filter(relHit).length; return hits < g.releases.length ? { ...g, matchCount: hits } : g; });
+  }, [rels, curDept, relTokens]);   // eslint-disable-line react-hooks/exhaustive-deps
   // ค้นอยู่: ใบหลักที่โชว์ = ใบที่มีล็อตตรงคำค้น หรือเลขใบตรงคำค้นเอง (ใบที่ยังไม่ปล่อยล็อต)
   const plansShown = useMemo(() => { if (!relTokens.length) return plans; const nums = new Set((groups || []).map((g) => roNumOf(g.releaseOrder))); return plans.filter((p) => nums.has(roNumOf(p.ro)) || relTokens.every((tk) => relNorm(p.ro).includes(tk))); }, [plans, groups, relTokens]);   // eslint-disable-line react-hooks/exhaustive-deps
   const curTab = curDept === "all" ? { ...DEPT_ALL, label: "" } : (DEPT_TABS.find((d) => d.value === curDept) || DEPT_TABS[0]);
@@ -12450,6 +12484,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   //   ล็อตที่ไม่มีใบหลัก (ปล่อยแบบเดิม) = แถวปกติ · เรียงที่ชั้นบนสุด แล้วล็อตเรียงตามเลขใต้ใบหลัก
   const togglePlan = (g) => setOpenPlans((o) => { const n = new Set(o); n.has(g.openKey) ? n.delete(g.openKey) : n.add(g.openKey); return n; });
   const planLeft = usePlanLeft(plans, rels);
+  const refreshAfterLot = usePlanRefresh(load, loadPlans, setPlanView);
   const treeRows = useMemo(() => buildReleaseTree(groups, plansShown.map((p) => ({ ...p, projectCode: p.projectCode || project.code })), {
     includeEmpty: curDept === "all", sort, open: openPlans,
     acc: {
@@ -12468,7 +12503,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
         group={viewGroup} user={user} goTo={goTo}
         onBack={() => setViewGroup(null)}
         onHome={onBack}
-        onChanged={load}
+        onChanged={refreshAfterLot}
       />
     );
   }
@@ -12522,7 +12557,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
       ) : null}
       <DeptTabs value={curDept} onChange={setDept} counts={rels ? deptCounts : null} withAll />
       <Card title={groups ? `Release ${curTab.label} (${treeRows.filter((r) => !r.childOf).length})` : "Release ทั้งหมด"}
-        right={rels && rels.length ? (
+        right={(rels && rels.length) || plans.length ? (
           <label className="rs-search sm">
             <Icon name="search" size={14} />
             <input type="search" value={relQ} onChange={(e) => setRelQ(e.target.value)} placeholder={L("ค้นหา Release / Part / INV / หมายเหตุ", "Search release / part / INV / remark")} aria-label={L("ค้นหา Release ในโปรเจคนี้", "Search releases in this project")} />
@@ -12540,7 +12575,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
             <div className="empty-state-title">{L(`ไม่พบ Release ที่ตรงกับ “${relQ.trim()}”`, `No releases match “${relQ.trim()}”`)}</div>
             <div className="empty-state-sub"><button type="button" className="rs-clear" onClick={() => setRelQ("")}>{L("ล้างคำค้น", "Clear search")}</button></div>
           </div>
-        ) : groups.length === 0 && !(relTokens.length && treeRows.length) ? (
+        ) : treeRows.length === 0 ? (   // ★ 2026-11-12 ข้อ 6: ใบหลักที่ยังไม่ปล่อยล็อตก็เป็นแถว (เดิมนับแค่ล็อต → ขึ้น "ยังไม่มี Release" ทั้งที่มีใบ)
           <div className="empty-state">
             <Icon name="box" size={32} />
             <div className="empty-state-title">{rels && rels.length
@@ -12565,7 +12600,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
               { key: "lots", header: <LotsAllBtn rows={treeRows} openPlans={openPlans} setOpenPlans={setOpenPlans} en={getLang() === "en"} />, dataLabel: "ล็อต", thStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, tdStyle: { width: "1%", whiteSpace: "nowrap", paddingRight: 4 }, cell: (g) => g.isPlan ? <PlanLotsBtn g={g} open={openPlans.has(g.openKey)} onToggle={() => togglePlan(g)} L={L} /> : null },
               { key: "date", header: "วันที่", sortKey: "date", cell: (g) => fmtD(g.date) },
               { key: "order", header: "Release Order", sortKey: "order", cell: (g) => g.isPlan ? <PlanOrderCell g={g} left={planLeft} L={L} /> : g.childOf ? <span className="prj-lot-cell">└ {g.releaseOrder}</span> : (g.releaseOrder || (g.releases[0]?.part_master?.part_no ?? "-")) },
-              { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => `${fmtNum(g.releases.length)} Part` },
+              { key: "parts", header: "Part No.", sortKey: "parts", align: "right", cell: (g) => <>{fmtNum(g.releases.length)} Part{g.matchCount ? <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>ตรงที่ค้น {fmtNum(g.matchCount)}</div> : null}</> },
               { key: "qty", header: "จำนวน", sortKey: "qty", align: "right", cell: (g) => `${fmtNum(g.totalQty)} ชิ้น` },
               { key: "finished", header: "เสร็จแล้ว", sortKey: "finished", align: "right",
                 tdProps: (g, i, c) => ({ style: { fontWeight: 700, color: statsReady && c.gFinished > 0 ? "var(--success)" : "var(--muted)" } }),

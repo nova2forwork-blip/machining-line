@@ -47,7 +47,13 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
   const ref = useRef(null);
   const [libPick, setLibPick] = useState({});   // job key → projectId ที่เลือกเก็บเข้าคลัง
   const [libMsg, setLibMsg] = useState({});     // job key → { busy | ok | err }
-  const byRo = (ro) => (plans || []).find((p) => roKey(p.ro) === roKey(ro));
+  // ★ 2026-11-12 เลข Release ซ้ำกันได้ข้ามโปรเจค (P-012 ของ A กับของ B) → จับคู่ด้วยรหัสโปรเจคในใบด้วย
+  //   ในใบมีรหัสโปรเจค = ต้องตรง (ไม่ตรงเลย = ไม่จับคู่) · ไม่มีรหัส = จับได้เฉพาะเมื่อมีใบเลขนี้ใบเดียว (ซ้ำหลายโปรเจค = ไม่เดา)
+  const byRo = (ro, prjCode = "") => {
+    const hit = (plans || []).filter((p) => roKey(p.ro) === roKey(ro)); const pc = NC(prjCode || "");
+    if (pc) return hit.find((p) => NC(p.projectCode || "") === pc) || hit.find((p) => pc && NC(p.projectCode || "").startsWith(pc)) || null;
+    return hit.length === 1 ? hit[0] : null;
+  };
   // ★ 2026-11-10 เก็บแบบซับ/พาร์ทเข้าคลังของโปรเจคตรงจากกล่องรับเอกสาร (เหมือนวางที่ขั้น "เลือกซับ / พาร์ท")
   async function saveToLibrary(j, projectId) {
     const project = projects.find((p) => p.id === projectId); if (!project || !api?.saveLibrary || !api?.loadBomLibrary) return;
@@ -108,14 +114,14 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
     const drawings = docs.filter((x) => x.type === "drawing"); const used = new Set();
     const list = [];
     for (const s of docs.filter((x) => x.type === "modify")) {
-      const o = s.data; const plan = o.refRo ? byRo(o.refRo) : null;
+      const o = s.data; const plan = o.refRo ? byRo(o.refRo, o.projectCode) : null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
       const mine = drawings.filter((d) => codes.has(NC(d.data.code))); mine.forEach((d) => used.add(keyOf(d)));
       const missing = o.items.filter((i) => !mine.some((d) => NC(d.data.code) === NC(i.code)));
       list.push({ k: "modify:" + s.file.name, sheet: s, plan, drawings: mine, missing, refRo: o.refRo });
     }
     for (const s of docs.filter((x) => x.type === "order")) {
-      const o = s.data; const plan = o.ro ? byRo(o.ro) : null;
+      const o = s.data; const plan = o.ro ? byRo(o.ro, o.projectCode || o.projectFull) : null;
       const codes = new Set(o.items.map((i) => NC(i.code)));
       const mine = drawings.filter((d) => !used.has(keyOf(d)) && (codes.has(NC(d.data.code)) || (d.data.kind === "loose" && (d.data.site || []).some((r) => codes.has(NC(r.code)))))); mine.forEach((d) => used.add(keyOf(d)));
       const pc = NC(o.projectCode || ""); const prj = projects.find((p) => NC(p.code) === NC(o.projectFull || "") || NC(p.code) === pc || (pc && NC(p.code).startsWith(pc)));

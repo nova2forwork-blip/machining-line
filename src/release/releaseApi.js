@@ -465,7 +465,11 @@ export async function undoModify({ plan, prevPlan, mod, by = "" }, onProgress = 
   }
   onProgress(`คืนใบ ${plan.ro} เป็นก่อน ${mod.ver}…`);
   const np = { ...prevPlan, id: plan.id, modUndone: [...(plan.modUndone || prevPlan.modUndone || []), { ver: mod.ver, no: mod.no, at: new Date().toISOString(), by, lots: done }] };
-  await updatePlan(np);
+  try { await updatePlan(np); }
+  catch (e) {   // ★ 2026-11-12 ยกเลิกในล็อตสำเร็จแล้วแต่บันทึกใบหลักไม่ได้ → บอกให้โหลดใหม่ (ล็อตเปลี่ยนแล้ว) · กด Ctrl+Z อีกครั้งได้ (ล็อตที่ยกเลิกแล้วจะข้าม)
+    const e2 = new Error(`${done.length ? `ยกเลิก ${mod.ver} ในล็อต ${done.join(", ")} แล้ว แต่` : ""}บันทึกใบ ${plan.ro} ไม่สำเร็จ (${e?.message || e}) — กด Ctrl+Z อีกครั้งเพื่อลองใหม่`);
+    e2.partial = done; throw e2;
+  }
   return { np, lots: done };
 }
 

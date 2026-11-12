@@ -35,7 +35,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onSheetMoved = null, onOpenPart = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onInboxUsed = null, onSheetMoved = null, onOpenPart = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   // ★ 2026-11-10 ปล่อยผิดใบ (งานพับไปอยู่ MACHINING PART) → ย้ายหมวดของเบอร์ที่ปล่อยแล้ว: แก้ "ใบ: …" ในแถวที่ปล่อย + หมวดในแผน (QR เดิมใช้ต่อ)
   async function moveReleased(codes, cat) {
@@ -64,7 +64,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   }
   // ★ 2026-11-10 มาจากกล่องรับเอกสาร: เปิด Modify / เพิ่มรายการ พร้อมไฟล์ที่วางไว้แล้ว (inbox = { mode: "modify"|"add", files })
   const [inboxFiles, setInboxFiles] = useState(null);
-  useEffect(() => { if (inbox && inbox.files && inbox.files.length) { setInboxFiles(inbox.files); setModify(inbox.mode === "add" ? "add" : true); } }, [inbox]);   // eslint-disable-line react-hooks/exhaustive-deps
+  //   ★ 2026-11-12 ใช้ไฟล์แล้วบอกให้ล้าง (onInboxUsed) — เดิมเปิดล็อตแล้วกลับมา หน้าใบหลักเปิดใหม่ → Modify เด้งขึ้นพร้อมไฟล์เดิมซ้ำ (เสี่ยงบันทึก M ซ้ำ)
+  useEffect(() => { if (inbox && inbox.files && inbox.files.length) { setInboxFiles(inbox.files); setModify(inbox.mode === "add" ? "add" : true); if (onInboxUsed) onInboxUsed(); } }, [inbox]);   // eslint-disable-line react-hooks/exhaustive-deps
   // ★ 2026-11-10 ใบปะหน้า (plan.order) — เทียบกับของในใบ: แบบยังมาไม่ครบ → เตือน + ปุ่มเพิ่มรายการ
   const orderCmp = useMemo(() => (plan.order ? compareOrder(plan.order, need) : []), [plan.order, need]);
   const orderMiss = orderCmp.filter((x) => x.status === "missing"), orderDiff = orderCmp.filter((x) => x.status === "less" || x.status === "more");
