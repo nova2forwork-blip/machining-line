@@ -35,7 +35,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onInboxUsed = null, onSheetMoved = null, onOpenPart = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onInboxUsed = null, onSheetMoved = null, onOpenPart = null, onConflict = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   // ★ 2026-11-10 ปล่อยผิดใบ (งานพับไปอยู่ MACHINING PART) → ย้ายหมวดของเบอร์ที่ปล่อยแล้ว: แก้ "ใบ: …" ในแถวที่ปล่อย + หมวดในแผน (QR เดิมใช้ต่อ)
   async function moveReleased(codes, cat) {
@@ -445,7 +445,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
 
 
       {modify ? (
-        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => { setModify(false); setInboxFiles(null); setInlineInit(null); }} addOnly={modify === "add"} initialFiles={inboxFiles} init={modify === true ? inlineInit : null}
+        <ModifyDrawer plan={plan} need={need} rel={rel} api={api} user={user} onClose={() => { setModify(false); setInboxFiles(null); setInlineInit(null); }} addOnly={modify === "add"} initialFiles={inboxFiles} init={modify === true ? inlineInit : null} onConflict={onConflict}
           onSaved={async (np, mod) => { setModify(false); setInlineInit(null); if (onModified) await onModified(np, mod); }}
           onAdded={(np, n) => { setModify(false); if (onPlanChange) onPlanChange(np); }} />
       ) : null}
@@ -735,7 +735,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 // ══ Modify Release (แผงด้านขวา) ══
 //   แก้ยอดต้องใช้ / ยกเลิกเบอร์ / ยกเลิกที่อยู่ (แผงที่ยังไม่ปล่อย) / เพิ่มเบอร์ใหม่ — 1 ครั้ง = 1 เลข M (M-001 …)
 //   ของที่ปล่อยไปแล้วเกินยอดใหม่ → ลด/ยกเลิกในล็อตให้เอง (ล็อตล่าสุดก่อน) ผ่าน Modify เดิมของระบบ · จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง
-function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null }) {
+function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null, onConflict = null }) {
   // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
   const [tab, setTab] = useState(addOnly ? "add" : init && init.bchg ? (init.bscope === "panel" ? "bom" : "sub") : "part");
   const [q, setQ] = useState("");
@@ -866,7 +866,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       if (!ok) return;
       setBusy("บันทึก…"); setErr("");
       try { await api.updatePlan(np); await keepDrawings(); setBusy(""); onAdded && onAdded(np, extra.length); }
-      catch (e) { setBusy(""); setErr(e?.message || String(e)); }
+      catch (e) { setBusy(""); setErr(e?.message || String(e)); if (e?.code === "conflict" && onConflict) await onConflict(); }
       return;
     }
     const mod = {
@@ -903,7 +903,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       await keepDrawings();
       setBusy("");
       await onSaved(np, mod);
-    } catch (e) { setBusy(""); setErr(e?.message || String(e)); }
+    } catch (e) { setBusy(""); setErr(e?.message || String(e)); if (e?.code === "conflict" && onConflict) await onConflict(); }   // ★ R1: โหลดใบล่าสุดจริง (เลข M ถัดไป / ยอดใหม่) — เดิมบอกว่าโหลดแล้วแต่หน้าจอยังเป็นใบเก่า
   }
 
   // ★ 2026-11-04 วาง PDF ใน Modify: แบบซับ/แผงที่มีในใบ → เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · แบบพาร์ท/ซับใหม่ → เพิ่มเบอร์ใหม่ (ลงข้อมูลให้ ใส่แค่จำนวน · แก้ได้)

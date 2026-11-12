@@ -7611,21 +7611,27 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           if (pending.current && pending.current.id === p.id) { clearTimeout(timer.current); pending.current = null; }
           setSaveErr("");
           mlsToast(m, "error");
-          hist.reset();
-          try {
-            const r = await realReleaseApi.listPlans(p.projectId || null); const np = (r.plans || []).find((x) => x.id === p.id);
-            if (np) { planRef.current = np; setView((v) => (v && v.plan && v.plan.id === np.id ? { ...v, plan: np } : v)); setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x))); }
-          } catch (_) { /* โหลดไม่ได้ = ผู้ใช้รีเฟรชเอง */ }
+          await reloadLatest(p);
           return;
         }
         if (!pending.current) pending.current = send;   // ที่แก้ใหม่กว่า (ถ้ามี) รวมของนี้อยู่แล้ว
         const offline = typeof navigator !== "undefined" && navigator.onLine === false;
         const msg = /fetch|network/i.test(m) || offline ? "เน็ตหลุด — จะลองบันทึกใหม่เองเมื่อเน็ตกลับมา" : /unauthorized|session/i.test(m) ? "session หมดอายุ — เข้าสู่ระบบใหม่ในแท็บอื่น แล้วกด “ลองบันทึกอีกครั้ง”" : m;
-        setSaveErr((old) => { if (!old) mlsToast("ยังไม่ได้บันทึกการแก้ใบ: " + msg, "error"); return msg; });
+        if (!saveErrRef.current) mlsToast("ยังไม่ได้บันทึกการแก้ใบ: " + msg, "error");   // toast ครั้งเดียว (แถบแดงค้างอยู่แล้ว)
+        saveErrRef.current = msg; setSaveErr(msg);
       }
     });
     return saving.current;
   };
+  // ★ R1: มีคนแก้ใบไปก่อน → โหลดใบล่าสุดมาแทน (ใช้ทั้งตอนบันทึกปกติ และตอน Modify / เพิ่มเบอร์ถูกปฏิเสธ)
+  async function reloadLatest(p = planRef.current) {
+    if (!p) return;
+    hist.reset();
+    try {
+      const r = await realReleaseApi.listPlans(p.projectId || null); const np = (r.plans || []).find((x) => x.id === p.id);
+      if (np) { planRef.current = np; setView((v) => (v && v.plan && v.plan.id === np.id ? { ...v, plan: np } : v)); setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x))); }
+    } catch (_) { /* โหลดไม่ได้ = ผู้ใช้รีเฟรชเอง */ }
+  }
   const flushRef = useRef(flush); flushRef.current = flush;
   useEffect(() => () => { flushRef.current(); }, []);
   useEffect(() => {
@@ -7678,7 +7684,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           const g = groupReleases(releases.filter((r) => String(r.release_order || "").trim().toUpperCase().replace(/\s+/g, "") === k && (!view.plan.projectCode || r.part_master?.projects?.code === view.plan.projectCode || !r.part_master?.projects?.code)))[0];
           if (g) onOpenGroup(g); else mlsToast("ไม่พบรายการของล็อตนี้", "error");
         } : null}
-        onBack={() => setView(null)} onPlanChange={onPlanChange}
+        onBack={() => setView(null)} onPlanChange={onPlanChange} onConflict={() => { clearTimeout(timer.current); pending.current = null; return reloadLatest(); }}
         onDelete={async (lots = []) => {
           // ★ 2026-11-09 ลบใบหลัก: ไม่มีล็อต → เลขนี้ใช้ลงใหม่ได้ · มีล็อต (เช่น สร้างใบหลักซ้ำ) → ลบเฉพาะใบหลัก ล็อต/QR อยู่ครบ
           const p = view.plan;
