@@ -34,7 +34,8 @@ function ClickSelect({ value, options, onChange, label, title = "" }) {
 
 export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null, madeOf = null, onRowProgress = null, onInlineModify = null }) {
   // ★ 2026-11-11 ผู้ใช้: "ให้กดตรงแถวเพื่อดูความคืบหน้าได้เหมือนใบปล่อย" → กดที่แถว (ไม่ใช่ปุ่ม / ช่องติ๊ก / ดรอปดาวน์) = เปิดความคืบหน้าของเบอร์นั้น
-  const rowClick = (code, kind) => (onRowProgress ? { onClick: (e) => { if (e.target.closest("button, input, select, a, label, textarea, .rt-matedit, .rt-usedpop")) return; onRowProgress(code, kind); }, title: "กดที่แถวเพื่อดูความคืบหน้า", style: { cursor: "pointer" } } : {});
+  // ★ 2026-11-12 ผู้ใช้: "เอาความคืบหน้าออก · ให้กดได้ที่ช่อง ปล่อยแล้ว / ทำแล้วที่ ที่อื่นไม่ต้อง" → กดเปิดความคืบหน้าได้เฉพาะช่องนี้
+  const rowClick = (code, kind) => (onRowProgress ? { onClick: (e) => { if (e.target.closest("button, input, select, a, label, textarea")) return; onRowProgress(code, kind); }, title: "กดเพื่อดูความคืบหน้า", style: { cursor: "pointer" }, className: "rl-donecell rt-progcell" } : { className: "rl-donecell" });
   const [grp, setGrp] = useState("part");
   const [sub, setSub] = useState({ part: "ALL", sub: "ALL", mat: "MAT", panel: "ALL", bom: "" });
   const [q, setQ] = useState("");
@@ -251,7 +252,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
           const hd = !r.qr ? hwDone.get(NC(r.code)) : null; const hdQ = hd ? (r.u === "m." && r.mm ? hd.qty / 1000 : hd.qty) : 0;
           const left = r.qr ? leftOf(r.code, r.qty) : Math.max(0, Math.round((r.qty - hdQ) * 100) / 100); const done = r.qr ? doneOf(r.code) : hdQ; const o = otherOf(rel, r.code);
           rows.push(
-            <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""} {...(r.qr ? rowClick(r.code, "part") : {})}>
+            <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""} >
               <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td>
               <td className="r rw-num">{i + 1}</td>
               <td className="rw-mono">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "rc", "p" + i, <Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />)}{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>
@@ -265,7 +266,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                 {!r.qr ? <div className="rw-muted small">ใบเบิก · ไม่มี QR</div>
                   : CAT_DEST[r.cat] === r.dest ? null   // หมวดผลิตเอง 3 หมวด = ใบเดียวกัน ไม่ต้องเลือกซ้ำ
                   : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><ClickSelect value={r.dest} onChange={(v) => setDests([r.code], v)} label={`ส่ง ${r.code} ไป`} title="กดเพื่อเปลี่ยนใบงาน" options={PART_DESTS.map((d) => [d, destLabel(d)])} /></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
-              <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}{r.qr ? madeEl(r.code, done) : null}</td>
+              <td {...(r.qr ? rowClick(r.code, "part") : { className: "rl-donecell" })}>{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}{r.qr ? madeEl(r.code, done) : null}</td>
               <td className="r"><b>{r.cancelled ? "" : r.qr ? (left > 0 ? nf(left) : "✓") : done ? (left > 0 ? nlen(left) : "✓") : ""}</b></td>
               <td className="rt-rem">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "f", "p" + i, r.f || "")}{r.rev ? <> · {E({ ...r, kind: "part" }, "rev", "p" + i, `Rev ${r.rev}`)}</> : null}</td>
             </tr>);
@@ -283,7 +284,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         <thead><tr><th style={{ width: 34 }}><Chk keys={vis.filter((x) => !x.cancelled && leftOf(x.code, x.qty) > 0).map((x) => x.code)} set={pickS} tog={tS} label="เลือกทั้งหน้า" /></th><th className="r">ITEM</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH (mm.)</th><th className="r">SUB QTY.</th>{kids ? <><th className="r">QTY OF PART/SUB</th><th className="r">PART QTY.</th></> : null}<th>UOM</th><th>งาน (ติ๊กได้หลายงาน)</th><th>ปล่อยแล้ว</th><th className="r">เหลือ</th></tr></thead>
         <tbody>{vis.map((s, i) => { const left = leftOf(s.code, s.qty); const done = doneOf(s.code); const ks = kids ? kidRows(s.code, qOf(s)) : []; return (
           <Fragment key={s.code}>
-            <tr className={`rt-subrow ${s.cancelled ? "rl-cancelrow" : pickS.has(s.code) ? "rl-sel" : left <= 0 ? "rt-full" : ""}`} {...rowClick(s.code, "subassembly")}>
+            <tr className={`rt-subrow ${s.cancelled ? "rl-cancelrow" : pickS.has(s.code) ? "rl-sel" : left <= 0 ? "rt-full" : ""}`} >
               <td><input type="checkbox" checked={pickS.has(s.code)} disabled={s.cancelled || left <= 0} onChange={(e) => tS([s.code], e.target.checked)} aria-label={`เลือก ${s.code}`} /></td>
               <td className="r rw-num">{i + 1}</td>
               <td className="rw-mono">{E({ ...s, kind: "sub" }, "rc", "s" + i, <Code code={s.code} cancel={!!s.cancelled} added={s.added} />)}</td>
@@ -293,7 +294,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               {kids ? <><td /><td /></> : null}
               <td className="rw-muted small">SET</td>
               <td>{onPlanChange && !s.cancelled ? <span className="rw-procs">{PROCS.map((k) => { const on = s.procs.includes(k); return <label key={k} className={`rw-proc ${on ? "on" : ""}`}><input type="checkbox" checked={on} onChange={(e) => setProcs([s.code], (c) => (e.target.checked ? [...c, k] : c.filter((x) => x !== k)))} />{SUB_SHORT[k]}</label>; })}</span> : s.procs.map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}{!s.procs.length ? <Pill tone="warn">ยังไม่เลือกงาน</Pill> : null}</td>
-              <td className="rl-donecell">{done ? <b>{nf(done)}</b> : null} {lotsOf(s.code)}{madeEl(s.code, done)}</td>
+              <td {...rowClick(s.code, "subassembly")}>{done ? <b>{nf(done)}</b> : null} {lotsOf(s.code)}{madeEl(s.code, done)}</td>
               <td className="r"><b>{s.cancelled ? "" : left > 0 ? nf(left) : "✓"}</b></td>
             </tr>
             {ks.map((k) => (
@@ -487,7 +488,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
       {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>✎ ที่รหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
       <div className="table-wrap rw-tw rt-tw" onClickCapture={(e) => {
         // ★ 2026-11-12 คลิกที่ไหนในช่องที่แก้ได้ = เปิดแก้ช่องนั้น (ก่อนที่แถวจะเปิดความคืบหน้า)
-        if (e.target.closest("button, input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) { e.stopPropagation(); btn.click(); } }}>
+        if (e.target.closest("button, input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && (td.querySelector(".bm-qbtn") || td.querySelector(".rt-matbtn")); if (btn) { e.stopPropagation(); btn.click(); } }}>
         {total ? table : <div className="rw-muted small rt-empty">{q ? "ไม่พบรายการที่ค้นหา" : "ไม่มีในใบนี้"}</div>}
       </div>
       {grp === "panel" && !pmx ? foot : null}
