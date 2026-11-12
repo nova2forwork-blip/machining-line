@@ -337,12 +337,12 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     let g = 0, lastTop = null;
     const shade = vis.map((r) => { if (sort.k) return ""; const top = r.unit + "|" + (r.path[0] || (r.kind === "sub" && !r.depth ? r.code : "")); if (top !== lastTop) { lastTop = top; if (top.split("|")[1]) g++; } return top.split("|")[1] ? (g % 2 ? "g1" : "g2") : ""; });
     const um = (r) => (r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase());
-    const nCols = wasteOn ? 18 : 17;
+    const nCols = wasteOn ? 19 : 17;
     body = (
       <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
-        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th><Th k="ml" r>{wasteOn ? "Mat. Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
+        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">WASTE</Th> : null}<Th k="ml" r>{wasteOn ? "Mat. Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
           {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
@@ -358,9 +358,8 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             <td className="r">{eCell(r, "l", u, nlen(r.l))}</td><td className="r">{nlen(r.h)}</td>
             <td>{eCell(r, "f", u, r.f)}</td>
             {/* ★ 2026-11-12 ผู้ใช้: "การใช้เศษตารางไม่เหมือนเดิม" → ขยายเศษ = แบบเดิม: Material ตัวแดง · WAST · Material Length = ความยาวเศษที่ใช้ (แดง) · ย่อ = แบบ Excel: ป้าย OFF + ความยาวเส้น */}
-            <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : wasteOn && off
-              ? eCell(r, "m", u, <span className="xl-waste" title={`${r.m} · ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>WASTE<small>{r.m}</small></span>)
-              : <>{eCell(r, "m", u, r.m)}{off ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
+            <td className={`c ${r.kind === "sub" ? "subm" : ""} ${wasteOn && off ? "rt-waste" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
+            {wasteOn ? <td className="c xl-wastec">{off ? "WASTE" : ""}</td> : null}
             <td className={`r ${wasteOn && off ? "rt-waste" : ""}`} title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off ? wasteLines(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{um(r)}</td>
             {wasteOn ? <>
