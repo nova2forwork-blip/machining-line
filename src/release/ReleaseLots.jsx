@@ -766,7 +766,14 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       .catch((e) => { if (alive) setLim({ s: "err", limits: new Map(), next: 0, err: String(e?.message || e) }); });
     return () => { alive = false; };
   }, [api, plan, rel.lots]);
-  useEffect(() => { const k = (e) => { if (e.key === "Escape" && !busy) onClose(); }; document.addEventListener("keydown", k); return () => document.removeEventListener("keydown", k); }, [busy, onClose]);
+  // ★ 2026-11-12 ผู้ใช้: "กด ESC แล้วเด้งออกเลย ยังไม่ได้ save" → มีที่แก้ค้าง = ถามก่อนปิด · Esc ในช่องพิมพ์ / ดรอปดาวน์ = ไม่ปิด
+  const dirtyRef = useRef(false);
+  const tryClose = async () => {
+    if (busy) return;
+    if (dirtyRef.current && !(await askConfirm({ title: "ปิดโดยไม่บันทึก?", message: "มีรายการที่แก้ไว้ยังไม่ได้บันทึก — ปิดแล้วจะหายทั้งหมด", tone: "danger", confirmText: "ปิด ไม่บันทึก", cancelText: "กลับไปแก้ต่อ" }))) return;
+    onClose();
+  };
+  useEffect(() => { const k = (e) => { if (e.key !== "Escape" || busy) return; const t = e.target; if (t && t.closest && t.closest("input, select, textarea")) return; if ([...document.querySelectorAll("[role=dialog][aria-modal=true]")].some((d) => !d.classList.contains("rl-drawer"))) return; e.preventDefault(); tryClose(); }; document.addEventListener("keydown", k); return () => document.removeEventListener("keydown", k); });
 
   const autoNo = nextModNo(plan, lim.next);
   const no = parseInt(verRaw, 10) > 0 ? parseInt(verRaw, 10) : autoNo;
@@ -804,6 +811,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const askRow = (f) => !!f.act || (isMatRow(f) && matChg.some((x) => (x.id || `${NC(x.code)}|${x.field || "mat"}`) === `${NC(f.code)}|${f.what === "วัสดุ (INV)" ? "mat" : "len"}`));
   const undecided = addOnly ? 0 : found.filter((f) => askRow(f) && !f.dec).length;
   const nChange = realChanges.length + addrs.size + adds.length + edits.length + matOn.length;
+  dirtyRef.current = nChange > 0 || !!reason.trim() || found.length > 0;
   const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
   const blockers = addOnly ? [
     !adds.length && "ยังไม่ได้เพิ่มอะไร",
@@ -811,7 +819,6 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   ].filter(Boolean) : [
     undecided > 0 && `ยังไม่ได้เลือก ${undecided} จุดในตาราง "เทียบกับแบบ" (ใช้ตามแบบ / คงเดิม)`,
     !nChange && !undecided && "ยังไม่ได้แก้อะไร",
-    !reason.trim() && "ใส่เหตุผล (เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B)",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
     verErr,
     ops.errors.length && `${ops.errors.length} รายการลดไม่ได้ (ดูแถวสีแดง)`,
@@ -834,8 +841,11 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     try { await api.storeLibPdfs({ projectId: plan.projectId, projectCode: plan.projectCode, pdfs: dropPdfs.current }, (m) => setBusy(m)); dropPdfs.current = []; }
     catch (e) { console.warn("store drawings", e); try { window.alert("บันทึกแล้ว แต่เก็บไฟล์แบบลงคลังไม่สำเร็จ — ปุ่ม \"ดูแบบ\" ยังเปิดไฟล์เดิม\n" + (e?.message || e)); } catch { /* ignore */ } }
   }
+  // ★ 2026-11-12 ผู้ใช้: "ไม่ใส่เหตุผล save ไม่ได้" → เหตุผลไม่บังคับ · เว้นว่าง = ระบบสรุปให้จากสิ่งที่แก้
+  const autoReason = () => [realChanges.length && `แก้จำนวน/ยกเลิก ${realChanges.length} เบอร์`, edits.length && `แก้ BOM ${edits.length} จุด`, matOn.length && `เปลี่ยนวัสดุ/ความยาว ${matOn.length} จุด`, adds.length && `เพิ่ม ${adds.length} เบอร์`, addrs.size && `ยกเลิกแผง ${addrs.size} ที่`, sheet ? `ตามใบ ${sheet.roRaw || sheet.mVer || sheet.file || ""}` : ""].filter(Boolean).join(" · ") || "แก้ไข";
   async function save() {
     if (blockers.length || busy) return;
+    const reasonOut = reason.trim() || autoReason();
     if (addOnly) {
       const at = new Date().toISOString(); const by = user?.name || "";
       const extra = adds.map((a) => ({ kind: a.kind, code: a.code.trim().toUpperCase(), qty: Number(a.qty), d: a.d || "", l: a.l === "" || a.l == null ? null : Number(a.l), inv: a.inv || "", dest: a.kind === "hw" ? undefined : a.dest, at, by, ...(a.cat ? { cat: a.cat } : {}), ...(a.kind === "hw" ? { u: a.u || "pcs." } : {}), ...(a.src ? { src: a.src } : {}) }));
@@ -850,7 +860,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       return;
     }
     const mod = {
-      no, ver, date, by: user?.name || "", at: new Date().toISOString(), reason: reason.trim(),
+      no, ver, date, by: user?.name || "", at: new Date().toISOString(), reason: reasonOut,
       ...(sheet && sheet.kind === "modify" ? { sheet: { file: sheet.file, roRaw: sheet.roRaw, mVer: sheet.mVer, refRo: sheet.refRo, zone: sheet.zone, issuedBy: sheet.issuedBy, date: sheet.date, items: sheet.items } } : {}),
       bomEdits: edits,
       items: [
@@ -872,7 +882,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         adds.length && `• เพิ่มเบอร์ใหม่ ${adds.length} เบอร์ (ปล่อยในล็อตถัดไป)`,
         matOn.length && `• เปลี่ยนตามแบบ ${matOn.length} จุด: ${matOn.map((x) => `${x.code} ${x.field === "len" ? "ยาว" : "วัสดุ"} ${x.from ?? "—"} → ${x.to}`).join(" · ")} (ใบปล่อย / ใบเบิกวัสดุใช้ค่าใหม่ · ล็อตที่ตัดไปแล้วไม่เปลี่ยน)`,
         lotTouched.length && `• แก้ในล็อต: ${lotTouched.map((x) => `${x.lot} (ยกเลิก QR ${nf(x.qr)} ใบ)`).join(" · ")} — QR ที่ยกเลิกเก็บเป็นหลักฐาน`,
-        `\nเหตุผล: ${reason.trim()}`,
+        `\nเหตุผล: ${reasonOut}`,
       ].filter(Boolean).join("\n"),
       tone: qrOut ? "danger" : "warn", confirmText: `บันทึก ${ver}`, cancelText: "กลับไปแก้",
     });
@@ -1157,16 +1167,16 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   );
   return (
     <>
-      <div className="rl-back" onClick={() => !busy && onClose()} />
+      <div className="rl-back" onClick={tryClose} />
       <aside className="rl-drawer rm" role="dialog" aria-modal="true" aria-label={`Modify Release ${plan.ro}`}>
         <div className="rl-dr-head">
           <div className="rl-dr-title">
             <h2>{addOnly ? `เพิ่มรายการ · Release ${plan.ro}` : `Modify Release ${plan.ro}`}</h2>
             {addOnly ? null : <input className="input rw-mono rl-lotno" value={verRaw} placeholder={modVer(autoNo)} onChange={(e) => setVerRaw(e.target.value.replace(/[^0-9]/g, ""))} aria-label="เลข M (ว่าง = อัตโนมัติ)" title="เลข M — ว่าง = เลขถัดไปอัตโนมัติ" />}
             {addOnly ? null : <input className="input rl-date" type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} aria-label="วันที่ของ M ตามเอกสาร" />}
-            {addOnly ? null : <input className="input rl-note" value={reason} placeholder="เหตุผล * เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />}
+            {addOnly ? null : <input className="input rl-note" value={reason} placeholder="เหตุผล (ไม่ใส่ก็ได้ — ระบบสรุปให้) เช่น ลูกค้าแจ้งลดจำนวน / แบบ Rev B" onChange={(e) => setReason(e.target.value)} aria-label="เหตุผลของการ Modify" />}
           </div>
-          <button type="button" className="rl-x" onClick={onClose} aria-label="ปิด" disabled={!!busy}>×</button>
+          <button type="button" className="rl-x" onClick={tryClose} aria-label="ปิด" disabled={!!busy}>×</button>
         </div>
         {addOnly ? <p className="rl-dr-sub">เพิ่มเบอร์ / Site Item / อุปกรณ์ ที่ยังไม่มีในใบนี้ — วาง PDF แบบ (เช่น แบบ mock-up ที่มี BILL SITE ITEM + FASTENER COMPONENT LIST) หรือพิมพ์เอง · <b>ไม่นับเป็น Modify</b> ไม่มีเลข M · ของเดิมไม่เปลี่ยน · ถ้าต้องแก้จำนวน/ยกเลิกของเดิม ใช้ ✎ Modify</p> : null}
         {addOnly ? null : <p className="rl-dr-sub">{ver}{verErr ? <b className="rl-errtxt"> · {verErr}</b> : null} · แก้ยอดต้องใช้ทั้งใบ / ยกเลิกเบอร์ / ยกเลิกที่อยู่แผงที่ยังไม่ปล่อย / เพิ่มเบอร์ใหม่ · ของที่ปล่อยแล้วเกินยอดใหม่ ระบบลด/ยกเลิกในล็อตให้ (ล็อตล่าสุดก่อน · ไม่ต่ำกว่าที่ทำแล้ว) · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง{lim.s === "err" ? ` · ⚠ อ่านยอดที่ทำแล้วไม่ได้ (${lim.err})` : ""}</p>}
@@ -1265,7 +1275,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
             {blockers.length ? <div className="rw-muted small">{blockers.join(" · ")}</div> : null}
           </div>
           <div className="rl-foot-btns">
-            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={!!busy}>ยกเลิก</button>
+            <button type="button" className="btn btn-ghost" onClick={tryClose} disabled={!!busy}>ยกเลิก</button>
             <button type="button" className="btn btn-accent" onClick={save} disabled={!!blockers.length || !!busy}>{busy || (addOnly ? `เพิ่ม ${adds.length} รายการ` : `บันทึก ${ver}`)}</button>
           </div>
         </div>
