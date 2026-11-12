@@ -266,7 +266,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       const full = flat.map((r) => ({
         PANEL: r.unit, "จำนวนแผง": r.n, "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
         "PART NO.": r.code, "ประเภท": r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: r.d || "", LENGTH: num(r.l), FINISH: r.f || "",
-        MATERIAL: r.kind === "sub" ? "" : r.m || "", WAST: r.cut?.reuse ? "wast" : "", "MAT. LENGTH": r.cut?.reuse ? wasteLens(r.cut) : r.cut ? num(r.cut.stock) : num(r.ml),
+        MATERIAL: r.kind === "sub" ? "" : r.m || "", WAST: r.cut?.reuse ? "wast" : "", "MAT. LENGTH": r.cut?.reuse ? (r.cut.fresh ? `${r.cut.stock}(${r.cut.fresh}) + เศษ ` : "") + wasteLens(r.cut) : r.cut ? num(r.cut.stock) : num(r.ml),
         "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.sum * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."),
         "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": r.cx ? (r.to ? `แทนด้วย ${r.to} ${r.ver || ""}` : `ยกเลิก ${r.ver || ""}`).trim() : r.add ? `เพิ่ม ${r.ver || ""}`.trim() : r.q0 != null ? `เดิม ${r.q0} (${r.ver || "Modify"})` : "",
       }));
@@ -358,9 +358,12 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             <td className="r">{eCell(r, "l", u, nlen(r.l))}</td><td className="r">{nlen(r.h)}</td>
             <td>{eCell(r, "f", u, r.f)}</td>
             {/* ★ 2026-11-12 ผู้ใช้: "การใช้เศษตารางไม่เหมือนเดิม" → ขยายเศษ = แบบเดิม: Material ตัวแดง · WAST · Material Length = ความยาวเศษที่ใช้ (แดง) · ย่อ = แบบ Excel: ป้าย OFF + ความยาวเส้น */}
-            <td className={`c ${r.kind === "sub" ? "subm" : ""} ${wasteOn && off ? "rt-waste" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
-            {wasteOn ? <td className="c xl-wastec">{off ? "WASTE" : ""}</td> : null}
-            <td className={`r ${wasteOn && off ? "rt-waste" : ""}`} title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off ? wasteLines(r.cut) : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
+            <td className={`c ${r.kind === "sub" ? "subm" : ""} ${wasteOn && off && !r.cut.fresh ? "rt-waste" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
+            {wasteOn ? <td className="c xl-wastec">{off ? <>WASTE{r.cut.fresh ? <small className="xl-wpart" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · จากเส้นเต็ม ${nf(r.cut.fresh)} ชิ้น`}> {nf(r.cut.reuse)}/{nf(r.cut.reuse + r.cut.fresh)}</small> : null}</> : ""}</td> : null}
+            <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off
+              // ★ 2026-11-12 ผู้ใช้: "ไม่มีเส้นเต็มเลยหรอ" → แถวที่ใช้ทั้งเส้นเต็มและเศษ โชว์ทั้งคู่: เส้นเต็ม (ดำ) + เศษ (แดง)
+              ? <>{r.cut.fresh ? <div className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}) <small>เส้นเต็ม</small></div> : null}<div className="rt-waste">{wasteLines(r.cut)}{r.cut.fresh ? <small> เศษ</small> : null}</div></>
+              : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{um(r)}</td>
             {wasteOn ? <>
               <td className="bm-flow">{(() => { const f = cutFlow(r.cut); return (<>
