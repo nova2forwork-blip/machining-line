@@ -7276,7 +7276,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
               </div>) : null}
             <DataTable id="lot-parts" columns={cols} rows={viewRows} rowKey={(r) => r.id}
               sort={sort} sortAccessors={sortAccessors} rowCtx={rctx} orderApiRef={colApi}
-              wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards"
+              wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards xl-look"
               rowProps={(r) => ({ className: "release-row", onClick: () => setViewPart(r), title: "กดเพื่อดูความคืบหน้าแยกขั้นตอน" })}
               rowAfter={(r) => {
                 if (!pmReady || !pmOpen.has(r.id)) return null;
