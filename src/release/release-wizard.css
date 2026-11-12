@@ -1337,3 +1337,9 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .rt-xl tr.g2 td { background: #fafafa; }
 .rt-xl tr.xl-pgap td { height: auto; padding: 6px 12px; }
 .bm-treet td.code { padding-top: 8px; padding-bottom: 8px; }
+
+/* ★ 2026-11-12 BOM: เลือกแบบแผงด้วยช่องพิมพ์/ดรอป · ตารางเต็มความกว้าง */
+.bm.list-off { grid-template-columns: minmax(0, 1fr); }
+.bm-pick { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+.bm-pick label { font-weight: 700; font-size: 13px; }
+.bm-pickin { width: 260px; max-width: 100%; min-height: 40px; }

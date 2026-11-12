@@ -171,7 +171,9 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     const first = rest.find((e) => !e.attr);
     onModify({ bchg, matChg, ...(first ? { bscope: first.scope, bowner: first.owner } : {}) });
   }
-  const [sel, setSel] = useState("");          // "" = แบบแรก · "__ALL__" = ทุกแบบ
+  // ★ 2026-11-12 ผู้ใช้: "ให้เป็นดรอปเลือกหรือพิมพ์เลือก · แสดงทั้งหมดก่อน · ตารางชิดขอบ" → ไม่มีรายการด้านซ้าย · เริ่มที่ทุกแบบแผง
+  const [sel, setSel] = useState("__ALL__");   // "__ALL__" = ทุกแบบ
+  const [pickTxt, setPickTxt] = useState(null);   // ข้อความที่กำลังพิมพ์ในช่องเลือกแบบแผง (null = โชว์ตัวที่เลือก)
   const [view, setView] = useState("tree");
   const [q, setQ] = useState("");
   const [lq, setLq] = useState("");
@@ -401,25 +403,26 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     : cur ? { n: cur.n, subs: cur.subs, parts: cur.parts, hw: cur.hw, pcs: cur.pcs, off: cur.off, fresh: cur.fresh } : null;
 
   return (
-    <div className={`bm ${listOff ? "list-off" : ""}`}>
-      {listOff ? null : <aside className="bm-side" aria-label="แบบแผง">
-        <div className="bm-side-top"><input className="input rw-search" style={{ marginTop: 0, maxWidth: "none" }} placeholder="ค้นหาแบบแผง" value={lq} onChange={(e) => setLq(e.target.value)} aria-label="ค้นหาแบบแผง" /><button type="button" className="bm-fold" onClick={() => setListOff(true)} title="พับรายการแบบแผง — ตารางกว้างขึ้น (เลือกแบบแผงจาก dropdown เหนือตาราง)" aria-label="พับรายการแบบแผง">‹</button></div>
-        <label className="bm-lsort2"><span>เรียง</span><select className="select" value={lsort.k + ":" + lsort.d} onChange={(e) => { const [k, d] = e.target.value.split(":"); setLsort({ k, d: Number(d) }); }} aria-label="เรียงแบบแผง">
-          <option value="unit:1">ชื่อ A→Z</option><option value="unit:-1">ชื่อ Z→A</option><option value="n:-1">จำนวนแผง มาก→น้อย</option><option value="rows:-1">จำนวนรายการ มาก→น้อย</option><option value="off:-1">ใช้เศษ มาก→น้อย</option></select></label>
-        <div className="bm-list" role="listbox">
-          <button type="button" role="option" aria-selected={ALL} className={`bm-li all ${ALL ? "on" : ""}`} onClick={() => { setSel("__ALL__"); setLimit(PAGE); }}><b>ทุกแบบแผง</b><small>{nf(model.types.size)} แบบ · {nf(model.total)} แผง</small></button>
-          {list.map((t) => (
-            <button key={t.unit} type="button" role="option" aria-selected={!ALL && cur?.unit === t.unit} className={`bm-li ${!ALL && cur?.unit === t.unit ? "on" : ""}`} onClick={() => { setSel(t.unit); setLimit(PAGE); }}>
-              <b className="rw-mono">{t.unit}</b><span className="bm-li-n">{nf(t.n)}</span>
-              <small>{t.has ? `${nf(t.subs)} ซับ · ${nf(t.parts)} พาร์ท${t.off ? ` · เศษ ${nf(t.off)}` : ""}` : "ไม่มี BOM"}</small>
-            </button>))}
-        </div>
-      </aside>}
+    <div className="bm list-off">
       <section className="bm-main-pane">
-        {listOff ? <div className="bm-pick"><button type="button" className="bm-fold open" onClick={() => setListOff(false)} title="แสดงรายการแบบแผงด้านซ้าย" aria-label="แสดงรายการแบบแผง">›</button>
-          <label><span>แบบแผง</span> <select className="select" value={ALL ? "__ALL__" : cur?.unit || ""} onChange={(e) => { setSel(e.target.value); setLimit(PAGE); }} aria-label="เลือกแบบแผง">
-            <option value="__ALL__">ทุกแบบแผง ({nf(model.types.size)} แบบ · {nf(model.total)} แผง)</option>
-            {list.map((t) => <option key={t.unit} value={t.unit}>{t.unit} · {nf(t.n)} แผง{t.has ? "" : " · ไม่มี BOM"}</option>)}</select></label></div> : null}
+        {(() => {
+          const ALLTXT = "ทุกแบบแผง"; const curTxt = ALL ? ALLTXT : cur?.unit || "";
+          const pickBy = (t) => { const v = String(t || "").trim(); if (!v || v === ALLTXT) { setSel("__ALL__"); return true; } const hit = list.find((x) => NC(x.unit) === NC(v)) || [...model.types.values()].find((x) => NC(x.unit) === NC(v)); if (hit) { setSel(hit.unit); return true; } return false; };
+          return (
+            <div className="bm-pick">
+              <label htmlFor={`bm-pick-${plan.ro}`}>แบบแผง</label>
+              <input id={`bm-pick-${plan.ro}`} className="input bm-pickin" list={`bm-units-${plan.ro}`} value={pickTxt ?? curTxt} placeholder="พิมพ์หรือเลือกแบบแผง"
+                onFocus={(e) => { setPickTxt(""); e.target.placeholder = curTxt || "พิมพ์หรือเลือกแบบแผง"; }}
+                onChange={(e) => { setPickTxt(e.target.value); if (pickBy(e.target.value) && e.target.value) { setPickTxt(null); setLimit(PAGE); e.target.blur(); } }}
+                onBlur={() => setPickTxt(null)}
+                onKeyDown={(e) => { if (e.key === "Enter") { const q0 = String(e.target.value || "").trim().toUpperCase(); const one = q0 ? list.filter((x) => NC(x.unit).includes(NC(q0))) : []; if (one.length === 1) setSel(one[0].unit); else pickBy(e.target.value); setPickTxt(null); setLimit(PAGE); e.target.blur(); } else if (e.key === "Escape") { setPickTxt(null); e.target.blur(); } }} />
+              <datalist id={`bm-units-${plan.ro}`}>
+                <option value={ALLTXT}>{nf(model.types.size)} แบบ · {nf(model.total)} แผง</option>
+                {list.map((t) => <option key={t.unit} value={t.unit}>{`${nf(t.n)} แผง · ${t.has ? `${nf(t.subs)} ซับ · ${nf(t.parts)} พาร์ท${t.off ? ` · เศษ ${nf(t.off)}` : ""}` : "ไม่มี BOM"}`}</option>)}
+              </datalist>
+              {!ALL ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSel("__ALL__"); setLimit(PAGE); }}>× แสดงทั้งหมด</button> : null}
+              <span className="rw-muted small">{ALL ? `${nf(model.types.size)} แบบ · ${nf(model.total)} แผง` : `${nf(cur?.n || 0)} แผง · ${cur?.desc || ""}`}</span>
+            </div>); })()}
         {stat ? (
           <>
             <div className="bm-head">
