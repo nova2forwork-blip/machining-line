@@ -365,8 +365,6 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
     count = rows.length; const vis = rows.slice(0, limit); shown = vis.length;
     let g = 0, lastTop = null;
     const shade = vis.map((r) => { if (sort.k) return ""; const top = r.unit + "|" + (r.path[0] || (r.kind === "sub" && !r.depth ? r.code : "")); if (top !== lastTop) { lastTop = top; if (top.split("|")[1]) g++; } return top.split("|")[1] ? (g % 2 ? "g1" : "g2") : ""; });
-    // ★ 2026-11-12 ผู้ใช้: "อยากได้จำนวนรวมทั้งหมดว่าเบอร์นี้มีกี่ชิ้น" → คอลัมน์ "รวมทั้งใบ" (ทุกแบบแผงในใบนี้) + ผลรวม Sum ของแถวที่แสดงท้ายตาราง
-    const visSum = rows.reduce((a, r) => a + (r.cx ? 0 : r.sum), 0);
     const um = (r) => (r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase());
     const nCols = wasteOn ? 19 : 17;
     body = (
@@ -403,7 +401,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
                 {f.to.length ? <div className="small rw-muted">→ เศษไปใช้ที่ {f.to.join(", ")}</div> : null}
               </>); })()}</td></> : null}
           </tr></Fragment>); })}</tbody>
-        <tfoot><tr><td colSpan={nCols}><b>{nf(rows.length)} บรรทัด · Sum รวม {nlen(Math.round(visSum * 1000) / 1000)}</b> · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
+        <tfoot><tr><td colSpan={nCols}>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง</td></tr></tfoot>
       </table></div>);
   }
 
