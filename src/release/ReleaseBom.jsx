@@ -345,7 +345,7 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
       <div className="table-wrap rw-tw rt-tw"><table className="rt-xl" onClick={(e) => {
         // ★ 2026-11-12 ผู้ใช้: "ตอนแก้ให้กดที่ตารางได้เลย กดที่ตัวหนังสือบางทีมันตัวเล็ก" → กดตรงไหนในช่องก็เปิดแก้ช่องนั้น
         if (e.target.closest("button, input, a, select, label")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) btn.click(); }}>
-        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">WASTE</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
+        <thead><tr><Th k="unit">Panel</Th><th>Description</th><th className="r">Quantity</th><th>U.M.</th><th>Rev</th><th>SUB-01</th><th>SUB-02</th><Th k="code">Code</Th><Th k="d">Description</Th><Th k="l" r>L</Th><th className="r">H</th><Th k="f">Finish</Th><Th k="m">Material</Th>{wasteOn ? <Th k="off">Wast</Th> : null}<Th k="ml" r>{wasteOn ? "Material Length" : "L"}</Th><Th k="q" r>Quantity</Th><Th k="sum" r>Sum</Th><th>U.M.</th>
           {wasteOn ? <th title="เส้นเต็ม (ชิ้นเต็ม) ใช้ที่ไหน · เศษมาจาก / ไปใช้ที่แถวไหน">เส้นเต็ม ↔ เศษ</th> : null}</tr></thead>
         <tbody>{vis.map((r, i) => { const u = r.unit + "#" + i; const inSub = r.path.length > 0; const off = !!r.cut?.reuse;
           // ★ 2026-11-12 ผู้ใช้: "ช่องว่างระหว่างแผงทำให้รู้ด้วย" → ขึ้นแผงใหม่ = แถบหัวแผง (ชื่อ · รายละเอียด · จำนวนแผง)
@@ -361,14 +361,11 @@ export function BomView({ plan, need, rel = null, onSaveDirect = null, onModify 
             <td className="r">{eCell(r, "l", u, nlen(r.l))}</td><td className="r">{nlen(r.h)}</td>
             <td>{eCell(r, "f", u, r.f)}</td>
             {/* ★ 2026-11-12 ผู้ใช้: "การใช้เศษตารางไม่เหมือนเดิม" → ขยายเศษ = แบบเดิม: Material ตัวแดง · WAST · Material Length = ความยาวเศษที่ใช้ (แดง) · ย่อ = แบบ Excel: ป้าย OFF + ความยาวเส้น */}
-            <td className={`c ${r.kind === "sub" ? "subm" : ""} ${wasteOn && off && !r.cut.fresh ? "rt-waste" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
-            {wasteOn ? <td className="c xl-wastec">{off ? <>WASTE{r.cut.fresh ? <small className="xl-wpart" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · จากเส้นเต็ม ${nf(r.cut.fresh)} ชิ้น`}> {nf(r.cut.reuse)}/{nf(r.cut.reuse + r.cut.fresh)}</small> : null}</> : ""}</td> : null}
-            <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && r.cut
-              // ★ ขยาย = บอกครบ: เส้นเต็มที่เปิด (ดำ) · เศษที่ใช้ (แดง) · เศษที่เหลือเก็บได้ / เศษทิ้ง (เทา)
-              ? <>{r.cut.fresh ? <div className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}) <small>เส้นเต็ม</small></div> : null}
-                {off ? <div className="rt-waste">{wasteLines(r.cut)} <small>ใช้เศษ</small></div> : null}
-                {r.cut.left && r.cut.left.length ? <div className="xl-left">เหลือ {groupLens(r.cut.left)} <small>เก็บได้</small></div> : null}
-                {r.cut.scrap && r.cut.scrap.length ? <div className="xl-left">ทิ้ง {groupLens(r.cut.scrap)} <small>&lt; {nf(MIN_OFFCUT)}</small></div> : null}</>
+            <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", u, r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>
+            {wasteOn ? <td className="c xl-wastec">{off ? "wast" : ""}</td> : null}
+            <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off
+              // ★ 2026-11-12 ผู้ใช้ (ภาพ Excel): "มันต้องเป็นแบบนี้" → เส้นเต็ม = ความยาวเส้น (ดำ) · ใช้เศษ = ความยาวเศษ (แดง) เช่น 2300(1), 2100(1) · ใช้ทั้งคู่ = เส้นเต็มก่อน แล้วตามด้วยเศษ
+              ? <>{r.cut.fresh ? <span className="xl-fresh">{nlen(r.cut.stock)}({nf(r.cut.fresh)}), </span> : null}<span className="rt-waste">{wasteLines(r.cut)}</span></>
               : r.cut ? nlen(r.cut.stock) : nlen(r.ml)}</td>
             <td className="r">{qCell(r, u)}</td><td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td><td>{um(r)}</td>
             {wasteOn ? <>
