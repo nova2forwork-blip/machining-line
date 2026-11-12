@@ -275,18 +275,38 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ★ 2026-11-10 มาจากกล่องรับเอกสาร: ใบปะหน้า → อ่านเติมหัวใบ · แบบ PDF → ใส่ขั้นอัพ PDF ให้ (แผง/แบบ Site Item) · ซับ/พาร์ท → เก็บไว้วางที่ขั้นเลือกซับ/พาร์ท
   const initRef = useRef(false);
   const [pendingPdfs, setPendingPdfs] = useState([]);   // แบบซับ/พาร์ทจาก inbox ที่รอวางในขั้น "เลือกซับ / พาร์ท"
+  // ★ 2026-11-12 ใช้ร่วมกัน: ไฟล์จากกล่องรับเอกสาร + ไฟล์ที่วางในช่องใบปะหน้า (ผู้ใช้วางแบบพาร์ทลงช่องนี้ → เดิมขึ้น "อ่านไม่ได้รายการ")
+  //   ใบปะหน้า (Excel / PDF ที่ไม่ใช่แบบ) → อ่านเติมหัวใบ · แบบแผง / Site Item → ขั้นอัพ PDF · แบบซับ / พาร์ท → ขั้น "เลือกซับ / พาร์ท" (เก็บเข้าคลัง + เลือกให้)
+  async function routeFiles(list) {
+    const files = [...list];
+    const sheets = files.filter((f) => /\.(xlsx?|xlsm)$/i.test(f.name)); const pdfFiles = files.filter((f) => /\.pdf$/i.test(f.name));
+    if (!sheets.length && !pdfFiles.length) { setOrderMsg({ bad: "วางไฟล์ใบปะหน้าเป็น PDF หรือ Excel (.xls/.xlsx) · แบบ PDF ก็วางได้" }); return; }
+    if (pdfFiles.length) setOrderMsg({ info: `กำลังอ่าน ${pdfFiles.length} ไฟล์…` });
+    let all = []; try { all = pdfFiles.length ? await readPdfFiles(pdfFiles) : []; } catch (e) { setOrderMsg({ bad: "โหลดตัวอ่าน PDF ไม่ได้: " + (e?.message || e) }); return; }
+    const drawings = []; const sheetPdfs = [];
+    for (const d of all) { if (d.kind === "unknown" && d._file) sheetPdfs.push(d._file); else drawings.push(d); }
+    const panelish = drawings.filter((d) => d.kind === "panel" || d.kind === "loose"); const subpart = drawings.filter((d) => d.kind === "sub" || d.kind === "part");
+    const first = sheets[0] || sheetPdfs[0];
+    if (first) await onOrderFile([first]);
+    if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
+    const toItems = subpart.length && !panelish.length && !units.length;
+    if (subpart.length && (toItems || itemsMode)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!itemsMode) setMode("items"); }
+    if (drawings.length) {
+      const codes = (xs) => `${xs.slice(0, 4).map((d) => d.code).join(", ")}${xs.length > 4 ? " …" : ""}`;
+      const lines = [
+        panelish.length && `แบบแผง ${panelish.length} ไฟล์ (${codes(panelish)}) → ใส่ในขั้น “อัพ PDF แผง” แล้ว`,
+        subpart.length && (toItems || itemsMode
+          ? `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เปลี่ยนเป็น “ปล่อยเฉพาะซับ / พาร์ท” · ขั้นถัดไปจะเก็บเข้าคลังโปรเจคแล้วเลือกเบอร์ให้ (ใส่จำนวนเอง)`
+          : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) ไม่ได้ใส่ — ปล่อยแผงใช้แบบซับ / พาร์ทจาก “ซับ / พาร์ท ของโปรเจค” (ลงที่นั่นก่อน)`),
+        !first && "ไม่มีใบปะหน้า — ไม่บังคับ",
+      ].filter(Boolean);
+      if (!first) setOrderMsg(subpart.length && !(toItems || itemsMode) && !panelish.length ? { bad: lines.join(" · ") } : { ok: lines });
+      else setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, ...lines] } : m));
+    } else if (!first) setOrderMsg({ bad: "ไม่พบใบปะหน้าในไฟล์ที่วาง" });
+  }
   useEffect(() => {
     if (!initialFiles || !initialFiles.length || initRef.current) return; initRef.current = true;
-    (async () => {
-      const sheets = initialFiles.filter((f) => /\.(xlsx?|xlsm)$/i.test(f.name)); const pdfs = initialFiles.filter((f) => /\.pdf$/i.test(f.name));
-      let all = []; try { all = pdfs.length ? await readPdfFiles(pdfs) : []; } catch { /* ignore */ }
-      const drawings = []; const sheetPdfs = [];
-      for (const d of all) { if (d.kind === "unknown" && d._file) sheetPdfs.push(d._file); else drawings.push(d); }
-      const first = sheets[0] || sheetPdfs[0]; if (first) await onOrderFile([first]);
-      const panelish = drawings.filter((d) => d.kind === "panel" || d.kind === "loose"); const subpart = drawings.filter((d) => d.kind === "sub" || d.kind === "part");
-      if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
-      if (subpart.length) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!panelish.length) setMode("items"); }
-    })();
+    routeFiles(initialFiles);
   }, [initialFiles]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── สถานะแต่ละขั้น (โชว์ในแถบขั้น) ──
@@ -453,10 +473,10 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
             <div className={`rw-drop rw-drop-sm ${orderDrag ? "drag" : ""}`} role="button" tabIndex={0} style={{ marginBottom: 12 }}
               onClick={() => orderRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); orderRef.current?.click(); } }}
               onDragOver={(e) => { e.preventDefault(); setOrderDrag(true); }} onDragLeave={() => setOrderDrag(false)}
-              onDrop={(e) => { e.preventDefault(); setOrderDrag(false); onOrderFile(e.dataTransfer.files); }}>
+              onDrop={(e) => { e.preventDefault(); setOrderDrag(false); routeFiles(e.dataTransfer.files); }}>
               <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
               <div><b>วางใบปะหน้า Release (Release for Production / Order · FM(DE)-03) — PDF หรือ Excel <span className="rw-opt">ถ้ามี</span></b><span>ระบบอ่านเลข Release · โปรเจค · Location/Zone · รายการ Part No. + จำนวน → เติมหัวใบให้ และใช้เทียบกับแบบที่วางในขั้นถัดไป ว่าครบ/ขาดเบอร์ไหน จำนวนตรงไหม</span></div>
-              <input ref={orderRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden data-testid="order-input" onChange={(e) => { onOrderFile(e.target.files); e.target.value = ""; }} />
+              <input ref={orderRef} type="file" multiple accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden data-testid="order-input" onChange={(e) => { routeFiles(e.target.files); e.target.value = ""; }} />
             </div>
           ) : (
             <div className="rw-order">
