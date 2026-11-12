@@ -12,3 +12,6 @@ schema.sql
 data.sql
 supabase/.temp/
 supabase/.branches/
+
+# ผลทดสอบจำลอง (/sim-test) — มีภาพหน้าจอ/ข้อมูลจริง
+.sim/
