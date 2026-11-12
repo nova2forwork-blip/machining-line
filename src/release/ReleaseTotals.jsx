@@ -418,7 +418,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
           <span className="rt-head-mat"><b>{nf(head.mat.MAT)}</b><small> รายการวัตถุดิบ · {nf(mats.reduce((x, m) => x + m.bars, 0))} เส้น (ประมาณ)</small></span>
         ) : (
           <>
-            <span className="rt-head-n"><b>{nf(head[g.k].done)}</b><small> / {nf(head[g.k].tot)} เบอร์ปล่อยครบ</small></span>
+            <span className="rt-head-n" title={`ทั้งหมด ${nf(head[g.k].tot)} เบอร์ · ปล่อยครบแล้ว ${nf(head[g.k].done)}`}><b>{nf(head[g.k].tot)}</b><small> เบอร์ · ปล่อยครบ {nf(head[g.k].done)}</small></span>
             <span className="rl-bar"><i style={{ width: `${pct(head[g.k].done, head[g.k].tot)}%` }} /></span>
           </>
         )}
@@ -448,7 +448,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         <button type="button" role="tab" aria-selected={grp === "panel"} className={`rt-head panel ${grp === "panel" ? "on" : ""}`} onClick={() => pick("panel")}>
           <span className="rt-head-t">ASSEMBLY (แผง)</span>
           <small className="rt-head-th">ประกอบแผง · 1 QR ต่อที่อยู่</small>
-          <span className="rt-head-n"><b>{nf(head.panel.done)}</b><small> / {nf(head.panel.tot)} แผง</small></span>
+          <span className="rt-head-n" title={`ทั้งหมด ${nf(head.panel.tot)} แผง · ปล่อยแล้ว ${nf(head.panel.done)}`}><b>{nf(head.panel.tot)}</b><small> แผง · ปล่อยแล้ว {nf(head.panel.done)}</small></span>
           <span className="rl-bar"><i style={{ width: `${pct(head.panel.done, head.panel.tot)}%` }} /></span>
         </button>
         {TOTALS.filter((g) => g.k === "mat").map(headBtn)}
