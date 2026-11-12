@@ -737,7 +737,14 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 //   ของที่ปล่อยไปแล้วเกินยอดใหม่ → ลด/ยกเลิกในล็อตให้เอง (ล็อตล่าสุดก่อน) ผ่าน Modify เดิมของระบบ · จำนวนเดิมขีดฆ่าไว้ · เบอร์ที่ยกเลิกเป็นสีแดง
 function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null, onConflict = null }) {
   // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
-  const [tab, setTab] = useState(addOnly ? "add" : init && init.bchg ? (init.bscope === "panel" ? "bom" : "sub") : "part");
+  // ★ 2026-11-12 S4: เปิดที่แท็บที่มีของที่แก้ (เดิม init.bchg = {} ก็ถือว่ามี → เปิดแท็บ "ซับ" ว่าง ผู้ใช้คิดว่าค่าหาย)
+  const [tab, setTab] = useState(() => {
+    if (addOnly) return "add";
+    if (!init) return "part";
+    if (init.bchg && Object.keys(init.bchg).length) return init.bscope === "panel" ? "bom" : "sub";
+    const kinds = [...Object.keys(init.chg || {}).map((k) => k.split("|")[0]), ...(init.matChg || []).map((x) => x.kind || "part")];
+    return kinds.length && kinds.every((k) => k === "sub") ? "sub" : "part";
+  });
   const [q, setQ] = useState("");
   const [onlyChg, setOnlyChg] = useState(false);
   const [chg, setChg] = useUndoState(() => (init && init.chg) || {}, { label: "Modify: จำนวน / ยกเลิก" });

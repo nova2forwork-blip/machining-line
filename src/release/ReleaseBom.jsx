@@ -6,7 +6,7 @@
 //   เศษ: ไล่ตัดตามลำดับแผงในใบนี้ — เบอร์ MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือ ≥ ความยาวที่ต้องตัด (+รอยตัด) ก่อนเปิดเส้นใหม่ · เศษ ≥ 500 มม. เก็บไว้ใช้ต่อ
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useMemo, useState } from "react";
-import { NC, ncmp, nf, nlen, findKey, stockLen, KERF, addrKey, destLabel } from "./releaseCore.js";
+import { NC, ncmp, nf, nlen, findKey, stockLen, KERF, addrKey, destLabel, explodeLines } from "./releaseCore.js";
 import { Pill, ModQty, SUB_SHORT, ModTag } from "./releaseUi.jsx";
 import { XTable } from "./xtable.jsx";
 
@@ -22,9 +22,11 @@ export function rowsOfType(plan, unit) {
   const mOv = (c) => { const k = findKey(plan.matOv || {}, c); const o = k ? plan.matOv[k] : null; return o && String(o.to || "").trim() ? o : null; };
   const lOv = (c) => { const k = findKey(plan.lenOv || {}, c); const o = k ? plan.lenOv[k] : null; return o && Number(o.to) > 0 ? Number(o.to) : null; };
   // ★ 2026-11-12 แต่ละแถวรู้ว่าอยู่ในรายการของใคร (own = แผง/ซับเจ้าของ · oi = ลำดับในรายการ) — ใช้แก้จำนวนต่อชุดในตาราง BOM
-  const walk = (items, path, mult, seen, scope, owner) => {
+  // ★ 2026-11-12 S3: ซับแตกบรรทัดแบบเดียวกับ Total Part / Total Mat (explodeLines = BOM ระบบ + สกรู/ยาง/กระจกที่มีแต่ใน PDF ซับ)
+  //   เดิมเดินแค่ sub.items → BOM ขาดบางเบอร์ (A10044 P-007: 375SD 52 แทน 60 · 11 เบอร์ไม่มีแถว) · บรรทัดที่มาจาก PDF แก้ในตารางไม่ได้ (ไม่มีใน BOM ระบบ)
+  const walk = (items, path, mult, seen, scope, owner, nOwn = (items || []).length) => {
     (items || []).forEach((it, oi) => {
-      const own = { scope, owner, oi };
+      const own = oi < nOwn ? { scope, owner, oi } : null;
       const [t, c, qq] = it;
       const cx = (it[4] || "") === "ยกเลิก"; const ed = { cx, ver: it[5] || "", q0: it[6] != null && it[6] !== qq ? it[6] : null, to: cx ? it[7] || "" : "", add: it[8] === "add" };
       if (cx) {   // ลูกที่ถูก Modify ยกเลิก/แทนที่ — โชว์สีแดง ไม่นับยอด ไม่แตกต่อ
@@ -35,7 +37,7 @@ export function rowsOfType(plan, unit) {
       if (t === "sub") {
         const sk = findKey(plan.bom.subs, c); const sd = sk ? plan.bom.subs[sk] : {};
         out.push({ i: out.length, path, depth: path.length, code: c, kind: "sub", d: sd.d || "", l: lOv(c) ?? sd.l ?? null, h: null, f: sd.f || "", m: "", rev: sd.rev || "", q: qq, per: mult * qq, own, ...ed });
-        if (sk && !seen.has(sk)) walk(sd.items, [...path, c], mult * qq, new Set([...seen, sk]), "sub", sk);
+        if (sk && !seen.has(sk)) walk(explodeLines(sd), [...path, c], mult * qq, new Set([...seen, sk]), "sub", sk, (sd.items || []).length);
       } else {
         const pd = plan.bom.parts[findKey(plan.bom.parts, c)] || {};
         const hw = pd.k === "hw";
@@ -157,8 +159,14 @@ export function BomView({ plan, need, ed }) {
       const par = r.path.length ? r.path[r.path.length - 1] : "(ติดแผงตรง)";
       const u = e.uses.get(par) || { q: 0, panels: new Set() }; u.q += r.per * T.n; u.panels.add(T.unit); e.uses.set(par, u);
     }
+    // ★ 2026-11-12 S3: ยอดทั้งใบที่แก้แล้ว (Modify / แก้ตรงไม่นับ M · ยกเลิก) — ตรงกับ Total Part / Total Sub · ใช้เมื่อดูทุกแบบแผง (ยอดทั้งใบ)
+    //   BOM คิดตามแบบ (ต่อชุด × แผง) · ยอดที่แก้ทั้งใบไม่ได้แตกกลับเป็นต่อแผง → โชว์ ยอดตามแบบขีดฆ่า → ยอดที่ใช้จริง + เลข M
+    if (ALL) for (const e of m.values()) {
+      const nr = (e.kind === "sub" ? need.subs : need.parts).find((x) => NC(x.code) === NC(e.code));
+      if (nr && (nr.modVer || nr.cancelled) && Math.abs((nr.qty || 0) - e.total) > 1e-6) { e.adj = nr.qty || 0; e.adjVer = nr.cancelled || nr.modVer || ""; e.adjCancel = !!nr.cancelled; }
+    }
     return [...m.values()];
-  }, [scope.map((t) => t.unit).join("|"), model]);
+  }, [scope.map((t) => t.unit).join("|"), model, need, ALL]);
 
   const flat = useMemo(() => scope.flatMap((T) => T.rows.map((r) => ({ ...r, unit: T.unit, pdesc: T.desc, n: T.n, sum: r.per * T.n }))), [scope.map((t) => t.unit).join("|"), model]);
   const sorter = (rows, keys) => {
@@ -198,7 +206,7 @@ export function BomView({ plan, need, ed }) {
       });
       const sum = [...merged].sort((a, b) => (a.kind === b.kind ? ncmp(a.code, b.code) : a.kind === "sub" ? -1 : 1)).map((e) => ({
         "PART NO.": e.code, "ประเภท": e.kind === "sub" ? "ซับ" : e.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: e.d || "", LENGTH: num(e.l), MATERIAL: e.m || "",
-        "รวมทั้งใบ": Math.round(e.total * 1000) / 1000, "หน่วย": e.uom, "ใช้ใน (ซับ/แผง × จำนวน)": [...e.uses.entries()].map(([p, u]) => `${p} ×${nlen(u.q)}`).join(", "),
+        "รวมทั้งใบ (ตามแบบ)": Math.round(e.total * 1000) / 1000, "ยอดที่ใช้ (หลังแก้)": e.adj != null ? Math.round(e.adj * 1000) / 1000 : Math.round(e.total * 1000) / 1000, "แก้ใน": e.adjVer || "", "หน่วย": e.uom, "ใช้ใน (ซับ/แผง × จำนวน)": [...e.uses.entries()].map(([p, u]) => `${p} ×${nlen(u.q)}`).join(", "),
         "ตัดจากเศษ": e.reuse || "", "เส้นใหม่": e.fresh || "",
       }));
       const tree = scope.flatMap((T) => T.rows.map((r) => ({ "แบบแผง": T.unit, "จำนวนแผง": T.n, "ชั้น": r.depth + 1, "โครงสร้าง": `${"    ".repeat(r.depth)}${r.kind === "sub" ? "▸ " : ""}${r.code}`, DESCRIPTION: r.d || "", LENGTH: num(r.l), MATERIAL: r.kind === "sub" ? "" : r.m || "", "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.per * T.n * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "หมายเหตุ": r.cx ? "ยกเลิก" : r.add ? "เพิ่ม" : "" })));
@@ -247,13 +255,13 @@ export function BomView({ plan, need, ed }) {
     body = (
       <div className="table-wrap rw-tw rt-tw">
         <XTable id="bom-merge" className="data-table rw-table rt-table" rows={rows} limit={limit} rowKey={(e) => e.code} trProps={(e) => ({ className: e.kind === "sub" ? "rt-subrow" : "" })}
-          note={<><b>{nf(rows.length)} เบอร์</b>{ALL ? " · ทุกแบบแผง" : ` · ${cur?.unit}`} · รวมทั้งใบ = ต่อชุด × ซับชั้นบน × จำนวนแผง</>}
+          note={<><b>{nf(rows.length)} เบอร์</b>{ALL ? " · ทุกแบบแผง" : ` · ${cur?.unit}`} · รวมทั้งใบ = ต่อชุด × ซับชั้นบน × จำนวนแผง{merged.some((e) => e.adj != null) ? <> · <b className="rl-new">ยอดที่แก้ทั้งใบ (M / ไม่นับ M)</b> โชว์แทนยอดตามแบบ (ขีดฆ่า) — ตรงกับ Total Part · เศษคิดจากยอดตามแบบ</> : null}</>}
           cols={[
             { k: "code", h: "เบอร์", sort: (e) => e.code, td: (e) => <td className="rw-mono"><b>{e.code}</b>{e.kind === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td> },
             { k: "d", h: "รายละเอียด", sort: (e) => e.d, td: (e) => <td className="rl-desc"><span>{e.d}</span></td> },
             { k: "l", h: "ยาว", th: { className: "r" }, sort: (e) => e.l ?? -1, td: (e) => <td className="r rw-num">{nlen(e.l)}</td> },
             { k: "m", h: "MATERIAL", sort: (e) => e.m, td: (e) => <td className="rw-mono rt-inv">{e.m}</td> },
-            { k: "total", h: "รวมทั้งใบ", th: { className: "r" }, sort: (e) => e.total, td: (e) => <td className="r"><b>{nlen(Math.round(e.total * 1000) / 1000)}</b></td> },
+            { k: "total", h: "รวมทั้งใบ", th: { className: "r" }, sort: (e) => e.adj ?? e.total, td: (e) => <td className="r">{e.adj != null ? <ModQty orig={Math.round(e.total * 1000) / 1000} cur={e.adj} ver={e.adjVer} cancel={e.adjCancel} /> : <b>{nlen(Math.round(e.total * 1000) / 1000)}</b>}</td> },
             { k: "uom", h: "หน่วย", sort: (e) => e.uom, td: (e) => <td className="rw-muted small">{e.uom}</td> },
             { k: "cut", h: "เศษ", sort: (e) => e.reuse, td: (e) => <td>{e.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${e.reuse} จาก ${e.reuse + e.fresh} ชิ้น`}>เศษ ×{nf(e.reuse)}</Pill> : null}{e.fresh ? <> <Pill tone="muted" title={`เปิดเส้นเต็มใหม่ ${e.fresh} เส้น`}>เส้นใหม่ ×{nf(e.fresh)}</Pill></> : null}</td> },
             { k: "uses", h: "ใช้ใน (ซับ ×จำนวน)", sort: (e) => e.uses.size, td: (e) => <td><div className="bm-uses">{[...e.uses.entries()].slice(0, 6).map(([p, u]) => <span key={p} className="rt-use" title={`${[...u.panels].slice(0, 6).join(", ")}${u.panels.size > 6 ? " …" : ""}`}><b className="rw-mono">{p}</b> × {nlen(u.q)}</span>)}{e.uses.size > 6 ? <small className="rw-muted">+{e.uses.size - 6}</small> : null}</div></td> },
@@ -349,6 +357,7 @@ export function BomView({ plan, need, ed }) {
                         {body}
             {v !== "tree" && count > shown ? <div className="rt-more"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit((n) => n + PAGE)}>แสดงเพิ่ม ({nf(Math.min(PAGE, count - shown))})</button></div> : null}
             <div className="rt-note bm-note">เศษ: ไล่ตัดตามลำดับแผงในใบนี้ · MATERIAL (INV) ตรงกัน ใช้เศษที่เหลือพอ (ยาว + รอยตัด {KERF} มม.) ก่อนเปิดเส้นใหม่ · เศษ ≥ {MIN_OFFCUT} มม. เก็บไว้ใช้ต่อ — เป็นการคำนวณเบื้องต้น ไม่ได้ตัดสต็อกจริง</div>
+            {v !== "merge" && (Object.keys(plan.adj || {}).length || Object.keys(plan.cancel || {}).length) ? <div className="rw-muted small bm-edhint">ยอดในตารางนี้ = ตามแบบ (ต่อชุด × แผง) · ยอดที่แก้ทั้งใบ {nf(Object.keys(plan.adj || {}).length + Object.keys(plan.cancel || {}).length)} เบอร์ (M / ไม่นับ M) ดูที่มุมมอง <b>รวมเบอร์</b> (ทุกแบบแผง) หรือ Total Part</div> : null}
             {canEdit && v !== "merge" && !ed.count ? <div className="rw-muted small bm-edhint">{v === "table" ? <>คลิกช่องเพื่อแก้: <b>Description (แผง) · Rev · Code · Description · L · H · Finish · Material · L (ความยาวเส้น) · Quantity · U.M. (สกรู/ยาง)</b> · ที่แก้ไม่ได้: Panel / Quantity แผง (มาจากแท็บ ASSEMBLY) · SUB-01 / SUB-02 (โครงสร้าง — ✎ Modify) · Sum / Wast (คำนวณเอง) · กดหัวคอลัมน์เพื่อเรียง</> : <>คลิกช่องเพื่อแก้: <b>เบอร์ · รายละเอียด · ยาว · MATERIAL · ต่อชุด</b> (FINISH แก้ที่ตารางเต็ม)</>} · Enter = ตกลง · Esc = ยกเลิก · ข้อมูลของเบอร์ (รายละเอียด / ยาว / FINISH / MATERIAL) แก้ที่เดียวมีผลทุกแผง · เพิ่ม / ยกเลิกลูก ทำที่ ✎ Modify ใหม่ → แท็บ BOM</div> : null}
 
           </>

@@ -628,7 +628,7 @@ export function countUnits(units, bom) {
 // picks = โหมด "เฉพาะซับ/พาร์ท" (ไม่มีแผง): [{ code, kind:"sub"|"part", qty }] — ซับที่เลือกแตกลูกลงไปทุกชั้นเหมือนซับใต้แผง
 // ★ 2026-10-26 บรรทัดของซับที่ explode ใช้: BOM ระบบ (items) + บรรทัดจาก PDF ที่มีแต่ใน full และเป็นของไม่มี QR
 //   (สกรู/ยาง = hw · กระจก GL…) → Total Mat. (FIXING / GLASS) ครบ · พาร์ท QR / ซับ ที่มีแต่ใน full ไม่เอา (ยอดผลิตยึด BOM ระบบ)
-function explodeLines(sub) {
+export function explodeLines(sub) {
   const its = sub.items || [];
   if (!sub.full || !sub.full.length) return its;
   const have = new Set(its.map((i) => NC(i[1])));
