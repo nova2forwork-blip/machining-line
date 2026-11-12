@@ -168,6 +168,8 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
         {tab === "files" ? (
           <FileBrowser api={api} roots={[
             { key: "pdf", name: "PDF แบบซับ / พาร์ท", bucket: "release-pdfs", prefix: (pdfFolder || projectCode).replace(/[^A-Za-z0-9._-]+/g, "_"), note: `ไฟล์ต้นฉบับที่อัพไว้ของโปรเจค ${projectCode} · แยก sub / part${pdfFolder && pdfFolder !== projectCode ? " · รหัสนี้มีหลายตึก — โฟลเดอร์ของตึกนี้ (ไฟล์ที่อัพก่อนแยกตึกอยู่ในโฟลเดอร์ " + projectCode + ")" : ""}` },
+            // ★ R5: รหัสนี้มีหลายตึก → ไฟล์ที่อัพก่อนแยกตึกอยู่ในโฟลเดอร์รหัสเดิม (ใช้ร่วมกันทุกตึก) — โชว์ให้เห็นด้วย
+            ...(pdfFolder && pdfFolder !== projectCode ? [{ key: "pdf-old", name: "PDF ก่อนแยกตึก (ใช้ร่วมกัน)", bucket: "release-pdfs", prefix: projectCode.replace(/[^A-Za-z0-9._-]+/g, "_"), note: `ไฟล์ที่อัพไว้ก่อนแยกโฟลเดอร์ตามตึก — ทุกโปรเจครหัส ${projectCode} ใช้ร่วมกัน · อัพใหม่จะเก็บในโฟลเดอร์ของตึกนี้` }] : []),
             { key: "photo", name: "รูปถ่าย (แพ็ก)", bucket: "packing-photos", prefix: "", note: "รูปที่ถ่ายตอนแพ็ก" },
           ]} />
         ) : (<>
