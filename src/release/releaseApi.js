@@ -262,7 +262,7 @@ export async function deletePlan(plan, { keepLots = false } = {}) {
   const { data, error } = await supabase.rpc("release_plan_set_status", { p_token: tok(), p_id: plan.id, p_status: "cancelled", ...(keepLots ? { p_keep_lots: true } : {}) });
   if (error) { if (missingFn(error)) throw notInstalled(); throw error; }
   if (data && data.ok === false) {
-    const e = new Error(data.reason === "has_lots" ? `${plan.ro} ยังมีล็อตที่ปล่อยแล้ว — ลบล็อตทั้งหมดก่อน แล้วจึงลบใบหลัก` : `ลบใบ ${plan.ro} ไม่สำเร็จ (${data.reason})`);
+    const e = new Error(data.reason === "has_lots" ? `${plan.ro} ยังมีล็อตที่ปล่อยแล้ว — ลบล็อตทั้งหมดก่อน แล้วจึงลบใบหลัก` : data.reason === "admin_only" ? `ลบใบหลัก ${plan.ro} ได้เฉพาะแอดมิน` : `ลบใบ ${plan.ro} ไม่สำเร็จ (${data.reason})`);
     e.code = data.reason; throw e;
   }
   return true;

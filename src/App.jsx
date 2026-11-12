@@ -6566,7 +6566,15 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   // ★ 2026-10-08: พนักงานออฟฟิศ (เช่น Planning) = สร้าง + Modify + แก้หัวเอกสาร + แก้รายการ ได้ · "ลบ" (Part / ข้อมูลสแกน) = Admin เท่านั้น
   //   (เดิม canEdit = isAdmin — office สร้างได้อย่างเดียว) · ฝั่ง DB เปิดสิทธิ์ด้วย migration-office-release-rights.sql
   const canEdit = canManage(user);
-  const canDelete = isAdmin(user);
+  const canDelete = isAdmin(user);          // ล้างข้อมูลสแกน = แอดมิน
+  // ★ 2026-11-12 ผู้ใช้: office ยกเลิกการปล่อย / ลบเบอร์ในล็อตได้ (= ลด) แต่ลบทั้งล็อต (ไม่เหลือเบอร์ไหนเลย) = แอดมิน
+  const canUnrelease = canManage(user);
+  const leavesLotEmpty = (rm) => { const ids = new Set(rm.map((r) => r.id)); return !releases.some((r) => !ids.has(r.id) && !r.mod_cancelled_at); };
+  const wholeLotBlocked = async (rm) => {
+    if (isAdmin(user) || !leavesLotEmpty(rm)) return false;
+    await askConfirm({ title: "ลบทั้งล็อตไม่ได้", message: "ลบ / ยกเลิกการปล่อยทุกเบอร์ในล็อตนี้ = ลบทั้ง Release — ทำได้เฉพาะแอดมิน\nยกเลิกได้ทีละบางเบอร์ (ต้องเหลืออย่างน้อย 1 เบอร์)", tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" });
+    return true;
+  };
   const [lang] = useLang();        // แปลหัวคอลัมน์ที่เพิ่มเอง (ลำดับ/Item) ตามภาษา
   // สำเนา releases แบบ local เพื่อให้แก้ไข/ลบ สะท้อนทันทีในหน้านี้ (ยอดรวมคิดใหม่ตามนี้)
   const [releases, setReleases] = useState(group.releases);
@@ -6622,6 +6630,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
   }
   async function unreleaseSel() {
     if (!selRows.length) return;
+    if (await wholeLotBlocked(selRows)) return;
     setBulkBusy("กำลังตรวจประวัติสแกน…");
     const okRows = [], blocked = [];
     try {
@@ -6813,6 +6822,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
 
   // ── ลบ Release (พร้อม QR + ประวัติสแกนของล็อตนั้น) ───────────────────────
   async function handleDelete(r) {
+    if (await wholeLotBlocked([r])) return;
     // ★ 2026-11-11 เบอร์ที่มีชิ้นเสร็จแล้ว = ลบ Release ไม่ได้ (เดิมแอดมินลบได้พร้อมประวัติ)
     const dn = doneOfRow(r);
     if (dn > 0) { await askConfirm({ title: "ลบ Release ไม่ได้", message: `${r.part_master?.part_no} มีชิ้นที่เสร็จแล้ว ${nc(dn)} ชิ้น — ลบไม่ได้ เพราะจะลบประวัติการผลิตไปด้วย`, tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
@@ -7269,7 +7279,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
                 <span className="lot-bulk-sep" aria-hidden="true" />
                 {sheetOpts.length ? <label className="lot-bulk-move"><span>{lang === "en" ? "Move to sheet" : "ย้ายไปใบ"}</span><select className="select" value="" disabled={!!bulkBusy} onChange={(e) => { if (e.target.value) moveSelSheet(e.target.value); }} aria-label="ย้ายแถวที่เลือกไปใบ"><option value="">— เลือกใบ —</option>{sheetOpts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
                   : selKinds.size > 1 ? <span className="lot-bulk-hint">ย้ายใบ: เลือกเฉพาะพาร์ท หรือเฉพาะซับ ทีละชุด</span> : null}
-                {canDelete ? <><button type="button" className="lot-bulk-undo" onClick={unreleaseSel} disabled={!!bulkBusy || (selDone.length > 0 && selDone.length === selRows.length)} title={selDone.length && selDone.length === selRows.length ? (lang === "en" ? "Finished parts cannot be un-released" : "เบอร์ที่เสร็จแล้ว ยกเลิกการปล่อยไม่ได้") : "ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้"}>{lang === "en" ? "Undo release" : "ยกเลิกการปล่อย"}</button>
+                {canUnrelease ? <><button type="button" className="lot-bulk-undo" onClick={unreleaseSel} disabled={!!bulkBusy || (selDone.length > 0 && selDone.length === selRows.length)} title={selDone.length && selDone.length === selRows.length ? (lang === "en" ? "Finished parts cannot be un-released" : "เบอร์ที่เสร็จแล้ว ยกเลิกการปล่อยไม่ได้") : "ลบแถวที่เลือกพร้อม QR ที่ยังไม่สแกน → ยอดกลับไปเป็น “เหลือ” ในใบหลัก ปล่อยใหม่ได้"}>{lang === "en" ? "Undo release" : "ยกเลิกการปล่อย"}</button>
                   {selDone.length ? <span className="lot-bulk-hint">{lang === "en" ? `${nc(selDone.length)} finished — cannot be un-released` : `เสร็จแล้ว ${nc(selDone.length)} เบอร์ — ยกเลิกการปล่อยไม่ได้`}</span> : null}</>
                   : <span className="lot-bulk-hint">ยกเลิกการปล่อย = แอดมิน</span>}
                 {bulkBusy ? <span className="lot-bulk-hint">{bulkBusy}</span> : null}
@@ -7383,7 +7393,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
           modLocked={modList.length > 0}
           onClose={() => setEditing(null)}
           onSaved={afterEdit}
-          onDelete={canDelete ? () => { const r = editing; setEditing(null); handleDelete(r); } : undefined}
+          onDelete={canUnrelease ? () => { const r = editing; setEditing(null); handleDelete(r); } : undefined}
           canClearScans={canDelete}
         />
       )}
@@ -7685,7 +7695,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           if (g) onOpenGroup(g); else mlsToast("ไม่พบรายการของล็อตนี้", "error");
         } : null}
         onBack={() => setView(null)} onPlanChange={onPlanChange} onConflict={() => { clearTimeout(timer.current); pending.current = null; return reloadLatest(); }}
-        onDelete={async (lots = []) => {
+        onDelete={!isAdmin(user) ? null : async (lots = []) => {   // ★ 2026-11-12 ลบทั้งใบหลัก (Release) = แอดมินเท่านั้น
           // ★ 2026-11-09 ลบใบหลัก: ไม่มีล็อต → เลขนี้ใช้ลงใหม่ได้ · มีล็อต (เช่น สร้างใบหลักซ้ำ) → ลบเฉพาะใบหลัก ล็อต/QR อยู่ครบ
           const p = view.plan;
           if (!(await confirmDeletePlan(p, lots))) return;
@@ -8039,7 +8049,8 @@ function ReleasePage({ user, goTo }) {
               </label>
               <select className={"rs-sel" + (projectFilter ? " on" : "")} value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} aria-label="โปรเจค">
                 <option value="">ทุกโปรเจค</option>
-                {projects.map((p) => <option key={p.code} value={p.code}>{p.code} — {p.name}</option>)}
+                {/* ★ 2026-11-12 รหัสเดียวกันหลายตึก → ตัวกรองตามรหัส แสดงครั้งเดียว (เดิม key ซ้ำ · React เตือน) */}
+                {[...new Map(projects.map((p) => [p.code, p])).values()].map((p) => { const n = projects.filter((x) => x.code === p.code).length; return <option key={p.code} value={p.code}>{p.code} — {n > 1 ? `${n} โปรเจค (หลายตึก)` : p.name}</option>; })}
               </select>
               <span className={"rs-dates" + (fromDate || toDate ? " on" : "")}>
                 <span className="rs-dl">วันที่</span>
@@ -12818,7 +12829,7 @@ function ProjectsPage({ user, goTo }) {
       )}
       {editing && (
         <ProjectEditModal
-          project={editing.project} impact={editing.impact} admin={isAdmin(getSession())} canDelRelease={isAdmin(getSession())}   /* ★ รอบ 12 (D): ลบ Release = admin เท่านั้น (ฝั่ง DB บล็อก office อยู่แล้ว — เดิมโชว์ปุ่มที่กดแล้วพัง) */
+          project={editing.project} impact={editing.impact} admin={isAdmin(getSession())} canDelRelease={isAdmin(getSession())} canEdit={canManage(getSession())}   /* ★ รอบ 12 (D): ลบ Release = admin เท่านั้น (ฝั่ง DB บล็อก office อยู่แล้ว — เดิมโชว์ปุ่มที่กดแล้วพัง) */
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }}
           onDeleted={() => { setEditing(null); reload(); }}
@@ -12887,7 +12898,8 @@ function PartsSummaryPage() {
 // 9) SETUP
 // ══════════════════════════════════════════════════════════════════════════
 // ─── Projects: เพิ่ม/แก้ไข/ลบ พร้อมเช็คผลกระทบก่อนลบ (มี Part/Release/QR อยู่ใต้โปรเจคไหม) ──
-function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin, canDelRelease }) {
+// ★ 2026-11-12 ผู้ใช้: office แก้ / เพิ่ม / ลด ได้ทุกอย่าง แต่ห้ามลบทั้ง Release กับโปรเจค → canEdit (แก้รหัส/ชื่อ · ปิด-เปิดโปรเจค) = office ขึ้นไป · ลบโปรเจค / ลบ Release = admin
+function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin, canDelRelease, canEdit = admin }) {
   const [code, setCode] = useState(project.code);
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
@@ -13036,8 +13048,8 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
         </> : <span style={{ color: "var(--alert, #d97a00)" }}>อ่านจำนวนข้อมูลใต้โปรเจคนี้ไม่ได้ (เน็ตสะดุด) — ลบได้แต่ต้องพิมพ์รหัสยืนยัน</span>}
       </div>
 
-      {/* ปิด/เปิดโปรเจค (แอดมิน) — ย้ายมาจากปุ่มในแถว */}
-      {admin && (
+      {/* ปิด/เปิดโปรเจค (office ขึ้นไป) — ย้ายมาจากปุ่มในแถว */}
+      {canEdit && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
           padding: "10px 12px", marginBottom: 12, borderRadius: 8,
           background: project.status === "closed" ? "#fff4e5" : "var(--surface-2, #f3f6f4)",

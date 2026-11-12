@@ -806,7 +806,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const noop = (c) => { const r = (c.kind === "sub" ? need.subs : need.parts).find((x) => NC(x.code) === NC(c.code)); return c.type === "qty" && r && Number(c.qty) === r.qty; };
   const realChanges = changes.filter((c) => !noop(c));
   const lotTouched = [...ops.lotOps.entries()].map(([lot, list]) => ({ lot, n: list.length, qr: list.reduce((s, o) => s + (o.type === "cancel" ? o.before - o.after : o.n), 0) }));
-  const needAdmin = ops.lotOps.size > 0 && user && user.role && user.role !== "admin";
+  // ★ 2026-11-12 ผู้ใช้: office แก้ / ลด / ยกเลิกของที่ปล่อยแล้วผ่าน Modify ได้ (ฝั่ง DB apply_release_modify รับ office อยู่แล้ว) — เหลือแค่ role ที่ไม่ใช่ออฟฟิศ
+  const needAdmin = ops.lotOps.size > 0 && user && user.role && !["admin", "office", "supervisor"].includes(user.role);
   const matOn = matChg.filter((x) => x.on);
   const isMatRow = (f) => f.what === "วัสดุ (INV)" || f.what === "ความยาว" || f.what === "ความยาวซับ";
   const askRow = (f) => !!f.act || (isMatRow(f) && matChg.some((x) => (x.id || `${NC(x.code)}|${x.field || "mat"}`) === `${NC(f.code)}|${f.what === "วัสดุ (INV)" ? "mat" : "len"}`));
@@ -823,7 +824,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
     verErr,
     ops.errors.length && `${ops.errors.length} รายการลดไม่ได้ (ดูแถวสีแดง)`,
-    needAdmin && "แก้ของที่ปล่อยแล้ว (ลด/ยกเลิกในล็อต) ต้องเป็นแอดมิน",
+    needAdmin && "แก้ของที่ปล่อยแล้ว (ลด/ยกเลิกในล็อต) ต้องเป็นออฟฟิศหรือแอดมิน",
     lim.s === "loading" && ops.lotOps.size && "กำลังโหลดยอดที่ทำแล้วของล็อต…",
   ].filter(Boolean);
 
@@ -1303,6 +1304,8 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const admin = user && user.role === "admin";
+  // ★ 2026-11-12 office ยกเลิกการปล่อยได้ทีละบางเบอร์ · ทั้งล็อต (ไม่เหลือเบอร์ไหน) = แอดมิน
+  const canUn = !!user && ["admin", "office", "supervisor"].includes(user.role);
   const descOf = (r) => (r.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(r.code))?.d || "";
   const rows = lot.rows.filter((r) => r.kind !== "panel" && !r.mod_cancelled_at);
   const ql = q.trim().toUpperCase();
@@ -1336,6 +1339,8 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
     setBusy("");
     const bl = chk.blocked.map((b) => `${b.row.code} (สแกนแล้ว ${nf(b.scanned)}${b.recs ? ` · บันทึกงาน ${nf(b.recs)}` : ""})`);
     if (!chk.ok.length) { setErr(`ยกเลิกไม่ได้ — ทุกเบอร์ที่เลือกเริ่มทำแล้ว: ${bl.join(", ")} `); return; }
+    // ★ 2026-11-12 ทั้งล็อต (รวมแผง) ไม่เหลือเบอร์ไหน = ลบทั้ง Release → แอดมินเท่านั้น
+    if (!admin) { const gone = new Set(chk.ok.map((r) => r.id)); if (!lot.rows.some((r) => !gone.has(r.id) && !r.mod_cancelled_at)) { setErr("ยกเลิกการปล่อยทุกเบอร์ในล็อต = ลบทั้ง Release — ทำได้เฉพาะแอดมิน · ยกเลิกได้ทีละบางเบอร์ (ต้องเหลืออย่างน้อย 1 เบอร์)"); return; } }
     const pcs = chk.ok.reduce((a, r) => a + (Number(r.qty) || 0), 0);
     const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${chk.ok.length} เบอร์ใน ${lot.no}?`, message: `${chk.ok.map((r) => `${r.code} (${nf(r.qty)})`).join(", ")}\n\nลบพร้อม QR ${nf(pcs)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" → กด "ปล่อยล็อตใหม่" ปล่อยในใบ/ล็อตที่ถูกได้${bl.length ? `\n\nข้าม ${bl.length} เบอร์ที่เริ่มทำแล้ว: ${bl.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
     if (!ok) return;
@@ -1356,7 +1361,7 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
           <span className="rw-muted small">เลือก <b>{sel.length}</b> / {rows.length}</span>
           <label className="rl-fix-act">ย้ายไปใบ <select className="select" value="" disabled={!sel.length || !opts.length || !!busy} onChange={(e) => { if (e.target.value) move(e.target.value); }} aria-label="ย้ายเบอร์ที่เลือกไปใบ">
             <option value="">{!sel.length ? "— ติ๊กเบอร์ก่อน —" : !opts.length ? "เลือกพาร์ท หรือ ซับ อย่างเดียว" : "— เลือกใบ —"}</option>{opts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
-          <button type="button" className="btn btn-sm rl-fix-del" disabled={!sel.length || !admin || !!busy} onClick={unrelease} title={admin ? "" : "ยกเลิกการปล่อย = แอดมิน"}>ยกเลิกการปล่อย {sel.length || ""}</button>
+          <button type="button" className="btn btn-sm rl-fix-del" disabled={!sel.length || !canUn || !!busy} onClick={unrelease} title={canUn ? (admin ? "" : "ยกเลิกได้ทีละบางเบอร์ · ทั้งล็อต = แอดมิน") : "ยกเลิกการปล่อย = ออฟฟิศ / แอดมิน"}>ยกเลิกการปล่อย {sel.length || ""}</button>
         </div>
         {err ? <div className="rw-msg bad">{err}</div> : null}
         {busy ? <div className="rw-msg info">{busy}</div> : null}
