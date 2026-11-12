@@ -30,6 +30,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
+import { modUndoStep } from "./release/modUndo.js";
 import { NC as relNC, baseOf as relBaseOf, revLetter as relRev } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
@@ -7582,11 +7583,15 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
     timer.current = setTimeout(() => { realReleaseApi.updatePlan(p).catch((e) => mlsToast("บันทึกการเปลี่ยนใบงานไม่สำเร็จ: " + (e?.message || e), "error")); }, 800);
   };
   // ★ 2026-11-04 Ctrl+Z / Ctrl+Y ย้อน/ทำซ้ำการแก้แผน (หมวด / ใบงาน / วัสดุ / ยอดเบิก / ใบปล่อย …) — ย้อนแล้วบันทึกให้เลย
-  //   ปล่อยล็อต / Modify = งานในฐานข้อมูล → ล้างประวัติ (ย้อนด้วย "ย้อน Modify" / ยกเลิกล็อต ของมันเอง)
+  //   ปล่อยล็อต = งานในฐานข้อมูล → ล้างประวัติ (ยกเลิกล็อตด้วยปุ่มของมันเอง) · Modify (บันทึกเป็น M) = ขั้นพิเศษ ย้อนได้ (2026-11-12)
   const hist = useUndoHistory(applyPlan, planChangeLabel);
   const planId = view?.plan?.id;
   useEffect(() => { hist.reset(); }, [planId]);   // eslint-disable-line react-hooks/exhaustive-deps
   const onPlanChange = (p) => { hist.record(view.plan, p); applyPlan(p); };
+  const planRef = useRef(view?.plan); planRef.current = view?.plan;
+  // ขั้น "บันทึกเป็น M" ในประวัติ Ctrl+Z: ย้อน = ยกเลิก M (ฐานข้อมูล + ใบหลัก) · ทำซ้ำได้เฉพาะ M ที่ไม่ได้แก้ในล็อต
+  const showPlan = (p) => { clearTimeout(timer.current); setView((v) => (v && v.plan && v.plan.id === p.id ? { ...v, plan: p } : v)); setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x))); };
+  const modUndoStepOf = (prev, np, mod) => modUndoStep({ prev, np, mod, api: realReleaseApi, user, showPlan, onReload, toast: mlsToast });
   return (
     <Suspense fallback={<div className="card" style={{ color: "var(--muted)" }}>กำลังเปิด Release…</div>}>
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null}
@@ -7609,10 +7614,12 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           await onReload();
         }}
         onModified={async (np, mod) => {
-          hist.reset();
+          // ★ 2026-11-12 บันทึกเป็น M แล้วย้อนได้ด้วย Ctrl+Z (ถามก่อน · ล็อตที่ M ลด/ยกเลิก → ยกเลิก M ในล็อตด้วย) · ไม่ล้างประวัติที่แก้ก่อน M
+          clearTimeout(timer.current);
+          hist.record(planRef.current, np, modUndoStepOf(planRef.current, np, mod));
           setView((v) => (v ? { ...v, plan: np } : v));
           setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
-          mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต)`, "success");
+          mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต) · Ctrl+Z = ย้อน ${mod.ver}`, "success");
           await onReload();
         }}
         onSheetMoved={async ({ codes, toLabel, rows, msg }) => { hist.reset(); mlsToast(msg || `ย้าย ${codes.join(", ")} ไปใบ ${toLabel} แล้ว (${nc(rows)} แถวที่ปล่อย)`, "success"); await onReload(); }}

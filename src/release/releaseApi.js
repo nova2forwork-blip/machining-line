@@ -9,7 +9,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   supabase, listRows, insertRows, createReleaseBatch, releaseOrderExists, updateRow, setBom, getBom, updatePartMaster,
-  listReleaseIdsOfOrder, setReleaseMdf, addMaterialsFromRelease, getMaterials, getReleaseModifyInfo, applyReleaseModify,
+  listReleaseIdsOfOrder, setReleaseMdf, addMaterialsFromRelease, getMaterials, getReleaseModifyInfo, applyReleaseModify, revertReleaseModify,
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
@@ -427,6 +427,48 @@ export async function modifyRelease({ plan, mod, lotOps, docDate }, onProgress =
   return np;
 }
 
+// ★ 2026-11-12 ย้อน M ด้วย Ctrl+Z: (1) ล็อตที่ M นี้ลด/ยกเลิก → ยกเลิก M ในล็อตนั้นด้วย revert_release_modify (mode "cancel")
+//   เช็คทุกล็อตก่อน (dry-run) — ล็อตไหนย้อนไม่ได้ (QR ที่มาจาก M ถูกสแกนแล้ว / มี M ใหม่กว่าแก้เบอร์เดียวกัน …) = ไม่แตะอะไรเลย
+//   (2) คืนใบหลักเป็นก่อน M (prevPlan) + จดไว้ใน modUndone ว่าเคยมี M นี้แล้วถูกย้อน
+//   lotsOfMod(mod) = ล็อตที่ M นี้แก้ · ไม่มีล็อต = ย้อนแค่ใบหลัก (ทำซ้ำได้)
+export const lotsOfMod = (mod) => [...new Set((mod.items || []).flatMap((it) => (it.lots || []).map((l) => l.lot)).filter(Boolean))];
+const REVERT_TXT = {
+  revert_not_installed: "ฐานข้อมูลยังไม่มีส่วน “ยกเลิก M” (migration-release-modify-revert.sql)",
+  revert_used: "ชิ้นงานที่มาจาก M นี้ถูกสแกน / ใช้ไปแล้ว", revert_conflict: "มี M ที่ใหม่กว่าแก้เบอร์เดียวกัน",
+  revert_state_changed: "เบอร์ถูกแก้ต่อหลัง M นี้แล้ว", revert_inv_changed: "INV ถูกแก้ต่อจากที่อื่นแล้ว",
+  revert_missing: "ไม่พบแถว Release นี้แล้ว", revert_qr_missing: "QR บางใบไม่อยู่ในระบบแล้ว", revert_qr_exists: "QR มีอยู่แล้ว",
+  revert_target_locked: "Release ปลายทางมีงานผูกอยู่", already_reverted: "M นี้ถูกยกเลิกไปแล้ว",
+};
+export const revertText = (r) => REVERT_TXT[r?.reason] || r?.message || r?.reason || "error";
+export async function undoModify({ plan, prevPlan, mod, by = "" }, onProgress = () => {}) {
+  const lots = lotsOfMod(mod); const todo = [];
+  for (const lot of lots) {
+    onProgress(`ตรวจล็อต ${lot}…`);
+    const info = await getReleaseModifyInfo(plan.projectId, lot);
+    if (!info || info.ok === false) throw new Error(`อ่านข้อมูลล็อต ${lot} ไม่ได้ (${info?.message || info?.reason || "error"})`);
+    const m = (info.mods || []).find((x) => Number(x.version_no) === Number(mod.no));
+    if (!m) continue;                                  // ล็อตนี้ไม่ได้ถูกแก้จริง (เช่นบันทึกไม่ครบ)
+    if (m.reverted) continue;                          // ยกเลิกไปแล้วจากหน้าล็อต
+    const dry = await revertReleaseModify({ projectId: plan.projectId, releaseOrder: lot, mode: "cancel", version: m.version, dryRun: true });
+    if (!dry || !dry.ok) throw new Error(`${lot}: ${revertText(dry)} — ย้อน ${mod.ver} ไม่ได้ (ยังไม่มีอะไรถูกแก้)`);
+    todo.push({ lot, version: m.version });
+  }
+  const done = [];
+  for (const t of todo) {
+    onProgress(`ยกเลิก ${mod.ver} ในล็อต ${t.lot}…`);
+    const r = await revertReleaseModify({ projectId: plan.projectId, releaseOrder: t.lot, mode: "cancel", version: t.version, reason: `Ctrl+Z ย้อน ${mod.ver} (Release ${plan.ro})` });
+    if (!r || !r.ok) {
+      const e = new Error(`${t.lot}: ${revertText(r)}${done.length ? ` · ล็อตที่ยกเลิก ${mod.ver} ไปแล้ว: ${done.join(", ")} (ใบหลักยังเป็น ${mod.ver} — ไปยกเลิกต่อที่หน้าล็อต)` : " · ยังไม่มีอะไรถูกแก้"}`);
+      e.partial = done; throw e;
+    }
+    done.push(t.lot);
+  }
+  onProgress(`คืนใบ ${plan.ro} เป็นก่อน ${mod.ver}…`);
+  const np = { ...prevPlan, id: plan.id, modUndone: [...(plan.modUndone || prevPlan.modUndone || []), { ver: mod.ver, no: mod.no, at: new Date().toISOString(), by, lots: done }] };
+  await updatePlan(np);
+  return { np, lots: done };
+}
+
 // ★ 2026-11-04 ใบปะหน้า: Instruction No. = ครั้งที่ปล่อยในเดือน (เดือน 9 ครั้งแรก = 001/09) แยกตามใบ CUTTING / BENDING / STEEL
 //   โหลดแถว releases ทั้งเดือน (ทุกโปรเจค · เฉพาะคอลัมน์ที่ใช้นับ) — แบ่งหน้า 1000
 export async function monthReleases(ym) {
@@ -490,4 +532,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, storeLibPdfs };
+export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

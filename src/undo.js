@@ -39,6 +39,7 @@ function install() {
         if ((u.seq || 0) <= gate) continue;
         if (isUndo ? u.canUndo() : u.canRedo()) {
           const label = isUndo ? u.undo() : u.redo();
+          if (label === false) return;   // ขั้นพิเศษ (ย้อน M) บอกผลเอง
           notify(`${isUndo ? "↶ ย้อนแล้ว" : "↷ ทำซ้ำแล้ว"}${label ? ": " + label : ""}${isUndo ? " · Ctrl+Y = ทำซ้ำ" : ""}`);
           return;
         }
@@ -91,25 +92,45 @@ export function useUndoState(initial, { label = "", coalesceMs = 0 } = {}) {
 // ── ประวัติของ "ค่าที่บันทึกอัตโนมัติ" (เช่นแผน Release) ──
 //   ใช้: const hist = useUndoHistory(apply, label) · ก่อนเปลี่ยนเรียก hist.record(ค่าเดิม, ค่าใหม่)
 //   ย้อน = เรียก apply(ค่าเดิม) (ซึ่งบันทึกลงฐานข้อมูลให้ด้วย) · hist.reset() เมื่อค่าถูกแทนด้วยงานที่ย้อนไม่ได้ (ปล่อยล็อต / Modify)
+//   ★ 2026-11-12 ขั้นพิเศษ (เช่น บันทึกเป็น M): record(ค่าเดิม, ค่าใหม่, step) · step = { undo: async () => true/false, redo?: async () => true/false }
+//     ย้อนขั้นนี้ = เรียก step.undo() (ถามยืนยัน / ยกเลิกในฐานข้อมูลเอง · คืน false = ไม่ได้ย้อน → ขั้นยังอยู่) · ไม่มี step.redo = ทำซ้ำไม่ได้
+//     ขั้นพิเศษไม่รวมกับขั้นอื่น (coalesce) · ระหว่างกำลังย้อนขั้นพิเศษ กด Ctrl+Z/Y ซ้ำไม่มีผล
 export function useUndoHistory(apply, label = "", coalesceMs = 1000) {
-  const h = useRef({ past: [], future: [], last: 0, cur: undefined });
+  const h = useRef({ past: [], future: [], last: 0, cur: undefined, busy: false });
   const ap = useRef(apply); ap.current = apply;
   const lb = useRef(label); lb.current = label;
   const api = useRef(null); if (!api.current) api.current = {};
   const a = api.current;
-  a.canUndo = () => h.current.past.length > 0;
-  a.canRedo = () => h.current.future.length > 0;
+  // กำลังย้อนขั้นพิเศษ (รอถามยืนยัน / ฐานข้อมูล) → รับปุ่มไว้เฉย ๆ ไม่ให้ไปย้อนจุดอื่นแทน
+  a.canUndo = () => h.current.past.length > 0 || h.current.busy;
+  a.canRedo = () => h.current.future.length > 0 || h.current.busy;
   const say = (to, from) => (typeof lb.current === "function" ? lb.current(to, from) : lb.current);
-  a.undo = () => { const p = h.current.past.pop(), c = h.current.cur; h.current.future.push(c); h.current.cur = p; h.current.last = 0; ap.current(p); return say(p, c); };
-  a.redo = () => { const n = h.current.future.pop(), c = h.current.cur; h.current.past.push(c); h.current.cur = n; h.current.last = 0; ap.current(n); return say(n, c); };
+  // past / future = [{ v: ค่าอีกฝั่ง, step? }]
+  const runStep = (fn, onOk) => {
+    const H = h.current; H.busy = true;
+    Promise.resolve().then(fn).then((ok) => { if (h.current === H && ok) onOk(); }, () => {}).finally(() => { H.busy = false; });
+    return false;   // toast ให้ step บอกเอง
+  };
+  a.undo = () => {
+    if (h.current.busy) return false;
+    const H = h.current; const e = H.past[H.past.length - 1];
+    if (e.step) return runStep(e.step.undo, () => { H.past.pop(); const c = H.cur; H.cur = e.v; H.last = 0; if (e.step.redo) H.future.push({ v: c, step: e.step }); else H.future = []; });
+    H.past.pop(); const c = H.cur; H.future.push({ v: c }); H.cur = e.v; H.last = 0; ap.current(e.v); return say(e.v, c);
+  };
+  a.redo = () => {
+    if (h.current.busy) return false;
+    const H = h.current; const e = H.future[H.future.length - 1];
+    if (e.step) return runStep(e.step.redo, () => { H.future.pop(); const c = H.cur; H.cur = e.v; H.last = 0; H.past.push({ v: c, step: e.step }); });
+    H.future.pop(); const c = H.cur; H.past.push({ v: c }); H.cur = e.v; H.last = 0; ap.current(e.v); return say(e.v, c);
+  };
   useRegister(a);
-  const record = useCallback((prev, next) => {
+  const record = useCallback((prev, next, step = null) => {
     touch(a);
-    const now = Date.now();
-    if (!(coalesceMs && now - h.current.last < coalesceMs && h.current.past.length)) h.current.past = [...h.current.past, prev].slice(-MAX);
-    h.current.last = now; h.current.future = []; h.current.cur = next;
+    const H = h.current; const now = Date.now(); const top = H.past[H.past.length - 1];
+    if (step || !(coalesceMs && now - H.last < coalesceMs && top && !top.step)) H.past = [...H.past, step ? { v: prev, step } : { v: prev }].slice(-MAX);
+    H.last = step ? 0 : now; H.future = []; H.cur = next;
   }, [a, coalesceMs]);
-  const reset = useCallback(() => { h.current = { past: [], future: [], last: 0, cur: undefined }; }, []);
+  const reset = useCallback(() => { h.current = { past: [], future: [], last: 0, cur: undefined, busy: false }; }, []);
   return { record, reset };
 }
 
