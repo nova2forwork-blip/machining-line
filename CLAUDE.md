@@ -14,4 +14,4 @@
 
 ## ทดสอบจำลอง
 พิมพ์ `/sim-test` เพื่อเรียกทีมผู้ทดสอบ 6 คน (`.claude/agents/sim*.md`, กติกาใน `.claude/sim/SETUP.md`)
-เช่น `/sim-test` (ทั้งทีม) หรือ `/sim-test 2 5` (เฉพาะ SIM2 กับ SIM5)
+เช่น `/sim-test` (ฝั่ง office: SIM1 2 3 5 6) · `/sim-test 2 5` (เฉพาะ SIM2 กับ SIM5) · `/sim-test 4` (หน้าเครื่อง — พักไว้ก่อน)
