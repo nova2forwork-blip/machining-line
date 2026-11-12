@@ -1239,3 +1239,26 @@ tr.rl-ask > td { background: #fff8e1 !important; }
 .bm-qbtn:not(.num) { text-align: left; }
 .bm-in:not(.num) { text-align: left; min-width: 120px !important; }
 .rl-desc .bm-qbtn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+
+/* ★ 2026-11-12 ตาราง BOM แบบชีต Excel */
+.rt-xl { border-collapse: collapse; width: 100%; font-size: 13px; color: #1b1f1d; }
+.rt-xl th { position: sticky; top: 0; z-index: 2; background: #d9d9d9; color: #1b1f1d; font-weight: 700; font-size: 12.5px; padding: 6px 8px; border: 1px solid #a6a6a6; text-align: center; white-space: nowrap; }
+.rt-xl th .bm-th { color: inherit; font-weight: 700; justify-content: center; }
+.rt-xl td { padding: 3px 8px; border: 1px solid #d0d0d0; white-space: nowrap; height: 26px; vertical-align: middle; }
+.rt-xl td.r { text-align: right; } .rt-xl td.c { text-align: center; }
+.rt-xl td.pn { text-align: center; font-weight: 600; }
+.rt-xl td.pd { color: #46574f; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.rt-xl td.desc { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.rt-xl td.mono, .rt-xl td.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+.rt-xl td.code.sub { color: #1e7b34; font-weight: 800; }
+.rt-xl td.code.kid { color: #2e9e4a; }
+.rt-xl td.subm { color: #1e7b34; font-weight: 800; }
+.rt-xl td.rev { color: #c00000; text-align: center; }
+.rt-xl tr.g1 td { background: #ececec; }
+.rt-xl tr.g2 td { background: #f6f6f6; }
+.rt-xl tr.sub td { font-weight: 700; }
+.rt-xl tr.cx td { color: #9b4a44; }
+.rt-xl tbody tr:hover td { background: #e8f1ff; }
+.rt-xl tfoot td { background: #fafafa; color: #5a6f68; font-size: 12px; white-space: normal; }
+.rt-xl .bm-flow { white-space: normal; min-width: 240px; }
+.xl-off { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: #fde2e2; color: #c00000; font-size: 11px; font-weight: 800; }
