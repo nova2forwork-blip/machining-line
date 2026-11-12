@@ -355,6 +355,22 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   return st;
 }
 
+// ★ 2026-11-12 ผู้ใช้: "ดูแบบ ถ้ามีการอัพใหม่หรือ Modify จะเปิดตัวใหม่ไหม" → ตอนบันทึก Modify / เพิ่มรายการ เก็บไฟล์ PDF ที่วางไว้ลงคลังโปรเจคด้วย
+//   (ไม่แตะ BOM / part_master — แค่อัพไฟล์ทับของเดิมเบอร์เดียวกัน + อัปเดตรายการไฟล์ในแถว LIB)
+export async function storeLibPdfs({ projectId, projectCode, pdfs }, onProgress = () => {}) {
+  const ds = (pdfs || []).filter((d) => d && d._file && d.code && ["part", "sub", "panel"].includes(d.kind));
+  if (!ds.length || !projectId) return { n: 0 };
+  const upOnce = new Map(); for (const d of ds) { const k = libPdfPath(projectCode || projectId, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
+  const out = [];
+  const errs = await pool([...upOnce.values()], 4, async (g) => { const path = await uploadLibPdf(projectCode || projectId, g[0]); for (const d of g) out.push({ file: d.file, kind: d.kind, code: d.code, path }); }, (n, m) => onProgress(`เก็บไฟล์แบบลงคลัง ${n}/${m}`));
+  if (!out.length) { const m = errs.length ? String(errs[0].e?.message || errs[0].e || "") : ""; throw new Error(m || "เก็บไฟล์แบบไม่สำเร็จ"); }
+  const old = (await listPlans(projectId)).lib;
+  const { id: _i, projectId: _p, ro: _r, status: _s, ...keep } = old || {};
+  const body = { ...(old ? keep : { v: 1, kind: "lib", projectCode }), pdfs: [...((old && old.pdfs) || []).filter((d) => !out.some((n) => NC(n.code) === NC(d.code) && n.kind === d.kind)), ...out], updatedAt: new Date().toISOString() };
+  await planRpc(projectId, "LIB", body, old ? old.id : null);
+  return { n: out.length, failed: errs.length };
+}
+
 // ปล่อย 1 ล็อต: rows จาก lotRows() → create_release_batch (release_order = เลขล็อต · QR ทุกชิ้น) + Modify + INV ใหม่
 //   append = เพิ่มเข้าล็อตที่ปล่อยแล้ว (เลขล็อตเดิม · แถวใหม่ + QR ใหม่ต่อท้ายในใบปล่อยเดียวกัน) — ผู้ใช้ยืนยันแล้ว
 export async function releaseLot({ plan, lotNo, date, userId, rows, append = false }, onProgress = () => {}) {
@@ -474,4 +490,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease };
+export const realReleaseApi = { checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, storeLibPdfs };

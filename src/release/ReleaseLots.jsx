@@ -828,6 +828,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const unitRows = plan.units.filter((u) => match(u.addr, u.unit));
   const tabCount = (k) => (k === "addr" ? addrs.size : k === "add" ? adds.length : k === "bom" ? edits.filter((e) => e.scope === "panel").length : realChanges.filter((c) => c.kind === k).length + (k === "sub" ? edits.filter((e) => e.scope === "sub").length : 0) + (k === "part" ? matOn.length : 0));
 
+  // เก็บแบบที่วางไว้ลงคลังโปรเจค — ไม่สำเร็จ = เตือนเฉย ๆ (Modify บันทึกไปแล้ว)
+  async function keepDrawings() {
+    if (!dropPdfs.current.length || !api.storeLibPdfs) return;
+    try { await api.storeLibPdfs({ projectId: plan.projectId, projectCode: plan.projectCode, pdfs: dropPdfs.current }, (m) => setBusy(m)); dropPdfs.current = []; }
+    catch (e) { console.warn("store drawings", e); try { window.alert("บันทึกแล้ว แต่เก็บไฟล์แบบลงคลังไม่สำเร็จ — ปุ่ม \"ดูแบบ\" ยังเปิดไฟล์เดิม\n" + (e?.message || e)); } catch { /* ignore */ } }
+  }
   async function save() {
     if (blockers.length || busy) return;
     if (addOnly) {
@@ -839,7 +845,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       const ok = await askConfirm({ title: `เพิ่ม ${extra.length} รายการใน Release ${plan.ro}?`, message: [nQr && `• พาร์ท/ซับ ${nQr} เบอร์ (มี QR · ปล่อยในล็อตถัดไป)`, nHw && `• อุปกรณ์ ${nHw} รายการ (ไม่มี QR · เบิกที่แท็บ ACCESSORIES ตอนปล่อยล็อต)`, "\nไม่นับเป็น Modify — ไม่มีเลข M · ของเดิมไม่เปลี่ยน"].filter(Boolean).join("\n"), confirmText: "เพิ่มรายการ", cancelText: "กลับไปแก้" });
       if (!ok) return;
       setBusy("บันทึก…"); setErr("");
-      try { await api.updatePlan(np); setBusy(""); onAdded && onAdded(np, extra.length); }
+      try { await api.updatePlan(np); await keepDrawings(); setBusy(""); onAdded && onAdded(np, extra.length); }
       catch (e) { setBusy(""); setErr(e?.message || String(e)); }
       return;
     }
@@ -874,6 +880,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     setBusy("เริ่มบันทึก…"); setErr("");
     try {
       const np = await api.modifyRelease({ plan, mod, lotOps: ops.lotOps, docDate: date }, (m) => setBusy(m));
+      await keepDrawings();
       setBusy("");
       await onSaved(np, mod);
     } catch (e) { setBusy(""); setErr(e?.message || String(e)); }
@@ -881,6 +888,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
 
   // ★ 2026-11-04 วาง PDF ใน Modify: แบบซับ/แผงที่มีในใบ → เทียบ BOM ให้เอง (จำนวนเพิ่ม-ลด · ยกเลิก · ลูกใหม่) · แบบพาร์ท/ซับใหม่ → เพิ่มเบอร์ใหม่ (ลงข้อมูลให้ ใส่แค่จำนวน · แก้ได้)
   const [pdfMsg, setPdfMsg] = useState(null);
+  const dropPdfs = useRef([]);   // ★ 2026-11-12 แบบที่วางในรอบนี้ → เก็บลงคลังโปรเจคตอนบันทึก (ปุ่ม "ดูแบบ" จะเปิดตัวใหม่)
   const [pdfDrag, setPdfDrag] = useState(false);
   const pdfRef = useRef(null);
   // ★ 2026-11-10 ใบปะหน้าของรอบนี้: ใบ Modify (FM(DE)-00 "Release for Modification" · M-060 อ้างถึง P-089 · รายการแบบที่แก้ UA2007 REV.A …)
@@ -926,6 +934,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         rest.push(d);
       }
       all = rest;
+      for (const d of all) if (d && d._file && d.code && ["part", "sub", "panel"].includes(d.kind)) { dropPdfs.current = [...dropPdfs.current.filter((x) => !(NC(x.code) === NC(d.code) && x.kind === d.kind)), d]; }
     } catch (e) { setPdfMsg({ bad: "อ่านไฟล์ไม่ได้: " + (e?.message || e) }); return; }
     const exists = (c) => need.parts.concat(need.subs).some((x) => NC(x.code) === NC(c)) || adds.some((a) => NC(a.code) === NC(c));
     for (const d of all) {

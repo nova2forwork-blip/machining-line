@@ -30,7 +30,7 @@ import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
-import { NC as relNC, baseOf as relBaseOf } from "./release/releaseCore.js";
+import { NC as relNC, baseOf as relBaseOf, revLetter as relRev } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
@@ -5072,11 +5072,14 @@ function PartProgressModal({ release, user, goTo, onClose }) {
     setDwg({ s: "loading", msg: "" });
     try {
       const r = await realReleaseApi.listPlans(pid); const pdfs = ((r && r.lib && r.lib.pdfs) || []).filter((x) => x && x.path);
-      const hit = pdfs.find((x) => relNC(x.code) === relNC(partNo)) || pdfs.find((x) => relBaseOf(x.code) === relBaseOf(partNo));
+      // ★ เบอร์เดียวกันหลาย Rev → เปิด Rev ล่าสุด (B ใหม่กว่า A) · ไม่มี Rev อื่น = ไฟล์ของเบอร์ตรงตัว
+      const fam = pdfs.filter((x) => relBaseOf(x.code) === relBaseOf(partNo)).sort((a, b) => relRev(b.code).localeCompare(relRev(a.code)));
+      const hit = fam[0] || pdfs.find((x) => relNC(x.code) === relNC(partNo));
       if (!hit) { if (w) w.close(); setDwg({ s: "none", msg: `ยังไม่มีไฟล์แบบของ ${partNo} ในคลังโปรเจค` }); return; }
       const url = await realReleaseApi.getLibPdfUrl(hit.path);
       if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
-      setDwg({ s: "idle", msg: hit.code !== partNo ? `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)` : "" });
+      const newer = relRev(hit.code) > relRev(partNo);
+      setDwg({ s: "idle", msg: relNC(hit.code) === relNC(partNo) ? "" : newer ? `เปิดแบบ ${hit.code} — Rev ใหม่กว่าในใบ (${partNo})` : `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)` });
     } catch (e) { if (w) w.close(); setDwg({ s: "err", msg: "เปิดแบบไม่ได้: " + (e?.message || e) }); }
   }
   const partName = release.part_master?.part_name || "";
