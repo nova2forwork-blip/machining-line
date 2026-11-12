@@ -12,7 +12,7 @@ import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
-import { SheetView } from "./ReleaseSheet.jsx";
+import { useBomEdit } from "./bomEdit.jsx";
 
 const PAGE = 300;
 const sheetOf = (k) => SHEETS.find((s) => s.k === k) || MAT_SHEETS.find((s) => s.k === k) || { k, tab: k, label: k, th: PART_CATS.includes(k) ? (QR_CATS.has(k) ? "ผลิตเอง · มี QR · ส่งไปใบ MACHINING PART / BENDING / STEEL ได้" : k === "SUB-ASSEMBLY PART" ? "ซับทั้งหมด (รายละเอียดดูที่ Total Sub-Assembly)" : k === "SITE ITEM" ? "รายการเบอร์ * ที่ส่งไปประกอบที่ไซต์" : "ใบเบิก · ไม่มี QR") : "" };
@@ -99,29 +99,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   // ★ 2026-11-11 มุมมอง: แบบเดิม (ค่าเริ่ม) / แบบใหม่ (ตารางเดียว แก้ในช่อง · ทดลอง) — จำไว้ในเครื่อง
   // ★ 2026-11-12 ผู้ใช้: "เอาแบบเดิม แบบใหม่ออก ใช้ตารางที่เลือก" → ใช้ตารางแบบเดิมเสมอ (ไม่มีปุ่มสลับ)
   const viewB = false;
-  const [editOn, setEditOn] = useState(false);
-  const [ed, setEd] = useState({});   // "part|CODE" / "sub|CODE" → { qty?, len? } (ข้อความที่พิมพ์)
-  const editing = editOn && !!onInlineModify && !fq;
-  const nMods = (plan.mods || []).length;
-  useEffect(() => { setEd({}); }, [nMods, plan.ro]);   // บันทึก Modify แล้ว / เปลี่ยนใบ = ล้างที่แก้ค้าง
-  const setEdit = (k, f, v) => setEd((c) => { const nx = { ...(c[k] || {}), [f]: v }; if (nx[f] === undefined) delete nx[f]; const o = { ...c }; if (Object.keys(nx).length) o[k] = nx; else delete o[k]; return o; });
-  const numOk = (v) => String(v ?? "").trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0;
-  const edList = useMemo(() => {
-    const out = [];
-    for (const [k, v] of Object.entries(ed)) {
-      const i = k.indexOf("|"); const kind = k.slice(0, i), code = k.slice(i + 1); const r = (kind === "sub" ? subs : parts).find((x) => x.code === code); if (!r || r.cancelled) continue;
-      if (numOk(v.qty) && Number(v.qty) !== r.qty) out.push({ kind, code, f: "qty", from: r.qty, to: Math.round(Number(v.qty)) });
-      if (numOk(v.len) && Number(v.len) > 0 && Number(v.len) !== Number(r.l)) out.push({ kind, code, f: "len", from: r.l ?? "—", to: Number(v.len) });
-    }
-    return out;
-  }, [ed, parts, subs]);
-  const edCell = (kind, r, f, cur) => { const k = `${kind}|${r.code}`; const raw = ed[k]?.[f]; const chg = edList.some((x) => x.kind === kind && x.code === r.code && x.f === f);
-    return <span className="rt-edwrap">{chg ? <s className="rl-old">{nlen(cur)}</s> : null}<input className={`input rw-cell rt-edin ${chg ? "chg" : ""} ${raw !== undefined && !numOk(raw) ? "bad" : ""}`} type="number" min="0" step={f === "qty" ? 1 : "any"} value={raw !== undefined ? raw : cur ?? ""}
-      onChange={(e) => setEdit(k, f, e.target.value === String(cur ?? "") ? undefined : e.target.value)} aria-label={`${f === "qty" ? "จำนวน" : "ความยาว"} ${r.code}`} /></span>; };
-  const sendInline = () => { if (!onInlineModify || !edList.length) return;
-    const chg = {}; const matChg = [];
-    for (const x of edList) { if (x.f === "qty") chg[`${x.kind}|${x.code}`] = { type: "qty", qty: String(x.to) }; else matChg.push({ id: `${NC(x.code)}|len`, code: x.code, kind: x.kind, field: "len", from: x.from, to: x.to, file: "", on: true }); }
-    onInlineModify({ chg, matChg }); };
+  // ★ 2026-11-12 ผู้ใช้: "ทุกตารางให้แก้ได้เหมือนตารางเต็ม · เลือก save เป็น M หรือไม่ก็ได้ · Ctrl+Z ได้" → ตัวแก้กลาง (bomEdit.jsx) ใช้ทุกแท็บ
+  const ed = useBomEdit({ plan, rel, onSaveDirect: onPlanChange ? async (np) => { await onPlanChange(np); } : null, onModify: onInlineModify });
+  const E = ed.eCell;
   const head = {
     part: stat(parts), sub: stat(subs),
     mat: { MAT: mats.length, GLASS: glass.length, FIXING: hw.length, OTHER: other.length },
@@ -209,10 +189,11 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
   };
   const kidRows = (code, mult) => {
     const sk = findKey(plan.bom.subs, code); if (!sk) return [];
-    return (plan.bom.subs[sk].items || []).filter((it) => (it[4] || "") !== "ยกเลิก").map(([t, c, qq]) => {
+    return (plan.bom.subs[sk].items || []).map((it, oi) => ({ it, oi })).filter(({ it }) => (it[4] || "") !== "ยกเลิก").map(({ it: [t, c, qq], oi }) => {
       const pd = t === "sub" ? plan.bom.subs[findKey(plan.bom.subs, c)] || {} : plan.bom.parts[findKey(plan.bom.parts, c)] || {};
       const uom = t === "sub" ? "SET" : pd.k === "hw" ? pd.u || "pcs." : "pcs.";
-      return { t, c, qq, d: pd.d || "", l: pd.l ?? null, uom, tot: mult * qq };
+      // ★ 2026-11-12 own = บรรทัดนี้ในรายการของซับ (แก้จำนวนต่อชุด / เบอร์ได้)
+      return { t, c, qq, d: pd.d || "", l: pd.l ?? null, uom, tot: mult * qq, own: { scope: "sub", owner: sk, oi }, kind: t === "sub" ? "sub" : pd.k === "hw" ? "hw" : "part", code: c, q: qq, f: pd.f || "" };
     });
   };
 
@@ -261,10 +242,10 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             <tr key={r.code + i} className={r.cancelled ? "rl-cancelrow" : pickP.has(r.code) ? "rl-sel" : r.qr && left <= 0 ? "rt-full" : ""} {...(r.qr ? rowClick(r.code, "part") : {})}>
               <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td>
               <td className="r rw-num">{i + 1}</td>
-              <td className="rw-mono"><Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>
-              <td className="rl-desc"><span>{r.d}</span></td>
-              <td className="r rw-num">{editing && r.qr && !r.cancelled ? edCell("part", r, "len", r.l) : r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{editing && r.qr && !r.cancelled ? null : nlen(r.l)}</td>
-              <td className="r">{editing && r.qr && !r.cancelled ? edCell("part", r, "qty", r.qty) : fq && !r.cancelled && !(r.u === "m." && r.mm) ? fqCell(r) : r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
+              <td className="rw-mono">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "rc", "p" + i, <Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />)}{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>
+              <td className="rl-desc">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "d", "p" + i, <span>{r.d}</span>)}</td>
+              <td className="r rw-num">{E({ ...r, kind: r.qr ? "part" : r.k === "hw" ? "hw" : "part" }, "l", "p" + i, <>{r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{nlen(r.l)}</>)}</td>
+              <td className="r">{fq && !r.cancelled && !(r.u === "m." && r.mm) ? fqCell(r) : r.qr ? E({ ...r, kind: "part" }, "tq", "p" + i, <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} />) : r.qr ? <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} /> : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>
               <td className="rt-inv">{r.qr ? <MatEdit cur={r.inv} orig={r.invOrig != null ? r.invOrig || "—" : ""} note={r.matNote} list={invList} withLen len={r.invOrig != null ? r.ml : ""} label={r.code}
                 onSave={setMatOv && !r.cancelled ? (v) => setMatOv([r.code], v) : null} onReset={resetMatOv ? () => resetMatOv([r.code]) : null} /> : <span className="rw-mono">{r.inv || <span className="rw-muted">—</span>}</span>}</td>
               <td className="rt-usedcell">{usedCell(r.code)}</td>
@@ -274,7 +255,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                   : (onPlanChange && !r.cancelled && !done ? <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span><select className="select rw-cellsel rt-dest" value={r.dest} onChange={(e) => setDests([r.code], e.target.value)} aria-label={`ส่ง ${r.code} ไป`}>{PART_DESTS.map((d) => <option key={d} value={d}>{destLabel(d)}</option>)}</select></div> : <div className="rt-destrow"><span className="rw-muted small">→ ส่งไปใบ</span> <Pill tone="part">{destLabel(r.dest)}</Pill></div>)}</td>
               <td className="rl-donecell">{done ? <b>{r.qr ? nf(done) : nlen(Math.round(done * 100) / 100)}</b> : null} {r.qr ? lotsOf(r.code) : hd ? hd.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null}{o ? <div className="small rw-ok">ทำแล้วที่ {o.ros.join(", ")} ({nf(o.qty)})</div> : null}{r.qr ? madeEl(r.code, done) : null}</td>
               <td className="r"><b>{r.cancelled ? "" : r.qr ? (left > 0 ? nf(left) : "✓") : done ? (left > 0 ? nlen(left) : "✓") : ""}</b></td>
-              <td className="rt-rem">{[r.f, r.rev ? `Rev ${r.rev}` : ""].filter(Boolean).join(" · ")}</td>
+              <td className="rt-rem">{E({ ...r, kind: r.k === "hw" ? "hw" : "part" }, "f", "p" + i, r.f || "")}{r.rev ? <> · {E({ ...r, kind: "part" }, "rev", "p" + i, `Rev ${r.rev}`)}</> : null}</td>
             </tr>);
           return rows;
         })}</tbody>
@@ -293,10 +274,10 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             <tr className={`rt-subrow ${s.cancelled ? "rl-cancelrow" : pickS.has(s.code) ? "rl-sel" : left <= 0 ? "rt-full" : ""}`} {...rowClick(s.code, "subassembly")}>
               <td><input type="checkbox" checked={pickS.has(s.code)} disabled={s.cancelled || left <= 0} onChange={(e) => tS([s.code], e.target.checked)} aria-label={`เลือก ${s.code}`} /></td>
               <td className="r rw-num">{i + 1}</td>
-              <td className="rw-mono"><Code code={s.code} cancel={!!s.cancelled} added={s.added} /></td>
-              <td className="rl-desc"><span>{s.d}</span></td>
-              <td className="r rw-num">{editing && !s.cancelled ? edCell("sub", s, "len", s.l) : nlen(s.l)}</td>
-              <td className="r">{editing && !s.cancelled ? edCell("sub", s, "qty", s.qty) : fq && !s.cancelled ? fqCell(s) : <ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} />}</td>
+              <td className="rw-mono">{E({ ...s, kind: "sub" }, "rc", "s" + i, <Code code={s.code} cancel={!!s.cancelled} added={s.added} />)}</td>
+              <td className="rl-desc">{E({ ...s, kind: "sub" }, "d", "s" + i, <span>{s.d}</span>)}</td>
+              <td className="r rw-num">{E({ ...s, kind: "sub" }, "l", "s" + i, nlen(s.l))}</td>
+              <td className="r">{fq && !s.cancelled ? fqCell(s) : E({ ...s, kind: "sub" }, "tq", "s" + i, <ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} />)}</td>
               {kids ? <><td /><td /></> : null}
               <td className="rw-muted small">SET</td>
               <td>{onPlanChange && !s.cancelled ? <span className="rw-procs">{PROCS.map((k) => { const on = s.procs.includes(k); return <label key={k} className={`rw-proc ${on ? "on" : ""}`}><input type="checkbox" checked={on} onChange={(e) => setProcs([s.code], (c) => (e.target.checked ? [...c, k] : c.filter((x) => x !== k)))} />{SUB_SHORT[k]}</label>; })}</span> : s.procs.map((k) => <Pill key={k} tone="sub">{SUB_SHORT[k] || k}</Pill>)}{!s.procs.length ? <Pill tone="warn">ยังไม่เลือกงาน</Pill> : null}</td>
@@ -305,9 +286,9 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
             </tr>
             {ks.map((k) => (
               <tr key={s.code + ">" + k.c} className={`rt-kid ${s.cancelled ? "rl-cancelrow" : ""}`}>
-                <td /><td /><td className="rw-mono"><span className="rt-kid-ic">└</span>{k.c}{k.t === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
-                <td className="rl-desc"><span>{k.d}</span></td><td className="r rw-num">{nlen(k.l)}</td><td className="r rw-num">{nlen(qOf(s))}</td>
-                <td className="r rw-num">{nlen(k.qq)}</td><td className="r"><b>{nlen(k.tot)}</b></td><td className="rw-muted small">{k.uom}</td><td /><td /><td />
+                <td /><td /><td className="rw-mono"><span className="rt-kid-ic">└</span>{E(k, "code", "k" + i, k.c)}{k.t === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
+                <td className="rl-desc">{E(k, "d", "k" + i, <span>{k.d}</span>)}</td><td className="r rw-num">{E(k, "l", "k" + i, nlen(k.l))}</td><td className="r rw-num">{nlen(qOf(s))}</td>
+                <td className="r rw-num">{E(k, "q", s.code + "k" + i, nlen(k.qq))}</td><td className="r"><b>{nlen(k.tot)}</b></td><td className="rw-muted small">{k.uom}</td><td /><td /><td />
               </tr>))}
           </Fragment>); })}</tbody>
         <tfoot><tr><td /><td /><td colSpan={3}><b>รวม {nf(live.length)} เบอร์</b>{rows.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {rows.length - live.length}</span> : null}</td><td className="r"><b>{nlen(live.reduce((a, s) => a + qOf(s), 0))}</b> <small className="rw-muted">SET</small></td>{kids ? <><td /><td /></> : null}<td /><td /><td><b>{nf(live.reduce((a, s) => a + Math.min(s.qty, doneOf(s.code)), 0))}</b></td><td className="r"><b>{nf(live.reduce((a, s) => a + leftOf(s.code, s.qty), 0))}</b></td></tr></tfoot>
@@ -330,7 +311,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
                   onSave={setMatOv ? (v) => setMatOv(codes, v) : null} onReset={resetMatOv && ovd.length ? () => resetMatOv(ovd) : null} />; })()}
                 {!m.inv ? <div><span className="rl-cxq small">ไม่มี INV</span></div> : null}</td>
               <td className="rl-desc"><span>{m.d}</span></td>
-              <td className="r rw-num"><span title={m.src === "code" ? "ไม่มีใน BOM — อ่านความยาวจากรหัส INV" : undefined}>{nf(m.stock)}</span>{m.src === "default" ? <div><Pill tone="warn" title="ไม่รู้ความยาวเส้น — คิดที่ 6,000">ไม่ทราบ</Pill></div> : null}</td>
+              <td className="r rw-num">{E({ kind: "mat", inv: m.inv, stock: m.stock, codes: m.parts.map((p) => p.code) }, "mml", "m" + i, <><span title={m.src === "code" ? "ไม่มีใน BOM — อ่านความยาวจากรหัส INV" : undefined}>{nf(m.stock)}</span>{m.src === "default" ? <div><Pill tone="warn" title="ไม่รู้ความยาวเส้น — คิดที่ 6,000">ไม่ทราบ</Pill></div> : null}</>)}</td>
               <td><button type="button" className="rt-uses" onClick={() => setOpenMat(open ? null : key)} aria-expanded={open}>{nf(m.parts.length)} เบอร์ · {nf(m.pcs)} ชิ้น {open ? "▴" : "▾"}</button>
                 {m.over ? <div><Pill tone="bad">ยาวกว่าเส้น {nf(m.over)} ชิ้น</Pill></div> : null}{m.noLen ? <div><Pill tone="warn">ไม่มีความยาว {nf(m.noLen)} ชิ้น</Pill></div> : null}</td>
               <td className="r rw-num">{nf(m.len / 1000, 1)}</td>
@@ -351,7 +332,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     table = (
       <table className="data-table rw-table rt-table">
         <thead><tr><th className="r">NO.</th><th>MATERIAL CODE</th><th>MATERIAL DESCRIPTION</th><th className="r">LENGTH (mm.)</th><th className="r">HEIGHT (mm.)</th><th className="r">REQUIRED QTY</th></tr></thead>
-        <tbody>{vis.map((g, i) => <tr key={g.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(g, glass.map((x) => x.code))}</td><td className="rl-desc"><span>{g.d}</span></td><td className="r rw-num">{nlen(g.l)}</td><td className="r rw-num">{nlen(g.h)}</td><td className="r"><b>{nf(g.qty)}</b></td></tr>)}</tbody>
+        <tbody>{vis.map((g, i) => <tr key={g.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(g, glass.map((x) => x.code))}</td><td className="rl-desc">{E({ ...g, kind: "part" }, "d", "g" + i, <span>{g.d}</span>)}</td><td className="r rw-num">{E({ ...g, kind: "part" }, "l", "g" + i, nlen(g.l))}</td><td className="r rw-num">{E({ ...g, kind: "part" }, "h", "g" + i, nlen(g.h))}</td><td className="r"><b>{nf(g.qty)}</b></td></tr>)}</tbody>
         <tfoot><tr><td /><td colSpan={4}><b>รวม {nf(rows.length)} เบอร์</b></td><td className="r"><b>{nf(rows.reduce((a, g) => a + g.qty, 0))}</b> <small className="rw-muted">แผ่น</small></td></tr></tfoot>
       </table>);
   } else if (grp === "mat" && cur === "FIXING") {
@@ -359,7 +340,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     table = (
       <table className="data-table rw-table rt-table">
         <thead><tr><th className="r">NO.</th><th>MATERIAL CODE</th><th>MATERIAL DESCRIPTION</th><th className="r">REQUIRED QTY</th><th>UNIT</th></tr></thead>
-        <tbody>{vis.map((h, i) => <tr key={h.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(h, hw.map((x) => x.code))}{isStar(h.code) ? <> <Pill tone="warn">*</Pill></> : null}</td><td className="rl-desc"><span>{h.d}</span></td><td className="r"><b>{h.u === "m." ? nlen(Math.round(hwQty(h) * 100) / 100) : nf(hwQty(h))}</b></td><td className="rw-muted small">{h.u || "pcs."}</td></tr>)}</tbody>
+        <tbody>{vis.map((h, i) => <tr key={h.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(h, hw.map((x) => x.code))}{isStar(h.code) ? <> <Pill tone="warn">*</Pill></> : null}</td><td className="rl-desc">{E({ ...h, kind: "hw" }, "d", "h" + i, <span>{h.d}</span>)}</td><td className="r"><b>{h.u === "m." ? nlen(Math.round(hwQty(h) * 100) / 100) : nf(hwQty(h))}</b></td><td className="rw-muted small">{h.u || "pcs."}</td></tr>)}</tbody>
         <tfoot><tr><td /><td colSpan={4}><b>รวม {nf(rows.length)} รายการ</b></td></tr></tfoot>
       </table>);
   } else if (grp === "mat") {
@@ -367,7 +348,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
     table = (
       <table className="data-table rw-table rt-table">
         <thead><tr><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th>CATEGORY</th><th className="r">QTY</th></tr></thead>
-        <tbody>{vis.map((o, i) => <tr key={o.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(o, other.map((x) => x.code))}</td><td className="rl-desc"><span>{o.d}</span></td><td><Pill tone="muted">{o.cat}</Pill></td><td className="r"><b>{nf(o.qty)}</b></td></tr>)}</tbody>
+        <tbody>{vis.map((o, i) => <tr key={o.code}><td className="r rw-num">{i + 1}</td><td>{swapCell(o, other.map((x) => x.code))}</td><td className="rl-desc">{E({ ...o, kind: "part" }, "d", "o" + i, <span>{o.d}</span>)}</td><td><Pill tone="muted">{o.cat}</Pill></td><td className="r"><b>{nf(o.qty)}</b></td></tr>)}</tbody>
       </table>);
   } else if (pmx) {
     // แบบแผง × ชั้น (เหมือนชีตสรุปใน Excel: Panel | L13 | L14 | … | TOTAL)
@@ -390,8 +371,8 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
           <tr key={a + i} className={cx ? "rl-cancelrow" : pickA.has(a) ? "rl-sel" : lot ? "rt-full" : ""}>
             <td><input type="checkbox" checked={pickA.has(a)} disabled={!!lot || !!cx} onChange={(e) => tA([a], e.target.checked)} aria-label={`เลือก ${a}`} /></td>
             <td className="r rw-num">{i + 1}</td>
-            <td className="rw-mono"><b className={cx ? "rl-cx" : ""}>{a}</b>{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : null}</td>
-            <td className="rw-mono">{u.unit}</td>
+            <td className="rw-mono">{E({ kind: "unit", addr: u.addr, unit: u.unit, cx: !!cx, released: !!lot }, "ua", "a" + i, <b className={cx ? "rl-cx" : ""}>{a}</b>)}{cx ? <> <Pill tone="bad">ยกเลิก {cx}</Pill></> : null}</td>
+            <td className="rw-mono">{E({ kind: "unit", addr: u.addr, unit: u.unit, cx: !!cx, released: !!lot }, "uu", "a" + i, u.unit)}</td>
             <td>{onPlanChange ? <input key={a + "|" + floorKey(u)} className="input rw-cell rw-mono rt-floorin" defaultValue={floorKey(u)} placeholder="—" aria-label={`ชั้นของ ${a}`}
               onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== floorKey(u)) setFloor([a], v); }} /> : <span className="rw-mono">{floorKey(u) || <span className="rw-muted">—</span>}</span>}</td>
             <td>{findKey(plan.bom.panels, u.unit) ? <Pill tone="ok">✓</Pill> : <Pill tone="warn">ไม่มี BOM</Pill>}</td>
@@ -453,7 +434,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         {TOTALS.filter((g) => g.k === "mat").map(headBtn)}
       </div>
 
-      {viewB && (grp === "part" || grp === "sub") ? <SheetView kind={grp} plan={plan} need={need} rel={rel} doneOf={doneOf} leftOf={leftOf} madeOf={madeOf} onInlineModify={onInlineModify} onRelease={onRelease} onRowProgress={onRowProgress} /> : (<>
+      {viewB ? null : (<>
       {grp === "part" && onPlanChange ? (
         <PartGroupBar mode={plan.partMode} groups={plan.partGroups} catOv={plan.catOv} bom={plan.bom} counts={catCount} filter={partGrp}
           onFilter={(g) => { setPartGrp(g); setLimit(PAGE); }}
@@ -468,7 +449,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
               {m.k === "MAT" ? m.tab : m.label} <small>{nf(head.mat[m.k] || 0)}</small>
             </button>))}
         </div>) : null}
-      {grp === "bom" ? <BomView plan={plan} need={need} rel={rel} onSaveDirect={onPlanChange ? async (np) => { await onPlanChange(np); } : null} onModify={onInlineModify} /> : (
+      {grp === "bom" ? <BomView plan={plan} need={need} ed={ed} /> : (
         <>
       <div className="rt-tools">
         <div className="rt-title">
@@ -492,18 +473,13 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         </div>) : null}
       {grp === "mat" && cur !== "MAT" ? <div className="rt-note"><b>✎ ที่เบอร์ = ใช้เบอร์อื่นแทน</b> (ของตามแบบไม่มี / หมด) · ใบเบิกของทุกล็อตใช้เบอร์ใหม่ + หมายเหตุ "ใช้แทน …" · ↺ = กลับไปตามแบบ</div> : null}
       {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>✎ ที่รหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
-      <div className="table-wrap rw-tw rt-tw">
+      <div className="table-wrap rw-tw rt-tw" onClickCapture={(e) => {
+        // ★ 2026-11-12 คลิกที่ไหนในช่องที่แก้ได้ = เปิดแก้ช่องนั้น (ก่อนที่แถวจะเปิดความคืบหน้า)
+        if (e.target.closest("button, input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(".bm-qbtn"); if (btn) { e.stopPropagation(); btn.click(); } }}>
         {total ? table : <div className="rw-muted small rt-empty">{q ? "ไม่พบรายการที่ค้นหา" : "ไม่มีในใบนี้"}</div>}
       </div>
       {grp === "panel" && !pmx ? foot : null}
-      {editing && (grp === "part" || grp === "sub") && !edList.length ? <div className="rt-note">โหมดแก้ในตาราง: พิมพ์ทับในช่อง <b>จำนวน</b> / <b>ความยาว</b> ได้เลย · Tab ไปช่องถัดไป · วัสดุกด ✎ ที่ช่อง MATERIAL เหมือนเดิม · ยังไม่บันทึกจนกว่าจะกดที่แถบล่าง</div> : null}
-      {onInlineModify && edList.length ? (
-        <div className="rt-pickbar rt-edbar" role="region" aria-label="รายการที่แก้ค้างไว้">
-          <span><b>แก้ {nf(edList.length)} ช่อง ใน {nf(new Set(edList.map((x) => x.kind + "|" + x.code)).size)} เบอร์ · ยังไม่ได้บันทึก</b>
-            <small>{edList.slice(0, 4).map((x) => `${x.code} ${x.f === "qty" ? "จำนวน" : "ยาว"} ${nlen(x.from)} → ${nlen(x.to)}`).join(" · ")}{edList.length > 4 ? ` · อีก ${edList.length - 4}` : ""} — จะบันทึกเป็น {modVer(nextModNo(plan))}</small></span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEd({})}>ยกเลิกที่แก้</button>
-          <button type="button" className="btn btn-accent" onClick={sendInline}>บันทึกเป็น {modVer(nextModNo(plan))} →</button>
-        </div>) : null}
+      {ed.canEdit && !ed.count && grp !== "bom" ? <div className="rt-note">คลิกช่องในตารางเพื่อแก้ (เบอร์ · รายละเอียด · ยาว · จำนวน{grp === "panel" ? " · ที่อยู่ · แบบแผง (ที่ยังไม่ปล่อย)" : grp === "mat" ? " · ความยาวเส้น" : ""}) · Enter = ตกลง · Esc = ยกเลิก · ที่แก้รวมที่แถบล่าง → บันทึกเป็น M หรือไม่นับ M · Ctrl+Z ย้อนได้</div> : null}
       {nPick ? (
         <div className="rt-pickbar" role="region" aria-label="รายการที่เลือกปล่อย">
           <span><b>เลือก {nf(nPick)} รายการ</b> <small>{[pickP.size && `พาร์ท ${nf(pickP.size)}`, pickS.size && `ซับ ${nf(pickS.size)}`, pickA.size && `แผง ${nf(pickA.size)}`].filter(Boolean).join(" · ")} · ปล่อยยอดที่เหลือทั้งหมดของแต่ละเบอร์ · แผง/ซับดึงลูกมาด้วย</small></span>
@@ -517,6 +493,7 @@ export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, o
         </>
       )}
       </>)}
+      {ed.barEl}
     </div>
   );
 }
