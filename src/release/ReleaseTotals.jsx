@@ -73,7 +73,18 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
     onPlanChange({ ...plan, matOv: { ...(plan.matOv || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } });
     toastMat(`เปลี่ยนวัสดุ ${codes.slice(0, 3).join(", ")}${codes.length > 3 ? " …" : ""} → ${String(v.to).trim().toUpperCase()} แล้ว (บันทึกแล้ว · Ctrl+Z ย้อนได้)`);
   } : null;
-  const resetMatOv = onPlanChange ? (codes) => { const m = { ...(plan.matOv || {}) }; for (const c of codes) delete m[c]; onPlanChange({ ...plan, matOv: m }); } : null;
+  // ★ 2026-11-17 ผู้ใช้: "กดกลับไปใช้ตามเดิม แล้วไม่มีการแจ้งเตือน แล้วก็ย้อนกลับไปใช้แบบใหม่ไม่ได้" → ถามก่อน (บอกว่ามาจาก Modify ไหน) + แจ้งหลังทำว่า Ctrl+Z ย้อนได้
+  const resetMatOv = onPlanChange ? async (codes) => {
+    const cur = plan.matOv || {}; const hit = codes.filter((c) => cur[c]); if (!hit.length) return;
+    const mods = [...new Set(hit.map((c) => (/^Modify\s+(M-\d+)/.exec(String(cur[c].r || "")) || [])[1]).filter(Boolean))];
+    const ok = await askConfirm({ title: "กลับไปใช้วัสดุเดิมตามแบบ?", tone: "warn", focusCancel: true, confirmText: "กลับไปใช้วัสดุเดิม", cancelText: "ไม่เปลี่ยน",
+      message: [`${hit.slice(0, 6).join(", ")}${hit.length > 6 ? " …" : ""} จะเลิกใช้ ${[...new Set(hit.map((c) => cur[c].to))].join(", ")}`,
+        mods.length ? `วัสดุนี้เปลี่ยนตาม ${mods.join(", ")} — กลับไปใช้ของเดิมแล้วจะไม่ตรงกับใบ Modify` : "",
+        "บันทึกทันที · ใบปล่อย / ใบเบิกวัสดุล็อตถัดไปใช้วัสดุเดิม · กด Ctrl+Z เพื่อย้อนได้"].filter(Boolean).join(String.fromCharCode(10)) });
+    if (!ok) return;
+    const m = { ...cur }; for (const c of hit) delete m[c]; onPlanChange({ ...plan, matOv: m });
+    toastMat(`กลับไปใช้วัสดุเดิมของ ${hit.slice(0, 3).join(", ")}${hit.length > 3 ? " …" : ""} แล้ว — กด Ctrl+Z เพื่อย้อน`);
+  } : null;
   const setSwap = onPlanChange ? (codes, v) => onPlanChange({ ...plan, matSwap: { ...(plan.matSwap || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } }) : null;
   const resetSwap = onPlanChange ? (codes) => { const m = { ...(plan.matSwap || {}) }; for (const c of codes) delete m[c]; onPlanChange({ ...plan, matSwap: m }); } : null;
   const invList = useMemo(() => knownInvs(plan, need), [plan, need]);

@@ -164,13 +164,15 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
       <button type="button" className="btn btn-accent btn-sm" disabled={!f.to.trim()} onClick={() => { onSave({ ...f, to: f.to.trim() }); setOpen(false); }}>ใช้</button>
       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>ยกเลิก</button>
     </span>);
+  const mv = (/^Modify\s+(M-\d+)/.exec(String(note || "")) || [])[1] || "";
+  const tip = [`เดิมตามแบบ: ${orig}`, note].filter(Boolean).join(" · ");
   return (
     <span className="rt-matcur">
-      {orig ? <><s className="rl-old rw-mono" title="ตามแบบ">{orig}</s> → </> : null}
-      <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? (note || "เปลี่ยนวัสดุจากแบบ") : undefined}>{cur || <span className="rw-muted">—</span>}</b>
+      {/* ★ 2026-11-17 ผู้ใช้: "ดูรก" — เดิมโชว์ ค่าเดิมขีดฆ่า → ค่าใหม่ + บรรทัดเหตุผล (2 บรรทัดทุกแถว) → เหลือค่าใหม่ + ป้ายสั้น · ค่าเดิม / เหตุผลเต็มอยู่ใน tooltip */}
+      <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? tip : undefined}>{cur || <span className="rw-muted">—</span>}</b>
+      {orig ? (mv ? <> <ModTag ver={mv} /></> : <> <Pill tone="warn" title={tip}>เปลี่ยน</Pill></>) : null}
       {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น)" onClick={start}>✎</button> : null}
       {orig && onReset ? <button type="button" className="rw-link rt-matbtn" title="กลับไปใช้ตามแบบ" onClick={onReset}>↺</button> : null}
-      {orig && note ? <div className="rw-muted small">{note}</div> : null}
     </span>);
 }
 
