@@ -238,17 +238,17 @@ export function BomView({ plan, need, ed }) {
         <XTable id="bom-tree" sortOn={false} className="rt-xl bm-treet" rows={vis} rowKey={(r) => r.i} tableProps={{ onClick: ed.tableClick }}
           trProps={(r) => ({ className: `${r.kind === "sub" ? "sub" : ""} ${r.depth || r.kind === "sub" ? (r.depth % 2 ? "g2" : "g1") : ""} ${r.cx ? "cx" : ""}` })}
           cols={[
-            { k: "code", h: "เบอร์", td: (r, i) => { const { key, shut, sub, u } = T(r, i); return <td className={`mono code ${sub ? "sub" : r.depth ? "kid" : ""}`} style={{ paddingLeft: 8 + r.depth * 18 + (sub ? 0 : 22) }}>
+            { k: "code", h: "เบอร์", tip: "เบอร์พาร์ท / ซับ", td: (r, i) => { const { key, shut, sub, u } = T(r, i); return <td className={`mono code ${sub ? "sub" : r.depth ? "kid" : ""}`} style={{ paddingLeft: 8 + r.depth * 18 + (sub ? 0 : 22) }}>
                 {sub ? <button type="button" className="bm-tg" onClick={() => tg(key)} aria-expanded={!shut} aria-label={`${shut ? "ขยาย" : "พับ"} ${r.code}`}>{shut ? "▸" : "▾"}</button> : null}
                 {eCell(r, "code", u, <span className={r.cx ? "rl-cx" : ""}>{r.code}</span>)} {sub ? <Pill tone="sub">{r.depth ? "ซับ 2" : "ซับ 1"}</Pill> : r.kind === "hw" ? <Pill tone="muted">สกรู/ยาง</Pill> : null}{tag(r)}</td>; } },
-            { k: "d", h: "รายละเอียด", td: (r, i) => <td className="desc">{eCell(r, "d", T(r, i).u, <span>{r.d}</span>)}</td> },
-            { k: "dest", h: "ส่งไปใบ", td: (r) => <td>{destOf(r).map((k) => <Pill key={k} tone={r.kind === "sub" ? "sub" : "part"}>{r.kind === "sub" ? SUB_SHORT[k] || k : destLabel(k)}</Pill>)}</td> },
-            { k: "l", h: "ยาว", th: { className: "r" }, td: (r, i) => <td className="r">{eCell(r, "l", T(r, i).u, nlen(r.l))}</td> },
-            { k: "m", h: "MATERIAL", td: (r, i) => <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : eCell(r, "m", T(r, i).u, r.m)}</td> },
-            { k: "cut", h: "เศษ", td: (r) => <td>{r.kind === "sub" ? null : cutChip(r)}</td> },
-            { k: "q", h: "ต่อชุด", th: { className: "r" }, td: (r, i) => <td className="r">{qCell(r, T(r, i).u)}</td> },
-            { k: "sum", h: `รวม (× ${nf(cur.n)} แผง)`, th: { className: "r" }, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b></td> },
-            { k: "um", h: "หน่วย", td: (r) => <td>{r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase()}</td> },
+            { k: "d", h: "รายละเอียด", tip: "ชื่อ / รายละเอียดของชิ้นจากแบบ", td: (r, i) => <td className="desc">{eCell(r, "d", T(r, i).u, <span>{r.d}</span>)}</td> },
+            { k: "dest", h: "ส่งไปใบ", tip: "ใบงานที่ชิ้นนี้ถูกส่งไปทำ (เช่น MACHINING PART / SUB ยิง)", td: (r) => <td>{destOf(r).map((k) => <Pill key={k} tone={r.kind === "sub" ? "sub" : "part"}>{r.kind === "sub" ? SUB_SHORT[k] || k : destLabel(k)}</Pill>)}</td> },
+            { k: "l", h: "ยาว (มม.)", tip: "ความยาวตัดต่อชิ้น (มม.)", th: { className: "r" }, td: (r, i) => <td className="r">{eCell(r, "l", T(r, i).u, nlen(r.l))}</td> },
+            { k: "m", h: "MATERIAL", tip: "รหัสวัตถุดิบ (INV) ที่ใช้ตัดชิ้นนี้", td: (r, i) => <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : eCell(r, "m", T(r, i).u, r.m)}</td> },
+            { k: "cut", h: "ตัดจาก", tip: "ชิ้นเหล่านี้ตัดจากอะไร — ป้ายแดง \"เศษ ×n\" = n ชิ้นตัดจากเศษของเส้นอื่น · ป้ายเทา \"เส้นใหม่ ×n\" = ต้องเบิกเส้นเต็ม n เส้น", td: (r) => <td>{r.kind === "sub" ? null : cutChip(r)}</td> },
+            { k: "q", h: "ต่อชุด", tip: "จำนวนชิ้นนี้ต่อแผง 1 ชุด (หรือต่อซับ 1 ตัว ถ้าเป็นลูกในซับ)", th: { className: "r" }, td: (r, i) => <td className="r">{qCell(r, T(r, i).u)}</td> },
+            { k: "sum", h: `รวม (× ${nf(cur.n)} แผง)`, tip: "จำนวนรวม = จำนวนต่อชุด × จำนวนแผงของแบบนี้", th: { className: "r" }, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b></td> },
+            { k: "um", h: "หน่วย", tip: "หน่วยนับ (pcs. / m.)", td: (r) => <td>{r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase()}</td> },
           ]} />) : <div className="rw-muted small rt-empty">ไม่พบรายการ</div>}
       </div>);
   } else if (v === "merge") {
@@ -259,14 +259,14 @@ export function BomView({ plan, need, ed }) {
         <XTable id="bom-merge" className="data-table rw-table rt-table" rows={rows} limit={limit} rowKey={(e) => e.code} trProps={(e) => ({ className: e.kind === "sub" ? "rt-subrow" : "" })}
           note={<><b>{nf(rows.length)} เบอร์</b>{ALL ? " · ทุกแบบแผง" : ` · ${cur?.unit}`} · รวมทั้งใบ = ต่อชุด × ซับชั้นบน × จำนวนแผง{merged.some((e) => e.adj != null) ? <> · <b className="rl-new">ยอดที่แก้ทั้งใบ (M / ไม่นับ M)</b> โชว์แทนยอดตามแบบ (ขีดฆ่า) — ตรงกับ Total Part · เศษคิดจากยอดตามแบบ</> : null}</>}
           cols={[
-            { k: "code", h: "เบอร์", sort: (e) => e.code, td: (e) => <td className="rw-mono"><b>{e.code}</b>{e.kind === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td> },
-            { k: "d", h: "รายละเอียด", sort: (e) => e.d, td: (e) => <td className="rl-desc"><span>{e.d}</span></td> },
-            { k: "l", h: "ยาว", th: { className: "r" }, sort: (e) => e.l ?? -1, td: (e) => <td className="r rw-num">{nlen(e.l)}</td> },
-            { k: "m", h: "MATERIAL", sort: (e) => e.m, td: (e) => <td className="rw-mono rt-inv">{e.m}</td> },
-            { k: "total", h: "รวมทั้งใบ", th: { className: "r" }, sort: (e) => e.adj ?? e.total, td: (e) => <td className="r">{e.adj != null ? <ModQty orig={Math.round(e.total * 1000) / 1000} cur={e.adj} ver={e.adjVer} cancel={e.adjCancel} /> : <b>{nlen(Math.round(e.total * 1000) / 1000)}</b>}</td> },
-            { k: "uom", h: "หน่วย", sort: (e) => e.uom, td: (e) => <td className="rw-muted small">{e.uom}</td> },
-            { k: "cut", h: "เศษ", sort: (e) => e.reuse, td: (e) => <td>{e.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${e.reuse} จาก ${e.reuse + e.fresh} ชิ้น`}>เศษ ×{nf(e.reuse)}</Pill> : null}{e.fresh ? <> <Pill tone="muted" title={`เปิดเส้นเต็มใหม่ ${e.fresh} เส้น`}>เส้นใหม่ ×{nf(e.fresh)}</Pill></> : null}</td> },
-            { k: "uses", h: "ใช้ใน (ซับ ×จำนวน)", sort: (e) => e.uses.size, td: (e) => <td><div className="bm-uses">{[...e.uses.entries()].slice(0, 6).map(([p, u]) => <span key={p} className="rt-use" title={`${[...u.panels].slice(0, 6).join(", ")}${u.panels.size > 6 ? " …" : ""}`}><b className="rw-mono">{p}</b> × {nlen(u.q)}</span>)}{e.uses.size > 6 ? <small className="rw-muted">+{e.uses.size - 6}</small> : null}</div></td> },
+            { k: "code", h: "เบอร์", tip: "เบอร์พาร์ท / ซับ", sort: (e) => e.code, td: (e) => <td className="rw-mono"><b>{e.code}</b>{e.kind === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td> },
+            { k: "d", h: "รายละเอียด", tip: "ชื่อ / รายละเอียดของชิ้นจากแบบ", sort: (e) => e.d, td: (e) => <td className="rl-desc"><span>{e.d}</span></td> },
+            { k: "l", h: "ยาว (มม.)", tip: "ความยาวตัดต่อชิ้น (มม.)", th: { className: "r" }, sort: (e) => e.l ?? -1, td: (e) => <td className="r rw-num">{nlen(e.l)}</td> },
+            { k: "m", h: "MATERIAL", tip: "รหัสวัตถุดิบ (INV) ที่ใช้ตัดชิ้นนี้", sort: (e) => e.m, td: (e) => <td className="rw-mono rt-inv">{e.m}</td> },
+            { k: "total", h: "รวมทั้งใบ", tip: "จำนวนที่ต้องใช้รวมทุกแผงในใบนี้", th: { className: "r" }, sort: (e) => e.adj ?? e.total, td: (e) => <td className="r">{e.adj != null ? <ModQty orig={Math.round(e.total * 1000) / 1000} cur={e.adj} ver={e.adjVer} cancel={e.adjCancel} /> : <b>{nlen(Math.round(e.total * 1000) / 1000)}</b>}</td> },
+            { k: "uom", h: "หน่วย", tip: "หน่วยนับ (pcs. / m.)", sort: (e) => e.uom, td: (e) => <td className="rw-muted small">{e.uom}</td> },
+            { k: "cut", h: "ตัดจาก", tip: "ชิ้นเหล่านี้ตัดจากอะไร — ป้ายแดง \"เศษ ×n\" = n ชิ้นตัดจากเศษของเส้นอื่น · ป้ายเทา \"เส้นใหม่ ×n\" = ต้องเบิกเส้นเต็ม n เส้น", sort: (e) => e.reuse, td: (e) => <td>{e.reuse ? <Pill tone="bad" title={`ตัดจากเศษ ${e.reuse} จาก ${e.reuse + e.fresh} ชิ้น`}>เศษ ×{nf(e.reuse)}</Pill> : null}{e.fresh ? <> <Pill tone="muted" title={`เปิดเส้นเต็มใหม่ ${e.fresh} เส้น`}>เส้นใหม่ ×{nf(e.fresh)}</Pill></> : null}</td> },
+            { k: "uses", h: "ใช้ใน (ซับ ×จำนวน)", tip: "เบอร์นี้ถูกใช้ที่ไหน กี่ชิ้น — \"(ติดแผงตรง) × 4\" = ติดกับแผงโดยตรง ไม่ผ่านซับ รวม 4 ชิ้น", sort: (e) => e.uses.size, td: (e) => <td><div className="bm-uses">{[...e.uses.entries()].slice(0, 6).map(([p, u]) => <span key={p} className="rt-use" title={`${[...u.panels].slice(0, 6).join(", ")}${u.panels.size > 6 ? " …" : ""}`}><b className="rw-mono">{p}</b> × {nlen(u.q)}</span>)}{e.uses.size > 6 ? <small className="rw-muted">+{e.uses.size - 6}</small> : null}</div></td> },
           ]} />
       </div>);
   } else if (v === "table") {
@@ -287,25 +287,25 @@ export function BomView({ plan, need, ed }) {
           group={(r) => ({ key: r.unit, render: (n) => <tr key={"pg" + r.unit} className="xl-pgap"><td colSpan={n}><b>{r.unit}</b><span>{r.pdesc}</span><small>{nf(r.n)} แผง</small></td></tr> })}
           note={(sorted) => <>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง{sorted ? " · กำลังเรียงอยู่ — กดหัวเดิมจนครบ 3 ครั้งเพื่อกลับลำดับแผง" : ""}</>}
           cols={[
-            { k: "unit", h: "Panel", sort: (r) => r.unit, td: (r) => <td className="pn">{r.unit}</td> },
-            { k: "pd", h: "Description", sort: (r) => r.pdesc, td: (r) => <td className="pd">{eCell(r, "pd", U(r), r.pdesc)}</td> },
-            { k: "n", h: "Quantity", th: { className: "r" }, sort: (r) => r.n, td: (r) => <td className="r">{nf(r.n)}</td> },
-            { k: "pum", h: "U.M.", td: () => <td>SET</td> },
-            { k: "rev", h: "Rev", sort: (r) => r.rev, td: (r) => <td className="rev">{eCell(r, "rev", U(r), r.rev || "")}</td> },
-            { k: "s1", h: "SUB-01", sort: s1, td: (r) => <td className="mono">{s1(r)}</td> },
-            { k: "s2", h: "SUB-02", sort: s2, td: (r) => <td className="mono">{s2(r)}</td> },
-            { k: "code", h: "Code", sort: (r) => r.code, td: (r) => <td className={`mono code ${r.kind === "sub" ? "sub" : r.path.length ? "kid" : ""}`}>{eCell(r, "code", U(r), <span className={r.cx ? "rl-cx" : ""}>{r.code}</span>)}{r.cx ? <> <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill></> : r.add ? <> {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>}</> : null}</td> },
-            { k: "d", h: "Description", sort: (r) => r.d, td: (r) => <td className="desc">{eCell(r, "d", U(r), <span>{r.d}</span>)}</td> },
-            { k: "l", h: "L", th: { className: "r" }, sort: (r) => r.l ?? -1, td: (r) => <td className="r">{eCell(r, "l", U(r), nlen(r.l))}</td> },
-            { k: "h", h: "H", th: { className: "r" }, sort: (r) => r.h ?? -1, td: (r) => <td className="r">{eCell(r, "h", U(r), nlen(r.h))}</td> },
-            { k: "f", h: "Finish", sort: (r) => r.f, td: (r) => <td>{eCell(r, "f", U(r), r.f)}</td> },
-            { k: "m", h: "Material", sort: (r) => r.m, td: (r) => { const off = !!r.cut?.reuse; return <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", U(r), r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>; } },
-            ...(wasteOn ? [{ k: "off", h: "Wast", sort: (r) => r.cut?.reuse || 0, td: (r) => <td className="c xl-wastec">{r.cut?.reuse ? "wast" : ""}</td> }] : []),
-            { k: "ml", h: wasteOn ? "Material Length" : "L", th: { className: "r" }, sort: (r) => r.cut?.stock ?? r.ml ?? -1, td: (r) => { const off = !!r.cut?.reuse; return <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off ? matLenCell(r.cut) : eCell(r, "ml", U(r), r.cut ? nlen(r.cut.stock) : nlen(r.ml))}</td>; } },
-            { k: "q", h: "Quantity", th: { className: "r" }, sort: (r) => r.q, td: (r) => <td className="r">{qCell(r, U(r))}</td> },
-            { k: "sum", h: "Sum", th: { className: "r" }, sort: (r) => r.sum, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td> },
-            { k: "um", h: "U.M.", sort: (r) => um(r), td: (r) => <td>{eCell(r, "um", U(r), um(r))}</td> },
-            ...(wasteOn ? [{ k: "src", h: "ที่มา", th: { title: "ชิ้นนี้ตัดจากไหน: เส้นเต็ม หรือเศษของแถวไหน" }, td: (r) => { const f = cutFlow(r.cut); return <td className="bm-flow">
+            { k: "unit", h: "Panel", tip: "แบบแผง (เลขแบบของแผง)", sort: (r) => r.unit, td: (r) => <td className="pn">{r.unit}</td> },
+            { k: "pd", h: "Panel Description", tip: "รายละเอียดของแบบแผง", sort: (r) => r.pdesc, td: (r) => <td className="pd">{eCell(r, "pd", U(r), r.pdesc)}</td> },
+            { k: "n", h: "Panel Qty", tip: "จำนวนแผงของแบบนี้ในใบ", th: { className: "r" }, sort: (r) => r.n, td: (r) => <td className="r">{nf(r.n)}</td> },
+            { k: "pum", h: "Panel U.M.", tip: "หน่วยของแผง (SET = ชุด)", td: () => <td>SET</td> },
+            { k: "rev", h: "Rev", tip: "Rev ของบรรทัดนี้ตามแบบ (ว่าง = ไม่มี)", sort: (r) => r.rev, td: (r) => <td className="rev">{eCell(r, "rev", U(r), r.rev || "")}</td> },
+            { k: "s1", h: "SUB-01", tip: "ซับชั้นแรกที่ชิ้นนี้อยู่ข้างใน (ว่าง = ติดแผงตรง ไม่ผ่านซับ)", sort: s1, td: (r) => <td className="mono">{s1(r)}</td> },
+            { k: "s2", h: "SUB-02", tip: "ซับชั้นที่สอง (ซับที่ซ้อนอยู่ใน SUB-01) ที่ชิ้นนี้อยู่ข้างใน", sort: s2, td: (r) => <td className="mono">{s2(r)}</td> },
+            { k: "code", h: "Code", tip: "เบอร์ของชิ้น — เขียวตัวหนา = ตัวซับ · เขียว = ลูกในซับ", sort: (r) => r.code, td: (r) => <td className={`mono code ${r.kind === "sub" ? "sub" : r.path.length ? "kid" : ""}`}>{eCell(r, "code", U(r), <span className={r.cx ? "rl-cx" : ""}>{r.code}</span>)}{r.cx ? <> <Pill tone="bad">{r.to ? `แทนด้วย ${r.to}` : "ยกเลิก"} {r.ver}</Pill></> : r.add ? <> {r.ver ? <ModTag ver={r.ver} /> : <Pill tone="mod">เพิ่ม</Pill>}</> : null}</td> },
+            { k: "d", h: "Description", tip: "ชื่อ / รายละเอียดของชิ้นจากแบบ", sort: (r) => r.d, td: (r) => <td className="desc">{eCell(r, "d", U(r), <span>{r.d}</span>)}</td> },
+            { k: "l", h: "L (mm.)", tip: "ความยาวตัดของชิ้น (มม.)", th: { className: "r" }, sort: (r) => r.l ?? -1, td: (r) => <td className="r">{eCell(r, "l", U(r), nlen(r.l))}</td> },
+            { k: "h", h: "H (mm.)", tip: "ความสูง / ความกว้างของชิ้น (มม.) — มีเฉพาะงานแผ่น", th: { className: "r" }, sort: (r) => r.h ?? -1, td: (r) => <td className="r">{eCell(r, "h", U(r), nlen(r.h))}</td> },
+            { k: "f", h: "Finish", tip: "ผิวงาน เช่น PC. = พ่นสี · CHROMATE", sort: (r) => r.f, td: (r) => <td>{eCell(r, "f", U(r), r.f)}</td> },
+            { k: "m", h: "Material", tip: "รหัสวัตถุดิบ (INV) ที่ใช้ตัดชิ้นนี้ · ป้ายแดง OFF = ชิ้นนี้ตัดจากเศษ", sort: (r) => r.m, td: (r) => { const off = !!r.cut?.reuse; return <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : <>{eCell(r, "m", U(r), r.m)}{off && !wasteOn ? <span className="xl-off" title={`ตัดจากเศษ ${nf(r.cut.reuse)} ชิ้น · ${r.cut.src}`}>OFF</span> : null}</>}</td>; } },
+            ...(wasteOn ? [{ k: "off", h: "Wast", tip: "wast = ชิ้นนี้ตัดจากเศษของเส้นอื่น (ไม่ต้องเบิกเส้นใหม่)", sort: (r) => r.cut?.reuse || 0, td: (r) => <td className="c xl-wastec">{r.cut?.reuse ? "wast" : ""}</td> }] : []),
+            { k: "ml", h: wasteOn ? "Material Length" : "Stock L (mm.)", tip: "ความยาวของเส้นวัตถุดิบเต็มเส้น (มม.) — คนละค่ากับความยาวชิ้น", th: { className: "r" }, sort: (r) => r.cut?.stock ?? r.ml ?? -1, td: (r) => { const off = !!r.cut?.reuse; return <td className="r" title={wasteOn && off ? r.cut.src : ""}>{r.kind === "sub" ? "" : wasteOn && off ? matLenCell(r.cut) : eCell(r, "ml", U(r), r.cut ? nlen(r.cut.stock) : nlen(r.ml))}</td>; } },
+            { k: "q", h: "Qty / Set", tip: "จำนวนชิ้นนี้ต่อแผง 1 ชุด", th: { className: "r" }, sort: (r) => r.q, td: (r) => <td className="r">{qCell(r, U(r))}</td> },
+            { k: "sum", h: "Sum", tip: "จำนวนรวมของบรรทัดนี้ = จำนวนต่อชุด × จำนวนแผง", th: { className: "r" }, sort: (r) => r.sum, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.sum * 1000) / 1000)}</b></td> },
+            { k: "um", h: "U.M.", tip: "หน่วยของชิ้น (pcs. / m.)", sort: (r) => um(r), td: (r) => <td>{eCell(r, "um", U(r), um(r))}</td> },
+            ...(wasteOn ? [{ k: "src", h: "ที่มา", tip: "ชิ้นนี้ตัดจากไหน: เส้นเต็ม หรือเศษของแถวไหน", td: (r) => { const f = cutFlow(r.cut); return <td className="bm-flow">
                 {r.cut?.fresh ? <div className="small">เส้นเต็ม{r.cut.fresh > 1 ? ` ×${nf(r.cut.fresh)}` : ""}</div> : null}
                 {f.from.length ? <div className="small rt-waste">เศษจาก {f.from.join(", ")}</div> : null}</td>; } }] : []),
           ]} />

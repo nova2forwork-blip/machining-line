@@ -58,14 +58,14 @@ function XTableOne({ id, cols, rows, rowKey, trProps = null, kids = null, kidTrP
       <thead><tr>{shown.map((c, ci) => {
         const fixed = ci < lock; const on = sort.k === c.k;
         return (
-          <th key={c.k} {...(c.th || {})} className={`${(c.th && c.th.className) || ""} ${over === c.k && drag && drag !== c.k ? "xt-over" : ""} ${drag === c.k ? "xt-drag" : ""}`.trim()}
+          <th key={c.k} {...(c.th || {})} title={c.tip || (c.th && c.th.title) || undefined} className={`${(c.th && c.th.className) || ""} ${over === c.k && drag && drag !== c.k ? "xt-over" : ""} ${drag === c.k ? "xt-drag" : ""}`.trim()}
             aria-sort={on ? (sort.d > 0 ? "ascending" : "descending") : undefined}
             draggable={!fixed} onDragStart={(e) => { if (fixed) return; setDrag(c.k); try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", c.k); } catch { /* ignore */ } }}
             onDragOver={(e) => { if (!drag || fixed) return; e.preventDefault(); if (over !== c.k) setOver(c.k); }} onDragLeave={() => setOver((o) => (o === c.k ? null : o))}
             onDrop={(e) => { e.preventDefault(); drop(c.k); setDrag(null); setOver(null); }} onDragEnd={() => { setDrag(null); setOver(null); }}>
             <span className="xt-h">
               {!fixed ? <span className="xt-grip" title="ลากเพื่อย้ายคอลัมน์" aria-hidden="true">⠿</span> : null}
-              {c.sort && sortOn ? <button type="button" className={`xt-sort ${on ? "on" : ""}`} onClick={() => clickSort(c)} title="กดเพื่อเรียง">{c.h}<i>{on ? (sort.d > 0 ? "▲" : "▼") : "↕"}</i></button> : <span>{c.h}</span>}
+              {c.sort && sortOn ? <button type="button" className={`xt-sort ${on ? "on" : ""}`} onClick={() => clickSort(c)} title={c.tip ? `${c.tip} · กดเพื่อเรียง` : "กดเพื่อเรียง"}>{c.h}<i>{on ? (sort.d > 0 ? "▲" : "▼") : "↕"}</i></button> : <span>{c.h}</span>}
               {ci === Math.min(lock, n - 1) && moved ? <button type="button" className="xt-reset" onClick={() => setOrder(null)} title="คืนลำดับคอลัมน์เดิม">↺</button> : null}{/* ★ 2026-11-17 ย้ายมาหัวคอลัมน์แรก (ถัดจากคอลัมน์ล็อก) — เดิมอยู่คอลัมน์ท้าย ต้องเลื่อนขวาถึงจะเห็น */}
             </span>
           </th>);
