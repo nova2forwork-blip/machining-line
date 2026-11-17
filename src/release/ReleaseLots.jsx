@@ -929,8 +929,13 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const [dropped, setDropped] = useState({});   // NC(code) → ข้อความสรุปจากแบบที่วาง (เช่น "จำนวนเปลี่ยน 2 · ลูกใหม่ 1")
   const sheetCmp = useMemo(() => {
     if (!sheet) return [];
-    if (sheet.kind === "modify") return sheet.items.map((it) => { const k = NC(it.code); const inPlan = findKey(plan.bom.panels, it.code) ? "panel" : findKey(plan.bom.subs, it.code) ? "sub" : need.parts.some((x) => NC(x.code) === k) ? "part" : ""; return { ...it, inPlan, drop: dropped[k] || "" }; });
-    return compareOrder(sheet, need).map((x) => ({ ...x, drop: dropped[NC(x.code)] || "" }));
+    // ★ 2026-11-17 ใบ Modify / ใบปะหน้าเขียนเบอร์ไม่มี Rev ("MAL132-5001") แต่ในใบ / แบบที่วางเป็น "MAL132-5001 A" → เทียบโดยไม่สน Rev
+    //   (เดิมเทียบตรงตัว → ขึ้น "ไม่อยู่ในใบ" + "ยังไม่ได้วางแบบ" ทั้งที่มีและวางแล้ว)
+    const b = (c) => baseOf(c);
+    const hasBase = (obj, c) => !!findKey(obj, c) || Object.keys(obj || {}).some((k) => b(k) === b(c));
+    const dropOf = (c) => { const k = NC(c); if (dropped[k]) return dropped[k]; const hit = Object.keys(dropped).find((x) => b(x) === b(c)); return hit ? dropped[hit] : ""; };
+    if (sheet.kind === "modify") return sheet.items.map((it) => { const k = NC(it.code); const inPlan = hasBase(plan.bom.panels, it.code) ? "panel" : hasBase(plan.bom.subs, it.code) ? "sub" : need.parts.some((x) => NC(x.code) === k || b(x.code) === b(it.code)) ? "part" : ""; return { ...it, inPlan, drop: dropOf(it.code) }; });
+    return compareOrder(sheet, need).map((x) => ({ ...x, drop: dropOf(x.code) }));
   }, [sheet, dropped, plan.bom, need]);
   async function onModPdfs(list) {
     const files = [...list].filter((f) => /\.(pdf|xlsx?|xlsm)$/i.test(f.name)); if (!files.length) return;
@@ -1087,7 +1092,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           <tr key={`${x.code}|${i}`} className={(sheet.kind === "modify" ? !x.drop : x.status === "missing") ? "rl-errrow" : ""}>
             <td className="r rw-muted">{x.item ?? ""}</td><td className="rw-mono"><b>{x.code}</b></td><td className="rw-desc">{x.d}</td>
             <td>{sheet.kind === "modify" ? (x.remark || (x.rev ? "REV." + x.rev : "")) : <>{nlen(x.qty)}{x.unit ? <small className="rw-muted"> {x.unit}</small> : null}</>}</td>
-            <td>{sheet.kind === "modify" ? (x.inPlan ? <Pill tone="ok">{x.inPlan === "panel" ? "แผง" : x.inPlan === "sub" ? "ซับ" : "พาร์ท"}</Pill> : <Pill tone="bad">ไม่อยู่ในใบ</Pill>) : (x.status === "missing" ? <Pill tone="bad">ยังไม่อยู่ในใบ</Pill> : x.status === "ok" ? <Pill tone="ok">มี {nlen(x.have)}</Pill> : <Pill tone="warn">มี {nlen(x.have)}</Pill>)}</td>
+            <td>{sheet.kind === "modify" ? (x.inPlan ? <Pill tone="ok">{x.inPlan === "panel" ? "แผง" : x.inPlan === "sub" ? "ซับ" : "พาร์ท"}</Pill> : /^(เพิ่มเป็นเบอร์ใหม่|แทน )/.test(String(x.drop || "")) ? <Pill tone="info">เบอร์ใหม่ (เพิ่มในใบ)</Pill> : <Pill tone="bad">ไม่อยู่ในใบ</Pill>) : (x.status === "missing" ? <Pill tone="bad">ยังไม่อยู่ในใบ</Pill> : x.status === "ok" ? <Pill tone="ok">มี {nlen(x.have)}</Pill> : <Pill tone="warn">มี {nlen(x.have)}</Pill>)}</td>
             <td>{x.drop ? <span className="rw-ok small">✓ {x.drop}</span> : <span className="rl-errtxt small">ยังไม่ได้วางแบบ</span>}</td>
           </tr>))}</tbody>
       </table>
