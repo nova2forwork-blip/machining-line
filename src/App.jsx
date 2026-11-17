@@ -544,6 +544,11 @@ const PRESETS = [
 ];
 function rangeFor(preset) {
   const to = new Date();
+  // ★ 2026-11-17 นับวันตามเวลาไทย (ไม่ขึ้นกับเขตเวลาของเครื่อง)
+  const today = bkkYmd(to);
+  const fromYmd = preset === "day" ? today : preset === "week" ? ymdAdd(today, -6) : preset === "month" ? ymdAdd(today, -29)
+    : ymdAdd(`${Number(today.slice(0, 4)) - 1}${today.slice(4)}`, 1);
+  if (fromYmd) return { from: bkkStart(fromYmd).toISOString(), to: to.toISOString() };
   const from = new Date(to);
   // ★ 2026-10-10: เริ่มที่เที่ยงคืนเสมอ (วันเต็ม) — เดิม "7 วัน" = ย้อน 7×24 ชม. จากตอนนี้ → วันแรกได้แค่ครึ่งวัน
   //   (ตารางรายวัน/เฉลี่ยต่อวันมีวันแหว่งปน) · 7 วัน = วันนี้ + 6 วันก่อน · 30 วัน = วันนี้ + 29 วันก่อน
@@ -557,18 +562,24 @@ function rangeFor(preset) {
 function monthRangeFor(monthStr) {
   if (!monthStr) return rangeFor("month");
   const [y, m] = monthStr.split("-").map(Number);
-  const from = new Date(y, m - 1, 1, 0, 0, 0, 0);
-  const to = new Date(y, m, 0, 23, 59, 59, 999); // last day of that month
+  const from = bkkStart(`${y}-${String(m).padStart(2, "0")}-01`);                                   // ★ เวลาไทย
+  const to = new Date(bkkStart(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`).getTime() - 1); // last ms of that month
   return { from: from.toISOString(), to: to.toISOString() };
 }
 function customRangeFor(fromStr, toStr) {
-  const from = fromStr ? new Date(`${fromStr}T00:00:00`) : new Date(0);
-  const to = toStr ? new Date(`${toStr}T23:59:59.999`) : new Date();
+  const from = fromStr ? new Date(`${fromStr}T00:00:00+07:00`) : new Date(0);   // ★ เวลาไทย
+  const to = toStr ? new Date(`${toStr}T23:59:59.999+07:00`) : new Date();
   return { from: from.toISOString(), to: to.toISOString() };
 }
 // ★ รอบ 11 (B16): วันที่ "ตามเวลาเครื่อง" (ไทย) — เดิม toISOString() = วันที่ UTC → ก่อน 07:00 กลายเป็นเมื่อวาน
 //   (Release ใหม่บันทึกเป็นเมื่อวาน · รายงานตัดกะดึก · วันที่ 1 เลือกเดือนก่อน)
-function localYmd(d = new Date()) { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); }
+// ★ 2026-11-17 (SIM5): รายงานตัดวันตามเวลาไทยเสมอ — เดิมใช้เขตเวลาของเครื่องที่เปิด (เครื่องตั้งเวลาต่างประเทศ = ยอดรายวันผิด)
+const BKK_MS = 7 * 3600e3;
+function bkkYmd(d = new Date()) { const t = d instanceof Date ? d.getTime() : new Date(d).getTime(); return Number.isFinite(t) ? new Date(t + BKK_MS).toISOString().slice(0, 10) : ""; }
+const bkkStart = (ymd) => new Date(`${ymd}T00:00:00+07:00`);           // เที่ยงคืนวันนั้น (ไทย)
+const bkkHour = (iso) => new Date(new Date(iso).getTime() + BKK_MS).getUTCHours();
+const ymdAdd = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+function localYmd(d = new Date()) { return bkkYmd(d); }
 function todayStr() { return localYmd(); }
 function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return localYmd(d); }
 // ★ รอบ 11 (B3): แถบสถานะโหลดรายงาน — กำลังโหลด / โหลดไม่สำเร็จ (ไม่โชว์ "0" หลอกว่าไม่มีงาน)
@@ -11403,7 +11414,7 @@ function MachineReportsPage() {
 //           · app_settings 'daily_report' (เวลากะ + เป้าต่อเครื่อง — migration-daily-report-settings.sql)
 // ══════════════════════════════════════════════════════════════════════════
 // วันที่ "ตามเวลาเครื่อง" (ไม่ใช่ UTC) — กันช่วงเช้ามืด (00:00–07:00 ไทย) กลายเป็นเมื่อวาน
-const localDayStr = (d = new Date()) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+const localDayStr = (d = new Date()) => bkkYmd(d);   // ★ 2026-11-17 วันตามเวลาไทย
 const shiftDayStr = (ds, n) => { const d = new Date(`${ds}T12:00:00`); d.setDate(d.getDate() + n); return localDayStr(d); };
 // ★ 2026-10-15: Report — ช่วงรายงาน วัน / สัปดาห์ (จันทร์–อาทิตย์) / เดือน / ปี · anchor = วันที่ใดก็ได้ในช่วง
 const DR_MODES = ["day", "week", "month", "year"];
@@ -11433,7 +11444,7 @@ function drPlannedMin(cfg, dayStr, nowMs = Date.now()) {
   const s = hmToMin(cfg.start), e = hmToMin(cfg.end);
   const bs = hmToMin(cfg.breakStart), be = bs + (Number(cfg.breakMin) || 0);
   let upTo = e;
-  if (dayStr === localDayStr(new Date(nowMs))) { const d = new Date(nowMs); upTo = Math.min(e, d.getHours() * 60 + d.getMinutes()); }
+  if (dayStr === localDayStr(new Date(nowMs))) { const d = new Date(nowMs + BKK_MS); upTo = Math.min(e, d.getUTCHours() * 60 + d.getUTCMinutes()); }
   if (upTo <= s) return 0;
   const brk = Math.max(0, Math.min(upTo, be) - Math.max(s, bs));
   return Math.max(0, upTo - s - brk);
@@ -11443,7 +11454,7 @@ function drStopMin(s, cfg, dayStr, nowMs = Date.now()) {
   const st = new Date(s.started_at).getTime();
   if (!Number.isFinite(st)) return { day: 0, planned: 0 };
   const en = s.ended_at ? new Date(s.ended_at).getTime() : s.open ? nowMs : st + (Number(s.minutes) || 0) * 60000;
-  const base = new Date(`${dayStr}T00:00:00`).getTime();
+  const base = bkkStart(dayStr).getTime();
   const a = Math.max(st, base), b = Math.min(en, base + 86400000);
   if (!(b > a)) return { day: 0, planned: 0 };
   const seg = (m0, m1) => Math.max(0, Math.min(b, base + m1 * 60000) - Math.max(a, base + m0 * 60000));
@@ -11884,14 +11895,16 @@ function DailyReportPage() {
     const en = s.ended_at ? new Date(s.ended_at).getTime() : s.open ? nowMs : st + (Number(s.minutes) || 0) * 60000;
     let dd = 0, pl = 0;
     for (const d of stopDays) {                       // ตัดตามขอบแต่ละวัน แล้วรวม (ข้ามวันที่ไม่ทับ)
-      const b0 = new Date(`${d}T00:00:00`).getTime();
+      const b0 = bkkStart(d).getTime();
       if (!(en > b0 && st < b0 + 86400000)) continue;
       const r = drStopMin(s, cfg, d, nowMs); dd += r.day; pl += r.planned;
     }
     return { ...s, day: dd, planned: pl };
   }).filter((s) => s.day > 0 || (s.started_at && (() => { const sd = localDayStr(new Date(s.started_at)); return sd >= period.from && sd <= clipTo; })()));
   const stopsF = stops.filter((s) => !machineF || s.machine === machineF);
-  const stopMin = sum(stopsF, (s) => s.day);
+  // ★ 2026-11-17 (SIM5): เวลาหยุด = เฉพาะในเวลากะ (เดิมนับเวลานาฬิกา รวมกลางคืน / วันหยุด → เดิน+หยุด+ว่าง ไม่เท่าเวลาตามแผน)
+  const stopMin = sum(stopsF, (s) => s.planned);
+  const stopClockMin = sum(stopsF, (s) => s.day);
   const openStops = stopsF.filter((s) => s.open);
   const cycleMin = timedPcs > 0 ? (totSec / 60) / timedPcs : null;
 
@@ -11968,11 +11981,11 @@ function DailyReportPage() {
   // ── ชิ้นงานรายชั่วโมง (ช่วงกะ ขยายถ้ามีงานนอกกะ) ──
   const hourly = (() => {
     const by = {};
-    rows.forEach((g) => { const h = new Date(g.time).getHours(); const e = by[h] || (by[h] = { pcs: 0, kg: 0, scans: 0 }); e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.scans += 1; });
+    rows.forEach((g) => { const h = bkkHour(g.time); const e = by[h] || (by[h] = { pcs: 0, kg: 0, scans: 0 }); e.pcs += Number(g.qty) || 0; e.kg += Number(g.weight) || 0; e.scans += 1; });
     const hs = Object.keys(by).map(Number);
     let h0 = Math.floor(hmToMin(cfg.start) / 60), h1 = Math.ceil(hmToMin(cfg.end) / 60) - 1;
     if (hs.length) { h0 = Math.min(h0, ...hs); h1 = Math.max(h1, ...hs); }
-    if (isToday) h1 = Math.min(h1, Math.max(new Date(nowMs).getHours(), hs.length ? Math.max(...hs) : h0));
+    if (isToday) h1 = Math.min(h1, Math.max(bkkHour(nowMs), hs.length ? Math.max(...hs) : h0));
     const out = [];
     for (let h = h0; h <= h1; h++) out.push({ h, pcs: by[h]?.pcs || 0, kg: by[h]?.kg || 0, scans: by[h]?.scans || 0 });
     return out;
@@ -12070,7 +12083,7 @@ function DailyReportPage() {
   // Pareto: เวลาหยุดตามสาเหตุ (นาที) · รายงานการทำงานตามเหตุผล (ครั้ง)
   const stopPareto = (() => {
     const m = {};
-    stopsF.forEach((s) => { const k = s.reason || L("ไม่ระบุ", "unspecified"); const e = m[k] || (m[k] = { v: 0, n: 0 }); e.v += Number(s.day) || 0; e.n += 1; });
+    stopsF.forEach((s) => { const k = s.reason || L("ไม่ระบุ", "unspecified"); const e = m[k] || (m[k] = { v: 0, n: 0 }); e.v += Number(s.planned) || 0; e.n += 1; });   // ★ 2026-11-17 ในเวลากะ (ตรงกับการ์ด "เวลาหยุดเครื่อง")
     return Object.entries(m).map(([k, e]) => ({ k, v: Math.round(e.v), n: e.n })).sort((a, b) => b.v - a.v);
   })();
   const slowPareto = (() => {
@@ -12115,7 +12128,7 @@ function DailyReportPage() {
       cell: (m) => (m.util != null ? <>{pctTxt(m.util)} <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{fmtDur(m.runMin, lang)}</span></> : "—"), exp: (m) => (m.util != null ? Math.round(m.util * 100) : "") },
     { key: "cycle", header: L("นาที/ชิ้น", "Min/pc"), sortKey: "cycle", align: "right", cell: (m) => (m.cycle != null ? fmtKpi(m.cycle) : "—"), exp: (m) => (m.cycle != null ? Math.round(m.cycle * 10) / 10 : "") },
     ...(manage ? [{ key: "stops", header: L("เวลาหยุด", "Downtime"), sortKey: "stops", align: "right", tdStyle: { whiteSpace: "nowrap" },
-      cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }}>{fmtDur(m.stopMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${nc(Math.round(m.stopMin))} min · ${m.stops}×` : "") }] : []),
+      cell: (m) => (m.stops ? <span style={{ color: "var(--danger)" }} title={L(`ในเวลากะ ${fmtDur(m.stopPlMin, lang)} · ตามนาฬิกา (รวมนอกกะ) ${fmtDur(m.stopMin, lang)}`, `in shift ${fmtDur(m.stopPlMin, lang)} · clock time ${fmtDur(m.stopMin, lang)}`)}>{fmtDur(m.stopPlMin, lang)} · {m.stops}×</span> : "—"), exp: (m) => (m.stops ? `${nc(Math.round(m.stopPlMin))} min · ${m.stops}×` : "") }] : []),
     { key: "idle", header: L("ว่าง/อื่นๆ", "Idle/other"), sortKey: "idle", align: "right", tdStyle: { whiteSpace: "nowrap", color: "var(--muted)" }, cell: (m) => (m.idleMin == null ? "—" : fmtDur(m.idleMin, lang)), exp: (m) => (m.idleMin == null ? "" : Math.round(m.idleMin)) },
     { key: "scans", header: L("สแกน", "Scans"), sortKey: "scans", align: "right", cell: (m) => fmtNum(m.scans), exp: (m) => m.scans },
     { key: "fin", header: L("เสร็จ (ชิ้น)", "Finished (pcs)"), sortKey: "fin", align: "right", cell: (m) => fmtNum(m.fin), exp: (m) => m.fin },
@@ -12126,7 +12139,7 @@ function DailyReportPage() {
     { key: "last", header: L("สแกนล่าสุด", "Last scan"), sortKey: "last", tdStyle: { fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }, cell: (m) => (m.last ? tFmt(m.last) : "—"), exp: (m) => (m.last ? tFmt(m.last) : "") },
   ];
   const mAcc = { flag: (m) => m.sev, mkey: (m) => m.mkey, name: (m) => m.name, emp: (m) => m.empText, pcs: (m) => m.pcs, tgt: (m) => m.pctT, avg7: (m) => m.avg7, kg: (m) => m.kg,
-    util: (m) => m.util, cycle: (m) => m.cycle, stops: (m) => m.stopMin, idle: (m) => m.idleMin, scans: (m) => m.scans, fin: (m) => m.fin, inp: (m) => m.inp,
+    util: (m) => m.util, cycle: (m) => m.cycle, stops: (m) => m.stopPlMin, idle: (m) => m.idleMin, scans: (m) => m.scans, fin: (m) => m.fin, inp: (m) => m.inp,
     parts: (m) => m.nParts, slow: (m) => m.slow, first: (m) => m.first || "", last: (m) => m.last || "" };
 
   // ── คอลัมน์ "รายการทั้งหมด" ──
@@ -12185,7 +12198,7 @@ function DailyReportPage() {
         [L("เวลาตามแผน (นาที)", "Planned time (min)"), Math.round(plannedMinTotal)],
         [L("เวลาเดินเครื่อง %", "Utilization %"), util != null ? Math.round(util * 100) : ""],
         [L("นาที/ชิ้น", "Min per piece"), cycleMin != null ? Math.round(cycleMin * 10) / 10 : ""],
-        ...(manage && stopsAll ? [[L("เวลาหยุด (นาที)", "Downtime (min)"), Math.round(stopMin)], [L("หยุด (ครั้ง)", "Stops"), stopsF.length]] : []),
+        ...(manage && stopsAll ? [[L("เวลาหยุด ในเวลากะ (นาที)", "Downtime in shift (min)"), Math.round(stopMin)], [L("เวลาหยุด ตามนาฬิกา รวมนอกกะ (นาที)", "Downtime clock time (min)"), Math.round(stopClockMin)], [L("หยุด (ครั้ง)", "Stops"), stopsF.length]] : []),
         [L("สแกน (ครั้ง)", "Scans"), rows.length], [L("เครื่องที่ทำงาน", "Machines working"), activeMachines.length], [L("พนักงาน", "Operators"), nEmp],
         ["Part", nParts], ["Release", nRel], [L("รายงานการทำงาน", "Work reports"), nSlow],
         [L("เทียบช่วงก่อน", "Previous period"), prevLbl || ""], [L("ชิ้นงาน ช่วงก่อน", "Pieces previous period"), prev ? prev.pcs : ""],
@@ -12333,7 +12346,7 @@ function DailyReportPage() {
               sub={L("เวลาเดินเครื่อง ÷ ชิ้นงาน (น้อย = เร็ว)", "run time ÷ pieces (lower = faster)")}
               info={L("เฉลี่ยทุกเครื่อง · ดูรายเครื่องในตารางด้านล่าง", "All machines average · see per machine below")} />
             <DrKpi label={L("เวลาหยุดเครื่อง", "Downtime")} value={manage && stopsAll ? fmtDur(stopMin, lang) : "—"}
-              sub={manage && stopsAll ? L(`${nc(stopsF.length)} ครั้ง${openStops.length ? ` · หยุดอยู่ ${openStops.length} เครื่อง` : ""}`, `${stopsF.length} stop(s)${openStops.length ? ` · ${openStops.length} stopped now` : ""}`) : L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}
+              sub={manage && stopsAll ? L(`ในเวลากะ · ${nc(stopsF.length)} ครั้ง${Math.round(stopClockMin) > Math.round(stopMin) ? ` · ตามนาฬิกา ${fmtDur(stopClockMin, lang)}` : ""}${openStops.length ? ` · หยุดอยู่ ${openStops.length} เครื่อง` : ""}`, `${stopsF.length} stop(s)${openStops.length ? ` · ${openStops.length} stopped now` : ""}`) : L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}
               alert={openStops.length ? L(`⛔ ${openStops.map((s) => s.machine).join(", ")} หยุดอยู่ตอนนี้`, `⛔ ${openStops.map((s) => s.machine).join(", ")} stopped now`) : null}
               info={L("จากการกด \"แจ้งเครื่องหยุด\" ที่หน้าเครื่อง จนกด \"พร้อมทำงาน\"", "From \"machine stop\" on the terminal until \"ready\"")} />
           </div>
@@ -12403,7 +12416,7 @@ function DailyReportPage() {
 
               {/* ── Pareto: สาเหตุเวลาหยุด · เหตุผลรอบช้า ── */}
               <div className="dr-grid2">
-                <Card title={L("สาเหตุเวลาหยุด (นาที)", "Downtime by reason (min)")}>
+                <Card title={L("สาเหตุเวลาหยุด (นาที · ในเวลากะ)", "Downtime by reason (min · in shift)")}>
                   {manage && stopsAll
                     ? <DrPareto rows={stopPareto} unit={L("น.", "min")} tone="stop" empty={multi ? L("ไม่มีเครื่องหยุดในช่วงนี้", "No downtime in this period") : L("ไม่มีเครื่องหยุดในวันนี้", "No downtime on this day")} />
                     : <div style={{ color: "var(--muted)", fontSize: 13 }}>{L("ดูได้เฉพาะ admin / office / supervisor", "admin / office / supervisor only")}</div>}

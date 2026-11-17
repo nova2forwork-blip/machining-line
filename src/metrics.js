@@ -222,6 +222,7 @@ export function partOpMatrix(logs, opOrder, qtyByRelease = null, scopeByRelease 
     // ★ 2026-10-10 ตรวจรอบ 3: เดิมตัวชี้ cur ตัวเดียวต่อ Release+Part → ตัวหลักของเครื่อง/ชิ้นอื่นแทรกก่อนติ๊กร่วม
     //   ทำให้ติ๊กร่วมกำพร้า/ไปเครดิตผิดสแกน · ใช้ Map สแกนที่เปิดอยู่ คีย์ = ชิ้น|เครื่อง|สถานะ
     const open = new Map();
+    const ost = new Map();   // ขั้นตอน|สถานะ → ชิ้น (ใช้หา "จำนวนชิ้น" ไม่นับซ้ำข้ามเครื่อง / ข้ามสถานะ)
     for (const l of asc) {
       const op = l.operation?.name || "ไม่ระบุ";
       const qv = q(l);
@@ -233,11 +234,25 @@ export function partOpMatrix(logs, opOrder, qtyByRelease = null, scopeByRelease 
         open.set(k, { qty: qv, puid, st, ops: new Set([op]) });
         entry.total.count += qv;
         ensureOp(op).count += qv;
+        ost.set(`${op}|${st}`, (ost.get(`${op}|${st}`) || 0) + qv);
       } else if (cur) {                               // ติ๊กร่วม → เครดิตจำนวนของสแกนนั้น
-        if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; }
+        if (!cur.ops.has(op)) { cur.ops.add(op); ensureOp(op).count += cur.qty; ost.set(`${op}|${cur.st}`, (ost.get(`${op}|${cur.st}`) || 0) + cur.qty); }
       } else {
         ensureOp(op);                                 // ติ๊กร่วมกำพร้า → มีคอลัมน์ไว้ แต่ไม่เครดิต
       }
+    }
+    // ★ 2026-11-17 (SIM5): "รวม (ชิ้น)" ของตาราง Release × Part = จำนวน "ชิ้น" ไม่ใช่จำนวนสแกน
+    //   เดิมบวกทุกสแกนทุกเครื่อง → ชิ้นที่ตัดที่เครื่องหนึ่งแล้วเจาะอีกเครื่องนับ 2 (สั่ง 2 ขึ้น 4 · น้ำหนัก 2 เท่า)
+    //   ตอนนี้ = ขั้นตอนที่ผ่านมากสุด (ชิ้นหนึ่งผ่านหลายขั้นนับครั้งเดียว) · ไม่เกินจำนวนสั่ง · น้ำหนักคิดตามจำนวนชิ้นนั้น
+    //   total.scans = จำนวนตามสแกน (เดิม) เก็บไว้ · ตารางแยกขั้นตอน (ops) ยังเป็นงานต่อขั้นตอนเหมือนเดิม
+    {
+      const scans = entry.total.count, wSum = entry.total.weight;
+      const maxOp = [...ost.values()].reduce((m, n) => Math.max(m, n || 0), 0);   // ขั้นตอน + สถานะ ที่มากสุด (In Process แล้ว Finished ชิ้นเดิม ≠ 2 ชิ้น)
+      const ord = qtyByRelease && kv.releaseId != null ? Number(qtyByRelease.get(String(kv.releaseId)) || 0) : 0;
+      const pcs = ord > 0 ? Math.min(maxOp, ord) : maxOp;
+      entry.total.scans = scans;
+      entry.total.count = pcs;
+      entry.total.weight = scans > 0 ? (wSum * pcs) / scans : wSum;
     }
     parts.push(entry);
   }
