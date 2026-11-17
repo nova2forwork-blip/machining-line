@@ -513,7 +513,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>✎ ที่รหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
       <div className="table-wrap rw-tw rt-tw" onClickCapture={(e) => {
         // ★ 2026-11-12 คลิกที่ไหนในช่องที่แก้ได้ = เปิดแก้ช่องนั้น (ก่อนที่แถวจะเปิดความคืบหน้า)
-        if (e.target.closest("button, input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && (td.querySelector(".bm-qbtn") || td.querySelector(".rt-matbtn")); if (btn) { e.stopPropagation(); btn.click(); } }}>
+        if (e.target.closest("button, [role=button], input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && (td.querySelector(".bm-qbtn") || td.querySelector(".rt-matbtn")); if (btn) { e.stopPropagation(); btn.click(); } }}>
         {total ? table : <div className="rw-muted small rt-empty">{q ? "ไม่พบรายการที่ค้นหา" : "ไม่มีในใบนี้"}</div>}
       </div>
       {grp === "panel" && !pmx ? foot : null}

@@ -96,7 +96,8 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     if (r.cx) return false;
     if (ITEM_F.has(f)) return !!r.own;
     if (f === "tq") return (r.kind === "part" || r.kind === "sub") && r.qr !== false;
-    if (f === "rc") return (r.kind === "part" || r.kind === "sub") && occOf(r.kind, r.code).length > 0;
+    // ★ 2026-11-17 ผู้ใช้: "เบอร์ไม่สามารถแก้ได้หรอ" → เบอร์ที่ปล่อยตรง ๆ (ไม่ได้เป็นลูกใน BOM) ก็แก้ได้ — บันทึกเป็น M: ยกเลิกเบอร์เดิม + เพิ่มเบอร์ใหม่ (จำนวน / ยาว / วัสดุ เดิม)
+    if (f === "rc") return (r.kind === "part" || r.kind === "sub") && r.qr !== false;
     if (f === "m" || f === "h" || f === "ml") return r.kind === "part";
     if (f === "um") return r.kind === "hw";
     return true;
@@ -112,12 +113,14 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
       onFocus={(e) => e.target.select()} onBlur={(e) => { setVal(r, f, e.target.value); setCur((c) => (c === id ? null : c)); }}
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pvv : c0); e.target.blur(); } }} /></span>;
     const tip = ITEM_F.has(f) ? (r.own.scope === "sub" ? `แก้ในซับ ${r.own.owner} — มีผลทุกแผงที่ใช้ซับนี้` : `แก้ในแผง ${r.own.owner}`)
-      : f === "pd" ? `แก้รายละเอียดของแบบแผง ${r.unit}` : f === "tq" ? `แก้จำนวนที่ต้องใช้ทั้งใบของ ${r.code}` : f === "rc" ? `เปลี่ยน ${r.code} เป็นเบอร์อื่น ทุกบรรทัดใน BOM`
+      : f === "pd" ? `แก้รายละเอียดของแบบแผง ${r.unit}` : f === "tq" ? `แก้จำนวนที่ต้องใช้ทั้งใบของ ${r.code}` : f === "rc" ? (occOf(r.kind, r.code).length ? `เปลี่ยน ${r.code} เป็นเบอร์อื่น ทุกบรรทัดใน BOM` : `เปลี่ยน ${r.code} เป็นเบอร์อื่น — บันทึกเป็น M: ยกเลิกเบอร์เดิม + เพิ่มเบอร์ใหม่`)
       : f === "ua" || f === "uu" ? `แก้แผง ${r.addr} (ยังไม่ปล่อย)` : f === "mml" ? `แก้ความยาวเส้น ${r.inv} — ทุกพาร์ทที่ใช้วัตถุดิบนี้` : `แก้ข้อมูลของเบอร์ ${r.code} — มีผลทุกแผง / ทุกซับที่ใช้เบอร์นี้`;
+    // rc: ข้างในอาจมีป้าย M-00x ที่เป็นปุ่ม → ใช้ span role=button (ปุ่มซ้อนปุ่มไม่ได้)
+    if (f === "rc") return <span role="button" tabIndex={0} className={`bm-qbtn ${chg ? "ed" : ""}`} onClick={(e) => { if (e.target.closest("button")) return; setCur(id); }} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setCur(id); } }} aria-label={lab} title={tip}>{disp}</span>;
     return <button type="button" className={`bm-qbtn ${NUMF.has(f) ? "num" : ""} ${chg ? "ed" : ""}`} onClick={() => setCur(id)} aria-label={lab} title={tip}>{disp}</button>;
   };
   // คลิกตรงไหนในช่องก็ได้ → เปิดแก้ช่องนั้น (ใส่ที่ <table onClick>)
-  const tableClick = (e) => { if (e.target.closest("button, input, a, select, label, textarea")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(":scope > .bm-qbtn, :scope > span > .bm-qbtn, .bm-qbtn"); if (btn) btn.click(); };
+  const tableClick = (e) => { if (e.target.closest("button, [role=button], input, a, select, label, textarea")) return; const td = e.target.closest("td"); const btn = td && td.querySelector(":scope > .bm-qbtn, :scope > span > .bm-qbtn, .bm-qbtn"); if (btn) btn.click(); };
 
   // รายการที่แก้ค้าง (แบน)
   const list = useMemo(() => {
@@ -137,7 +140,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
   }, [S, plan.bom, plan.units]);   // eslint-disable-line react-hooks/exhaustive-deps
   const lineOf = (e) => (e.attr ? `${e.code} ${FL[e.f]} ${fmtF(e.f, e.from)} → ${fmtF(e.f, e.to)}`
     : e.tq ? `${e.code} ทั้งใบ ${nlen(e.from)} → ${nlen(e.to)}`
-    : e.rc ? `${e.from} → ${e.to} (${e.occ.length} บรรทัดใน BOM)`
+    : e.rc ? (e.occ.length ? `${e.from} → ${e.to} (${e.occ.length} บรรทัดใน BOM)` : `${e.from} → ${e.to} (ยกเลิกเบอร์เดิม + เพิ่มเบอร์ใหม่)`)
     : e.unit ? `แผง ${e.from} → ${e.to}`
     : `${e.f === "code" ? `${e.from} → ${e.to}` : `${e.code} ต่อชุด ${nlen(e.from)} → ${nlen(e.to)}`} ใน${e.scope === "panel" ? "แผง" : "ซับ"} ${e.owner}`);
 
@@ -161,6 +164,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
           matOv = matOv || { ...(plan.matOv || {}) }; matOv[mk] = { ...matOv[mk], ...(e.f === "m" ? { to: e.to } : { ml: e.to }) }; continue; }
         const x = ent(e.kd, e.key); x[e.fld || e.f] = e.to; continue; }
       if (e.tq) { adj = adj || { ...(plan.adj || {}) }; if (Math.abs(e.to - (e.base ?? -1)) < 1e-9 && !(adj[e.code] && adj[e.code].ver)) delete adj[e.code]; else adj[e.code] = { qty: e.to, ver: "" }; continue; }
+      if (e.rc && !e.occ.length) { errs.push(`เปลี่ยนเบอร์ ${e.from} → ${e.to}: เบอร์นี้ปล่อยตรง ๆ (ไม่ได้อยู่ใน BOM ของแผง / ซับ) — ต้องบันทึกเป็น M`); continue; }
       if (e.rc) { for (const o of e.occ) setCode(o.scope, o.owner, o.idx, e.from, e.to); continue; }
       if (e.unit) {
         units = units || (plan.units || []).map((u) => ({ ...u }));
@@ -201,8 +205,23 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
       if (onSaveDirect) { setBusy(true); try { await onSaveDirect(np); } finally { setBusy(false); } }
     }
     const rest = list.filter((e) => !direct.includes(e));
-    const chg = {}, bchg = {}, matChg = [];
+    const chg = {}, bchg = {}, matChg = []; const adds = [];
+    // เปลี่ยนเบอร์ของเบอร์ที่ปล่อยตรง ๆ → ยกเลิกเบอร์เดิม + เพิ่มเบอร์ใหม่ (ค่าเดิม) · เบอร์ใหม่ซ้ำกับที่มีในใบ = ไม่ให้
+    const nd = rest.some((e) => e.rc && !e.occ.length) ? needOf(plan) : null;
+    if (nd) {
+      const dup = rest.filter((e) => e.rc && !e.occ.length && [...nd.parts, ...nd.subs].some((x) => NC(x.code) === NC(e.to) && !x.cancelled));
+      if (dup.length) { await askConfirm({ title: "เปลี่ยนเบอร์ไม่ได้", message: dup.map((e) => `${e.from} → ${e.to}: ${e.to} มีอยู่ในใบนี้แล้ว — แก้จำนวนของ ${e.to} แล้วยกเลิก ${e.from} แทน`).join("\n"), tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
+    }
     for (const e of rest) {
+      if (e.rc && !e.occ.length) {
+        const src = (e.kind === "sub" ? nd.subs : nd.parts).find((x) => NC(x.code) === NC(e.code)) || {};
+        const tqE = rest.find((x) => x.tq && x.kind === e.kind && NC(x.code) === NC(e.code));
+        chg[`${e.kind}|${e.code}`] = { type: "cancel" };
+        adds.push({ kind: e.kind === "sub" ? "sub" : "part", code: String(e.to).trim().toUpperCase(), d: src.d || "", qty: String(tqE ? tqE.to : src.qty ?? ""), l: src.l != null ? String(src.l) : "", inv: src.inv || "", dest: src.dest || "CUTTING", procs: (Array.isArray(src.procs) ? src.procs[0] : src.procs) || "ยิง", u: "pcs.",
+          note: `แทน ${e.code} — ใช้จำนวนเดิม และยกเลิก ${e.code} ให้แล้ว (ไม่เปลี่ยน: ลบแถวนี้ + เอาการยกเลิกออกที่แท็บ${e.kind === "sub" ? "ซับ" : "พาร์ท"})` });
+        continue;
+      }
+      if (e.tq && rest.some((x) => x.rc && !x.occ.length && x.kind === e.kind && NC(x.code) === NC(e.code))) continue;   // จำนวนใหม่ไปอยู่กับเบอร์ใหม่แล้ว
       if (e.attr) { matChg.push({ id: `${NC(e.code)}|${e.f === "m" ? "mat" : "len"}`, code: e.code, kind: e.kd === "sub" ? "sub" : "part", field: e.f === "m" ? "mat" : "len", from: e.from === "" ? "—" : e.from, to: e.to, file: "", on: true }); continue; }
       if (e.tq) { chg[`${e.kind}|${e.code}`] = { type: "qty", qty: String(e.to) }; continue; }
       if (e.rc) { for (const o of e.occ) bchg[`${o.scope}|${o.owner}|${o.idx}`] = { type: "replace", newCode: e.to, qty: String(o.q) }; continue; }
@@ -211,9 +230,9 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
       else if (!bchg[k]) bchg[k] = { type: "qty", qty: String(e.to) };
     }
     clear();
-    if (!Object.keys(chg).length && !Object.keys(bchg).length && !matChg.length) return;
+    if (!Object.keys(chg).length && !Object.keys(bchg).length && !matChg.length && !adds.length) return;
     const firstB = Object.keys(bchg)[0];
-    onModify({ chg, bchg, matChg, ...(firstB ? { bscope: firstB.split("|")[0], bowner: firstB.split("|")[1] } : {}) });
+    onModify({ chg, bchg, matChg, ...(adds.length ? { adds } : {}), ...(firstB ? { bscope: firstB.split("|")[0], bowner: firstB.split("|")[1] } : {}) });
   }
   // ★ 2026-11-12 R8: มีที่แก้ค้าง (ยังไม่กดบันทึก) แล้วรีเฟรช / ปิดแท็บ → เบราว์เซอร์ถามก่อน (เดิมหายเงียบ)
   const dirty = list.length > 0;

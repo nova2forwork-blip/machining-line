@@ -756,7 +756,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const [chg, setChg] = useUndoState(() => (init && init.chg) || {}, { label: "Modify: จำนวน / ยกเลิก" });
   useEffect(() => pushUndoGate(), []);                 // "part|CODE" → { type: "qty"|"cancel", qty }
   const [addrs, setAddrs] = useUndoState(() => new Set(), { label: "Modify: ยกเลิกที่อยู่" });  // ที่อยู่ที่จะยกเลิก
-  const [adds, setAdds] = useUndoState([], { label: "Modify: เพิ่มเบอร์", coalesceMs: 800 });
+  const [adds, setAdds] = useUndoState(() => (init && init.adds) || [], { label: "Modify: เพิ่มเบอร์", coalesceMs: 800 });   // ★ 2026-11-17 init.adds = เปลี่ยนเบอร์จากตาราง (ยกเลิกเดิม + เพิ่มใหม่)
   // ★ 2026-11-10 เปลี่ยนวัสดุผ่าน Modify: วางแบบพาร์ท Rev ใหม่ที่ INV.CODE ต่างจากเดิม → เสนอเป็นรายการ "เปลี่ยนวัสดุ" (ติ๊กออกได้) · บันทึกเป็น matOv ของแผน
   const [matChg, setMatChg] = useState(() => (init && init.matChg) || []);   // ★ เปลี่ยนจากแบบ: [{ id, code, kind:"part"|"sub", field:"mat"|"len", from, to, file, on }]
   const [found, setFound] = useState([]);     // ★ 2026-11-10 สรุปทุกอย่างที่เทียบเจอจากแบบที่วาง (โชว์รวมที่เดียว) [{ code, what, from, to, where, tone }]
