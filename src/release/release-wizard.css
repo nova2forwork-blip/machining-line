@@ -1385,3 +1385,10 @@ table.xt .xt-reset { margin-left: 6px; font-size: 12px; border: 1px solid #c4c8c
 .rt .rt-table td .bm-edhold .bm-ghost { display: block; }
 .rt .rt-table td .bm-edhold .bm-in { position: absolute; inset: -4px -9px; min-width: 0 !important; width: auto !important; height: auto !important; min-height: 0 !important; padding: 0 8px !important; font-size: 13px; }
 .rt .rt-table td .rt-cselhold { display: block; }
+/* ★ 2026-11-17 Total Part ที่จอ 1440 + แถบข้างเปิด: DESCRIPTION แคบลง (2 บรรทัด) ให้ "เหลือ" + "ปล่อยแล้ว" อยู่ในจอโดยไม่ต้องเลื่อน */
+.rt-allparts td.rl-desc { max-width: 128px; }
+.rt-allparts th.rt-donecol, .rt-allparts th.rt-donecol * { white-space: normal; line-height: 1.25; }
+.rt-allparts th.rt-donecol { width: 96px; max-width: 96px; }
+.rt-allparts td.rl-desc { white-space: normal; }
+.rt-allparts td.rl-desc .bm-qbtn, .rt-allparts td.rl-desc span { white-space: normal; overflow-wrap: anywhere; text-align: left; }
+@media (min-width: 1700px) { .rt-allparts td.rl-desc { max-width: 230px; } }

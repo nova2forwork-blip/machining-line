@@ -1079,8 +1079,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       </div>
       <table className="data-table rw-table rw-order-tbl">
         <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th>{sheet.kind === "modify" ? "Remarks" : "จำนวน"}</th><th>ในใบ {plan.ro}</th><th>แบบที่วางรอบนี้</th></tr></thead>
-        <tbody>{sheetCmp.map((x) => (
-          <tr key={x.code} className={(sheet.kind === "modify" ? !x.drop : x.status === "missing") ? "rl-errrow" : ""}>
+        <tbody>{sheetCmp.map((x, i) => (
+          <tr key={`${x.code}|${i}`} className={(sheet.kind === "modify" ? !x.drop : x.status === "missing") ? "rl-errrow" : ""}>
             <td className="r rw-muted">{x.item ?? ""}</td><td className="rw-mono"><b>{x.code}</b></td><td className="rw-desc">{x.d}</td>
             <td>{sheet.kind === "modify" ? (x.remark || (x.rev ? "REV." + x.rev : "")) : <>{nlen(x.qty)}{x.unit ? <small className="rw-muted"> {x.unit}</small> : null}</>}</td>
             <td>{sheet.kind === "modify" ? (x.inPlan ? <Pill tone="ok">{x.inPlan === "panel" ? "แผง" : x.inPlan === "sub" ? "ซับ" : "พาร์ท"}</Pill> : <Pill tone="bad">ไม่อยู่ในใบ</Pill>) : (x.status === "missing" ? <Pill tone="bad">ยังไม่อยู่ในใบ</Pill> : x.status === "ok" ? <Pill tone="ok">มี {nlen(x.have)}</Pill> : <Pill tone="warn">มี {nlen(x.have)}</Pill>)}</td>

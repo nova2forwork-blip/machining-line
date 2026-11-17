@@ -48,7 +48,7 @@ function SecHead({ title, sub, right }) {
 }
 function Chips({ list, max = 14 }) {
   const tone = (x) => (x.src === "none" ? "warn" : x.src === "lib" ? "info" : "ok");
-  const chip = (x) => <Pill key={x.code} tone={tone(x)} title={x.from ? "ใช้ใน " + x.from : ""}>{x.code}</Pill>;
+  const chip = (x, i) => <Pill key={`${x.code}|${i}`} tone={tone(x)} title={x.from ? "ใช้ใน " + x.from : ""}>{x.code}</Pill>;
   if (list.length <= max) return <>{list.map(chip)}</>;
   return (
     <>
@@ -503,7 +503,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
                 <span className="rw-muted">{[order.projectName, order.zone && `Zone: ${order.zone}`, order.issuedBy && `โดย ${order.issuedBy}`, order.date && fmtYmd(order.date)].filter(Boolean).join(" · ")} · {order.items.length} รายการ</span>
                 <button type="button" className="rw-link" onClick={() => { setOrder(null); setOrderHw([]); setOrderMsg(null); }}>เอาออก</button>
               </div>
-              <div className="rw-order-items">{order.items.map((it) => <span key={it.code} className="rw-pick-chip part" title={it.d}>{it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
+              <div className="rw-order-items">{order.items.map((it, i) => <span key={`${it.code}|${i}`} className="rw-pick-chip part" title={it.d}>{it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
               {order.note ? <div className="rw-muted small">NOTE: {order.note}</div> : null}
             </div>
           )}
@@ -540,7 +540,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
           {project ? (
             <div className="rw-exist">
               <span>Release ในโปรเจคนี้:</span>
-              {ctx.orders.length ? ctx.orders.slice(0, 8).map((o) => <Pill key={o.code} tone="muted">{o.code}{o.panels ? ` · ${nf(o.panels)} แผง` : ""}</Pill>) : <span className="rw-muted">ยังไม่มี</span>}
+              {ctx.orders.length ? ctx.orders.slice(0, 8).map((o, i) => <Pill key={`${o.code}|${i}`} tone="muted">{o.code}{o.panels ? ` · ${nf(o.panels)} แผง` : ""}</Pill>) : <span className="rw-muted">ยังไม่มี</span>}
               {ctx.orders.length > 8 ? <span className="rw-muted">… อีก {ctx.orders.length - 8}</span> : null}
               {nextRo ? <> · เลขถัดไป <button type="button" className="rw-link" onClick={() => setHdr({ ...hdr, ro: nextRo })}>{nextRo}</button></> : null}
             </div>
@@ -769,10 +769,10 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
         <div className="rw-cov-lab"><b>{lab}</b><span>{arr.length} เบอร์</span></div>
         <div className="rw-cov-bar" role="img" aria-label={`${lab}: PDF ${pdf}, BOM เดิม ${lb}, ขาด ${none.length}`}><i className="pdf" style={{ width: `${(pdf / tot) * 100}%` }} /><i className="lib" style={{ width: `${(lb / tot) * 100}%` }} /><i className="none" style={{ width: `${(none.length / tot) * 100}%` }} /></div>
         <div className="rw-cov-num"><Pill tone="ok">PDF {pdf}</Pill>{lb ? <Pill tone="info">เดิม {lb}</Pill> : null}<Pill tone={none.length ? "warn" : "ok"}>ขาด {none.length}</Pill></div>
-        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> {none.slice(0, 12).map((x) => <span key={x.code} className="rw-miss-i"><button type="button" className="rw-misslink" onClick={() => locate(x.code)} title="กดเพื่อเปิดแผงที่ใช้เบอร์นี้ และไฮไลต์แถว"><Pill tone="warn">{x.code}</Pill> 🔍</button>{x.from ? <span className="rw-muted small"> ← ใช้ใน <b className="rw-mono">{x.from}</b></span> : null}</span>)}{none.length > 12 ? <span className="rw-muted small"> … อีก {none.length - 12} เบอร์ (เปิด “ดูทั้งหมด” ด้านล่าง)</span> : null}</div> : null}
+        {none.length ? <div className="rw-cov-miss"><span className="rw-muted">ยังไม่มี PDF {what}:</span> {none.slice(0, 12).map((x, i) => <span key={`${x.code}|${i}`} className="rw-miss-i"><button type="button" className="rw-misslink" onClick={() => locate(x.code)} title="กดเพื่อเปิดแผงที่ใช้เบอร์นี้ และไฮไลต์แถว"><Pill tone="warn">{x.code}</Pill> 🔍</button>{x.from ? <span className="rw-muted small"> ← ใช้ใน <b className="rw-mono">{x.from}</b></span> : null}</span>)}{none.length > 12 ? <span className="rw-muted small"> … อีก {none.length - 12} เบอร์ (เปิด “ดูทั้งหมด” ด้านล่าง)</span> : null}</div> : null}
         {arr.length ? <details className="rw-cov-all"><summary>ดูทั้งหมด {arr.length} เบอร์ — แต่ละเบอร์มาจากไหน / ใช้ในอะไร</summary>
           <table className="data-table rw-table"><thead><tr><th>เบอร์</th><th>แหล่งข้อมูล</th><th>{lab === "แบบแผง" ? "ในใบนี้" : "ใช้ใน"}</th></tr></thead>
-            <tbody>{arr.map((x) => <tr key={x.code}><td className="rw-mono"><b>{x.code}</b></td><td><Pill tone={x.src === "pdf" ? "ok" : x.src === "lib" ? "info" : "warn"}>{x.src === "pdf" ? "PDF ที่อัพ" : x.src === "lib" ? "BOM เดิม" : "ยังไม่มี"}</Pill></td><td className="rw-mono">{lab === "แบบแผง" ? `${units.filter((u) => NC(u.unit) === NC(x.code)).length} แผง${units.some((u) => NC(u.unit) === NC(x.code) && u.mock) ? " · Mockup" : ""}` : (x.from || "")}</td></tr>)}</tbody></table>
+            <tbody>{arr.map((x, i) => <tr key={`${x.code}|${i}`}><td className="rw-mono"><b>{x.code}</b></td><td><Pill tone={x.src === "pdf" ? "ok" : x.src === "lib" ? "info" : "warn"}>{x.src === "pdf" ? "PDF ที่อัพ" : x.src === "lib" ? "BOM เดิม" : "ยังไม่มี"}</Pill></td><td className="rw-mono">{lab === "แบบแผง" ? `${units.filter((u) => NC(u.unit) === NC(x.code)).length} แผง${units.some((u) => NC(u.unit) === NC(x.code) && u.mock) ? " · Mockup" : ""}` : (x.from || "")}</td></tr>)}</tbody></table>
         </details> : null}
       </div>
     );
@@ -822,9 +822,9 @@ function PdfStep({ onReloadLib, pdfs, setPdfs, checks, cv, units, useLib, setUse
             <div>
               <div className="rw-seg">{[["all", "ทั้งหมด"], ["bad", "ต้องตรวจ"], ["ok", "ไม่มีปัญหา"]].map(([k, l]) => <button key={k} type="button" className={filt === k ? "on" : ""} onClick={() => setFilt(k)}>{l}</button>)}</div>
               <div className="rw-plist">
-                {list.map((r) => { const [kc, kl] = kindLabel[r.d.kind] || kindLabel.unknown; const lv = LV[r.lv];
+                {list.map((r, ri) => { const [kc, kl] = kindLabel[r.d.kind] || kindLabel.unknown; const lv = LV[r.lv];
                   return (
-                    <div key={r.d.file} className="rw-pitem-row">
+                    <div key={`${r.d.file}|${ri}`} className="rw-pitem-row">
                       <button type="button" className={`rw-pitem ${R && r.d.file === R.d.file ? "on" : ""}`} onClick={() => setSel(r.d.file)}>
                         <span className="rw-pitem-l"><Pill tone={kc}>{kl}</Pill><span className="rw-mono">{r.d.code}</span></span>
                         <Pill tone={lv[0]}>{r.open ? `${lv[1]} ${r.open} จุด` : lv[1]}</Pill>
@@ -942,8 +942,8 @@ function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint })
       </div>
       <table className="data-table rw-table rw-order-tbl">
         <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th className="r">ใบปะหน้า</th><th className="r">ในใบนี้</th><th>สถานะ</th><th title="สกรู / น็อต / ยาง ที่ไม่ผลิตเอง — ไม่มี QR ไปใบเบิก ACCESSORIES">อุปกรณ์?</th></tr></thead>
-        <tbody>{orderCmp.map((x) => (
-          <tr key={x.code} className={x.status === "missing" && !isHw(x.code) ? "rl-errrow" : x.status === "ok" ? "" : "rw-picked-row"}>
+        <tbody>{orderCmp.map((x, i) => (   // ★ 2026-11-17 ใบปะหน้ามีเบอร์ซ้ำได้ → key ใส่ลำดับด้วย (เดิม React เตือน key ซ้ำ)
+          <tr key={`${x.code}|${i}`} className={x.status === "missing" && !isHw(x.code) ? "rl-errrow" : x.status === "ok" ? "" : "rw-picked-row"}>
             <td className="r rw-muted">{x.item ?? ""}</td>
             <td className="rw-mono"><b>{x.code}</b></td>
             <td className="rw-desc">{x.d}{x.remark ? <span className="rw-muted"> · {x.remark}</span> : null}</td>
@@ -1212,11 +1212,11 @@ function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units,
             <div className="table-wrap rw-tw">
               <table className="data-table rw-table">
                 <thead><tr><th>Code</th><th>Description</th><th className="r">จำนวน</th><th>Category</th><th>ใบงาน (ส่งไปทำที่)</th></tr></thead>
-                <tbody>{vis.slice(0, 500).map((r) => {
+                <tbody>{vis.slice(0, 500).map((r, ri) => {
                   const cat = r.type === "sub" ? "SUB-ASSEMBLY PART" : catOf(r.code, r.type);
                   const qr = r.type === "part" && QR_CATS.has(cat);
                   return (
-                    <tr key={r.type + r.code}>
+                    <tr key={`${r.type}|${r.code}|${ri}`}>
                       <td className="rw-mono"><b>{r.code}</b>{isStar(r.code) ? <> <Pill tone="warn">Site *</Pill></> : null}</td>
                       <td className="rw-desc">{r.d}</td>
                       <td className="r">{nlen(r.qty)} <span className="rw-muted small">{r.uom}</span></td>
