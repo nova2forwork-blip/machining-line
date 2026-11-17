@@ -333,8 +333,16 @@ function StnMovedNote({ dept }) {
   const [lang] = useLang();
   const t = (th, en) => (lang === "en" ? en : th);
   const [from, setFrom] = useState(() => {
-    try { const f = new URLSearchParams(window.location.search).get("from"); return f && f !== dept && DEPT_META[f] ? f : null; } catch { return null; }
+    // ★ 2026-11-17 (SIM4 F8): มาจากหน้าเครื่อง (/station = หน้าแรกหลังล็อกอิน) = ปกติของบัญชีสถานีแผง / ซับ / แพ็ก → ไม่เตือน
+    //   (เดิมเตือนทุกครั้งที่สถานีแผงล็อกอิน ทั้งที่ตั้งค่าถูก · ค้างไม่หาย · บังปุ่มบันทึก) · เตือนเฉพาะเปิดลิงก์หน้าแผนกอื่นที่บัญชีนี้ทำไม่ได้
+    try { const f = new URLSearchParams(window.location.search).get("from"); return f && f !== dept && f !== "machine" && DEPT_META[f] ? f : null; } catch { return null; }
   });
+  useEffect(() => {
+    try { if (new URLSearchParams(window.location.search).get("from")) window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
+    if (!from) return undefined;
+    const tm = setTimeout(() => setFrom(null), 12000);   // หายเองใน 12 วิ
+    return () => clearTimeout(tm);
+  }, [from]);
   if (!from) return null;
   const a = DEPT_META[from], b = DEPT_META[dept] || DEPT_META.machine;
   const close = () => { setFrom(null); try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ } };
@@ -398,15 +406,17 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
     return () => window.removeEventListener("online", on);
   }, []);
 
-  async function submit(e) {
-    e.preventDefault();
-    setErr(""); setBusy(true);
-    const res = await stationLogin(code, password);
+  const [inUse, setInUse] = useState(false);   // ★ 2026-11-17 (SIM4 F9) บัญชีค้างที่เครื่องอื่น → "ใช้เครื่องนี้แทน"
+  async function submit(e, takeover = false) {
+    if (e && e.preventDefault) e.preventDefault();
+    setErr(""); setBusy(true); setInUse(false);
+    const res = await stationLogin(code, password, { takeover });
     setBusy(false);
     if (!res || !res.user) {
       if (res && res.error === "in_use") {
         const t = res.lastSeen ? new Date(res.lastSeen) : null;
         const hhmm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
+        setInUse(true);
         setErr(`มีเครื่องอื่นใช้บัญชีนี้อยู่${hhmm ? ` (ใช้งานล่าสุด ${hhmm})` : ""} — เข้าไม่ได้ · ให้ออกจากระบบที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว`);
         return;
       }
@@ -454,6 +464,7 @@ function StationLogin({ onLogin, notice, dept = "machine" }) {
             onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </div>
         {err && <div className="stn-err">{err}</div>}
+        {inUse && !busy ? <button type="button" className="stn-takeover" onClick={() => submit(null, true)}>ใช้เครื่องนี้แทน (เครื่องเดิมจะออกจากระบบ)</button> : null}
         <button className="stn-btn" disabled={busy}>{busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}</button>
         <div className="stn-login-foot">
           จอนี้สำหรับติดหน้า{meta.word} (แนวนอน)
@@ -1910,6 +1921,28 @@ Is this a spare? If not, press "Don't save"`),
     }
     // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
     const cno = u.part_master?.part_no || u.qr_code;
+    // ★ 2026-11-17 (SIM4 F7): ยังใส่ได้อิสระ (หน้างานทำตามแบบกระดาษ) แต่ถามก่อนเมื่อ "ไม่อยู่ในแบบ" หรือ "เกินจำนวนในแบบ"
+    //   (เดิมรับเงียบ ๆ → ใส่ผิดเบอร์ / เกิน แล้วไปเห็นที่ออฟฟิศทีหลัง) · ค่าเริ่ม = ไม่ใส่ · ขาด (ยังใส่ไม่ครบ) ไม่ถาม — ประกอบหลายรอบได้
+    {
+      const bom = asmParent.bom || [];
+      if (bom.length) {
+        const inBom = bom.find((b) => b.child_pm_id === u.part_master_id);
+        const made = Math.max(1, (Number(asmParent.madeSum) || 0) + Math.max(0, Math.floor(Number(asmParentQty) || 0)));
+        const warns = [];
+        if (!inBom) warns.push(t(`${cno} ไม่อยู่ในแบบของ ${asmParent.unit?.part_master?.part_no || "เบอร์แม่"} — อาจหยิบผิดเบอร์`, `${cno} is not in ${asmParent.unit?.part_master?.part_no || "the parent"}'s BOM — wrong part?`));
+        else {
+          const need = Math.max(1, Math.floor(Number(inBom.qty) || 1)) * made;
+          if (pmHave(u.part_master_id) + 1 > need) warns.push(t(`${cno} ใส่ครบตามแบบแล้ว (${nc(need)} ชิ้น) — ชิ้นนี้จะเกิน`, `${cno} already has the ${nc(need)} in the BOM — this one is extra`));
+        }
+        if (warns.length) {
+          closeScan(); errorBeep();
+          const v = await askChoice({ title: t("ตรวจก่อนใส่", "Check before adding"), tone: "warn", list: warns, cancelText: false,
+            message: t("ชิ้นนี้ไม่ตรงกับแบบ — ใส่ต่อไหม? (ออฟฟิศจะเห็นเป็นรายการที่ต้องตรวจ)", "This piece doesn't match the BOM — add anyway? (the office will see it flagged)"),
+            choices: [{ value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }, { value: "skip", label: t("ไม่ใส่", "Don't add"), primary: true }] });
+          if (v !== "add") { flash(t("ไม่ได้ใส่", "not added"), "info"); return false; }
+        }
+      }
+    }
     const clen = u.length_mm ?? u.part_master?.default_length_mm ?? null;   // ความยาว: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
     const cwt = u.weight ?? u.part_master?.unit_weight ?? null;             // น้ำหนัก: ของยูนิต → ถ้าไม่มีใช้ค่าเริ่มต้นของ Part
     tickBeep();
@@ -2556,12 +2589,20 @@ Is this a spare? If not, press "Don't save"`),
                 className={`stn-oppick-btn${opSel.has(o.id) ? " sel" : ""}`}
                 disabled={locked}
                 title={locked ? t("ล็อกระหว่างทำงาน — จบ/ยกเลิกงานก่อนถึงเปลี่ยนได้", "Locked during a job — finish or cancel first") : undefined}
-                onClick={() => setOpSel((prev) => { const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
-                {opLabel(o.name, lang)}
+                aria-pressed={opSel.has(o.id)}
+                onClick={() => setOpSel((prev) => {
+                  // ★ 2026-11-17 (SIM4 F4): เลือกไว้ทุกขั้น (ค่าเริ่ม) แล้วแตะขั้นหนึ่ง = "ทำขั้นนี้" → เลือกขั้นนี้ขั้นเดียว
+                  //   (เดิมแตะ = เอาออก → แตะ "เจาะ" แต่บันทึกเป็น "บาก") · หลังจากนั้นแตะ = เพิ่ม / เอาออก (CNC หลายขั้นพร้อมกันได้)
+                  const all = machineOps.length > 1 && machineOps.every((x) => prev.has(x.id));
+                  if (all) return new Set([o.id]);
+                  const n = new Set(prev); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n;
+                })}>
+                {opSel.has(o.id) ? "✓ " : ""}{opLabel(o.name, lang)}
               </button>
             );
           })}
           {opSel.size === 0 && <span className="stn-oppick-hint">← {t("เลือกอย่างน้อย 1 ขั้นตอน", "pick at least one step")}</span>}
+          {opSel.size > 0 && step === STEP.IDLE && <span className="stn-oppick-now">{t("จะบันทึกเป็น", "Will record")}: <b>{selOps.map((o) => opLabel(o.name, lang)).join(" + ")}</b></span>}
           {step !== STEP.IDLE && opSel.size > 0 && <span className="stn-oppick-hint">🔒 {t("ล็อกระหว่างทำงาน", "locked during job")}</span>}
         </div>
       )}

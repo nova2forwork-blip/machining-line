@@ -92,12 +92,14 @@ function tooManyAttempts(error) { return /too_many_attempts/i.test(error?.messag
 
 // ล็อกอินหน้าเครื่อง: ออนไลน์ = ตรวจ DB + จำ credential ไว้ · ออฟไลน์/เน็ตหลุด = เทียบกับที่จำไว้
 // คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
-export async function stationLogin(code, password) {
+// ★ 2026-11-17 (SIM4 F9): takeover = ผู้ใช้กด "ใช้เครื่องนี้แทน" — ข้ามการบล็อก แล้วตัด session เครื่องเดิมหลังล็อกอินสำเร็จ
+async function takeOverOthers(token) { try { await supabase.rpc("session_takeover", { p_token: token }); } catch { /* ไม่มี RPC (DB เก่า) = ปล่อยไป */ } }
+export async function stationLogin(code, password, { takeover = false } = {}) {
   const key = code.trim().toLowerCase();
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (!isOffline) {
     // บล็อกถ้ามีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) — fail-open ถ้า probe พลาด
-    try {
+    if (!takeover) try {
       const { data: probe } = await supabase.rpc("session_probe", { p_code: code.trim() });
       if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
     } catch { /* fail-open: ปล่อยเข้า ไม่ให้ล็อกตายเพราะ RPC พลาด */ }
@@ -107,6 +109,7 @@ export async function stationLogin(code, password) {
       const row = Array.isArray(data) ? data[0] : data;
       if (!row) { forgetCredential(code); return { error: "bad" }; }   // เซิร์ฟเวอร์ตอบว่ารหัสผิด → ไม่ fallback + ลืมรหัสเก่าที่จำไว้
       const user = mapLoginRow(row);
+      if (takeover && user.token) await takeOverOthers(user.token);
       await cacheCredential(code, password, user);   // จำไว้ใช้ตอนออฟไลน์
       return { user, offline: false };
     }
@@ -125,14 +128,14 @@ export async function stationLogin(code, password) {
 // (heartbeat < 3 นาที) → บล็อก ไม่ให้เข้า · "เครื่องที่เข้าก่อน" ทำงานต่อได้ (เหมือน stationLogin)
 // fail-open ถ้า probe พลาด/ช้า (กันล็อกตายเพราะ RPC/เน็ตสะดุด) · ยังจำรหัสไว้ล็อกอินออฟไลน์
 // คืน { user, offline } เมื่อสำเร็จ · { error:'in_use'|'bad'|'offline_first'|'network' } เมื่อไม่สำเร็จ
-export async function appLogin(code, password) {
+export async function appLogin(code, password, { takeover = false } = {}) {
   const key = code.trim().toLowerCase();
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   let onlineFailed = false;
   if (!isOffline) {
     // ★ กันล็อกอินซ้อน: มีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) → บล็อก ไม่ให้เข้า
     //   เครื่องที่เข้าก่อนไม่หลุด · fail-open ถ้า probe พลาด/ช้า (timeout 6 วิ) กันล็อกตาย
-    try {
+    if (!takeover) try {
       const probeRpc = supabase.rpc("session_probe", { p_code: code.trim() });
       const probeTo = new Promise((resolve) => setTimeout(() => resolve({ data: null }), 6000));
       const { data: probe } = await Promise.race([probeRpc, probeTo]);
@@ -148,6 +151,7 @@ export async function appLogin(code, password) {
       const row = Array.isArray(data) ? data[0] : data;
       if (!row) { forgetCredential(code); return { error: "bad" }; }   // รหัสผิด → ไม่ fallback + ลืมรหัสเก่าที่จำไว้
       const user = mapLoginRow(row);
+      if (takeover && user.token) await takeOverOthers(user.token);   // ★ F9 ใช้เครื่องนี้แทน
       await cacheCredential(code, password, user);   // จำไว้ล็อกอินออฟไลน์รอบหน้า (สำหรับคนงานหน้างาน)
       return { user, offline: false };
     }

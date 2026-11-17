@@ -33,3 +33,24 @@ update public.assembly_links l
    set child_pm_id = pu.part_master_id
   from public.part_units pu
  where pu.id = l.child_unit_id and l.child_pm_id is null;
+
+-- ── F9 ──  บัญชีค้าง session (ปิดเบราว์เซอร์ / แท็บเล็ตรีสตาร์ท โดยไม่กดออก) → "กำลังใช้งานอยู่ที่เครื่องอื่น" ต้องรอ 3 นาที
+--   ปุ่ม "ใช้เครื่องนี้แทน" ที่หน้าล็อกอิน: ล็อกอินด้วยรหัสผ่านตามปกติ แล้วเรียกฟังก์ชันนี้ด้วย token ใหม่ → ตัด session อื่นของบัญชีเดียวกัน
+--   (ต้องรู้รหัสผ่านอยู่แล้ว · เครื่องเดิมถูกตัด (superseded) ส่งงานค้างได้แล้วเด้งออกเอง) · ค่าเริ่มยังเป็น "เครื่องที่เข้าก่อนได้ใช้"
+create or replace function public.session_takeover(p_token uuid)
+ returns jsonb
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare v_emp uuid; n int;
+begin
+  select s.employee_id into v_emp from public.sessions s where s.token = p_token and s.expires_at > now();
+  if v_emp is null then return jsonb_build_object('ok', false, 'reason', 'unauthorized'); end if;
+  -- ไม่ลบ: ตั้ง superseded_at แบบเดียวกับ _mls_single_session / authz_force_logout → เครื่องเดิมยังส่งงานที่ค้างคิว (ออฟไลน์) ได้ แล้วขึ้น "ถูกใช้ที่เครื่องอื่น"
+  update public.sessions set superseded_at = now()
+   where employee_id = v_emp and token <> p_token and superseded_at is null;
+  get diagnostics n = row_count;
+  return jsonb_build_object('ok', true, 'removed', n);
+end $function$;
+grant execute on function public.session_takeover(uuid) to anon, authenticated;

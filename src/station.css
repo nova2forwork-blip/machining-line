@@ -620,6 +620,11 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
 }
 .stn-oppick-btn:active { transform: scale(.96); }
 .stn-oppick-btn.sel { background: #14e39a; border-color: #14e39a; color: #06251a; }
+/* ★ 2026-11-17 (SIM4 F4): ปุ่มขั้นตอนสูงอย่างน้อย 44px (กดด้วยนิ้ว / ถุงมือ) · บอกชัดว่าจะบันทึกเป็นขั้นไหน */
+.stn-oppick-btn { min-height: 48px; }
+.stn-oppick-btn:not(.sel) { opacity: .75; border-style: dashed; }
+.stn-oppick-now { color: #cdd9e5; font-size: 14px; margin-left: 6px; }
+.stn-oppick-now b { color: #14e39a; }
 .stn-oppick-hint { color: #f0b429; font-size: 14px; font-weight: 700; }
 .stn-oppick.one .stn-oppick-btn.sel { font-size: 16px; padding: 7px 16px; }
 
@@ -663,7 +668,8 @@ table.stn-rec tr.stn-new td { color: var(--st-red); font-weight: 600; background
   /* แถบ Operation ด้านบน — ย่อให้บางลง คืนพื้นที่แนวตั้งให้ตัวเครื่อง (กัน SCAN ล้นล่าง) */
   .stn-oppick { padding: 4px 10px; gap: 8px; }
   .stn-oppick-lbl { font-size: 12px; }
-  .stn-oppick-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; }
+  .stn-oppick-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; min-height: 44px; }
+  .stn-oppick-now { font-size: 12px; }
   .stn-oppick.one .stn-oppick-btn.sel { font-size: 13px; padding: 4px 12px; }
   .stn-oppick-hint { font-size: 11px; }
 }
@@ -1200,3 +1206,8 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-moved-tx { display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.45; flex: 1; }
 .stn-moved-tx b { font-size: 14px; color: #5c3800; }
 .stn-moved-x { flex: none; border: none; background: transparent; font-size: 22px; line-height: 1; color: #7a4b00; cursor: pointer; padding: 0 4px; }
+/* ★ 2026-11-17 (SIM4 F8): ไว้ด้านบน (ไม่บังปุ่มบันทึกด้านล่าง) · ปุ่มปิด 44px */
+.stn-moved { bottom: auto; top: 12px; }
+.stn-moved-x { min-width: 44px; min-height: 44px; font-size: 26px; }
+/* ★ 2026-11-17 (SIM4 F9) ปุ่ม "ใช้เครื่องนี้แทน" ที่หน้าล็อกอินเครื่อง */
+.stn-takeover { display: block; width: 100%; min-height: 48px; margin: 10px 0 0; border-radius: 12px; border: 2px solid #f0b429; background: transparent; color: #f0b429; font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; }

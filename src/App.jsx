@@ -1045,16 +1045,18 @@ function Login({ onLogin }) {
   //   (ล็อกอินออฟไลน์ทีหลัง หน้าเครื่องจะได้หน้าตาเหมือนตอนออนไลน์)
   useEffect(() => { prefetchAllScanModes(); }, []);
 
-  async function submit(e) {
-    e.preventDefault();
-    setErr(""); setBusy(true);
-    const res = await appLogin(code, password);   // ล็อกอินรวม (หน้าเดียวทั้งออฟฟิศ+คนงาน) — ออนไลน์เช็ค DB + จำรหัสไว้ล็อกอินออฟไลน์
+  const [inUse, setInUse] = useState(false);   // ★ 2026-11-17 (SIM4 F9) บัญชีค้างที่เครื่องอื่น → ปุ่ม "ใช้เครื่องนี้แทน"
+  async function submit(e, takeover = false) {
+    if (e && e.preventDefault) e.preventDefault();
+    setErr(""); setBusy(true); setInUse(false);
+    const res = await appLogin(code, password, { takeover });   // ล็อกอินรวม (หน้าเดียวทั้งออฟฟิศ+คนงาน) — ออนไลน์เช็ค DB + จำรหัสไว้ล็อกอินออฟไลน์
     setBusy(false);
     if (!res || !res.user) {
       // ★ กันล็อกอินซ้อน: บัญชีถูกใช้อยู่ที่เครื่องอื่น → แจ้งเตือน + บล็อก (เครื่องแรกไม่หลุด)
       if (res && res.error === "in_use") {
         const t = res.lastSeen ? new Date(res.lastSeen) : null;
         const hhmm = t && !isNaN(t.getTime()) ? t.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : "";
+        setInUse(true);
         setErr(`บัญชีนี้กำลังใช้งานอยู่ที่เครื่องอื่น${hhmm ? ` (ใช้งานล่าสุด ${hhmm} น.)` : ""} — เข้าไม่ได้ · ให้กด “ออกจากระบบ” ที่เครื่องนั้นก่อน หรือรอสักครู่หากเครื่องนั้นปิดไปแล้ว (แอดมินสั่งเด้งออกจากเมนู ตั้งค่า → ผู้ใช้ออนไลน์ ได้)`);
         return;
       }
@@ -1103,6 +1105,10 @@ function Login({ onLogin }) {
         </Field>
         {notice && !err && <div style={{ color: "var(--alert, #b45309)", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{notice}</div>}
         {err && <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        {inUse && !busy ? (
+          <button type="button" className="btn btn-ghost" style={{ width: "100%", marginBottom: 12, minHeight: 44 }} onClick={() => submit(null, true)}>
+            ใช้เครื่องนี้แทน (เครื่องเดิมจะถูกออกจากระบบ)
+          </button>) : null}
         <Btn variant="accent" size="lg" className="btn-block" disabled={busy}>
           {busy ? <>กำลังเข้าสู่ระบบ<span className="mls-btn-dots"><i /><i /><i /></span></> : "เข้าสู่ระบบ"}
         </Btn>
@@ -6337,7 +6343,9 @@ function pmMachines(list, qty) {
   const q = Number(qty) || 0;
   return (Array.isArray(list) ? list : []).map((m) => {
     const done = Number(m.done) || 0;
-    const st = m.active ? "run" : (m.finished || (q > 0 && done >= q)) ? "fin" : "bal";
+    // ★ 2026-11-17 (SIM4 F6): "Finish" = เครื่องนี้ทำครบจำนวนสั่งแล้ว · กด Finished แต่ยังไม่ครบ (ป้ายละชิ้น กด Finished ทุกชิ้น) = ยังค้าง (In Process Balance)
+    //   เดิม กด Finished ครั้งเดียว = Finish ทั้งเบอร์ (2/3 ขึ้น Finish · ชิปหน้าล็อตไม่ตรงกับหัวล็อต / popup) · ไม่รู้จำนวนสั่ง = เชื่อปุ่ม Finished ตามเดิม
+    const st = m.active ? "run" : (q > 0 ? done >= q : !!m.finished) ? "fin" : "bal";
     return { ...m, done, st, bal: Math.max(0, q - done), over: Math.max(0, done - q) };
   });
 }
@@ -14299,6 +14307,21 @@ function BackupCard() {
 // ── ซิงค์ "ขั้นตอนที่เครื่องทำได้" (machine_operations) ให้ตรงกับที่เลือก ──────────
 // ความสามารถผูกกับ "เครื่องจักร" (ไม่ใช่พนักงาน) — หน้าเครื่องอ่านตารางนี้ไปทำปุ่มเลือกขั้นตอน
 // ตั้งได้ทั้งจากแท็บเครื่องจักร (ความสามารถ) และจากฟอร์มพนักงาน (ขั้นตอนประจำ) — แหล่งข้อมูลเดียวกัน
+// ★ 2026-11-17 (SIM4 F5): ขั้นตอนเป็นของ "เครื่อง" (ทุกคนที่ใช้เครื่องนี้) — ฟอร์มพนักงานจะเปลี่ยนของเครื่องต้องถามก่อน
+//   เดิมเพิ่มพนักงานแล้วแตะชิป (คิดว่าเลือก) = เอาขั้นตอนออกจากเครื่องของทุกคนเงียบ ๆ · ไม่ต่างจากเดิม = ไม่ถาม · ยกเลิก = บันทึกพนักงานอย่างเดียว
+async function confirmMachineOpsChange({ machineId, newIds, caps = [], machines = [], operations = [] }) {
+  const before = [...new Set(caps.filter((c) => c.machine_id === machineId).map((c) => c.operation_id))];
+  const after = [...new Set(newIds || [])];
+  if (before.length === after.length && before.every((x) => after.includes(x))) return true;
+  const nm = (id) => operations.find((o) => o.id === id)?.name || "?";
+  const m = machines.find((x) => x.id === machineId);
+  return askConfirm({ title: `เปลี่ยนขั้นตอนของเครื่อง ${m?.code || ""}?`, tone: "warn", focusCancel: true,
+    message: `ขั้นตอนเป็นของ "เครื่อง" — เปลี่ยนแล้วมีผลกับทุกคนที่ใช้เครื่องนี้ (ปุ่มขั้นตอนบนหน้าเครื่อง)
+
+เดิม: ${before.map(nm).join(", ") || "—"}
+ใหม่: ${after.map(nm).join(", ") || "—"}`,
+    confirmText: "เปลี่ยนขั้นตอนของเครื่อง", cancelText: "ไม่เปลี่ยน (บันทึกพนักงานอย่างเดียว)" });
+}
 async function syncMachineOps(machineId, selectedIds, _caps) {
   if (!machineId) return;
   // ตั้งความสามารถทั้งชุดผ่าน RPC เฉพาะ (admin) — เลี่ยง insertRows generic ที่ไม่รองรับ machine_operations
@@ -15056,7 +15079,7 @@ function EmployeeEditModal({ employee, departments, machines, operations, caps =
         fields: [form.password ? "รหัสผ่าน" : null].filter(Boolean),
       });
       // ซิงค์ความสามารถของเครื่องให้ตรงกับที่เลือก (หน้าเครื่องจะโชว์ปุ่มเลือกตามนี้) — เฉพาะเมื่อแตะชิปขั้นตอน
-      if (form.machine_id && opsDirty) await syncMachineOps(form.machine_id, opIds, caps);
+      if (form.machine_id && opsDirty && await confirmMachineOpsChange({ machineId: form.machine_id, newIds: opIds, caps, machines, operations })) await syncMachineOps(form.machine_id, opIds, caps);
       if (multiDirty && multi !== multiInit) {
         const r = await setEmployeeMultiSession(employee.id, multi);
         if (r && r.ok === false) throw new Error(r.reason === "forbidden" ? "เฉพาะแอดมินตั้ง \"ล็อกอินได้หลายเครื่อง\" ได้" : (r.reason || "ตั้งล็อกอินหลายเครื่องไม่สำเร็จ"));
@@ -15266,7 +15289,7 @@ function EmployeeCrud() {
     // ── ขั้นที่ 2: ตั้งความสามารถเครื่อง (งานรอง) — ถ้าพลาด พนักงานถูกสร้างแล้ว อย่าให้ดูเหมือนล้มเหลว ──
     let warn = "";
     try {
-      if (form.machine_id && opsDirty) await syncMachineOps(form.machine_id, opIds, caps);
+      if (form.machine_id && opsDirty && await confirmMachineOpsChange({ machineId: form.machine_id, newIds: opIds, caps, machines, operations })) await syncMachineOps(form.machine_id, opIds, caps);
     } catch (e) {
       warn = ` (แต่ตั้งความสามารถเครื่องไม่สำเร็จ: ${e?.message || "error"} — แก้ได้ที่ปุ่ม "แก้ไข")`;
       mlsToast(`เพิ่มพนักงานแล้ว${warn}`, "warn");

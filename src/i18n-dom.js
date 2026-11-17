@@ -215,6 +215,8 @@ const DICT = {
   "Release × Part × ขั้นตอน": "Release × Part × Operation",
   "เครื่องจักร × ขั้นตอน (ปริมาณงาน + เฉลี่ย/วัน)": "Machine × Operation (workload + avg/day)",
   "เฉลี่ย/วัน": "Avg/day",
+  "ใช้เครื่องนี้แทน (เครื่องเดิมจะออกจากระบบ)": "Use this device instead (signs out the other one)",
+  "ใช้เครื่องนี้แทน (เครื่องเดิมจะถูกออกจากระบบ)": "Use this device instead (signs out the other one)",
   "รวม (ชิ้น)": "Total (pcs)", "น้ำหนัก (กก.)": "Weight (kg)", "เสร็จ (ชิ้น)": "Finished (pcs)",
   "กด Ctrl+Z เพื่อย้อนกลับการแก้ไขตาราง": "Press Ctrl+Z to undo table edits",
   "สถานีของคุณ": "Your station", "เลือกโหมดสแกน": "Select scan mode",
