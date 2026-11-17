@@ -6358,8 +6358,8 @@ function pmMachines(list, qty) {
 //   สถานะแถว = กติกาเดียวกับหัวล็อต: ชิ้นที่กด Finished แล้ว (เครื่องไหนก็ได้) ครบจำนวนสั่ง = Finish · มีงานแต่ยังไม่ครบ = In Process Balance
 //   (เดิมดูทีละเครื่อง "ทุกเครื่องต้องครบ" → ตัดครบ 2 + พับ 1 = ยังค้าง ทั้งที่หัวล็อตนับเสร็จ → ชิปไม่ตรงหัวล็อต)
 function pmRowStatus(ms, prog) {
+  if (prog && prog.total > 0 && prog.finished >= prog.total) return "fin";   // เสร็จครบ มาก่อน "กำลังทำ" (เครื่องอื่นค้างงานไว้ก็ถือว่าเสร็จ — ตรงกับหัวล็อต)
   if (ms.some((m) => m.st === "run")) return "run";
-  if (prog && prog.total > 0 && prog.finished >= prog.total) return "fin";
   if (ms.length) return "bal";
   if (!ms.length) {
     // ไม่มีงานหน้าเครื่อง แต่มียอดจากการสแกนออฟฟิศแบบเดิม → ไม่ขึ้น Pending หลอก
@@ -7012,7 +7012,7 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
       const ms = pmMachines(mstat.data[r.id] || mstat.data[String(r.id)], r.qty);
       const st = r.mod_cancelled_at ? "cxl" : pmRowStatus(ms, relProgress(r, unitStats, opProg));
       // พาร์ทเสร็จครบแล้ว (เครื่องอื่นกด Finished) → เครื่องที่ทำไม่ครบไม่ได้ "รออีก n ชิ้น" แล้ว
-      m.set(r.id, { ms: st === "fin" ? ms.map((x) => (x.st === "bal" ? { ...x, st: "fin", partDone: true, bal: 0 } : x)) : ms, st });
+      m.set(r.id, { ms: st === "fin" ? ms.map((x) => (x.st === "bal" || x.st === "run" ? { ...x, st: "fin", partDone: true, bal: 0 } : x)) : ms, st });
     }
     return m;
   }, [releases, mstat, unitStats, opProg]);
