@@ -1,5 +1,6 @@
 // ชิ้นส่วนหน้าจอที่ใช้ร่วมกัน (หน้า Release · ตัวสร้างล็อต · Modify · Total)
 import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { askConfirm } from "../confirm.jsx";
 import { NC, findKey, nlen, nf, PART_CATS, UNCAT, seedPartGroups, partGroupsOf } from "./releaseCore.js";
 
@@ -143,7 +144,7 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ to: "", d: "", ml: "", r: "" });
   const lid = "mat-dl-" + String(label || cur || "x").replace(/[^A-Za-z0-9_-]/g, "");
-  const start = () => { setF({ to: orig ? cur : "", d: orig ? desc : "", ml: orig && len ? String(len) : "", r: note || "" }); setOpen(true); };
+  const start = () => { setF({ to: "", d: orig ? desc : "", ml: orig && len ? String(len) : "", r: note || "" }); setOpen(true); };
   // ★ 2026-11-12 ผู้ใช้: "กดผิดมาแก้ แล้วไปกดช่องอื่น ให้ออกจากตรงนี้" → คลิกนอกกล่อง = ปิด (ไม่บันทึก) · Esc ก็ปิด
   const box = useRef(null);
   useEffect(() => {
@@ -153,26 +154,63 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
     document.addEventListener("mousedown", out, true); document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", out, true); document.removeEventListener("keydown", esc); };
   }, [open]);
-  if (open) return (
-    <span className="rt-matedit" ref={box} onClick={(e) => e.stopPropagation()}>
-      <input className="input rw-cell rw-mono" autoFocus list={lid} value={f.to} placeholder={placeholder} onChange={(e) => setF({ ...f, to: e.target.value.toUpperCase() })}
-        onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter" && f.to.trim()) { onSave({ ...f, to: f.to.trim() }); setOpen(false); } }} aria-label={`วัสดุใหม่ ${label}`} />
-      <datalist id={lid}>{list.filter((x) => x !== (orig || cur)).map((x) => <option key={x} value={x} />)}</datalist>
-      {withDesc ? <input className="input rw-cell" value={f.d} placeholder="รายละเอียด (ไม่ใส่ = เดิม)" onChange={(e) => setF({ ...f, d: e.target.value })} aria-label={`รายละเอียดวัสดุใหม่ ${label}`} /> : null}
-      {withLen ? <input className="input rw-cell rw-num" type="number" min="0" value={f.ml} placeholder="ยาวเส้น (มม.)" title="ไม่ใส่ = ใช้ความยาวของ INV นี้ในแบบ หรืออ่านจากรหัส" onChange={(e) => setF({ ...f, ml: e.target.value })} aria-label={`ยาวเส้น ${label}`} /> : null}
-      <input className="input rw-cell" value={f.r} placeholder="เหตุผล เช่น ของหมด" onChange={(e) => setF({ ...f, r: e.target.value })} aria-label={`เหตุผล ${label}`} />
-      <button type="button" className="btn btn-accent btn-sm" disabled={!f.to.trim()} onClick={() => { onSave({ ...f, to: f.to.trim() }); setOpen(false); }}>ใช้</button>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>ยกเลิก</button>
-    </span>);
+  // ★ 2026-11-17 ผู้ใช้: "ออกแบบวิธีแก้ material ให้ใช้ง่ายกว่านี้" — เดิม: ช่องพิมพ์ 3-4 ช่องเบียดในแถว + ปุ่ม ✎ ↺ เล็กๆ
+  //   ใหม่: กด ✎ = กล่องลอยใต้ช่อง · ค้นหา / กดเลือกจากรายการวัสดุของใบนี้ · เหตุผลกดเลือกได้ · "กลับไปใช้ตามแบบ" อยู่ในกล่อง (มีชื่อบอก ไม่ใช่ไอคอน)
+  const anchor = useRef(null);
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const a = anchor.current; if (!a) return;
+      const r = (a.closest("td") || a).getBoundingClientRect(); const w = Math.min(340, window.innerWidth - 16); const h = (box.current && box.current.offsetHeight) || 380;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)); const below = r.bottom + 4 + h <= window.innerHeight - 8;
+      setPos({ left, top: below ? r.bottom + 4 : Math.max(8, r.top - h - 4), width: w });
+    };
+    place(); const t = setTimeout(place, 0);
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { clearTimeout(t); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [open]);
+  const codeOf = (x) => String(typeof x === "string" ? x : (x && (x.inv || x.code)) || "").trim().toUpperCase();
+  const descOf = (x) => (typeof x === "string" ? "" : (x && (x.d || x.desc)) || "");
+  const now = String(cur || "").trim().toUpperCase();
+  const ql = f.to.trim().toUpperCase();
+  const all = list.map((x) => ({ c: codeOf(x), d: descOf(x) })).filter((x) => x.c && x.c !== now);
+  const exact = all.some((x) => x.c === ql);
+  const shown = (ql && !exact ? all.filter((x) => x.c.includes(ql) || String(x.d).toUpperCase().includes(ql)) : all).slice(0, 60);
+  const go = () => { if (!f.to.trim() || f.to.trim() === now) return; onSave({ ...f, to: f.to.trim() }); setOpen(false); };
+  const REASONS = ["ของหมด", "ไม่มีในสต็อก", "ใช้วัสดุที่มีอยู่", "ตามแบบแก้ไข"];
+  const pop = open ? createPortal(
+    <div className="rt-matpop" ref={box} role="dialog" aria-label={`เปลี่ยนวัสดุ ${label}`} style={pos ? { left: pos.left, top: pos.top, width: pos.width } : { left: -9999, top: 0 }}
+      onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      <div className="rt-matpop-h"><b>เปลี่ยนวัสดุ</b>{label && label !== "noinv" ? <span className="rw-mono rw-muted"> {label}</span> : null}<button type="button" className="rl-x" onClick={() => setOpen(false)} aria-label="ปิด">×</button></div>
+      <div className="rt-matpop-cur">ตอนนี้ใช้ <b className="rw-mono">{cur || "—"}</b>{orig ? <> · ตามแบบ <span className="rw-mono">{orig}</span></> : null}{orig && note ? <div className="rw-muted small">{note}</div> : null}</div>
+      <input className="input rw-mono" autoFocus value={f.to} placeholder={`ค้นหา หรือพิมพ์ ${placeholder}`} onChange={(e) => setF({ ...f, to: e.target.value.toUpperCase() })}
+        onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter") { if (!exact && shown.length === 1 && ql) setF({ ...f, to: shown[0].c }); else go(); } }} aria-label={`วัสดุใหม่ ${label}`} />
+      <div className="rt-matpop-list" role="listbox" aria-label="วัสดุในใบนี้">
+        {shown.length ? shown.map((x) => (
+          <button key={x.c} type="button" role="option" aria-selected={x.c === ql} className={`rt-matpop-i ${x.c === ql ? "on" : ""}`} onClick={() => setF({ ...f, to: x.c })}>
+            <span className="rw-mono">{x.c}</span>{x.d ? <small className="rw-muted">{x.d}</small> : null}{orig && x.c === String(orig).trim().toUpperCase() ? <small className="rw-muted">ตามแบบ</small> : null}
+          </button>)) : <div className="rw-muted small" style={{ padding: "8px 10px" }}>{ql ? `ไม่มี ${ql} ในใบนี้ — ใช้รหัสที่พิมพ์ได้ (ระบบจะถามยืนยัน)` : "ยังไม่มีรายการวัสดุให้เลือก — พิมพ์รหัสเอง"}</div>}
+      </div>
+      {withDesc || withLen ? <div className="rt-matpop-row">
+        {withDesc ? <input className="input" value={f.d} placeholder="รายละเอียด (ไม่ใส่ = เดิม)" onChange={(e) => setF({ ...f, d: e.target.value })} aria-label={`รายละเอียดวัสดุใหม่ ${label}`} /> : null}
+        {withLen ? <input className="input rw-num" type="number" min="0" value={f.ml} placeholder="ยาวเส้น (มม.) — ไม่ใส่ก็ได้" title="ไม่ใส่ = ใช้ความยาวของ INV นี้ในแบบ หรืออ่านจากรหัส" onChange={(e) => setF({ ...f, ml: e.target.value })} aria-label={`ยาวเส้น ${label}`} /> : null}
+      </div> : null}
+      <input className="input" value={f.r} placeholder="เหตุผล (ไม่ใส่ก็ได้)" onChange={(e) => setF({ ...f, r: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") go(); if (e.key === "Escape") setOpen(false); }} aria-label={`เหตุผล ${label}`} />
+      <div className="rt-matpop-chips">{REASONS.map((t) => <button key={t} type="button" className={`rt-matpop-chip ${f.r === t ? "on" : ""}`} onClick={() => setF({ ...f, r: f.r === t ? "" : t })}>{t}</button>)}</div>
+      <div className="rt-matpop-f">
+        {orig && onReset ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); onReset(); }}>↺ กลับไปใช้ตามแบบ</button> : <span />}
+        <span><button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>ยกเลิก</button> <button type="button" className="btn btn-accent btn-sm" disabled={!f.to.trim() || f.to.trim() === now} onClick={go}>{f.to.trim() && f.to.trim() !== now ? `ใช้ ${f.to.trim()}` : "เลือกวัสดุ"}</button></span>
+      </div>
+    </div>, document.body) : null;
   const mv = (/^Modify\s+(M-\d+)/.exec(String(note || "")) || [])[1] || "";
   const tip = [`เดิมตามแบบ: ${orig}`, note].filter(Boolean).join(" · ");
   return (
-    <span className="rt-matcur">
-      {/* ★ 2026-11-17 ผู้ใช้: "ดูรก" — เดิมโชว์ ค่าเดิมขีดฆ่า → ค่าใหม่ + บรรทัดเหตุผล (2 บรรทัดทุกแถว) → เหลือค่าใหม่ + ป้ายสั้น · ค่าเดิม / เหตุผลเต็มอยู่ใน tooltip */}
+    <span className={`rt-matcur ${open ? "open" : ""}`} ref={anchor}>
       <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? tip : undefined}>{cur || <span className="rw-muted">—</span>}</b>
       {orig ? (mv ? <> <ModTag ver={mv} /></> : <> <Pill tone="warn" title={tip}>เปลี่ยน</Pill></>) : null}
-      {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น)" onClick={start}>✎</button> : null}
-      {orig && onReset ? <button type="button" className="rw-link rt-matbtn" title="กลับไปใช้ตามแบบ" onClick={onReset}>↺</button> : null}
+      {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น) · กลับไปใช้ตามแบบ" aria-label={`เปลี่ยนวัสดุ ${label}`} onClick={start}>✎</button> : null}
+      {pop}
     </span>);
 }
 
