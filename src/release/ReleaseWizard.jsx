@@ -286,6 +286,39 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ★ 2026-11-10 มาจากกล่องรับเอกสาร: ใบปะหน้า → อ่านเติมหัวใบ · แบบ PDF → ใส่ขั้นอัพ PDF ให้ (แผง/แบบ Site Item) · ซับ/พาร์ท → เก็บไว้วางที่ขั้นเลือกซับ/พาร์ท
   const initRef = useRef(false);
   const moreRef = useRef(null);
+  // ★ 2026-11-17 ผู้ใช้: "ใช่ เก็บให้เอง" — ปล่อยแผง แล้ววางแบบซับ / พาร์ทมาด้วย (เช่น P-005: MARKING + PART + SUB) → เก็บเข้าคลังของโปรเจคให้เลย
+  //   (เดิม: "ไม่ได้ใส่ — ลงที่หน้า ซับ / พาร์ท ของโปรเจคก่อน") · รอคลังโหลดเสร็จก่อนเสมอ (กันบันทึกทับคลังด้วยคลังว่าง) · ต้องเลือกโปรเจคก่อน
+  const [libQueue, setLibQueue] = useState([]);
+  const [libSave, setLibSave] = useState(null);   // { msg } | { ok, warn } | { err }
+  const libBusy = useRef(false);
+  useEffect(() => {
+    if (!libQueue.length || libBusy.current || !project) return;
+    const queue = libQueue; libBusy.current = true;
+    (async () => {
+      try {
+        if (!api?.saveLibrary) { setLibSave({ err: "ระบบนี้ยังบันทึกลงคลังจากหน้านี้ไม่ได้ — ลงที่หน้า “ซับ / พาร์ท ของโปรเจค”" }); return; }
+        setLibSave({ msg: `กำลังโหลดคลังของโปรเจค…` });
+        // โหลดคลังทั้งชุดเองทุกครั้ง (โหมดปล่อยแผง ตัววิซาร์ดโหลดคลังแค่บางเบอร์ + โหลดตอนขั้น 3) — ห้ามบันทึกทับด้วยคลังที่ไม่ครบ
+        const base = (await api.loadBomLibrary(project.id, null, undefined, { fallback: true })) || EMPTY_LIB;
+        const older = queue.filter((d) => d.kind === "part" && newerRevOf(base.parts, d.code));
+        const got = queue.filter((d) => !older.includes(d));
+        const oldTxt = older.length ? `รุ่นเก่ากว่าในคลัง ${older.length} ไฟล์ ไม่เอาทับ (${older.slice(0, 4).map((d) => `${d.code} → ใช้ ${newerRevOf(base.parts, d.code)}`).join(", ")}${older.length > 4 ? " …" : ""})` : "";
+        if (!got.length) { setLibSave({ ok: "ไม่ได้เพิ่มลงคลัง — คลังมีรุ่นใหม่กว่าอยู่แล้ว", warn: oldTxt }); return; }
+        const ov = base.ov || {};
+        const ownOnly = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => !(v && v.from)));
+        const merged = buildBom({ lib: { ...base, subs: ownOnly(base.subs), parts: ownOnly(base.parts) }, pdfs: got, ack: {}, useLib: true });
+        const cfg = { partMode: ov.partMode || "auto", partGroups: ov.partGroups || [] };
+        setLibSave({ msg: `กำลังเก็บแบบซับ / พาร์ท ${got.length} ไฟล์เข้าคลังของโปรเจค…` });
+        const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
+          newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: makeCatOf(merged, ov.catOv || {}, cfg),
+          pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (m) => setLibSave({ msg: m }));
+        const gs = got.filter((d) => d.kind === "sub").length;
+        setLibSave({ ok: `เก็บเข้าคลังของโปรเจคแล้ว — ซับ ${nf(gs)} · พาร์ท ${nf(got.length - gs)} เบอร์ (${got.slice(0, 5).map((d) => d.code).join(", ")}${got.length > 5 ? " …" : ""}) · แผงที่ใช้เบอร์เหล่านี้จะดึงจากคลังให้เอง`, warn: [oldTxt, ...((r && r.errors) || [])].filter(Boolean).join(" · ") });
+        setLibTick((t) => t + 1);
+      } catch (e) { setLibSave({ err: "เก็บเข้าคลังไม่สำเร็จ: " + (e?.message || e) }); }
+      finally { libBusy.current = false; setLibQueue((q) => q.filter((d) => !queue.includes(d))); }
+    })();
+  }, [libQueue, project]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [pendingPdfs, setPendingPdfs] = useState([]);   // แบบซับ/พาร์ทจาก inbox ที่รอวางในขั้น "เลือกซับ / พาร์ท"
   // ★ 2026-11-12 ใช้ร่วมกัน: ไฟล์จากกล่องรับเอกสาร + ไฟล์ที่วางในช่องใบปะหน้า (ผู้ใช้วางแบบพาร์ทลงช่องนี้ → เดิมขึ้น "อ่านไม่ได้รายการ")
   //   ใบปะหน้า (Excel / PDF ที่ไม่ใช่แบบ) → อ่านเติมหัวใบ · แบบแผง / Site Item → ขั้นอัพ PDF · แบบซับ / พาร์ท → ขั้น "เลือกซับ / พาร์ท" (เก็บเข้าคลัง + เลือกให้)
@@ -310,17 +343,18 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     if (toPanel) setMode("panel");
     const toItems = subpart.length && !panelish.length && !units.length && !pdfsRaw.length;   // 2026-11-17: panel PDFs already dropped -> stay in panel mode
     if (subpart.length && (toItems || itemsMode)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!itemsMode) setMode("items"); }
+    else if (subpart.length) { setLibSave(null); setLibQueue((q) => { const names = new Set(subpart.map((d) => d.file)); return [...q.filter((d) => !names.has(d.file)), ...subpart]; }); }
     if (drawings.length) {
       const codes = (xs) => `${xs.slice(0, 4).map((d) => d.code).join(", ")}${xs.length > 4 ? " …" : ""}`;
       const lines = [
         panelish.length && `แบบแผง ${panelish.length} ไฟล์ (${codes(panelish)}) → ใส่ในขั้น “อัพ PDF แผง” แล้ว${toPanel ? " · เปลี่ยนเป็น “ปล่อยแผง (มีที่อยู่)” ให้" : ""}`,
         subpart.length && (toItems || itemsMode
           ? `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เปลี่ยนเป็น “ปล่อยเฉพาะซับ / พาร์ท” · ขั้นถัดไปจะเก็บเข้าคลังโปรเจคแล้วเลือกเบอร์ให้ (ใส่จำนวนเอง)`
-          : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) ไม่ได้ใส่ — ปล่อยแผงใช้แบบซับ / พาร์ทจาก “ซับ / พาร์ท ของโปรเจค” (ลงที่นั่นก่อน)`),
+          : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เก็บเข้าคลัง “ซับ / พาร์ท ของโปรเจค” ให้ (ปล่อยแผงดึงซับ / พาร์ทจากคลัง)`),
         !first && !order && "ไม่มีใบปะหน้า — ไม่บังคับ",
       ].filter(Boolean);
       if (skipMsg) lines.push(skipMsg);
-      if (!first) setOrderMsg(subpart.length && !(toItems || itemsMode) && !panelish.length ? { bad: lines.join(" · ") } : { ok: lines });
+      if (!first) setOrderMsg({ ok: lines });
       else setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, ...lines] } : m));
     } else if (!first) setOrderMsg({ bad: `${order ? "อ่านไฟล์ที่วางไม่ได้ว่าเป็นแบบหรือใบปะหน้า" : "ไม่พบใบปะหน้าในไฟล์ที่วาง"}${skipMsg ? ` · ${skipMsg}` : ""}` });
     else if (skipMsg) setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, skipMsg] } : m && m.bad ? { bad: `${m.bad} · ${skipMsg}` } : { ok: [skipMsg] }));
@@ -520,6 +554,11 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
             </div>
           )}
           {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>{/^⚠/.test(String(t)) ? t : <>✓ {t}</>}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
+          {libSave || libQueue.length ? <div className={`rw-msg ${libSave && libSave.err ? "bad" : libSave && libSave.ok ? "ok" : "info"}`} style={{ marginBottom: 10 }} data-testid="lib-save-msg">
+            {libSave && libSave.err ? `✗ ${libSave.err}` : libSave && libSave.ok ? <>✓ {libSave.ok}{libSave.warn ? <div className="small">⚠ {libSave.warn}</div> : null}</> : libSave && libSave.msg ? libSave.msg
+              : !project ? `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง — เลือกโปรเจคก่อน` : `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง…`}
+            {libSave && (libSave.ok || libSave.err) ? <> <button type="button" className="rw-link" onClick={() => setLibSave(null)}>ปิด</button></> : null}
+          </div> : null}
           <div className="rw-mode" role="radiogroup" aria-label="โหมดการปล่อยงาน">
             <button type="button" role="radio" aria-checked={!itemsMode} className={`rw-mode-opt ${!itemsMode ? "on" : ""}`} onClick={() => setMode("panel")}>
               <b>🏢 ปล่อยแผง (มีที่อยู่)</b><small>ลง Address &amp; Unit + อัพ PDF แบบแผง → ระบบแตกเป็นซับ / พาร์ท ให้เอง</small>
