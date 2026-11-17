@@ -1204,9 +1204,27 @@ const BOOT_GO = (() => {
   try { const q = new URLSearchParams(window.location.search); return { go: q.get("go") || "", forCode: q.get("for") || "", used: false }; }
   catch { return { go: "", forCode: "", used: false }; }
 })();
+// ★ 2026-11-17 กด F5 แล้วกลับมาที่เดิม (เดิมกลับหน้ารายการทุกครั้ง): จำ แท็บ · โปรเจคที่เปิด · ใบหลักที่เปิด ไว้ใน sessionStorage (ต่อแท็บเบราว์เซอร์)
+//   กดเมนูเอง = ล้างโปรเจค/ใบที่จำไว้ · เปิดใบ/โปรเจค = จำ · กลับ = ลืม
+const NAV_KEY = "mls.nav";
+function navGet() { try { return JSON.parse(sessionStorage.getItem(NAV_KEY) || "{}") || {}; } catch { return {}; } }
+function navSet(patch) { try { sessionStorage.setItem(NAV_KEY, JSON.stringify({ ...navGet(), ...patch })); } catch { /* ignore */ } }
+// field = ช่องใน nav · value/setValue = state ของหน้า · list = รายการที่ใช้หาตัวเดิม (รอโหลดเสร็จ) · toId / build = แปลงไป-กลับ
+function useNavKeep(field, value, setValue, list, toId = (x) => x?.id, build = (x) => x) {
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    const id = navGet()[field]; if (!id) { restored.current = true; return; }
+    if (!list || !list.length) return;
+    restored.current = true;
+    const hit = list.find((x) => x && x.id === id); if (hit) setValue(build(hit)); else navSet({ [field]: null });
+  }, [list]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (restored.current) navSet({ [field]: value ? toId(value) || null : null }); }, [value]);   // eslint-disable-line react-hooks/exhaustive-deps
+}
 function Shell({ user, onLogout }) {
   const [shellLang] = useLang();
-  const [tab, setTab] = useState(() => (BOOT_GO.go === "setup-employees" && isAdmin(user)) ? "setup" : "projects");
+  const [tab, setTab] = useState(() => { if (BOOT_GO.go === "setup-employees" && isAdmin(user)) return "setup"; const t = navGet().tab; return t && canOpenTab(user, t) ? t : "projects"; });
+  useEffect(() => { navSet({ tab }); }, [tab]);
   useEffect(() => {
     if (!BOOT_GO.go) return;
     try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }   // ล้าง ?go= ออกจาก URL (รีโหลดแล้วไม่เด้งซ้ำ)
@@ -1230,6 +1248,7 @@ function Shell({ user, onLogout }) {
 
   function go(key, opts) {
     if (!canOpenTab(user, key)) return; // กันเปิดแท็บที่ไม่มีสิทธิ์ (เช่น ยิงจากปุ่มลึกๆ)
+    navSet({ plan: null, project: null });   // ★ กดเมนู = เริ่มที่หน้าแรกของเมนูนั้น (ไม่เปิดใบ/โปรเจคที่จำไว้)
     if (key === tab && (key === "projects" || key === "release")) setHomeNonce((n) => n + 1);
     setTab(key);
     setDrawerOpen(false);
@@ -7598,7 +7617,10 @@ function usePlanRefresh(load, loadPlans, setPlanView) {
     if (ps) setPlanView((v) => { if (!v || !v.plan) return v; const np = ps.find((x) => x.id === v.plan.id); return np ? { ...v, plan: np } : null; });
   }, [load, loadPlans, setPlanView]);
 }
-function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null }) {
+function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, onReload, goTo, onOpenGroup = null, onInboxDone = null }) {
+  // ★ 2026-11-17 เปิด Modify จากกล่องรับเอกสาร แล้วบันทึก M สำเร็จ → เอางานนั้นออกจากกล่อง (เดิมค้าง กดซ้ำเสี่ยงบันทึก M ซ้ำ)
+  const inboxFilesRef = useRef(null);
+  useEffect(() => { if (view?.inbox?.mode === "modify" && view.inbox.files?.length) inboxFilesRef.current = { plan: view.plan?.id, files: view.inbox.files }; }, [view?.inbox]);   // eslint-disable-line react-hooks/exhaustive-deps
   const timer = useRef(null);
   // ★ 2026-11-12 (ตรวจหน้า ปล่อยงาน/โปรเจค ข้อ 1, 3): แก้ใบแล้วรอ 0.8 วิ ค่อยบันทึก — ออกจากหน้า (กลับ / เปิดล็อต / พิมพ์ QR) หรือโหลดรายการใหม่ก่อนครบเวลา
   //   เดิม = ทิ้งที่แก้ (clearTimeout) / โหลดใบเก่าจากฐานข้อมูลมาทับ → ตอนนี้บันทึกที่ค้างทันที (flush) ก่อนออก / ก่อนโหลดใหม่
@@ -7665,7 +7687,8 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
     if (planRef.current && planRef.current.id === p.id && planRef.current._at) p = { ...p, _at: planRef.current._at };
     // ★ 2026-11-12 ข้อ 8: modUndone (M ที่เคยถูกย้อน) มีแต่เพิ่ม — ย้อน/ทำซ้ำไปใบรุ่นก่อน (ที่ยังไม่มีบันทึกนั้น) ต้องไม่ทำให้หาย
     const keep = planRef.current?.modUndone || [];
-    if (keep.length) { const m = new Map(); for (const x of [...keep, ...(p.modUndone || [])]) { const o = m.get(x.ver); if (!o || String(x.at || "") > String(o.at || "")) m.set(x.ver, x); } const u = [...m.values()]; if (u.length !== (p.modUndone || []).length || keep.some((x) => !(p.modUndone || []).some((y) => y.ver === x.ver))) p = { ...p, modUndone: u }; }   // รวมตามเลข M (ไม่ซ้ำ · ไม่หาย)
+    // ★ 2026-11-17 M ที่อยู่ใน mods ของใบนี้ (ใช้อยู่ / ทำซ้ำแล้ว) ไม่นับเป็น "ย้อนแล้ว"
+    if (keep.length) { const live = new Set((p.mods || []).map((x) => x.ver)); const m = new Map(); for (const x of [...keep, ...(p.modUndone || [])].filter((y) => !live.has(y.ver))) { const o = m.get(x.ver); if (!o || String(x.at || "") > String(o.at || "")) m.set(x.ver, x); } const u = [...m.values()]; if (u.length !== (p.modUndone || []).length || keep.some((x) => !(p.modUndone || []).some((y) => y.ver === x.ver))) p = { ...p, modUndone: u }; }   // รวมตามเลข M (ไม่ซ้ำ · ไม่หาย)
     planRef.current = p;
     setView((v) => (v ? { ...v, plan: p } : v));
     setPlans((ps) => ps.map((x) => (x.id === p.id ? p : x)));
@@ -7714,6 +7737,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           // ★ 2026-11-12 บันทึกเป็น M แล้วย้อนได้ด้วย Ctrl+Z (ถามก่อน · ล็อตที่ M ลด/ยกเลิก → ยกเลิก M ในล็อตด้วย) · ไม่ล้างประวัติที่แก้ก่อน M
           clearTimeout(timer.current); pending.current = null;   // ใบที่ค้างบันทึกรวมอยู่ใน M แล้ว (modifyRelease บันทึกใบใหม่ทั้งใบ)
           hist.record(planRef.current, np, modUndoStepOf(planRef.current, np, mod));
+          if (inboxFilesRef.current && inboxFilesRef.current.plan === np.id && onInboxDone) { onInboxDone(inboxFilesRef.current.files); inboxFilesRef.current = null; }
           setView((v) => (v ? { ...v, plan: np } : v));
           setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต) · Ctrl+Z = ย้อน ${mod.ver}`, "success");
@@ -7880,6 +7904,7 @@ function ReleasePage({ user, goTo }) {
   const [viewGroup, setViewGroup] = useState(null); // group ที่กำลังดูรายละเอียดอยู่ (null = แสดงตารางสรุป)
   const { plans, setPlans, loadPlans } = useReleasePlans(null);   // ★ 2026-10-13: Release แบบใหม่ที่ยังปล่อยล็อตไม่ครบ
   const [planView, setPlanView] = useState(null);                  // { plan, openBuilder, inbox? }
+  useNavKeep("plan", planView, setPlanView, plans, (v) => v?.plan?.id, (p) => ({ plan: p }));
   const [wizardFiles, setWizardFiles] = useState(null);             // ★ 2026-11-10 ไฟล์จากกล่องรับเอกสาร → เปิด "ปล่อยงานใหม่" พร้อมใบปะหน้า/แบบ
   const [wizardProject, setWizardProject] = useState("");
   const [inboxDocs, setInboxDocs] = useState([]);                   // เอกสารในกล่องรับ — คงอยู่ตอนเปิดใบไปทำแล้วกลับมา
@@ -7977,7 +8002,7 @@ function ReleasePage({ user, goTo }) {
     return <ReleaseGroupDetail group={viewGroup} user={user} onBack={() => setViewGroup(null)} goTo={goTo} onHome={() => { setViewGroup(null); goTo && goTo("release"); }} onChanged={refreshAfterLot} />;
   }
   if (planView) {
-    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={refreshAfterLot} onOpenGroup={setViewGroup} />;
+    return <ReleasePlanPage goTo={goTo} view={planView} setView={setPlanView} releases={recent} plans={plans} user={user} setPlans={setPlans} onReload={refreshAfterLot} onOpenGroup={setViewGroup} onInboxDone={(files) => setInboxDocs((d) => d.filter((x) => !files.includes(x.file)))} />;
   }
   if (createOpen === "wizard") {
     return (
@@ -12500,6 +12525,7 @@ function ProjectReleasesView({ project, user, goTo, onBack }) {
   const [lists, setLists] = useState(null);      // { projects, parts } สำหรับป็อปอัปสร้างงาน (โหลดเบื้องหลัง)
   const { plans, setPlans, loadPlans } = useReleasePlans(project.id);
   const [planView, setPlanView] = useState(null);
+  useNavKeep("plan", planView, setPlanView, plans, (v) => v?.plan?.id, (p) => ({ plan: p }));   // ★ F5 = กลับมาที่ใบเดิม
   const [openPlans, setOpenPlans] = useState(() => new Set());   // ★ 2026-11-04 ใบหลักที่กางดูล็อต
   const [libOpen, setLibOpen] = useState(false);   // ★ ซับ / พาร์ท ของโปรเจค (คลัง — Release ลงแค่แผง)
   const [showNewProject, setShowNewProject] = useState(false);
@@ -12719,6 +12745,7 @@ function ProjectsPage({ user, goTo }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);    // { project, impact }
   const [viewProject, setViewProject] = useState(null); // โปรเจคที่กดเข้าไปดู Release อยู่
+  useNavKeep("project", viewProject, setViewProject, projects);
   const sort = useTableSort("code");
 
   const reload = useCallback(async () => {

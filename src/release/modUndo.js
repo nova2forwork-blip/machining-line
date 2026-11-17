@@ -32,7 +32,7 @@ export function modUndoStep({ prev, np, mod, api, user = null, showPlan, onReloa
     },
     redo: lots.length ? null : async () => {
       try {
-        const p2 = fresh({ ...np, modUndone: cur.modUndone });
+        const p2 = fresh({ ...np, modUndone: (cur.modUndone || []).filter((x) => x.ver !== mod.ver) });   // ★ 2026-11-17 ทำซ้ำแล้ว = M นี้ใช้อยู่ → ไม่อยู่ในรายการ "ย้อนแล้ว" (เลขยังไม่ซ้ำ เพราะอยู่ใน mods)
         await api.updatePlan(p2); cur = p2; showPlan(p2);
         toast(`↷ ทำซ้ำ ${mod.ver} แล้ว`, "success");
         return true;
