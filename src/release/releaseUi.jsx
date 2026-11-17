@@ -147,9 +147,10 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   const start = () => { setF({ to: "", d: orig ? desc : "", ml: orig && len ? String(len) : "", r: note || "" }); setOpen(true); };
   // ★ 2026-11-12 ผู้ใช้: "กดผิดมาแก้ แล้วไปกดช่องอื่น ให้ออกจากตรงนี้" → คลิกนอกกล่อง = ปิด (ไม่บันทึก) · Esc ก็ปิด
   const box = useRef(null);
+  const closedAt = useRef(0);
   useEffect(() => {
     if (!open) return undefined;
-    const out = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    const out = (e) => { if (box.current && !box.current.contains(e.target)) { const td = anchor.current && anchor.current.closest("td"); closedAt.current = td && td.contains(e.target) ? 1 : 0; setOpen(false); } };
     const esc = (e) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", out, true); document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", out, true); document.removeEventListener("keydown", esc); };
@@ -158,6 +159,14 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   //   ใหม่: กด ✎ = กล่องลอยใต้ช่อง · ค้นหา / กดเลือกจากรายการวัสดุของใบนี้ · เหตุผลกดเลือกได้ · "กลับไปใช้ตามแบบ" อยู่ในกล่อง (มีชื่อบอก ไม่ใช่ไอคอน)
   const anchor = useRef(null);
   const [pos, setPos] = useState(null);
+  // ★ 2026-11-17 ผู้ใช้: "เอาดินสอออก" → กดที่ช่อง (ทั้งช่อง) = เปิดกล่องเปลี่ยนวัสดุ เหมือนช่องอื่นของตารางที่คลิกแล้วแก้ได้
+  const canEdit = !!onSave;
+  const startRef = useRef(null); startRef.current = start;
+  useEffect(() => {
+    const td = canEdit && anchor.current ? anchor.current.closest("td") || anchor.current : null; if (!td) return undefined;
+    const on = (e) => { if (e.target.closest && e.target.closest(".rw-pill, a, input, select")) return; if (closedAt.current) { closedAt.current = 0; return; } startRef.current(); };
+    td.addEventListener("click", on); return () => td.removeEventListener("click", on);
+  }, [canEdit]);
   useEffect(() => {
     if (!open) return undefined;
     const place = () => {
@@ -206,10 +215,11 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
   const mv = (/^Modify\s+(M-\d+)/.exec(String(note || "")) || [])[1] || "";
   const tip = [`เดิมตามแบบ: ${orig}`, note].filter(Boolean).join(" · ");
   return (
-    <span className={`rt-matcur ${open ? "open" : ""}`} ref={anchor}>
-      <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? tip : undefined}>{cur || <span className="rw-muted">—</span>}</b>
-      {orig ? (mv ? <> <ModTag ver={mv} /></> : <> <Pill tone="warn" title={tip}>เปลี่ยน</Pill></>) : null}
-      {onSave ? <button type="button" className="rw-link rt-matbtn" title="เปลี่ยนวัสดุ (ของไม่มี / หมด → ใช้ตัวอื่น) · กลับไปใช้ตามแบบ" aria-label={`เปลี่ยนวัสดุ ${label}`} onClick={start}>✎</button> : null}
+    <span className={`rt-matcur ${open ? "open" : ""} ${canEdit ? "can" : ""}`} ref={anchor}>
+      {canEdit
+        ? <button type="button" className={`rt-matval rw-mono ${orig ? "rl-new" : ""}`} title={orig ? `${tip} · กดเพื่อเปลี่ยนวัสดุ` : "กดเพื่อเปลี่ยนวัสดุ"} aria-label={`เปลี่ยนวัสดุ ${label} (ตอนนี้ ${cur || "ไม่มี"})`} aria-haspopup="dialog" aria-expanded={open}>{cur || <span className="rw-muted">—</span>}</button>
+        : <b className={`rw-mono ${orig ? "rl-new" : ""}`} title={orig ? tip : undefined}>{cur || <span className="rw-muted">—</span>}</b>}
+      {orig && mv ? <> <ModTag ver={mv} /></> : null}
       {pop}
     </span>);
 }
