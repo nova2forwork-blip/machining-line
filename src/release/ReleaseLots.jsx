@@ -10,7 +10,7 @@ import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import { getSession } from "../auth.js";
 import {
-  NC, ncmp, nf, nlen, inchToMm, suspectLen, staleReleasedRows, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
+  NC, normalizeRO, ncmp, nf, nlen, inchToMm, suspectLen, staleReleasedRows, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
   otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
@@ -465,7 +465,9 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
   const [tab, setTab] = useState(() => (SHEETS.find((s) => (s.kind === "part" ? need.parts.some((p) => p.dest === s.k && leftOf(p.code, p.qty) > 0)
     : s.kind === "sub" ? need.subs.some((x) => x.procs.includes(s.k) && leftOf(x.code, x.qty) > 0)
     : plan.units.some((u) => !rel.addrLot.has(String(u.addr).toUpperCase())))) || SHEETS[0]).k);
-  const [lotNo, setLotNo] = useState(() => nextLotNo(plan.ro, rel.lots));
+  // ★ 2026-11-17 ผู้ใช้: "ไม่อยากปล่อยเป็น .1 .2 เป็นเต็ม" → ปล่อยครั้งแรกของใบ = เลขเต็ม (P-002) · ปล่อยไปแล้ว = ล็อตถัดไป (.1 .2 …) · สลับได้ด้วยปุ่มข้างช่อง
+  const plainRo = normalizeRO(plan.ro).replace(/\s*\(.*\)$/, "");
+  const [lotNo, setLotNo] = useState(() => (rel.lots.length ? nextLotNo(plan.ro, rel.lots) : plainRo));
   const [date, setDate] = useState(todayYmd());
   const [note, setNote] = useState("");
   const [q, setQ] = useState("");
@@ -620,7 +622,9 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
           <div className="rl-dr-title">
             <h2>ปล่อยล็อตใหม่</h2>
             <input className="input rw-mono rl-lotno" value={lotNo} onChange={(e) => setLotNo(e.target.value.toUpperCase())} aria-label="เลขล็อต" />
-            {!rel.lots.some((L) => lotOf(L.no) === 0) ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLotNo(plan.ro)} title="ปล่อยในเลข Release หลักเลย">ใช้เลข {plan.ro}</button> : null}
+            {!rel.lots.some((L) => lotOf(L.no) === 0) ? (roKey(lotNo) === roKey(plainRo)
+              ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLotNo(nextLotNo(plan.ro, rel.lots))} title="แบ่งปล่อยเป็นล็อตย่อย (.1 .2 …)">แบ่งเป็นล็อต {nextLotNo(plan.ro, rel.lots)}</button>
+              : <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLotNo(plainRo)} title="ปล่อยในเลข Release หลักเลย">ใช้เลข {plainRo}</button>) : null}
             {rel.lots.length ? <select className="select rw-mono" style={{ width: "auto" }} value={intoLot ? intoLot.no : ""} onChange={(e) => setLotNo(e.target.value || nextLotNo(plan.ro, rel.lots))} aria-label="เพิ่มเข้าล็อตเดิม" title="เพิ่มของใหม่เข้าล็อตที่ปล่อยแล้ว (ใบปล่อยเดียวกัน · QR ใหม่ต่อท้าย)">
               <option value="">ล็อตใหม่ {nextLotNo(plan.ro, rel.lots)}</option>
               {rel.lots.map((L) => <option key={L.no} value={L.no}>เพิ่มเข้าล็อตเดิม {L.no}</option>)}
