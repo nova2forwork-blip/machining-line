@@ -934,6 +934,14 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   //   หรือใบปะหน้า Release (FM(DE)-03) ตอน "เพิ่มรายการ" — วางได้ในช่องเดียวกับแบบ (xls/xlsx/pdf) → เติมเลข M / วันที่ / เหตุผล + เช็กลิสต์ว่าแบบที่แก้มาครบไหม
   const [sheet, setSheet] = useState(null);
   const [dropped, setDropped] = useState({});   // NC(code) → ข้อความสรุปจากแบบที่วาง (เช่น "จำนวนเปลี่ยน 2 · ลูกใหม่ 1")
+  // ★ 2026-11-17 ผู้ใช้: "จำนวนมีอยู่แล้ว" (ช่อง Qty ของใบ Modify / ใบปะหน้า) → เบอร์ใหม่ที่ยังไม่มีจำนวน ใช้จำนวนจากใบให้เลย (แก้ได้)
+  //   ทำครั้งเดียวต่อเบอร์ (sheetQ) — ลบจำนวนทิ้งเองแล้วไม่เติมกลับ · วางใบก่อนหรือหลังแบบก็ได้
+  useEffect(() => {
+    if (!sheet || !adds.some((x) => x.qty === "" && !x.sheetQ)) return;
+    const qOf = (c) => { const it = sheet.items.find((i) => NC(i.code) === NC(c)) || sheet.items.find((i) => baseOf(i.code) === baseOf(c)); return it && Number(it.qty) > 0 ? it.qty : null; };
+    if (!adds.some((x) => x.qty === "" && !x.sheetQ && qOf(x.code) != null)) return;
+    setAdds((xs) => xs.map((x) => { if (x.qty !== "" || x.sheetQ) return x; const q = qOf(x.code); return q == null ? x : { ...x, qty: String(q), sheetQ: true, note: [x.note, `จำนวน ${q} จาก${sheet.kind === "modify" ? "ใบ Modify" : "ใบปะหน้า"}`].filter(Boolean).join(" · ") }; }));
+  }, [sheet, adds]);
   const sheetCmp = useMemo(() => {
     if (!sheet) return [];
     // ★ 2026-11-17 ใบ Modify / ใบปะหน้าเขียนเบอร์ไม่มี Rev ("MAL132-5001") แต่ในใบ / แบบที่วางเป็น "MAL132-5001 A" → เทียบโดยไม่สน Rev
@@ -1133,7 +1141,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
             <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
             <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ค่าช่อง A ของตาราง (${c.to} มม.) ละเอียดกว่าค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? (f.dec === "keep" ? <b>{String(f.from)}</b> : <s className="rl-old">{String(f.from)}</s>) : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
-            <td className="rw-mono">{an ? <label className="rl-inq">จำนวน <input className="input rw-cell rl-qty" type="number" min={an.kind === "hw" ? "0.01" : "1"} step={an.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={an.qty} onChange={(e) => { const v = e.target.value; setAdds((xs) => xs.map((x, k) => (k === ai ? { ...x, qty: v } : x))); }} aria-label={`จำนวน ${an.code}`} /></label> : f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
+            <td className="rw-mono">{an ? <label className="rl-inq">{an.sheetQ ? "จำนวนตามใบ" : "จำนวน"} <input className="input rw-cell rl-qty" type="number" min={an.kind === "hw" ? "0.01" : "1"} step={an.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={an.qty} onChange={(e) => { const v = e.target.value; setAdds((xs) => xs.map((x, k) => (k === ai ? { ...x, qty: v } : x))); }} aria-label={`จำนวน ${an.code}`} /></label> : f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
           </tr>); })}</tbody>
       </table></div>
       <div className="rw-muted small">จุดที่ต่างจากเดิมยังไม่ถูกใช้จนกว่าจะเลือก · เลือกแล้วเปลี่ยนใจได้ · เบอร์ใหม่ / Site Item ใส่จำนวนในตารางนี้ได้เลย (ข้อมูลอื่นแก้ที่แท็บ "เพิ่มเบอร์ใหม่") · ความยาว / วัสดุ = ใบปล่อยล็อตถัดไปใช้ค่าใหม่ (ล็อตที่ปล่อยแล้วไม่เปลี่ยน)</div>
