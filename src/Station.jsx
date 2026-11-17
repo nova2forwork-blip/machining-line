@@ -873,7 +873,11 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
   const endHoldRef = useRef(endHold); endHoldRef.current = endHold;
   // ★ 2026-11-17 ตอนถอดหน้า: หยุดแค่ตัวนับ (interval) — ไม่ล้าง "เวลาเริ่มจริง"
   //   เดิมเรียก stopTimer() → ล้าง startTs → (โหมด dev / StrictMode รัน effect ซ้ำ) draft ถูกเขียนทับเป็นไม่มีเวลาเริ่ม → กู้งานหลังรีโหลดแล้วนาฬิกาค้าง ไม่เดินต่อ
-  useEffect(() => () => { clearInterval(timerRef.current); timerRef.current = null; }, []);
+  //   + เปิดหน้ากลับมา (StrictMode ถอดแล้วใส่ใหม่ทันที) แล้วงานยังมีเวลาเริ่มอยู่ → ให้ตัวนับเดินต่อ (รอบสองไม่มี draft ให้กู้ซ้ำ เพราะ effect เขียน draft ของรอบแรกลบไปก่อน)
+  useEffect(() => {
+    if (startTsRef.current != null && !timerRef.current) startTimer();
+    return () => { clearInterval(timerRef.current); timerRef.current = null; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // ปิดกล้องถาวรตอนออกจากหน้าเครื่อง (ออกจากระบบ/ถูกเตะ) — ระหว่างใช้งานกล้องเปิดค้างไว้ตัวเดียว
   useEffect(() => () => releaseSharedCamera(), []);
 
