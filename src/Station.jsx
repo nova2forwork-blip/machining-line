@@ -1365,7 +1365,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       const tot = progress?.noOp ? null : (progress?.total ?? null);
       const doneNow = Number(progress?.done) || 0;
       const proj = doneNow + (Number(qty) || 0);
-      if (tot != null && proj > tot) {
+      // In Process → Finished ของเครื่องนี้ (ยังไม่เคย Finished) = ปิดงานเดิม ไม่ใช่สแกนซ้ำ — ยอด In Process นับอยู่ใน done แล้ว จึงไม่ถือว่าเกิน
+      const closingInProcess = status === "finished" && statusLock.inProcessExists && !statusLock.finishedExists;
+      if (tot != null && proj > tot && !closingInProcess) {
         const pn = unit?.part_master?.part_no || "";
         if (dupCount > 0) {
           errorBeep();
