@@ -5,7 +5,7 @@
 //   ใช้ในหน้า "ปล่อยงานใหม่": วางใบนี้ก่อน → ได้เลข Release / โปรเจค / รายการเบอร์ + จำนวนที่ต้องมีในใบ
 //   แล้วค่อยวางแบบ PDF ตามเดิม → ระบบเทียบว่าเบอร์ไหนมีแบบ/อยู่ในคลังแล้ว เบอร์ไหนยังขาด จำนวนตรงไหม
 // ══════════════════════════════════════════════════════════════════════════
-import { NC, normalizeRO, loadPdfJs } from "./releaseCore.js";
+import { NC, baseOf, normalizeRO, loadPdfJs } from "./releaseCore.js";
 
 const S = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
 const num = (v) => { const m = /-?\d+(?:[.,]\d+)?/.exec(String(v ?? "").replace(/,/g, "")); return m ? parseFloat(m[0]) : null; };
@@ -120,7 +120,9 @@ export function compareOrder(order, plan) {
   const put = (list, kind) => { for (const x of list || []) { const k = NC(x.code); const e = idx.get(k) || { qty: 0, kind }; e.qty += Number(x.qty) || 0; idx.set(k, e); } };
   put(plan.panels, "panel"); put(plan.subs, "sub"); put(plan.parts, "part"); put(plan.hw, "hw"); put(plan.glass, "glass"); put(plan.other, "other");
   return order.items.map((it) => {
-    const e = idx.get(NC(it.code));
+    // ★ 2026-11-17 ใบเขียนเบอร์ไม่มี Rev ("MAL132-5001") แต่ในใบเป็น "MAL132-5001 A" → เทียบโดยไม่สน Rev (รวมทุก Rev ของเบอร์นั้น)
+    let e = idx.get(NC(it.code));
+    if (!e) { const b = baseOf(it.code); let q = 0, kind = null; for (const [k, v] of idx) if (baseOf(k) === b) { q += v.qty; kind = kind || v.kind; } if (kind) e = { qty: q, kind }; }
     if (!e) return { ...it, status: "missing", have: 0 };
     const ok = it.qty == null || Math.abs(e.qty - it.qty) < 1e-9;
     return { ...it, status: ok ? "ok" : e.qty > it.qty ? "more" : "less", have: e.qty, kind: e.kind };
