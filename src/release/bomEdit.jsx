@@ -109,7 +109,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     const disp = chg ? <>{f === "d" || f === "pd" ? null : <s className="rl-old">{fmtF(f, c0)}</s>}<b>{fmtF(f, pvv)}</b></> : shown;
     const who = f === "pd" ? r.unit : f === "ua" || f === "uu" ? r.addr : f === "mml" ? r.inv : r.code;
     const id = `${f}|${okey(r) || who}|${uniq}`; const lab = `${FL[f]} ${who}`;
-    if (cur === id) return <span className="bm-edhold"><span className="bm-ghost" aria-hidden="true">{disp}</span><input autoFocus className={`input bm-in ${NUMF.has(f) ? "num" : ""}`} defaultValue={chg ? pvv : c0} inputMode={NUMF.has(f) ? "decimal" : "text"} aria-label={lab}
+    if (cur === id) return <span className="bm-edhold"><span className={`bm-ghost bm-qbtn ${NUMF.has(f) ? "num" : ""}`} aria-hidden="true">{disp}</span><input autoFocus className={`input bm-in ${NUMF.has(f) ? "num" : ""}`} defaultValue={chg ? pvv : c0} inputMode={NUMF.has(f) ? "decimal" : "text"} aria-label={lab}
       onFocus={(e) => e.target.select()} onBlur={(e) => { setVal(r, f, e.target.value); setCur((c) => (c === id ? null : c)); }}
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); else if (e.key === "Escape") { e.target.value = String(chg ? pvv : c0); e.target.blur(); } }} /></span>;
     const tip = ITEM_F.has(f) ? (r.own.scope === "sub" ? `แก้ในซับ ${r.own.owner} — มีผลทุกแผงที่ใช้ซับนี้` : `แก้ในแผง ${r.own.owner}`)
