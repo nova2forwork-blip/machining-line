@@ -1392,3 +1392,11 @@ table.xt .xt-reset { margin-left: 6px; font-size: 12px; border: 1px solid #c4c8c
 .rt-allparts td.rl-desc { white-space: normal; }
 .rt-allparts td.rl-desc .bm-qbtn, .rt-allparts td.rl-desc span { white-space: normal; overflow-wrap: anywhere; text-align: left; }
 @media (min-width: 1700px) { .rt-allparts td.rl-desc { max-width: 230px; } }
+
+/* ★ 2026-11-17 Modify: สิ่งที่เหลือก่อนบันทึก (กดแล้วพาไปจุดนั้น) + ช่องจำนวนในตารางเทียบ */
+.rl-todo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; }
+.rl-todo-i { border: 1px solid #f0d58a; background: #fff8e1; color: var(--text); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; line-height: 1.35; text-align: left; }
+.rl-todo-i.go { cursor: pointer; font-weight: 600; }
+.rl-todo-i.go:hover, .rl-todo-i.go:focus-visible { background: #ffefc2; border-color: #e0b84a; }
+.rl-inq { display: inline-flex; align-items: center; gap: 6px; font-family: inherit; }
+.rl-inq .rl-qty { width: 84px; }

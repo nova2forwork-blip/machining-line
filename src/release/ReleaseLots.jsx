@@ -742,6 +742,8 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
 function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = false, onAdded = null, initialFiles = null, init = null, onConflict = null }) {
   // ★ 2026-11-09 addOnly = "เพิ่มรายการ" — เพิ่มเบอร์/Site Item/อุปกรณ์ที่ยังไม่มีในใบ โดยไม่นับเป็น Modify (ไม่มีเลข M · ไม่ลงประวัติ Modify)
   // ★ 2026-11-12 S4: เปิดที่แท็บที่มีของที่แก้ (เดิม init.bchg = {} ก็ถือว่ามี → เปิดแท็บ "ซับ" ว่าง ผู้ใช้คิดว่าค่าหาย)
+  const [sheetOpen, setSheetOpen] = useState(false);   // ★ 2026-11-17 ตารางใบ Modify ย่อไว้เมื่อครบทุกแถว
+  const topRef = useRef(null);
   const [tab, setTab] = useState(() => {
     if (addOnly) return "add";
     if (!init) return "part";
@@ -838,6 +840,11 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     needAdmin && "แก้ของที่ปล่อยแล้ว (ลด/ยกเลิกในล็อต) ต้องเป็นออฟฟิศหรือแอดมิน",
     lim.s === "loading" && ops.lotOps.size && "กำลังโหลดยอดที่ทำแล้วของล็อต…",
   ].filter(Boolean);
+  // ★ 2026-11-17 สิ่งที่เหลือก่อนบันทึก — กดแล้วพาไปจุดนั้น
+  const focusIn = (el) => { if (!el) return false; el.scrollIntoView({ block: "center", behavior: "smooth" }); const b = el.matches("input,button") ? el : el.querySelector("button,input"); if (b) b.focus({ preventScroll: true }); return true; };
+  const goAsk = () => focusIn(topRef.current && topRef.current.querySelector("tr.rl-ask .rl-dec"));
+  const goQty = () => { if (focusIn(topRef.current && topRef.current.querySelector("tr.rl-ask input.rl-qty"))) return; setTab("add"); setTimeout(() => focusIn(document.querySelector(".rl-drawer tr.rl-needqty input.rl-qty")), 80); };
+  const todos = blockers.map((t) => ({ t, go: /^ยังไม่ได้เลือก/.test(String(t)) ? goAsk : /^ใส่จำนวนเบอร์ใหม่/.test(String(t)) ? goQty : null }));
 
   const ql = q.trim().toUpperCase();
   const match = (...xs) => !ql || xs.some((x) => String(x || "").toUpperCase().includes(ql));
@@ -1079,14 +1086,17 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <span className={`rl-1drop-chip ${nDrawn && !nMiss ? "ok" : nMiss ? "warn" : ""}`}>{nDrawn && !nMiss ? "✓" : "○"} แบบ: {nDrawn ? <b>วางแล้ว {nDrawn} แบบ</b> : <span className="rw-muted">ยังไม่มี</span>}{sheet ? (nMiss ? <span className="rl-errtxt"> · ตามใบยังขาด {nMiss} แบบ</span> : nDrawn ? " · ครบตามใบ" : "") : ""}</span>
       </div>
     </div>);
+  const sheetBad = !!sheet && sheetCmp.some((x) => (sheet.kind === "modify" ? !x.drop : x.status === "missing"));
   const sheetEl = sheet ? (
-    <div className={`rw-order-check ${sheetCmp.some((x) => (sheet.kind === "modify" ? !x.drop : x.status === "missing")) ? "warn" : "ok"}`} style={{ marginBottom: 10 }}>
+    <div className={`rw-order-check ${sheetBad ? "warn" : "ok"}`} style={{ marginBottom: 10 }}>
       <div className="rw-order-h">
         <b>{sheet.kind === "modify" ? `ใบ Modify ${sheet.roRaw || sheet.mVer}` : `ใบปะหน้า ${sheet.roRaw || sheet.ro || sheet.file}`}</b>
         <span className="rw-muted">{[sheet.refRo && `อ้างถึง ${sheet.refRo}`, sheet.zone && `Zone ${sheet.zone}`, sheet.issuedBy && `โดย ${sheet.issuedBy}`, sheet.date].filter(Boolean).join(" · ")} · {sheet.items.length} รายการ{sheet.kind === "modify" ? ` · วางแบบแล้ว ${sheetCmp.filter((x) => x.drop).length}/${sheet.items.length}` : ""}</span>
-        <button type="button" className="rw-link" onClick={() => { setSheet(null); }}>เอาออก</button>
+        {sheetBad ? null : <span className="rw-ok small">✓ ครบทุกรายการ</span>}
+        {sheetBad ? null : <button type="button" className="rw-link" onClick={() => setSheetOpen((o) => !o)} aria-expanded={sheetOpen}>{sheetOpen ? "ซ่อนรายการ" : "ดูรายการ"}</button>}
+        <button type="button" className="rw-link" style={sheetBad ? undefined : { marginLeft: 0 }} onClick={() => { setSheet(null); }}>เอาออก</button>
       </div>
-      <table className="data-table rw-table rw-order-tbl">
+      {sheetBad || sheetOpen ? <table className="data-table rw-table rw-order-tbl">
         <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th>{sheet.kind === "modify" ? "Remarks" : "จำนวน"}</th><th>ในใบ {plan.ro}</th><th>แบบที่วางรอบนี้</th></tr></thead>
         <tbody>{sheetCmp.map((x, i) => (
           <tr key={`${x.code}|${i}`} className={(sheet.kind === "modify" ? !x.drop : x.status === "missing") ? "rl-errrow" : ""}>
@@ -1095,7 +1105,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
             <td>{sheet.kind === "modify" ? (x.inPlan ? <Pill tone="ok">{x.inPlan === "panel" ? "แผง" : x.inPlan === "sub" ? "ซับ" : "พาร์ท"}</Pill> : /^(เพิ่มเป็นเบอร์ใหม่|แทน )/.test(String(x.drop || "")) ? <Pill tone="info">เบอร์ใหม่ (เพิ่มในใบ)</Pill> : <Pill tone="bad">ไม่อยู่ในใบ</Pill>) : (x.status === "missing" ? <Pill tone="bad">ยังไม่อยู่ในใบ</Pill> : x.status === "ok" ? <Pill tone="ok">มี {nlen(x.have)}</Pill> : <Pill tone="warn">มี {nlen(x.have)}</Pill>)}</td>
             <td>{x.drop ? <span className="rw-ok small">✓ {x.drop}</span> : <span className="rl-errtxt small">ยังไม่ได้วางแบบ</span>}</td>
           </tr>))}</tbody>
-      </table>
+      </table> : null}
     </div>) : null;
   const togChg = (id, on) => setMatChg((m) => m.map((y) => ((y.id || `${NC(y.code)}|${y.field || "mat"}`) === id ? { ...y, on } : y)));
   const chgOf = (f) => matChg.find((x) => (x.id || `${NC(x.code)}|${x.field || "mat"}`) === `${NC(f.code)}|${f.what === "วัสดุ (INV)" ? "mat" : "len"}`);
@@ -1117,15 +1127,16 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <button type="button" className="rw-link small" onClick={() => setFound((l) => l.filter((f) => askRow(f) && !f.dec))}>ซ่อนที่เลือกแล้ว</button></div>
       <div className="rl-found-tw"><table className="rl-sc-table rl-cmp-t">
         <thead><tr><th style={{ width: 190 }}>จะเอาแบบไหน</th><th>เบอร์</th><th>อยู่ที่</th><th>ต่างตรงไหน</th><th className="r">เดิม</th><th /><th>ตามแบบ</th></tr></thead>
-        <tbody>{found.map((f, i) => { const c = isMatRow(f) ? chgOf(f) : null; const ask = askRow(f); return (
-          <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone} ${ask && !f.dec ? "rl-ask" : ""}`}>
-            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span> : f.tone === "same" ? <span className="rw-muted">=</span> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ ใส่ให้แล้ว</span>}</td>
+        <tbody>{found.map((f, i) => { const c = isMatRow(f) ? chgOf(f) : null; const ask = askRow(f);
+          const ai = !f.act && f.tone === "new" ? adds.findIndex((a) => NC(a.code) === NC(f.code)) : -1; const an = ai >= 0 ? adds[ai] : null; const needQ = !!an && !(Number(an.qty) > 0); return (
+          <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone} ${(ask && !f.dec) || needQ ? "rl-ask" : ""}`}>
+            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
             <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ค่าช่อง A ของตาราง (${c.to} มม.) ละเอียดกว่าค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? (f.dec === "keep" ? <b>{String(f.from)}</b> : <s className="rl-old">{String(f.from)}</s>) : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
-            <td className="rw-mono">{f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
+            <td className="rw-mono">{an ? <label className="rl-inq">จำนวน <input className="input rw-cell rl-qty" type="number" min={an.kind === "hw" ? "0.01" : "1"} step={an.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={an.qty} onChange={(e) => { const v = e.target.value; setAdds((xs) => xs.map((x, k) => (k === ai ? { ...x, qty: v } : x))); }} aria-label={`จำนวน ${an.code}`} /></label> : f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
           </tr>); })}</tbody>
       </table></div>
-      <div className="rw-muted small">จุดที่ต่างจากเดิมยังไม่ถูกใช้จนกว่าจะเลือก · เลือกแล้วเปลี่ยนใจได้ · เบอร์ใหม่ / Site Item ใส่ให้แล้ว แก้จำนวนที่แท็บ "เพิ่มเบอร์ใหม่" · ความยาว / วัสดุ = ใบปล่อยล็อตถัดไปใช้ค่าใหม่ (ล็อตที่ปล่อยแล้วไม่เปลี่ยน)</div>
+      <div className="rw-muted small">จุดที่ต่างจากเดิมยังไม่ถูกใช้จนกว่าจะเลือก · เลือกแล้วเปลี่ยนใจได้ · เบอร์ใหม่ / Site Item ใส่จำนวนในตารางนี้ได้เลย (ข้อมูลอื่นแก้ที่แท็บ "เพิ่มเบอร์ใหม่") · ความยาว / วัสดุ = ใบปล่อยล็อตถัดไปใช้ค่าใหม่ (ล็อตที่ปล่อยแล้วไม่เปลี่ยน)</div>
     </div>) : null;
   const pdfMsgEl = pdfMsg ? (
     <div className={`rw-msg ${pdfMsg.bad ? "bad" : pdfMsg.info ? "info" : "ok"}`} style={{ marginTop: 0, marginBottom: 10 }}>
@@ -1213,7 +1224,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
               <b>{l}</b><small>{n != null ? `${nf(n)} รายการ` : k === "bom" ? "แก้เบอร์/จำนวนลูกในแผง" : "เบอร์ที่ไม่มีใน BOM"}{tabCount(k) ? <em>แก้ {tabCount(k)}</em> : null}</small>
             </button>))}
         </div>}
-        <div className="rl-dr-top">{pdfDropEl}{sheetEl}{matChgEl}{pdfMsgEl}</div>
+        <div className="rl-dr-top" ref={topRef}>{pdfDropEl}{sheetEl}{matChgEl}{pdfMsgEl}</div>
         {tab !== "add" && tab !== "bom" && !(tab === "sub" && bowner) ? (
           <div className="rl-tools">
             <input className="input rw-search" style={{ marginTop: 0 }} placeholder={tab === "addr" ? "ค้นหาที่อยู่ / Unit" : "ค้นหาเบอร์ / description"} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -1299,7 +1310,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           <div className="rl-sum">
             {addOnly ? <><b>เพิ่มรายการ:</b> พาร์ท/ซับ {adds.filter((a) => a.kind !== "hw").length} เบอร์ · อุปกรณ์ {adds.filter((a) => a.kind === "hw").length} รายการ <small className="rw-muted">· ไม่นับเป็น Modify</small></> : <><b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}{matOn.length ? <> · เปลี่ยนตามแบบ {matOn.length}</> : null}</>}
             {lotTouched.length ? <div className="rl-sum-chips">{lotTouched.map((x) => <Pill key={x.lot} tone="bad">{x.lot}: QR −{nf(x.qr)}</Pill>)}</div> : null}
-            {blockers.length ? <div className="rw-muted small">{blockers.join(" · ")}</div> : null}
+            {blockers.length ? <div className="rl-todo"><b>เหลือก่อนบันทึก</b>{todos.map((x, i) => (x.go ? <button key={i} type="button" className="rl-todo-i go" onClick={x.go}>{x.t} →</button> : <span key={i} className="rl-todo-i">{x.t}</span>))}</div> : <div className="rw-ok small">✓ พร้อมบันทึก</div>}
           </div>
           <div className="rl-foot-btns">
             <button type="button" className="btn btn-ghost" onClick={tryClose} disabled={!!busy}>ยกเลิก</button>
