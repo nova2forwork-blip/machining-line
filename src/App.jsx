@@ -4668,173 +4668,174 @@ function AssemblyVerifyPage({ initialQr, onConsumeInitial }) {
   }, [initialQr]);
 
   const doing = (s) => /progress/i.test(s || "");
-  // ★ 2026-11-17 ออกแบบหน้าใหม่ (ผู้ใช้: "ออกแบบหน้านี้ใหม่"): ซ้าย = ช่องเดียว สแกน/ค้นหา + ตัวกรองแบบชิป + รายการที่เห็นทันที ·
-  //   ขวา = ผลเทียบ (สถานะใหญ่ + แถบความคืบหน้า + ตัวเลขสรุป + ตาราง กรอง "เฉพาะที่ต้องดู") · จอแคบ = ซ้อนบน-ล่าง · ข้อมูล / การโหลดเหมือนเดิม
+  // ★ 2026-11-17 (รอบ 2) ผู้ใช้: "ทำไมหน้าตาไม่เหมือนหน้าอื่น" → ใช้ชิ้นส่วนเดียวกับหน้าปล่อยงาน:
+  //   ช่องค้นหา rs-bar · การ์ดแผนก DeptTabs · ตาราง DataTable (เรียง / ลากคอลัมน์) · ชิป mat-chip · กดแถว = หน้ารายละเอียด + ปุ่ม "กลับ"
   const KIND_TXT = { package: "แพ็ก", panel: "แผง", subassembly: "ซับ" };
-  const kindCount = useMemo(() => { const m = { all: 0, panel: 0, subassembly: 0, package: 0 }; for (const p of parents) if (!projSel || p.project_code === projSel) { m.all++; m[p.kind] = (m[p.kind] || 0) + 1; } return m; }, [parents, projSel]);
+  const deptOf = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : "sub");
+  const listSort = useTableSort();
+  const rowSort = useTableSort();
+  const inDept = (p) => kindTab === "all" || deptOf(p.kind) === kindTab;
+  const deptCounts = useMemo(() => { const m = { all: filtered.length, sub: 0, panel: 0, packing: 0 }; for (const p of filtered) m[deptOf(p.kind)]++; return m; }, [filtered]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const nKindAll = filtered.filter(inDept).length;
+  const nDoing = filtered.filter((p) => inDept(p) && doing(p.status)).length;
   const list = useMemo(() => filtered
-    .filter((p) => (kindTab === "all" || p.kind === kindTab) && (stTab === "all" || (stTab === "doing" ? doing(p.status) : !doing(p.status))))
+    .filter((p) => inDept(p) && (stTab === "all" || (stTab === "doing" ? doing(p.status) : !doing(p.status))))
     .sort((a, b) => (doing(b.status) - doing(a.status)) || String(a.project_code || "").localeCompare(String(b.project_code || ""), undefined, { numeric: true }) || String(a.part_no || "").localeCompare(String(b.part_no || ""), undefined, { numeric: true })),
   [filtered, kindTab, stTab]);   // eslint-disable-line react-hooks/exhaustive-deps
-  // เบอร์เดียวกันหลายตัว (คนละ QR) → โชว์ท้าย QR ให้แยกออก
-  const dupNo = useMemo(() => { const m = new Map(); for (const p of parents) m.set(p.part_no, (m.get(p.part_no) || 0) + 1); return new Set([...m].filter(([, n]) => n > 1).map(([k]) => k)); }, [parents]);
-  const nKindAll = filtered.filter((p) => kindTab === "all" || p.kind === kindTab).length;
-  const nDoing = filtered.filter((p) => (kindTab === "all" || p.kind === kindTab) && doing(p.status)).length;
-  // ช่องเดียว: พิมพ์ = กรองรายการ · Enter = เปิด (ตรงกับ QR / เบอร์ในรายการ = เปิดตัวนั้น · ไม่ตรง = ถือเป็น QR เช่นเบอร์ที่เสร็จแล้ว)
+  // ช่องค้นหา: พิมพ์ = กรองตาราง · Enter = เปิด (QR / เบอร์ในรายการ · ไม่ตรง = ถือเป็น QR เช่นเบอร์ที่เสร็จแล้ว)
   const openTyped = () => {
     const t = q.trim(); if (!t) return;
     const T = t.toUpperCase();
     const hit = parents.find((p) => String(p.qr_code || "").toUpperCase() === T) || (list.length === 1 ? list[0] : null) || list.find((p) => String(p.part_no || "").toUpperCase() === T);
     if (hit) load(hit.qr_code, hit); else load(t, null);
   };
-  // จอแคบ (iPad / มือถือ): ผลอยู่ใต้รายการ → เลื่อนลงไปให้เห็นเลยหลังเลือก
-  useEffect(() => { if (result && typeof window !== "undefined" && window.innerWidth < 980) { try { document.querySelector(".av-res")?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* ignore */ } } }, [result]);
   const R = result;
-  const tone = R ? (R.ok ? "ok" : (R.extra.length || R.hasOver) ? "bad" : "warn") : "";
   const cnt = R ? { complete: R.rows.filter((r) => r.status === "complete").length, partial: R.rows.filter((r) => r.status === "partial").length, missing: R.rows.filter((r) => r.status === "missing").length, over: R.rows.filter((r) => r.status === "over").length } : null;
   const shownRows = R ? (rowFilter === "issue" ? R.rows.filter((r) => r.status !== "complete") : R.rows) : [];
-  const pct = R && R.plannedTotal ? Math.min(100, Math.round((R.scannedTotal / R.plannedTotal) * 100)) : 0;
-  const statusTxt = (r) => (r.status === "complete" ? "✓ ครบ" : r.status === "over" ? `เกิน +${nc(r.scanned - r.planned)}` : r.status === "partial" ? `ขาด ${nc(r.planned - r.scanned)}` : "ยังไม่สแกน");
+  const statusTxt = (r) => (r.status === "complete" ? "✓ ครบ" : r.status === "over" ? `เกิน +${nc(r.scanned - r.planned)}` : r.status === "partial" ? `ขาด ${nc(r.planned - r.scanned)}` : "✗ ยังไม่สแกน");
+  const pill = (c, t) => <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: c.bg, color: c.fg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>{t}</span>;
+  const back = () => { setResult(null); setSel(null); setErr(""); setBusy(false); };
 
+  // ── หน้ารายละเอียด (เลือกแล้ว) ──
+  if (R || busy || err) {
+    const bannerStyle = !R ? {} : R.ok ? { background: "rgba(16,185,129,.12)", color: "var(--accent-dk, #0e9d63)", border: "1px solid rgba(16,185,129,.35)" }
+      : (R.extra.length || R.hasOver) ? { background: "rgba(220,38,38,.10)", color: "var(--danger-hi, #c0362c)", border: "1px solid rgba(220,38,38,.3)" }
+        : { background: "rgba(217,164,65,.14)", color: "#b45309", border: "1px solid rgba(217,164,65,.4)" };
+    return (
+      <div>
+        <div className="page-head">
+          <div>
+            <div className="page-title">{R ? R.parentNo : sel?.part_no || "ตรวจงานประกอบ / แพ็ก"}</div>
+            <div className="page-sub">{R ? [R.isPackage ? "แพ็ก" : KIND_TXT[R.nestKind] || "ซับ", R.parentName && R.parentName !== R.parentNo ? R.parentName : "", sel?.project_code && sel.project_code !== "-" ? sel.project_code : "", sel?.qr_code && sel.qr_code !== R.parentNo ? `QR ${sel.qr_code}` : "", R.finished ? "เสร็จแล้ว" : ""].filter(Boolean).join(" · ") : "ตรวจงานประกอบ / แพ็ก"}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="ghost" onClick={back}>← กลับ</Btn>
+          </div>
+        </div>
+        {busy && <Card><div style={{ color: "var(--muted)", padding: 8 }}>กำลังโหลด…</div></Card>}
+        {err && !busy && <Card><div style={{ color: "var(--danger-hi)", fontSize: 13, padding: 8, lineHeight: 1.6 }}>{err}</div></Card>}
+        {R && !busy && (<>
+          <Card title="ผลเทียบกับแผน">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "11px 14px", borderRadius: 10, marginBottom: 12, fontWeight: 700, ...bannerStyle }}>
+              <span style={{ fontSize: 16 }}>{R.ok ? "✓ ทำถูกและครบตามแผน" : R.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด / เกิน)" : R.hasOver ? "⚠ มีชิ้นเกินจำนวนที่แผนกำหนด" : "◐ ยังไม่ครบตามแผน"}</span>
+              {R.madeQty > 1 ? <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", opacity: .9 }}>ทำเบอร์แม่ {nc(R.madeQty)} ตัว · แผน = ต่อชุด × {nc(R.madeQty)}</span> : null}
+            </div>
+            <div style={{ maxWidth: 420, marginBottom: 12 }}><ProgressBar finished={R.scannedTotal} total={R.plannedTotal} /></div>
+            <div className="mat-kpis">
+              <span>สแกนแล้ว <b>{nc(R.scannedTotal)}</b> / {nc(R.plannedTotal)} ชิ้น</span>
+              <span>ครบ <b>{nc(cnt.complete)}</b></span>
+              <span>ขาด <b>{nc(cnt.partial)}</b></span>
+              <span>ยังไม่สแกน <b>{nc(cnt.missing)}</b></span>
+              <span>เกิน <b style={cnt.over ? { color: "var(--danger-hi)" } : undefined}>{nc(cnt.over)}</b></span>
+              <span>นอกแผน <b style={R.extra.length ? { color: "var(--danger-hi)" } : undefined}>{nc(R.extra.length)}</b></span>
+            </div>
+          </Card>
+
+          <Card title={`ของที่ต้องใส่ (${nc(R.rows.length)} เบอร์)`}>
+            <div className="mat-kpis">
+              <span className="mat-chips">
+                {[["all", "ทั้งหมด", R.rows.length], ["issue", "เฉพาะที่ต้องดู", R.rows.length - cnt.complete]].map(([k, lab, n]) => (
+                  <button key={k} type="button" className={"mat-chip" + (rowFilter === k ? " on" : "") + (k === "issue" && n ? " warn" : "")} onClick={() => setRowFilter(k)} aria-pressed={rowFilter === k}>{lab} <b>{nc(n)}</b></button>))}
+              </span>
+            </div>
+            <DataTable id="asm-verify-rows" rows={shownRows} rowKey={(r, i) => `${r.part_no}|${i}`} sort={rowSort}
+              sortAccessors={{ part: (r) => r.part_no, planned: (r) => r.planned, scanned: (r) => r.scanned, status: (r) => ({ missing: 0, partial: 1, over: 2, complete: 3 })[r.status] }}
+              empty={R.rows.length ? "✓ ไม่มีรายการที่ต้องดู — ครบทุกเบอร์" : "เบอร์นี้ไม่มี BOM (ไม่มีชิ้นที่ต้องประกอบ)"}
+              columns={[
+                { key: "part", header: "เบอร์ชิ้น (แผน)", sortKey: "part", lockCol: true, cell: (r) => <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, whiteSpace: "nowrap" }}>{r.part_no}</span> },
+                { key: "name", header: "รายละเอียด", cell: (r) => <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{r.part_name}</span> },
+                { key: "planned", header: "ต้องใช้", sortKey: "planned", align: "right", cell: (r) => nc(r.planned) },
+                { key: "scanned", header: "สแกนแล้ว", sortKey: "scanned", tdStyle: { whiteSpace: "nowrap" }, cell: (r) => <ProgressBar finished={r.scanned} total={r.planned} /> },
+                { key: "status", header: "สถานะ", sortKey: "status", cell: (r) => pill(verifyStatusColor(r.status), statusTxt(r)) },
+                { key: "qrs", header: "QR / ชิ้นที่สแกนมา", cell: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{r.units.length ? r.units.map((u) => (Number(u.qty) > 1 ? `${u.qr} ×${u.qty}` : u.qr)).join(", ") : "—"}</span> },
+              ]} />
+            {R.extra.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 700, color: "var(--danger-hi)", marginBottom: 6 }}>{`⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน (${nc(R.extra.length)}) — ตรวจว่าใส่ผิดเบอร์ไหม`}</div>
+                <div className="table-wrap">
+                  <table className="data-table" style={{ minWidth: 360 }}>
+                    <thead><tr><th>เบอร์ชิ้น</th><th>QR</th></tr></thead>
+                    <tbody>{R.extra.map((u, i) => <tr key={i}><td style={{ fontFamily: "var(--font-mono)" }}>{u.part_no || "?"}</td><td style={{ fontFamily: "var(--font-mono)" }}>{u.qr}{Number(u.qty) > 1 ? ` ×${u.qty}` : ""}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {(R.nestTree.length > 0 || R.nestPath.length > 0) && (
+            <Card title={R.isPackage ? "บั้งซ้อน · ของทุกชั้น" : "ของย่อยทุกชั้น"}>
+              <PackNestTree rootName={R.nestRoot} rootKind={R.isPackage ? "package" : R.nestKind} pathUp={R.nestPath} tree={R.nestTree} onOpen={(qq) => load(qq, null)} />
+            </Card>
+          )}
+          {R.shared && R.shared.length > 0 && (
+            <Card title={`⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย (${nc(R.shared.length)})`}>
+              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ</div>
+              <div className="table-wrap">
+                <table className="data-table asm-shared" style={{ minWidth: 420 }}>
+                  <thead><tr><th>เบอร์ชิ้น</th><th>QR</th><th>อยู่ในบั้งอื่น</th></tr></thead>
+                  <tbody>{R.shared.map((x, i) => (
+                    <tr key={i}><td style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{x.part_no || "?"}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{x.qr}</td>
+                      <td style={{ fontFamily: "var(--font-mono)" }}>{(x.others || []).join(", ")}</td></tr>))}</tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+          {(!R.isPackage || (R.hist && (R.hist.batches || []).length > 0)) && <AssemblyStationHistory hist={R.hist} missing={R.histMissing} isPackage={R.isPackage} />}
+        </>)}
+      </div>
+    );
+  }
+
+  // ── หน้ารายการ ──
   return (
-    <div className="av">
+    <div>
       <div className="page-head">
         <div>
           <div className="page-title">ตรวจงานประกอบ / แพ็ก</div>
-          <div className="page-sub">เทียบของที่ต้องใส่ตามแผน (Release) กับที่หน้างานสแกนจริง — ครบไหม · ผิดเบอร์ไหม · เกินไหม</div>
+          <div className="page-sub">เทียบของที่ต้องใส่ตามแผน (Release) กับที่หน้างานสแกนจริง — ครบไหม · ผิดเบอร์ไหม · เกินไหม · แตะแถวเพื่อดูผล หรือสแกน QR (เบอร์ที่เสร็จแล้วก็ได้)</div>
         </div>
       </div>
 
-      <div className={`av-grid ${R || busy || err ? "has-res" : ""}`}>
-        {/* ── ซ้าย: เลือกเบอร์แม่ / บั้ง ── */}
-        <aside className="card av-pick">
-          <form className="av-scan" onSubmit={(e) => { e.preventDefault(); openTyped(); }}>
-            <Icon name="scan" size={18} />
-            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="สแกน QR หรือพิมพ์เบอร์ / โปรเจค" aria-label="สแกน QR หรือค้นหาเบอร์" />
-            {q ? <button type="button" className="av-x" onClick={() => setQ("")} aria-label="ล้าง">×</button> : null}
-            <button type="submit" className="btn btn-accent btn-sm" disabled={!q.trim()}>เปิด</button>
-          </form>
-          <div className="av-filters">
-            <select className="select av-proj" value={projSel} onChange={(e) => setProjSel(e.target.value)} aria-label="โปรเจค">
-              <option value="">ทุกโปรเจค</option>
-              {projOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <div className="av-chips" role="group" aria-label="ชนิด">
-              {[["all", "ทั้งหมด"], ["panel", "แผง"], ["subassembly", "ซับ"], ["package", "แพ็ก"]].map(([k, l]) => ((kindCount[k] || k === "all")
-                ? <button key={k} type="button" className={`av-chip ${kindTab === k ? "on" : ""}`} onClick={() => setKindTab(k)}>{l} <small>{nc(kindCount[k] || 0)}</small></button> : null))}
-            </div>
-            <div className="av-chips" role="group" aria-label="สถานะ">
-              {[["all", "ทุกสถานะ", nKindAll], ["doing", "กำลังทำ", nDoing], ["todo", "ยังไม่เริ่ม", nKindAll - nDoing]].map(([k, l, n]) => (
-                <button key={k} type="button" className={`av-chip ${stTab === k ? "on" : ""}`} onClick={() => setStTab(k)}>{l} <small>{nc(n)}</small></button>))}
-            </div>
-          </div>
-          <div className="av-list" role="list">
-            {list.slice(0, 300).map((p) => (
-              <button key={p.id} type="button" role="listitem" className={`av-item ${sel && sel.id === p.id ? "on" : ""}`} onClick={() => load(p.qr_code, p)}>
-                <span className={`av-dot ${doing(p.status) ? "doing" : ""}`} title={doing(p.status) ? "กำลังทำ" : "ยังไม่เริ่ม"} />
-                <span className="av-item-main">
-                  <b>{p.kind === "package" && p.bunk_no ? p.bunk_no : p.part_no}</b>
-                  <small>{[p.part_name && p.part_name !== p.part_no ? p.part_name : "", p.project_code && p.project_code !== "-" ? p.project_code : "", dupNo.has(p.part_no) ? `QR …${String(p.qr_code || "").slice(-9)}` : ""].filter(Boolean).join(" · ") || p.qr_code}</small>
-                </span>
-                <span className={`av-kind k-${p.kind}`}>{KIND_TXT[p.kind] || "ซับ"}</span>
-              </button>))}
-            {!list.length ? <div className="av-empty-list">{parents.length ? "ไม่พบในรายการที่กำลังทำ / ยังไม่เริ่ม" : "ยังไม่มีงานประกอบ / แพ็กที่เปิดอยู่"}<br /><small>เบอร์ที่เสร็จแล้ว: สแกน / พิมพ์ QR แล้วกด Enter</small></div> : null}
-            {list.length > 300 ? <div className="av-more">แสดง 300 จาก {nc(list.length)} — พิมพ์ค้นหาเพื่อให้แคบลง</div> : null}
-          </div>
-          <div className="av-foot"><span className="av-dot doing" /> กำลังทำ · <span className="av-dot" /> ยังไม่เริ่ม · เบอร์ที่เสร็จแล้วไม่อยู่ในรายการ — สแกน QR ได้เลย</div>
-        </aside>
+      <Card>
+        <form className="rs-bar" onSubmit={(e) => { e.preventDefault(); openTyped(); }}>
+          <label className="rs-search">
+            <Icon name="search" size={15} />
+            <input type="search" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="สแกน QR หรือค้นหาเบอร์ / โปรเจค — กด Enter เพื่อเปิด (เบอร์ที่เสร็จแล้วก็เปิดได้)" aria-label="สแกน QR หรือค้นหา" />
+            {q ? <button type="button" className="rs-x" onClick={() => setQ("")} aria-label="ล้างคำค้น">✕</button> : null}
+          </label>
+          <select className={"rs-sel" + (projSel ? " on" : "")} value={projSel} onChange={(e) => setProjSel(e.target.value)} aria-label="โปรเจค">
+            <option value="">ทุกโปรเจค</option>
+            {projOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          {(q || projSel || stTab !== "all") ? <button type="button" className="rs-clear" onClick={() => { setQ(""); setProjSel(""); setStTab("all"); }}>ล้างตัวกรอง</button> : null}
+        </form>
+      </Card>
 
-        {/* ── ขวา: ผลเทียบ ── */}
-        <section className="av-res">
-          {busy ? <div className="card av-state">กำลังโหลด…</div>
-            : err ? <div className="card av-state bad">{err}</div>
-            : !R ? (
-              <div className="card av-state av-intro">
-                <Icon name="check" size={28} />
-                <b>เลือกเบอร์แม่ / บั้งจากรายการ หรือสแกน QR</b>
-                <span>ระบบจะเทียบของที่ต้องใส่ตาม BOM × จำนวนที่ทำ กับชิ้นที่หน้างานสแกนเข้า แล้วบอกว่าครบ ขาด เกิน หรือใส่ผิดเบอร์</span>
-              </div>
-            ) : (<>
-              <div className="card av-head">
-                <div className="av-head-top">
-                  <div>
-                    <span className={`av-kind k-${R.isPackage ? "package" : R.nestKind}`}>{R.isPackage ? "แพ็ก" : KIND_TXT[R.nestKind] || "ซับ"}</span>
-                    {R.finished ? <span className="av-kind k-done">เสร็จแล้ว</span> : null}
-                    <h2>{R.parentNo}</h2>
-                    <div className="av-sub">{[R.parentName && R.parentName !== R.parentNo ? R.parentName : "", sel?.project_code && sel.project_code !== "-" ? sel.project_code : "", sel?.qr_code && sel.qr_code !== R.parentNo ? `QR ${sel.qr_code}` : ""].filter(Boolean).join(" · ")}</div>
-                  </div>
-                  <button type="button" className="av-close" onClick={() => { setResult(null); setSel(null); setErr(""); }} aria-label="ปิดผล">×</button>
-                </div>
-                <div className={`av-banner ${tone}`}>
-                  <b>{R.ok ? "✓ ทำถูกและครบตามแผน" : R.extra.length ? "⚠ มีชิ้นที่ไม่อยู่ในแผน (อาจใส่ผิด / เกิน)" : R.hasOver ? "⚠ มีชิ้นเกินจำนวนที่แผนกำหนด" : "◐ ยังไม่ครบตามแผน"}</b>
-                  <div className="av-bar" aria-label={`สแกนแล้ว ${pct}%`}><i style={{ width: `${pct}%` }} /></div>
-                  <span className="av-banner-num">สแกนแล้ว <b>{nc(R.scannedTotal)}</b> / {nc(R.plannedTotal)} ชิ้น{R.madeQty > 1 ? ` · ทำเบอร์แม่ ${nc(R.madeQty)} ตัว (แผน = ต่อชุด × ${nc(R.madeQty)})` : ""}</span>
-                </div>
-                <div className="av-stats">
-                  <div className="av-stat ok"><b>{nc(cnt.complete)}</b><span>ครบ</span></div>
-                  <div className="av-stat warn"><b>{nc(cnt.partial)}</b><span>ขาด</span></div>
-                  <div className="av-stat miss"><b>{nc(cnt.missing)}</b><span>ยังไม่สแกน</span></div>
-                  <div className={`av-stat ${cnt.over ? "bad" : ""}`}><b>{nc(cnt.over)}</b><span>เกิน</span></div>
-                  <div className={`av-stat ${R.extra.length ? "bad" : ""}`}><b>{nc(R.extra.length)}</b><span>นอกแผน</span></div>
-                </div>
-              </div>
+      <DeptTabs value={kindTab} onChange={setKindTab} counts={deptCounts} withAll only={["sub", "panel", "packing"]} allSub="ซับ · แผง · แพ็ก" />
 
-              <div className="card av-table-card">
-                <div className="av-tbar">
-                  <b>ของที่ต้องใส่ ({nc(R.rows.length)} เบอร์)</b>
-                  <div className="av-chips">
-                    <button type="button" className={`av-chip ${rowFilter === "all" ? "on" : ""}`} onClick={() => setRowFilter("all")}>ทั้งหมด <small>{nc(R.rows.length)}</small></button>
-                    <button type="button" className={`av-chip ${rowFilter === "issue" ? "on" : ""}`} onClick={() => setRowFilter("issue")}>เฉพาะที่ต้องดู <small>{nc(R.rows.length - cnt.complete)}</small></button>
-                  </div>
-                </div>
-                <div className="table-wrap">
-                  <table className="data-table av-table">
-                    <thead><tr><th>เบอร์ชิ้น</th><th className="r">ต้องใช้</th><th>สแกนแล้ว</th><th>สถานะ</th><th>QR ที่สแกนมา</th></tr></thead>
-                    <tbody>
-                      {shownRows.map((r, i) => {
-                        const c = verifyStatusColor(r.status); const w = r.planned ? Math.min(100, Math.round((r.scanned / r.planned) * 100)) : 0;
-                        return (
-                          <tr key={`${r.part_no}|${i}`} className={`av-row s-${r.status}`}>
-                            <td><b className="av-code">{r.part_no}</b>{r.part_name ? <small className="av-desc">{r.part_name}</small> : null}</td>
-                            <td className="r av-num">{nc(r.planned)}</td>
-                            <td><div className="av-cell-prog"><span className="av-num"><b>{nc(r.scanned)}</b></span><span className="av-mini"><i style={{ width: `${w}%`, background: c.fg }} /></span></div></td>
-                            <td><span className="av-pill" style={{ background: c.bg, color: c.fg, borderColor: c.bd }}>{statusTxt(r)}</span></td>
-                            <td className="av-qrs">{r.units.length ? (<>{r.units.slice(0, 3).map((u) => (Number(u.qty) > 1 ? `${u.qr} ×${u.qty}` : u.qr)).join(", ")}{r.units.length > 3 ? <span title={r.units.slice(3).map((u) => u.qr).join(", ")}> +{nc(r.units.length - 3)}</span> : null}</>) : "—"}</td>
-                          </tr>);
-                      })}
-                      {!shownRows.length ? <tr><td colSpan={5} className="av-none">{R.rows.length ? "✓ ไม่มีรายการที่ต้องดู — ครบทุกเบอร์" : "เบอร์นี้ไม่มี BOM (ไม่มีชิ้นที่ต้องประกอบ)"}</td></tr> : null}
-                    </tbody>
-                  </table>
-                </div>
-                {R.extra.length > 0 && (
-                  <div className="av-extra">
-                    <b>⚠ ชิ้นที่สแกนมาแต่ไม่อยู่ในแผน ({nc(R.extra.length)}) — ตรวจว่าใส่ผิดเบอร์ไหม</b>
-                    <div className="av-extra-list">{R.extra.map((u, i) => <span key={i} className="av-pill bad"><b>{u.part_no || "?"}</b> {u.qr}{Number(u.qty) > 1 ? ` ×${u.qty}` : ""}</span>)}</div>
-                  </div>
-                )}
-              </div>
-
-              {R.shared && R.shared.length > 0 && (
-                <Card title={`⚠ ชิ้นที่อยู่ในบั้งอื่นด้วย (${nc(R.shared.length)})`}>
-                  <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>แผง/ชิ้นประกอบ 1 ชิ้นควรอยู่บั้งเดียว — ตรวจว่าสแกนผิดบั้งหรือป้ายซ้ำ</div>
-                  <div className="table-wrap">
-                    <table className="data-table asm-shared">
-                      <thead><tr><th>เบอร์ชิ้น</th><th>QR</th><th>อยู่ในบั้งอื่น</th></tr></thead>
-                      <tbody>{R.shared.map((x, i) => (
-                        <tr key={i}><td className="av-code">{x.part_no || "?"}</td><td className="av-qrs">{x.qr}</td><td className="av-code">{(x.others || []).join(", ")}</td></tr>))}</tbody>
-                    </table>
-                  </div>
-                </Card>
-              )}
-              {(R.nestTree.length > 0 || R.nestPath.length > 0) && (
-                <Card title={R.isPackage ? "บั้งซ้อน · ของทุกชั้น" : "ของย่อยทุกชั้น"}>
-                  <PackNestTree rootName={R.nestRoot} rootKind={R.isPackage ? "package" : R.nestKind} pathUp={R.nestPath} tree={R.nestTree} onOpen={(qq) => load(qq, null)} />
-                </Card>
-              )}
-              {(!R.isPackage || (R.hist && (R.hist.batches || []).length > 0)) && <AssemblyStationHistory hist={R.hist} missing={R.histMissing} isPackage={R.isPackage} />}
-            </>)}
-        </section>
-      </div>
+      <Card title="เบอร์แม่ / บั้ง ที่ยังเปิดอยู่">
+        <div className="mat-kpis">
+          <span className="mat-chips">
+            {[["all", "ทุกสถานะ", nKindAll], ["doing", "กำลังทำ", nDoing], ["todo", "ยังไม่เริ่ม", nKindAll - nDoing]].map(([k, lab, n]) => (
+              <button key={k} type="button" className={"mat-chip" + (stTab === k ? " on" : "")} onClick={() => setStTab(k)} aria-pressed={stTab === k}>{lab} <b>{nc(n)}</b></button>))}
+          </span>
+          <span>เบอร์ที่เสร็จแล้วไม่อยู่ในรายการ — สแกน / พิมพ์ QR ในช่องค้นหาแล้วกด Enter</span>
+        </div>
+        <DataTable id="asm-verify-list" wrapClass="table-wrap tall-scroll" tableClass="data-table responsive-cards" rows={list.slice(0, 500)} rowKey={(p) => p.id} sort={listSort}
+          sortAccessors={{ part: (p) => p.part_no, project: (p) => p.project_code || "", kind: (p) => p.kind, status: (p) => (doing(p.status) ? 0 : 1) }}
+          rowProps={(p) => ({ className: "release-row", onClick: () => load(p.qr_code, p) })}
+          empty={parents.length ? "ไม่พบตามเงื่อนไข — ถ้าเบอร์เสร็จแล้ว ให้สแกน / พิมพ์ QR ในช่องค้นหาแล้วกด Enter" : "ยังไม่มีงานประกอบ / แพ็กที่เปิดอยู่"}
+          columns={[
+            { key: "part", header: "เบอร์แม่ / บั้ง", sortKey: "part", lockCol: true, cell: (p) => <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{p.kind === "package" && p.bunk_no ? p.bunk_no : p.part_no}</span> },
+            { key: "name", header: "รายละเอียด", cell: (p) => <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{p.part_name && p.part_name !== p.part_no ? p.part_name : "—"}</span> },
+            { key: "project", header: "โปรเจค", sortKey: "project", cell: (p) => p.project_code || "-" },
+            { key: "kind", header: "ชนิด", sortKey: "kind", cell: (p) => KIND_TXT[p.kind] || "ซับ" },
+            { key: "status", header: "สถานะ", sortKey: "status", cell: (p) => <span style={{ fontSize: 11.5, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: doing(p.status) ? "rgba(217,164,65,.15)" : "rgba(120,140,190,.12)", color: doing(p.status) ? "#b45309" : "var(--muted)", whiteSpace: "nowrap" }}>{doing(p.status) ? "กำลังทำ" : "ยังไม่เริ่ม"}</span> },
+            { key: "qr", header: "QR", cell: (p) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>{p.qr_code}</span> },
+          ]} />
+        {list.length > 500 ? <div style={{ color: "var(--muted)", fontSize: 12, padding: 10, textAlign: "center" }}>แสดง 500 จาก {nc(list.length)} — พิมพ์ค้นหาเพื่อให้แคบลง</div> : null}
+      </Card>
     </div>
   );
 }
@@ -7911,10 +7912,12 @@ const DEPT_TABS = [
 const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel" : k === "subassembly" ? "sub" : "machine");
 // ★ 2026-11-04 แท็บ "ทั้งหมด" (หน้าโปรเจค) — ผู้ใช้: ".2 ทำไมไม่มี" (ล็อตแผงอยู่แท็บ Assembly · ล็อตพาร์ทอยู่แท็บ Machine)
 const DEPT_ALL = { value: "all", label: "ทั้งหมด", sub: "ทุกใบ · ทุกแผนก", color: "#334155", soft: "rgba(51,65,85,.08)", icon: "folder" };
-function DeptTabs({ value, onChange, counts, withAll = false }) {
+// only = เฉพาะแผนกที่ระบุ (เช่น หน้าตรวจงานประกอบ ไม่มี Machine) · allSub = คำใต้ "ทั้งหมด"
+function DeptTabs({ value, onChange, counts, withAll = false, only = null, allSub = null }) {
+  const tabs = (withAll ? [allSub ? { ...DEPT_ALL, sub: allSub } : DEPT_ALL, ...DEPT_TABS] : DEPT_TABS).filter((d) => !only || d.value === "all" || only.includes(d.value));
   return (
     <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
-      {(withAll ? [DEPT_ALL, ...DEPT_TABS] : DEPT_TABS).map((d) => {
+      {tabs.map((d) => {
         const active = value === d.value;
         return (
           <button key={d.value} type="button" onClick={() => onChange(d.value)}
