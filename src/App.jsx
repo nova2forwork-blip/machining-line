@@ -6349,7 +6349,8 @@ function pmMachines(list, qty) {
     const opDone = (Array.isArray(m.ops) ? m.ops : []).filter((o) => o && o.done != null).map((o) => Number(o.done) || 0);
     const doneAll = opDone.length > 1 ? Math.min(...opDone) : done;
     const st = m.active ? "run" : (q > 0 ? doneAll >= q : !!m.finished) ? "fin" : "bal";
-    return { ...m, done, st, bal: Math.max(0, q - done), over: Math.max(0, done - q) };
+    // doneAll = ขั้นที่ช้าสุดของเครื่องนี้ (ใช้บอก "ทำไป x จาก y" ให้ตรงกับสถานะ)
+    return { ...m, done, doneAll, st, bal: Math.max(0, q - doneAll), over: Math.max(0, done - q) };
   });
 }
 function pmRowStatus(ms, prog) {
@@ -6401,8 +6402,12 @@ function pmNowText(m, qty, lang, nowMs) {
     return `${how} · ${en ? "done" : "เสร็จ"} ${pmClock(m.last_at, nowMs)}${over}`;
   }
   const idle = m.last_at ? pmAgo(nowMs - new Date(m.last_at).getTime(), lang) : "-";
-  return en ? `paused · ${fmtNum(m.done)} of ${fmtNum(qty)} made · ${fmtNum(m.bal)} to go · idle ${idle}`
-            : `พักอยู่ · ทำไป ${fmtNum(m.done)} จาก ${fmtNum(qty)} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
+  const dn = m.doneAll != null ? m.doneAll : m.done;
+  const slow = (Array.isArray(m.ops) ? m.ops : []).filter((o) => o && o.done != null);
+  const lag = slow.length > 1 ? slow.reduce((a, o) => (Number(o.done) < Number(a.done) ? o : a)) : null;   // ขั้นที่ช้าสุด (เครื่องหลายขั้นตอน)
+  const lagTxt = lag ? (en ? ` (${lag.name})` : ` (${lag.name})`) : "";
+  return en ? `paused · ${fmtNum(dn)} of ${fmtNum(qty)} made${lagTxt} · ${fmtNum(m.bal)} to go · idle ${idle}`
+            : `พักอยู่ · ทำไป ${fmtNum(dn)} จาก ${fmtNum(qty)}${lagTxt} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
 }
 const pmOps = (m) => {
   const names = (Array.isArray(m.ops) ? m.ops : []).map((o) => o && o.name).filter(Boolean);
