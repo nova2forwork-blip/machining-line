@@ -8,7 +8,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
 import {
-  NC, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
+  NC, baseOf, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
@@ -1035,13 +1035,13 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
       setPicks((old) => {
         const next = old.map((p) => { const d = p.kind === "part" ? got.find((g) => g.kind === "part" && NC(g.code) !== NC(p.code) && newerRevOf({ [g.code]: 1 }, p.code)) : null; return d ? { ...p, code: d.code } : p; });
         const have = new Set(next.map((p) => key(p.kind, p.code)));
-        const oq = (c) => { const it = order && order.items.find((x) => NC(x.code) === NC(c)); return it && Number(it.qty) > 0 ? Number(it.qty) : 1; };   // จำนวนตามใบปะหน้า ถ้ามี
+        const oq = (c) => { const it = order && (order.items.find((x) => NC(x.code) === NC(c)) || order.items.find((x) => baseOf(x.code) === baseOf(c))); return it && Number(it.qty) > 0 ? Number(it.qty) : 1; };   // ★ 2026-11-17 ไม่สน Rev (ใบเขียน MAL132-5001 · แบบเป็น MAL132-5001 A → เดิมได้ ×1)   // จำนวนตามใบปะหน้า ถ้ามี
         return [...next, ...got.filter((d) => !have.has(key(d.kind, d.code))).map((d) => ({ code: d.code, kind: d.kind, qty: oq(d.code) }))];
       });
       onReloadLib();
       const gs = got.filter((d) => d.kind === "sub").length, gp = got.length - gs;
       const errs = (r && r.errors) || [];
-      setReading({ ok: `เพิ่มลงคลังแล้ว ซับ ${nf(gs)} · พาร์ท ${nf(gp)} เบอร์ — เลือกให้แล้ว ×1 แก้จำนวนในตารางได้เลย`, warn: [skipTxt, ...errs].filter(Boolean).join(" · ") });
+      setReading({ ok: `เพิ่มลงคลังแล้ว ซับ ${nf(gs)} · พาร์ท ${nf(gp)} เบอร์ — เลือกให้แล้ว ${order && got.some((d) => order.items.some((x) => baseOf(x.code) === baseOf(d.code) && Number(x.qty) > 0)) ? "ตามจำนวนในใบปะหน้า" : "×1"} แก้จำนวนในตารางได้เลย`, warn: [skipTxt, ...errs].filter(Boolean).join(" · ") });
     } catch (e) { setReading({ err: "วาง PDF ไม่สำเร็จ: " + (e?.message || e) }); }
   }
   if (!project) return <div className="card rw-card"><div className="rw-empty"><Icon name="grid" size={26} /><b>ยังไม่ได้เลือกโปรเจค</b><span>กลับไปขั้น ① แล้วเลือกโปรเจค — เบอร์ที่เลือกได้มาจากคลังของโปรเจค</span></div></div>;
