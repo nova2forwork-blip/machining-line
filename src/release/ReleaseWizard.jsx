@@ -285,6 +285,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const orderRef = useRef(null);
   // ★ 2026-11-10 มาจากกล่องรับเอกสาร: ใบปะหน้า → อ่านเติมหัวใบ · แบบ PDF → ใส่ขั้นอัพ PDF ให้ (แผง/แบบ Site Item) · ซับ/พาร์ท → เก็บไว้วางที่ขั้นเลือกซับ/พาร์ท
   const initRef = useRef(false);
+  const moreRef = useRef(null);
   const [pendingPdfs, setPendingPdfs] = useState([]);   // แบบซับ/พาร์ทจาก inbox ที่รอวางในขั้น "เลือกซับ / พาร์ท"
   // ★ 2026-11-12 ใช้ร่วมกัน: ไฟล์จากกล่องรับเอกสาร + ไฟล์ที่วางในช่องใบปะหน้า (ผู้ใช้วางแบบพาร์ทลงช่องนี้ → เดิมขึ้น "อ่านไม่ได้รายการ")
   //   ใบปะหน้า (Excel / PDF ที่ไม่ใช่แบบ) → อ่านเติมหัวใบ · แบบแผง / Site Item → ขั้นอัพ PDF · แบบซับ / พาร์ท → ขั้น "เลือกซับ / พาร์ท" (เก็บเข้าคลัง + เลือกให้)
@@ -305,21 +306,23 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const skipMsg = skipNote([...broken, ...extraSheets]);
     if (first) await onOrderFile([first]);
     if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
-    const toItems = subpart.length && !panelish.length && !units.length;
+    const toPanel = panelish.length > 0 && itemsMode && !subpart.length;   // ★ 2026-11-17 วางแบบแผงตอนอยู่โหมด "เฉพาะซับ / พาร์ท" → เปลี่ยนเป็นปล่อยแผงให้
+    if (toPanel) setMode("panel");
+    const toItems = subpart.length && !panelish.length && !units.length && !pdfsRaw.length;   // 2026-11-17: panel PDFs already dropped -> stay in panel mode
     if (subpart.length && (toItems || itemsMode)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!itemsMode) setMode("items"); }
     if (drawings.length) {
       const codes = (xs) => `${xs.slice(0, 4).map((d) => d.code).join(", ")}${xs.length > 4 ? " …" : ""}`;
       const lines = [
-        panelish.length && `แบบแผง ${panelish.length} ไฟล์ (${codes(panelish)}) → ใส่ในขั้น “อัพ PDF แผง” แล้ว`,
+        panelish.length && `แบบแผง ${panelish.length} ไฟล์ (${codes(panelish)}) → ใส่ในขั้น “อัพ PDF แผง” แล้ว${toPanel ? " · เปลี่ยนเป็น “ปล่อยแผง (มีที่อยู่)” ให้" : ""}`,
         subpart.length && (toItems || itemsMode
           ? `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เปลี่ยนเป็น “ปล่อยเฉพาะซับ / พาร์ท” · ขั้นถัดไปจะเก็บเข้าคลังโปรเจคแล้วเลือกเบอร์ให้ (ใส่จำนวนเอง)`
           : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) ไม่ได้ใส่ — ปล่อยแผงใช้แบบซับ / พาร์ทจาก “ซับ / พาร์ท ของโปรเจค” (ลงที่นั่นก่อน)`),
-        !first && "ไม่มีใบปะหน้า — ไม่บังคับ",
+        !first && !order && "ไม่มีใบปะหน้า — ไม่บังคับ",
       ].filter(Boolean);
       if (skipMsg) lines.push(skipMsg);
       if (!first) setOrderMsg(subpart.length && !(toItems || itemsMode) && !panelish.length ? { bad: lines.join(" · ") } : { ok: lines });
       else setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, ...lines] } : m));
-    } else if (!first) setOrderMsg({ bad: `ไม่พบใบปะหน้าในไฟล์ที่วาง${skipMsg ? ` · ${skipMsg}` : ""}` });
+    } else if (!first) setOrderMsg({ bad: `${order ? "อ่านไฟล์ที่วางไม่ได้ว่าเป็นแบบหรือใบปะหน้า" : "ไม่พบใบปะหน้าในไฟล์ที่วาง"}${skipMsg ? ` · ${skipMsg}` : ""}` });
     else if (skipMsg) setOrderMsg((m) => (m && m.ok ? { ok: [...m.ok, skipMsg] } : m && m.bad ? { bad: `${m.bad} · ${skipMsg}` } : { ok: [skipMsg] }));
   }
   useEffect(() => {
@@ -505,6 +508,15 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
               </div>
               <div className="rw-order-items">{order.items.map((it, i) => <span key={`${it.code}|${i}`} className="rw-pick-chip part" title={it.d}>{it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
               {order.note ? <div className="rw-muted small">NOTE: {order.note}</div> : null}
+              {/* ★ 2026-11-17 ผู้ใช้: "ตรงนี้ วาง pdf ของแผงต่อไม่ได้" — เดิมพอมีใบปะหน้า ช่องวางหายไปเลย → มีช่องวางแบบเพิ่มใต้ใบปะหน้า */}
+              <div className={`rw-drop rw-drop-sm ${orderDrag ? "drag" : ""}`} role="button" tabIndex={0} style={{ marginTop: 10 }}
+                onClick={() => moreRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); moreRef.current?.click(); } }}
+                onDragOver={(e) => { e.preventDefault(); setOrderDrag(true); }} onDragLeave={() => setOrderDrag(false)}
+                onDrop={(e) => { e.preventDefault(); setOrderDrag(false); routeFiles(e.dataTransfer.files); }}>
+                <div className="rw-drop-ic"><Icon name="plus" size={18} /></div>
+                <div><b>วางแบบ PDF เพิ่มได้ — แผง / ซับ / พาร์ท</b><span>วางพร้อมกันหลายไฟล์ได้ · ระบบแยกให้เอง: แบบแผงไปขั้น “อัพ PDF แผง” · แบบซับ / พาร์ทไปขั้น “เลือกซับ / พาร์ท” · วางใบปะหน้าใบใหม่ = ใช้ใบใหม่แทน{pdfsRaw.length ? ` · ตอนนี้มีแบบแผง ${pdfsRaw.length} ไฟล์` : ""}</span></div>
+                <input ref={moreRef} type="file" multiple accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden data-testid="order-more-input" onChange={(e) => { routeFiles(e.target.files); e.target.value = ""; }} />
+              </div>
             </div>
           )}
           {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>{/^⚠/.test(String(t)) ? t : <>✓ {t}</>}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
