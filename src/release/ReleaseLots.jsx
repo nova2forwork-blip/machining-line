@@ -832,7 +832,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     !adds.length && "ยังไม่ได้เพิ่มอะไร",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
   ].filter(Boolean) : [
-    undecided > 0 && `ยังไม่ได้เลือก ${undecided} จุดในตาราง "เทียบกับแบบ" (ใช้ตามแบบ / คงเดิม)`,
+    undecided > 0 && `เลือก "ใช้ตามแบบ" หรือ "คงเดิม" อีก ${undecided} จุด (แถวสีเหลือง)`,
     !nChange && !undecided && "ยังไม่ได้แก้อะไร",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
     verErr,
@@ -841,10 +841,10 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     lim.s === "loading" && ops.lotOps.size && "กำลังโหลดยอดที่ทำแล้วของล็อต…",
   ].filter(Boolean);
   // ★ 2026-11-17 สิ่งที่เหลือก่อนบันทึก — กดแล้วพาไปจุดนั้น
-  const focusIn = (el) => { if (!el) return false; el.scrollIntoView({ block: "center", behavior: "smooth" }); const b = el.matches("input,button") ? el : el.querySelector("button,input"); if (b) b.focus({ preventScroll: true }); return true; };
+  const focusIn = (el) => { if (!el) return false; el.scrollIntoView({ block: "center", behavior: "smooth" }); const b = el.matches("input,button") ? el : el.querySelector("button,input"); if (b) b.focus({ preventScroll: true }); const tr = el.closest("tr"); if (tr) { tr.classList.remove("rl-flash"); void tr.offsetWidth; tr.classList.add("rl-flash"); setTimeout(() => tr.classList.remove("rl-flash"), 1600); } return true; };
   const goAsk = () => focusIn(topRef.current && topRef.current.querySelector("tr.rl-ask .rl-dec"));
   const goQty = () => { if (focusIn(topRef.current && topRef.current.querySelector("tr.rl-ask input.rl-qty"))) return; setTab("add"); setTimeout(() => focusIn(document.querySelector(".rl-drawer tr.rl-needqty input.rl-qty")), 80); };
-  const todos = blockers.map((t) => ({ t, go: /^ยังไม่ได้เลือก/.test(String(t)) ? goAsk : /^ใส่จำนวนเบอร์ใหม่/.test(String(t)) ? goQty : null }));
+  const todos = blockers.map((t) => ({ t, go: /^เลือก "ใช้ตามแบบ"/.test(String(t)) ? goAsk : /^ใส่จำนวนเบอร์ใหม่/.test(String(t)) ? goQty : null }));
 
   const ql = q.trim().toUpperCase();
   const match = (...xs) => !ql || xs.some((x) => String(x || "").toUpperCase().includes(ql));
@@ -1318,11 +1318,12 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           <div className="rl-sum">
             {addOnly ? <><b>เพิ่มรายการ:</b> พาร์ท/ซับ {adds.filter((a) => a.kind !== "hw").length} เบอร์ · อุปกรณ์ {adds.filter((a) => a.kind === "hw").length} รายการ <small className="rw-muted">· ไม่นับเป็น Modify</small></> : <><b>{ver}:</b> แก้จำนวน {realChanges.filter((c) => c.type === "qty").length} · ยกเลิกเบอร์ {realChanges.filter((c) => c.type === "cancel").length} · ยกเลิกที่อยู่ {addrs.size} · แก้ BOM ลูก {edits.length} · เพิ่ม {adds.length}{matOn.length ? <> · เปลี่ยนตามแบบ {matOn.length}</> : null}</>}
             {lotTouched.length ? <div className="rl-sum-chips">{lotTouched.map((x) => <Pill key={x.lot} tone="bad">{x.lot}: QR −{nf(x.qr)}</Pill>)}</div> : null}
-            {blockers.length ? <div className="rl-todo"><b>เหลือก่อนบันทึก</b>{todos.map((x, i) => (x.go ? <button key={i} type="button" className="rl-todo-i go" onClick={x.go}>{x.t} →</button> : <span key={i} className="rl-todo-i">{x.t}</span>))}</div> : <div className="rw-ok small">✓ พร้อมบันทึก</div>}
+            {blockers.length ? <div className="rl-todo"><b className="rl-errtxt">ยังบันทึกไม่ได้ — เหลือ</b>{todos.map((x, i) => (x.go ? <button key={i} type="button" className="rl-todo-i go" onClick={x.go}>{x.t} →</button> : <span key={i} className="rl-todo-i">{x.t}</span>))}</div> : <div className="rw-ok small">✓ พร้อมบันทึก</div>}
           </div>
           <div className="rl-foot-btns">
             <button type="button" className="btn btn-ghost" onClick={tryClose} disabled={!!busy}>ยกเลิก</button>
-            <button type="button" className="btn btn-accent" onClick={save} disabled={!!blockers.length || !!busy}>{busy || (addOnly ? `เพิ่ม ${adds.length} รายการ` : `บันทึก ${ver}`)}</button>
+            {/* ★ 2026-11-17 ผู้ใช้: "บันทึกไม่ได้" — ปุ่มเทาเฉยๆ ไม่บอกอะไร → ยังกดได้ กดแล้วพาไปจุดที่ยังค้าง */}
+            <button type="button" className={`btn btn-accent ${blockers.length ? "is-blocked" : ""}`} aria-disabled={!!blockers.length} title={blockers.length ? `ยังบันทึกไม่ได้ — ${blockers.join(" · ")}` : undefined} onClick={() => { if (!blockers.length) return save(); const t = todos.find((x) => x.go); if (t) t.go(); }} disabled={!!busy || (!!blockers.length && !todos.some((x) => x.go))}>{busy || (addOnly ? `เพิ่ม ${adds.length} รายการ` : `บันทึก ${ver}`)}</button>
           </div>
         </div>
       </aside>
