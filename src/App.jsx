@@ -7737,7 +7737,9 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           // ★ 2026-11-12 บันทึกเป็น M แล้วย้อนได้ด้วย Ctrl+Z (ถามก่อน · ล็อตที่ M ลด/ยกเลิก → ยกเลิก M ในล็อตด้วย) · ไม่ล้างประวัติที่แก้ก่อน M
           clearTimeout(timer.current); pending.current = null;   // ใบที่ค้างบันทึกรวมอยู่ใน M แล้ว (modifyRelease บันทึกใบใหม่ทั้งใบ)
           hist.record(planRef.current, np, modUndoStepOf(planRef.current, np, mod));
-          if (inboxFilesRef.current && inboxFilesRef.current.plan === np.id && onInboxDone) { onInboxDone(inboxFilesRef.current.files); inboxFilesRef.current = null; }
+          // เอาออกเฉพาะเมื่อ M นี้ทำจากใบ Modify ในกล่องจริง (mod.sheet = ไฟล์ใบนั้น) — M ที่แก้เองทีหลังไม่แตะกล่อง
+          { const ib = inboxFilesRef.current; const sheetName = mod?.sheet?.file;
+            if (ib && ib.plan === np.id && onInboxDone && sheetName && ib.files.some((f) => f && f.name === sheetName)) { onInboxDone(ib.files); inboxFilesRef.current = null; } }
           setView((v) => (v ? { ...v, plan: np } : v));
           setPlans((ps) => ps.map((x) => (x.id === np.id ? np : x)));
           mlsToast(`บันทึก ${mod.ver} แล้ว — ${mod.items.length} รายการ · จำนวนเดิมขีดฆ่า · เบอร์ที่ยกเลิกเป็นสีแดง (หน้า Release และล็อต) · Ctrl+Z = ย้อน ${mod.ver}`, "success");
