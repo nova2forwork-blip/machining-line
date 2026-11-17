@@ -1425,3 +1425,4 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rt-matbtn { opacity: .8; }
 .rt-matval { border: 0; background: none; padding: 0; margin: 0; font-weight: 700; font-size: inherit; color: inherit; cursor: pointer; text-align: left; }
 .rt-matval.rl-new { color: #5b3ce0; }
+.rw-pick-chip.panel { background: #e6f1ff; border-color: #c5dbf7; }

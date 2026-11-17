@@ -12,7 +12,7 @@ import {
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
 import { SubKids, trailTo } from "./releaseUi.jsx";
-import { readOrderFile, compareOrder } from "./orderSheet.js";
+import { readOrderFile, compareOrder, orderItemKind, orderKinds } from "./orderSheet.js";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
@@ -278,7 +278,17 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       // ★ 2026-11-12 เจอหลายโปรเจค (รหัสเดียวกันหลายตึก / ขึ้นต้นเหมือนกัน) ≠ ไม่เจอ → บอกให้ถูก ให้เลือกตึกเอง
       if (o.projectCode && !patch.projectId && !hdr.projectId) notes.push(multiHit ? `⚠ ${o.projectFull || o.projectCode} ตรงกับ ${multiHit.length} โปรเจค (${multiHit.slice(0, 4).map((p) => `${p.code}${p.name ? " " + p.name : ""}`).join(" · ")}${multiHit.length > 4 ? " …" : ""}) — เลือกโปรเจค / ตึกเอง` : `⚠ หาโปรเจค ${o.projectFull || o.projectCode} ในระบบไม่เจอ — เลือกเอง`);
       if (o.warn.length) notes.push(o.warn.join(" · "));
+      // ★ 2026-11-17 เลือกโหมดปล่อยจากใบปะหน้าให้ (มีแผง = ปล่อยแผง · มีแต่ซับ / พาร์ท = ปล่อยเฉพาะซับ / พาร์ท) — ยังไม่ได้ลงอะไรเท่านั้น · กดเปลี่ยนเองได้
+      const ok = orderKinds(o); let picked = null;
+      if (ok.mode) {
+        const what = [ok.panel && `แผง ${ok.panel}`, ok.sub && `ซับ ${ok.sub}`, ok.part && `พาร์ท ${ok.part}`].filter(Boolean).join(" · ");
+        const label = ok.mode === "panel" ? "ปล่อยแผง (มีที่อยู่)" : "ปล่อยเฉพาะซับ / พาร์ท";
+        const free = !unitsRaw.length && !pdfsRaw.length && !picks.length;
+        if (free) { picked = ok.mode; if (mode !== ok.mode) setMode(ok.mode); notes.push(`ในใบมี ${what} → เลือก “${label}” ให้ (เปลี่ยนเองได้ที่ปุ่มด้านล่าง)`); }
+        else if (mode !== ok.mode) notes.push(`⚠ ในใบมี ${what} — น่าจะเป็น “${label}” แต่ใบนี้ลงข้อมูลไปแล้ว จึงไม่เปลี่ยนโหมดให้`);
+      }
       setOrderMsg({ ok: notes });
+      return picked;
     } catch (e) { setOrderMsg({ bad: "อ่านใบปะหน้าไม่ได้: " + (e?.message || e) }); }
   }
   const [orderDrag, setOrderDrag] = useState(false);
@@ -337,18 +347,20 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     const first = sheets[0] || sheetPdfs[0];
     const extraSheets = [...sheets, ...sheetPdfs].filter((f) => f !== first).map((f) => `${f.name} (ใบปะหน้าใช้ได้ทีละใบ)`);
     const skipMsg = skipNote([...broken, ...extraSheets]);
-    if (first) await onOrderFile([first]);
+    const sheetMode = first ? await onOrderFile([first]) : null;   // โหมดที่ใบปะหน้าเพิ่งเลือกให้ (state ยังไม่อัปเดตในรอบนี้)
+    const imEff = sheetMode ? sheetMode === "items" : itemsMode;
+    const sheetPanel = sheetMode === "panel" || (!first && order && orderKinds(order).mode === "panel" && !itemsMode);
     if (panelish.length) setPdfs((old) => { const names = new Set(panelish.map((d) => d.file)); return [...old.filter((d) => !names.has(d.file)), ...panelish]; });
-    const toPanel = panelish.length > 0 && itemsMode && !subpart.length;   // ★ 2026-11-17 วางแบบแผงตอนอยู่โหมด "เฉพาะซับ / พาร์ท" → เปลี่ยนเป็นปล่อยแผงให้
+    const toPanel = panelish.length > 0 && imEff && !subpart.length;   // ★ 2026-11-17 วางแบบแผงตอนอยู่โหมด "เฉพาะซับ / พาร์ท" → เปลี่ยนเป็นปล่อยแผงให้
     if (toPanel) setMode("panel");
-    const toItems = subpart.length && !panelish.length && !units.length && !pdfsRaw.length;   // 2026-11-17: panel PDFs already dropped -> stay in panel mode
-    if (subpart.length && (toItems || itemsMode)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!itemsMode) setMode("items"); }
+    const toItems = subpart.length && !panelish.length && !units.length && !pdfsRaw.length && !sheetPanel;   // 2026-11-17: panel PDFs already dropped -> stay in panel mode
+    if (subpart.length && (toItems || imEff)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!imEff) setMode("items"); }
     else if (subpart.length) { setLibSave(null); setLibQueue((q) => { const names = new Set(subpart.map((d) => d.file)); return [...q.filter((d) => !names.has(d.file)), ...subpart]; }); }
     if (drawings.length) {
       const codes = (xs) => `${xs.slice(0, 4).map((d) => d.code).join(", ")}${xs.length > 4 ? " …" : ""}`;
       const lines = [
         panelish.length && `แบบแผง ${panelish.length} ไฟล์ (${codes(panelish)}) → ใส่ในขั้น “อัพ PDF แผง” แล้ว${toPanel ? " · เปลี่ยนเป็น “ปล่อยแผง (มีที่อยู่)” ให้" : ""}`,
-        subpart.length && (toItems || itemsMode
+        subpart.length && (toItems || imEff
           ? `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เปลี่ยนเป็น “ปล่อยเฉพาะซับ / พาร์ท” · ขั้นถัดไปจะเก็บเข้าคลังโปรเจคแล้วเลือกเบอร์ให้ (ใส่จำนวนเอง)`
           : `แบบซับ / พาร์ท ${subpart.length} ไฟล์ (${codes(subpart)}) → เก็บเข้าคลัง “ซับ / พาร์ท ของโปรเจค” ให้ (ปล่อยแผงดึงซับ / พาร์ทจากคลัง)`),
         !first && !order && "ไม่มีใบปะหน้า — ไม่บังคับ",
@@ -540,7 +552,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
                 <span className="rw-muted">{[order.projectName, order.zone && `Zone: ${order.zone}`, order.issuedBy && `โดย ${order.issuedBy}`, order.date && fmtYmd(order.date)].filter(Boolean).join(" · ")} · {order.items.length} รายการ</span>
                 <button type="button" className="rw-link" onClick={() => { setOrder(null); setOrderHw([]); setOrderMsg(null); }}>เอาออก</button>
               </div>
-              <div className="rw-order-items">{order.items.map((it, i) => <span key={`${it.code}|${i}`} className="rw-pick-chip part" title={it.d}>{it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
+              <div className="rw-order-items">{order.items.map((it, i) => <span key={`${it.code}|${i}`} className={`rw-pick-chip ${orderItemKind(it)}`} title={it.d}><small className="rw-muted">{{ panel: "แผง", sub: "ซับ", part: "พาร์ท" }[orderItemKind(it)]}</small> {it.code} <b>×{nlen(it.qty)}{it.unit ? ` ${it.unit}` : ""}</b></span>)}</div>
               {order.note ? <div className="rw-muted small">NOTE: {order.note}</div> : null}
               {/* ★ 2026-11-17 ผู้ใช้: "ตรงนี้ วาง pdf ของแผงต่อไม่ได้" — เดิมพอมีใบปะหน้า ช่องวางหายไปเลย → มีช่องวางแบบเพิ่มใต้ใบปะหน้า */}
               <div className={`rw-drop rw-drop-sm ${orderDrag ? "drag" : ""}`} role="button" tabIndex={0} style={{ marginTop: 10 }}

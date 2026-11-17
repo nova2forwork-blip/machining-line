@@ -128,3 +128,18 @@ export function compareOrder(order, plan) {
     return { ...it, status: ok ? "ok" : e.qty > it.qty ? "more" : "less", have: e.qty, kind: e.kind };
   });
 }
+
+// ★ 2026-11-17 ผู้ใช้: "ดูจากใบปะหน้าได้ไหม ว่ารอบไหนแผง รอบไหน sub รอบไหน part ให้เลือกให้เอง"
+//   ใบจริง: แผง = Description "MARKING DRAWING …" · ซับ = Description "ASSEMBLY" (เบอร์ MSA… / SA…) · ที่เหลือ = พาร์ท
+export function orderItemKind(it) {
+  const d = String((it && it.d) || ""); const c = String((it && it.code) || "").toUpperCase();
+  if (/MARKING/i.test(d)) return "panel";
+  if (/^\s*(SUB[\s-]*)?ASSEMBLY/i.test(d) || /^M?SA/.test(c)) return "sub";
+  return "part";
+}
+//   → { panel, sub, part, mode } · mode: "panel" ถ้ามีแผงในใบ · ไม่มีแผง = "items" (ปล่อยเฉพาะซับ / พาร์ท)
+export function orderKinds(order) {
+  const n = { panel: 0, sub: 0, part: 0 };
+  for (const it of (order && order.items) || []) n[orderItemKind(it)]++;
+  return { ...n, mode: n.panel ? "panel" : n.sub + n.part ? "items" : null };
+}
