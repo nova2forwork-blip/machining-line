@@ -1127,6 +1127,14 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
     const set = new Set(idxs); setFound((l) => l.map((f, i) => (set.has(i) && askRow(f) ? { ...f, dec: use ? "use" : "keep" } : f)));
   };
   const askIdx = found.map((f, i) => (askRow(f) ? i : -1)).filter((i) => i >= 0);
+  // ★ 2026-11-17 ผู้ใช้: "ใช่ เลือกให้เอง" — เบอร์ที่อยู่ในใบ Modify + วางแบบมาแล้ว → วัสดุ (INV) เลือก "ใช้ตามแบบ" ให้เลย (เปลี่ยนเป็น คงเดิม ได้)
+  //   เฉพาะวัสดุ — ความยาวยังต้องเลือกเอง (ผู้ใช้ 2026-11-11: งานจริงความยาวไม่เปลี่ยน เปลี่ยนแค่ MATERIAL) · ทำครั้งเดียวต่อแถว (auto)
+  const autoIdx = sheet && sheet.kind === "modify" && !addOnly ? found.map((f, i) => (f.what === "วัสดุ (INV)" && askRow(f) && !f.dec && !f.auto && sheet.items.some((it) => NC(it.code) === NC(f.code) || baseOf(it.code) === baseOf(f.code)) ? i : -1)).filter((i) => i >= 0) : [];
+  useEffect(() => {
+    if (!autoIdx.length) return;
+    decide(autoIdx, true);
+    const set = new Set(autoIdx); setFound((l) => l.map((f, i) => (set.has(i) ? { ...f, auto: true } : f)));
+  });
   const matChgEl = found.length && !addOnly ? (
     <div className="rl-found">
       <div className="rl-found-h"><b>เทียบกับแบบที่วาง</b><span className="rw-muted small">{found.filter((f) => f.tone !== "same").length} จุดที่ต่างจากเดิม · {found.filter((f) => f.tone === "same").length} แบบตรงเดิม</span>
@@ -1138,7 +1146,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <tbody>{found.map((f, i) => { const c = isMatRow(f) ? chgOf(f) : null; const ask = askRow(f);
           const ai = !f.act && f.tone === "new" ? adds.findIndex((a) => NC(a.code) === NC(f.code)) : -1; const an = ai >= 0 ? adds[ai] : null; const needQ = !!an && !(Number(an.qty) > 0); return (
           <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone} ${(ask && !f.dec) || needQ ? "rl-ask" : ""}`}>
-            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
+            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button>{f.auto && f.dec === "use" ? <small className="rw-muted"> ตามใบ Modify</small> : null}</span> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
             <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ค่าช่อง A ของตาราง (${c.to} มม.) ละเอียดกว่าค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? (f.dec === "keep" ? <b>{String(f.from)}</b> : <s className="rl-old">{String(f.from)}</s>) : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
             <td className="rw-mono">{an ? <label className="rl-inq">{an.sheetQ ? "จำนวนตามใบ" : "จำนวน"} <input className="input rw-cell rl-qty" type="number" min={an.kind === "hw" ? "0.01" : "1"} step={an.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={an.qty} onChange={(e) => { const v = e.target.value; setAdds((xs) => xs.map((x, k) => (k === ai ? { ...x, qty: v } : x))); }} aria-label={`จำนวน ${an.code}`} /></label> : f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
