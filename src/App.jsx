@@ -5160,14 +5160,15 @@ function PartProgressModal({ release, user, goTo, onClose }) {
       const pdfs = await realReleaseApi.libPdfsWithFallback(pid);
       // ★ เบอร์เดียวกันหลาย Rev → เปิด Rev ล่าสุด (B ใหม่กว่า A) · ไม่มี Rev อื่น = ไฟล์ของเบอร์ตรงตัว
       const mine = pdfs.filter((x) => !x.from); const pool = mine.some((x) => relBaseOf(x.code) === relBaseOf(partNo) || relNC(x.code) === relNC(partNo)) ? mine : pdfs;
-      const fam = pool.filter((x) => relBaseOf(x.code) === relBaseOf(partNo)).sort((a, b) => relRev(b.code).localeCompare(relRev(a.code)));
-      const hit = fam[0] || pool.find((x) => relNC(x.code) === relNC(partNo));
+      // ★ 2026-11-17 ตัวอักษรท้ายเบอร์เป็นส่วนของเบอร์ → เปิดไฟล์ของเบอร์ตรงตัวก่อนเสมอ · ไม่มี = ไฟล์ของเบอร์ฐานเดียวกัน (แบบตระกูลเดียวกัน)
+      const fam = pool.filter((x) => relBaseOf(x.code) === relBaseOf(partNo)).sort((a, b) => relRev(a.code).localeCompare(relRev(b.code)));
+      const hit = pool.find((x) => relNC(x.code) === relNC(partNo)) || fam[0];
       if (!hit) { if (w) w.close(); setDwg({ s: "none", msg: `ยังไม่มีไฟล์แบบของ ${partNo} ในคลังโปรเจค` }); return; }
       const url = await realReleaseApi.getLibPdfUrl(hit.path);
       if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
       const newer = relRev(hit.code) > relRev(partNo);
       const fromTxt = hit.from ? ` · แบบจากตึกอื่นที่รหัสเดียวกัน (${hit.from}) — ตึกนี้ยังไม่มีแบบนี้ในคลัง` : "";
-      setDwg({ s: "idle", msg: (relNC(hit.code) === relNC(partNo) ? "" : newer ? `เปิดแบบ ${hit.code} — Rev ใหม่กว่าในใบ (${partNo})` : `เปิดแบบ ${hit.code} (เบอร์เดียวกัน คนละ Rev)`) + fromTxt });
+      setDwg({ s: "idle", msg: (relNC(hit.code) === relNC(partNo) ? "" : `เปิดแบบ ${hit.code} — ไม่มีไฟล์ของ ${partNo} ตรงตัว (แบบตระกูลเดียวกัน)`) + fromTxt });
     } catch (e) { if (w) w.close(); setDwg({ s: "err", msg: "เปิดแบบไม่ได้: " + (e?.message || e) }); }
   }
   const partName = release.part_master?.part_name || "";

@@ -19,14 +19,18 @@ const REV_RE = /^(.*?)\s+([A-Z])(\*?)$/;
 export const baseOf = (c) => { const n = NC(c).replace(/\*$/, ""); const m = REV_RE.exec(n); return m ? m[1] : n; };
 export const revRank = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "") + ""); return m ? m[2].charCodeAt(0) - 64 : 0; };
 export const revLetter = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "")); return m ? m[2] : ""; };
+// ★ 2026-11-17 ผู้ใช้ยืนยัน: ตัวอักษรท้ายเบอร์ ("MFA183-5001 A") เป็น "ส่วนของเบอร์" ไม่ใช่ Rev — A กับ B คือคนละชิ้น · Rev จริงอยู่ที่ช่อง REV. ในแบบ
+//   เดิม (2026-11-03) ถือว่าเป็น Rev: มี "X B" แล้ว = ซ่อน / ไม่รับ "X A" และ BOM ที่เขียน "X A" ถูกเปลี่ยนไปปล่อย "X B" → ผิดเมื่อ A กับ B เป็นคนละชิ้น
+//   ตอนนี้: findLatest = เบอร์ตรงตัวเท่านั้น · ยกเว้นเบอร์ที่เขียนมา "ไม่มีตัวอักษรท้าย" (ใบปะหน้าเขียน "MFA183-5001") และในชุดนั้นมีเบอร์ฐานนี้ตัวเดียว → ใช้ตัวนั้น
 export function findLatest(obj, c) {
   if (!obj || !c) return null;
-  const exact = findKey(obj, c); const b = baseOf(c); let best = exact, br = exact ? revRank(exact) : -1;
-  for (const k of Object.keys(obj)) { if (k === exact || baseOf(k) !== b) continue; const r = revRank(k); if (r > br) { best = k; br = r; } }
-  return best;
+  const exact = findKey(obj, c); if (exact) return exact;
+  if (REV_RE.test(NC(c).replace(/\*$/, ""))) return null;            // เขียนตัวอักษรท้ายมาแล้ว แต่ไม่มีตัวนั้น → ไม่เดาเป็นตัวอื่น
+  const b = baseOf(c); const fam = Object.keys(obj).filter((k) => baseOf(k) === b);
+  return fam.length === 1 ? fam[0] : null;
 }
 // รุ่นที่ใหม่กว่า "ของเบอร์เดียวกัน" ที่มีอยู่แล้ว (ไว้เตือน/ข้ามไฟล์รุ่นเก่า) → คีย์ หรือ null
-export const newerRevOf = (obj, c) => { const k = findLatest(obj, c); return k && revRank(k) > revRank(c) ? k : null; };
+export const newerRevOf = (_obj, _c) => null;   // ★ 2026-11-17 ตัวอักษรท้ายเบอร์ไม่ใช่ Rev → ไม่มี "รุ่นใหม่กว่า" ของเบอร์อื่น (ไฟล์ที่วางไม่ถูกข้าม / ไม่ถูกสลับเบอร์)
 export const nf = (n, d = 0) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const nlen = (n) => (n == null || n === "" ? "" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }));
 

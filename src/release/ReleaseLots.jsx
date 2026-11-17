@@ -1056,7 +1056,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           notes.push(`${d.code}: ตรงกับใบเดิม (ความยาว / วัสดุไม่เปลี่ยน)`); continue;
         }
         const t = d.title || {}; const L = parseFloat(t.LENGTH); const inv = String(t["INV.CODE"] || "").trim();
-        const old = d.kind === "part" ? need.parts.find((x) => baseOf(x.code) === baseOf(d.code) && NC(x.code) !== NC(d.code)) : null;
+        const old = null;   // ★ 2026-11-17 ตัวอักษรท้ายเบอร์เป็นส่วนของเบอร์ (X A กับ X B คนละชิ้น) → ไม่ยกเลิก X A ให้เองเมื่อวางแบบ X B อีกแล้ว — เพิ่มเป็นเบอร์ใหม่ (จะแทนกันจริง = ยกเลิกเองที่แท็บพาร์ท หรือแก้ที่ช่อง CODE)
         drops[NC(d.code)] = old ? `แทน ${old.code}` : "เพิ่มเป็นเบอร์ใหม่";
         // ★ 2026-11-10 เบอร์รุ่นใหม่ (REV) ของเบอร์ที่มีในใบ → ใช้จำนวนเดิม + ยกเลิกเบอร์เดิมให้ (แก้/ติ๊กออกได้ที่แท็บพาร์ท)
         if (old) { setRow("part", old.code, { type: "cancel" }); foundL.push({ code: `${old.code} → ${String(d.code).trim().toUpperCase()}`, what: "เปลี่ยนเบอร์ (REV ใหม่)", from: `${old.code} × ${nf(old.qty)}`, to: `${String(d.code).trim().toUpperCase()} × ${nf(old.qty)}`, where: "พาร์ท", tone: "chg" }); }
