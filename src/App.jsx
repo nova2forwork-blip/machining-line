@@ -6345,7 +6345,10 @@ function pmMachines(list, qty) {
     const done = Number(m.done) || 0;
     // ★ 2026-11-17 (SIM4 F6): "Finish" = เครื่องนี้ทำครบจำนวนสั่งแล้ว · กด Finished แต่ยังไม่ครบ (ป้ายละชิ้น กด Finished ทุกชิ้น) = ยังค้าง (In Process Balance)
     //   เดิม กด Finished ครั้งเดียว = Finish ทั้งเบอร์ (2/3 ขึ้น Finish · ชิปหน้าล็อตไม่ตรงกับหัวล็อต / popup) · ไม่รู้จำนวนสั่ง = เชื่อปุ่ม Finished ตามเดิม
-    const st = m.active ? "run" : (q > 0 ? done >= q : !!m.finished) ? "fin" : "bal";
+    //   เครื่องหลายขั้นตอน: ต้องครบทุกขั้นที่เครื่องนี้บันทึก (บาก 3 · เจาะ 1/3 = ยังค้าง — เดิมรวมเป็น 3/3 Finish)
+    const opDone = (Array.isArray(m.ops) ? m.ops : []).filter((o) => o && o.done != null).map((o) => Number(o.done) || 0);
+    const doneAll = opDone.length > 1 ? Math.min(...opDone) : done;
+    const st = m.active ? "run" : (q > 0 ? doneAll >= q : !!m.finished) ? "fin" : "bal";
     return { ...m, done, st, bal: Math.max(0, q - done), over: Math.max(0, done - q) };
   });
 }

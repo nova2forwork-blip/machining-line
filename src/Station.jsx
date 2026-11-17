@@ -1713,6 +1713,27 @@ Is this a spare? If not, press "Don't save"`),
         if (v !== "add") return;   // แผงกรอกจำนวนยังเปิดอยู่ — แก้แล้วกดใหม่
       }
     }
+    // ★ 2026-11-17 (SIM4 F7 รอบ 2): ประกอบ / แผง — จำนวนที่กรอกทำให้เกินแบบ (BOM × จำนวนที่ทำ) = ถามก่อน (เดิมเช็กแค่ตอนสแกน +1 → แก้จำนวนเป็น 9 ผ่านได้)
+    if (asmPending.asm && !asmPending.bomOk && asmParent && (asmParent.bom || []).length) {
+      const inBom = asmParent.bom.find((b) => b.child_pm_id === asmPending.child_pm_id);
+      if (inBom) {
+        const made = Math.max(1, (Number(asmParent.madeSum) || 0) + Math.max(0, Math.floor(Number(asmParentQty) || 0)));
+        const need = Math.max(1, Math.floor(Number(inBom.qty) || 1)) * made;
+        const total = pmHave(asmPending.child_pm_id) + q;
+        if (total > need) {
+          errorBeep();
+          const v = await askChoice({
+            title: t("ตรวจก่อนใส่", "Check before adding"), tone: "warn", cancelText: false,
+            message: t(`${asmPending.part_no}: ในแบบใช้ ${nc(need)} · ใส่รอบนี้แล้วรวมจะเป็น ${nc(total)} (เกิน ${nc(total - need)})
+ใส่ต่อไหม?`,
+                       `${asmPending.part_no}: the BOM needs ${nc(need)} · this makes ${nc(total)} (${nc(total - need)} extra)
+Add anyway?`),
+            choices: [{ value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }, { value: "skip", label: t("แก้จำนวน", "Change qty"), primary: true }],
+          });
+          if (v !== "add") return;   // แผงกรอกจำนวนยังเปิดอยู่ — แก้แล้วกดใหม่
+        }
+      }
+    }
     setAsmChildren((prev) => {
       const i = prev.findIndex((c) => c.unit_id === asmPending.unit_id);
       if (i >= 0) {   // เบอร์เดิมที่สแกนซ้ำ → บวกจำนวนเพิ่มในแถวเดิม (นับจำนวนรวม)
@@ -1923,6 +1944,7 @@ Is this a spare? If not, press "Don't save"`),
     const cno = u.part_master?.part_no || u.qr_code;
     // ★ 2026-11-17 (SIM4 F7): ยังใส่ได้อิสระ (หน้างานทำตามแบบกระดาษ) แต่ถามก่อนเมื่อ "ไม่อยู่ในแบบ" หรือ "เกินจำนวนในแบบ"
     //   (เดิมรับเงียบ ๆ → ใส่ผิดเบอร์ / เกิน แล้วไปเห็นที่ออฟฟิศทีหลัง) · ค่าเริ่ม = ไม่ใส่ · ขาด (ยังใส่ไม่ครบ) ไม่ถาม — ประกอบหลายรอบได้
+    let bomOk = false;   // ผู้ใช้กด "ใส่ต่อ" ไปแล้วตอนสแกน → แผงจำนวนไม่ถามซ้ำ
     {
       const bom = asmParent.bom || [];
       if (bom.length) {
@@ -1940,6 +1962,7 @@ Is this a spare? If not, press "Don't save"`),
             message: t("ชิ้นนี้ไม่ตรงกับแบบ — ใส่ต่อไหม? (ออฟฟิศจะเห็นเป็นรายการที่ต้องตรวจ)", "This piece doesn't match the BOM — add anyway? (the office will see it flagged)"),
             choices: [{ value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }, { value: "skip", label: t("ไม่ใส่", "Don't add"), primary: true }] });
           if (v !== "add") { flash(t("ไม่ได้ใส่", "not added"), "info"); return false; }
+          bomOk = true;
         }
       }
     }
@@ -1952,7 +1975,7 @@ Is this a spare? If not, press "Don't save"`),
     // จำนวนเริ่มต้น = จำนวนเบอร์แม่ที่ทำรอบนี้ (ทำ 10 ชุด → ลูกเริ่มที่ 10 · แก้ได้) · ไม่ได้ทำเพิ่ม (0) = 1
     const defQty = Math.max(1, Math.floor(Number(asmParentQty) || 0) || 1);
     setAsmPending({ unit_id: u.id, qr: u.qr_code, child_pm_id: u.part_master_id, part_no: cno, part_name: u.part_master?.part_name || "", len: clen, wt: cwt, qty: 1,
-      existingQty: existing ? (Number(existing.qty) || 0) : 0, prevQty, defQty });
+      existingQty: existing ? (Number(existing.qty) || 0) : 0, prevQty, defQty, asm: true, bomOk });
     return true;
   }
   // ยอดของเบอร์นี้ในบั้ง/เบอร์แม่: ที่บันทึกแล้ว + ที่สแกนรอบนี้ (รวมจำนวน)
