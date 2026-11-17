@@ -1358,6 +1358,39 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       cancelText: t("ยกเลิก", "Cancel"),
     }))) return;
     if (!stillSame()) return;   // ★ 2026-10-10 ตรวจรอบ 3: งานเปลี่ยนระหว่างถาม → ไม่บันทึก
+    // ★ 2026-11-17 (SIM4 F3): เกินจำนวนสั่ง
+    //   ป้ายนี้เคยบันทึกขั้นตอนนี้แล้ว + ยอดจะเกินจำนวนสั่ง = สแกนป้ายเดิมซ้ำ → ไม่บันทึก (เดิมบันทึกได้ → 5/4 · QR เดียวบันทึก 2 ครั้ง)
+    //   ป้ายใหม่ แต่เกินจำนวนสั่ง (ทำเผื่อ / สแปร์) → ถามชัด ๆ ก่อน (ค่าเริ่ม = ไม่บันทึก) · ยังไม่เกิน = บันทึกตามปกติ (In Process → Finished ป้ายเดิมได้)
+    {
+      const tot = progress?.noOp ? null : (progress?.total ?? null);
+      const doneNow = Number(progress?.done) || 0;
+      const proj = doneNow + (Number(qty) || 0);
+      if (tot != null && proj > tot) {
+        const pn = unit?.part_master?.part_no || "";
+        if (dupCount > 0) {
+          errorBeep();
+          await askConfirm({ title: t("ป้ายนี้บันทึกไปแล้ว", "Label already recorded"), tone: "danger",
+            message: t(`${pn}: ป้ายนี้บันทึกขั้นตอนนี้ไปแล้ว ${nc(dupCount)} ครั้ง และยอดครบจำนวนสั่งแล้ว (${nc(doneNow)}/${nc(tot)}) — ไม่บันทึกซ้ำ
+
+สแกนชิ้นถัดไป · ถ้าทำชิ้นนี้ใหม่จริง (งานแก้ / ของเสีย) แจ้งออฟฟิศ`,
+                       `${pn}: this label was already recorded for this step ${dupCount}× and the order is complete (${doneNow}/${tot}) — not saved again
+
+Scan the next piece · if this piece was really remade, tell the office`),
+            confirmText: t("ตกลง", "OK"), cancelText: t("ปิด", "Close") });
+          return;
+        }
+        errorBeep();
+        if (!(await askConfirm({ title: t(`เกินจำนวนสั่ง +${nc(proj - tot)} ชิ้น`, `Over the order by ${proj - tot}`), tone: "warn", focusCancel: true,
+          message: t(`${pn}: สั่ง ${nc(tot)} · ทำแล้ว ${nc(doneNow)} · ครั้งนี้ ${nc(qty)} → รวม ${nc(proj)}
+
+ทำเผื่อ / สแปร์ใช่ไหม? ถ้าไม่ใช่ ให้กด "ไม่บันทึก"`,
+                     `${pn}: ordered ${tot} · done ${doneNow} · now ${qty} → total ${proj}
+
+Is this a spare? If not, press "Don't save"`),
+          confirmText: t("บันทึก (สแปร์)", "Save (spare)"), cancelText: t("ไม่บันทึก", "Don't save") }))) return;
+        if (!stillSame()) return;
+      }
+    }
     // หมายเหตุ: ไม่เด้ง confirm "ทำซ้ำ (rework)" อีกแล้ว — เตือนแบบไม่บล็อก (ไม่หยุดเวลา) และเฉพาะ
     //   ตอน "เกินจำนวนสั่ง" เท่านั้น (ดูป้าย ⚠ เกินจำนวนสั่ง ในการ์ด · ยังไม่เกิน = ไม่เตือน)
     // ★ รอบ 13: เวลาผิดปกติ (เร็ว/ช้ากว่าปกติมาก) → ถามก่อนบันทึก (ครั้งเดียวต่องาน · มีเหตุผลรอบช้าแล้ว = ไม่ถามเรื่องช้า)
