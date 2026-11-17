@@ -54,3 +54,73 @@ begin
   return jsonb_build_object('ok', true, 'removed', n);
 end $function$;
 grant execute on function public.session_takeover(uuid) to anon, authenticated;
+
+-- ── ลำดับขั้นตอนของพาร์ท = ตามลำดับที่สแกนจริง (ผู้ใช้ 2026-11-17: "ขั้นตอนของแต่ละพาร์ท คนงานจะรู้เอง ให้เรียงตามลำดับการสแกน") ──
+--   release_op_progress: เพิ่ม first_at (เวลาที่ขั้นตอนนี้ถูกสแกนครั้งแรกของ release นั้น) + เรียงตาม first_at (เดิมเรียงตาม seq ที่ตั้งไว้)
+--   ตัวเลข done / finished คิดเหมือนเดิมทุกอย่าง
+create or replace function public.release_op_progress(p_release_ids uuid[])
+ returns jsonb
+ language sql
+ stable security definer
+ set search_path to 'public'
+ set statement_timeout to '20s'
+as $function$
+  with umo as (
+    select mr.release_id, mr.part_unit_id, mr.machine_id, mr.operation_id,
+           sum(coalesce(mr.quantity, 0))::int as q,
+           bool_or(mr.status = 'finished')    as f
+    from public.machine_records mr
+    where coalesce(mr.release_id, mr.part_master_id) = any(p_release_ids)
+      and mr.release_id = any(p_release_ids)
+      and mr.part_unit_id is not null
+      and mr.quantity > 0
+    group by mr.release_id, mr.part_unit_id, mr.machine_id, mr.operation_id
+  ),
+  umw as (
+    select umo.*, bool_or(f) over (partition by release_id, part_unit_id, machine_id) as mfin
+    from umo
+  ),
+  uo as (                                          -- ★ v4 ต่อ (release, ป้าย, ขั้นตอน): รวมข้ามเครื่อง
+    select release_id, part_unit_id, operation_id,
+           sum(q)::int as q,
+           sum(case when mfin then q else 0 end)::int as fq
+    from umw
+    group by release_id, part_unit_id, operation_id
+  ),
+  pu as (
+    select release_id, part_unit_id, max(q)::int as qty, max(fq)::int as finq
+    from uo
+    group by release_id, part_unit_id
+  ),
+  pu_ops as (
+    select mr.release_id, mr.part_unit_id, mr.operation_id, min(mr.recorded_at) as first_at
+    from public.machine_records mr
+    where coalesce(mr.release_id, mr.part_master_id) = any(p_release_ids)
+      and mr.release_id = any(p_release_ids)
+      and mr.part_unit_id is not null
+      and mr.operation_id is not null
+    group by mr.release_id, mr.part_unit_id, mr.operation_id
+  ),
+  base as (
+    select po.release_id, po.operation_id,
+           sum(pu.qty)::int  as done,
+           sum(pu.finq)::int as finished,
+           min(po.first_at)  as first_at
+    from pu_ops po
+    join pu on pu.release_id = po.release_id and pu.part_unit_id = po.part_unit_id
+    group by po.release_id, po.operation_id
+  )
+  select coalesce(jsonb_object_agg(rid, ops), '{}'::jsonb) from (
+    select b.release_id as rid,
+      jsonb_agg(jsonb_build_object(
+        'op',       coalesce(op.name, 'ไม่ระบุ'),
+        'seq',      coalesce(op.seq, 999),
+        'done',     b.done,
+        'finished', b.finished,
+        'first_at', b.first_at
+      ) order by b.first_at nulls last, coalesce(op.seq, 999), op.name) as ops
+    from base b
+    left join public.operations op on op.id = b.operation_id
+    group by b.release_id
+  ) x;
+$function$;

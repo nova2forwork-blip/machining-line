@@ -704,8 +704,9 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
       // ★ หน้าเครื่อง: เลือก "ทุกขั้นตอนที่เครื่องทำได้" ไว้ก่อน (CNC ทำหลายขั้นในครั้งเดียว) — คนงานกดออกเหลือเท่าที่ทำจริง · คงการกดออกไว้ (ไม่รีเซ็ตทุกครั้งที่โหลด)
       if (dept === "machine") setOpSel((prev) => {
         if (prev && prev.size) return prev;
-        const keep = Array.isArray(savedPref.sel) ? savedPref.sel.filter((id) => ops.some((o) => o.id === id)) : [];
-        return new Set(keep.length ? keep : ops.map((o) => o.id));   // ★ 2026-10-10 ตรวจรอบ 2: ที่เลือกไว้ก่อนรีโหลด (ที่ยังมีอยู่)
+        // ★ 2026-11-17 ผู้ใช้: "ขั้นตอนบนเครื่อง ให้อิงกับที่แอดมินตั้งให้ไว้ก่อน" → เปิดหน้าเครื่อง = เลือกทุกขั้นที่แอดมินตั้งให้เครื่องนี้เสมอ
+        //   (เดิมจำที่คนงานเลือกครั้งก่อนไว้ในเครื่อง → เปิดมาอาจเหลือขั้นเดียวโดยไม่รู้ตัว) · งานที่ทำค้างอยู่ยังกู้ขั้นตอนของงานนั้นจาก draft ตามเดิม
+        return new Set(ops.map((o) => o.id));   // ★ 2026-10-10 ตรวจรอบ 2: ที่เลือกไว้ก่อนรีโหลด (ที่ยังมีอยู่)
       });
       setOp((cur) => {
         if (cur && ops.some((o) => o.id === cur.id)) return cur;

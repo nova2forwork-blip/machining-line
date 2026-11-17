@@ -5073,12 +5073,14 @@ function computeGroupProgress(releases, unitStats, opProg, totalQty) {
   for (const r of releases) {
     for (const o of (opProg?.[r.id] || [])) {
       const k = o.op || "ไม่ระบุ";
-      const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0 };
+      const e = by.get(k) || { op: k, seq: o.seq ?? 999, done: 0, finished: 0, first: "" };
       e.done += Number(o.done) || 0; e.finished += Number(o.finished) || 0;
+      if (o.first_at && (!e.first || String(o.first_at) < e.first)) e.first = String(o.first_at);
       by.set(k, e);
     }
   }
-  const opAgg = Array.from(by.values()).sort((a, b) => (a.seq - b.seq) || a.op.localeCompare(b.op));
+  // ★ 2026-11-17 ผู้ใช้: "ขั้นตอนของแต่ละพาร์ท ให้เรียงตามลำดับการสแกน" → ขั้นที่สแกนก่อนขึ้นก่อน (ไม่มีเวลา = DB เก่า → เรียงตามลำดับที่ตั้งไว้เหมือนเดิม)
+  const opAgg = Array.from(by.values()).sort((a, b) => ((a.first || "￿").localeCompare(b.first || "￿")) || (a.seq - b.seq) || a.op.localeCompare(b.op));
   const aggWithDone = opAgg.filter((o) => (Number(o.done) || 0) > 0);
   const lastOp = aggWithDone.length ? aggWithDone[aggWithDone.length - 1] : (opAgg.length ? opAgg[opAgg.length - 1] : null);   // ใช้แสดงผลเท่านั้น (ไม่ใช้นับเสร็จแล้ว)
   let finished = 0, inProgress = 0, officeFinished = 0, stationFinished = 0, stationDone = 0, anyStation = false;
@@ -5189,8 +5191,11 @@ function PartProgressModal({ release, user, goTo, onClose }) {
           getReleaseMachineStatus([release.id]).catch(() => null),   // ★ 2026-11-11 วันที่-เวลา เริ่ม/ล่าสุด ต่อเครื่อง + ขั้นตอนที่เครื่องทำจริง (ไม่มี = ไม่โชว์)
         ]);
         if (!alive) return;
-        setMachineProg(Array.isArray(mprog) ? mprog : []);
         const stRows = mstat && mstat.ok && mstat.data ? (mstat.data[release.id] || mstat.data[String(release.id)] || []) : [];
+        // ★ 2026-11-17 เครื่อง / ขั้นตอนเรียงตามลำดับที่สแกนจริง (เครื่องที่สแกนก่อนขึ้นก่อน — เดิมเรียงตามยอดมากสุด)
+        const firstOf = new Map((Array.isArray(stRows) ? stRows : []).map((x) => [String(x.machine_id || x.code), String(x.first_at || "")]));
+        const fk = (m) => firstOf.get(String(m.machine_id || m.code)) || "￿";
+        setMachineProg((Array.isArray(mprog) ? mprog : []).slice().sort((a, b) => fk(a).localeCompare(fk(b))));
         setMachTimes(new Map((Array.isArray(stRows) ? stRows : []).map((x) => [String(x.machine_id || x.code), x])));
         const ops = Array.isArray(prog[release.id]) ? prog[release.id] : [];
         // ── นิยาม "เสร็จ / กำลังทำ" เดียวกับการ์ดรวมและตารางแต่ละ Part (relProgress) ──
@@ -6345,23 +6350,23 @@ function pmMachines(list, qty) {
     const done = Number(m.done) || 0;
     // ★ 2026-11-17 (SIM4 F6): "Finish" = เครื่องนี้ทำครบจำนวนสั่งแล้ว · กด Finished แต่ยังไม่ครบ (ป้ายละชิ้น กด Finished ทุกชิ้น) = ยังค้าง (In Process Balance)
     //   เดิม กด Finished ครั้งเดียว = Finish ทั้งเบอร์ (2/3 ขึ้น Finish · ชิปหน้าล็อตไม่ตรงกับหัวล็อต / popup) · ไม่รู้จำนวนสั่ง = เชื่อปุ่ม Finished ตามเดิม
-    //   เครื่องหลายขั้นตอน: ต้องครบทุกขั้นที่เครื่องนี้บันทึก (บาก 3 · เจาะ 1/3 = ยังค้าง — เดิมรวมเป็น 3/3 Finish)
-    const opDone = (Array.isArray(m.ops) ? m.ops : []).filter((o) => o && o.done != null).map((o) => Number(o.done) || 0);
-    const doneAll = opDone.length > 1 ? Math.min(...opDone) : done;
-    const st = m.active ? "run" : (q > 0 ? doneAll >= q : !!m.finished) ? "fin" : "bal";
-    // doneAll = ขั้นที่ช้าสุดของเครื่องนี้ (ใช้บอก "ทำไป x จาก y" ให้ตรงกับสถานะ)
-    return { ...m, done, doneAll, st, bal: Math.max(0, q - doneAll), over: Math.max(0, done - q) };
+    const st = m.active ? "run" : (q > 0 ? done >= q : !!m.finished) ? "fin" : "bal";
+    return { ...m, done, st, bal: Math.max(0, q - done), over: Math.max(0, done - q) };
   });
 }
+// ★ 2026-11-17 ผู้ใช้: "เครื่องใดกด Finished คือพาร์ทชิ้นนั้นไม่ต้องเข้าเครื่องอื่นแล้ว พร้อมประกอบ"
+//   สถานะแถว = กติกาเดียวกับหัวล็อต: ชิ้นที่กด Finished แล้ว (เครื่องไหนก็ได้) ครบจำนวนสั่ง = Finish · มีงานแต่ยังไม่ครบ = In Process Balance
+//   (เดิมดูทีละเครื่อง "ทุกเครื่องต้องครบ" → ตัดครบ 2 + พับ 1 = ยังค้าง ทั้งที่หัวล็อตนับเสร็จ → ชิปไม่ตรงหัวล็อต)
 function pmRowStatus(ms, prog) {
+  if (ms.some((m) => m.st === "run")) return "run";
+  if (prog && prog.total > 0 && prog.finished >= prog.total) return "fin";
+  if (ms.length) return "bal";
   if (!ms.length) {
     // ไม่มีงานหน้าเครื่อง แต่มียอดจากการสแกนออฟฟิศแบบเดิม → ไม่ขึ้น Pending หลอก
     if (prog && prog.total > 0 && prog.done >= prog.total) return "fin";
     if (prog && prog.done > 0) return "bal";
     return "pend";
   }
-  if (ms.some((m) => m.st === "run")) return "run";
-  if (ms.every((m) => m.st === "fin")) return "fin";
   return "bal";
 }
 const pmPad = (n) => String(n).padStart(2, "0");
@@ -6397,17 +6402,14 @@ function pmNowText(m, qty, lang, nowMs) {
               : `กำลังทำชุดที่ ${n} · เริ่ม ${pmClock(a.started_at, nowMs)} · ผ่านไป ${el}`;
   }
   if (m.st === "fin") {
-    const how = m.finished ? (en ? "Finished pressed" : "กด Finished") : (en ? "full qty" : "ครบจำนวน");
+    const how = m.partDone ? (en ? `made ${fmtNum(m.done)} · part finished at another machine` : `ทำไป ${fmtNum(m.done)} · พาร์ทเสร็จแล้ว (เครื่องอื่นกด Finished)`)
+      : m.finished ? (en ? "Finished pressed" : "กด Finished") : (en ? "full qty" : "ครบจำนวน");
     const over = m.over > 0 ? (en ? ` · +${fmtNum(m.over)} spare` : ` · เกิน ${fmtNum(m.over)} (สแปร์)`) : "";
     return `${how} · ${en ? "done" : "เสร็จ"} ${pmClock(m.last_at, nowMs)}${over}`;
   }
   const idle = m.last_at ? pmAgo(nowMs - new Date(m.last_at).getTime(), lang) : "-";
-  const dn = m.doneAll != null ? m.doneAll : m.done;
-  const slow = (Array.isArray(m.ops) ? m.ops : []).filter((o) => o && o.done != null);
-  const lag = slow.length > 1 ? slow.reduce((a, o) => (Number(o.done) < Number(a.done) ? o : a)) : null;   // ขั้นที่ช้าสุด (เครื่องหลายขั้นตอน)
-  const lagTxt = lag ? (en ? ` (${lag.name})` : ` (${lag.name})`) : "";
-  return en ? `paused · ${fmtNum(dn)} of ${fmtNum(qty)} made${lagTxt} · ${fmtNum(m.bal)} to go · idle ${idle}`
-            : `พักอยู่ · ทำไป ${fmtNum(dn)} จาก ${fmtNum(qty)}${lagTxt} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
+  return en ? `paused · ${fmtNum(m.done)} of ${fmtNum(qty)} made · ${fmtNum(m.bal)} to go · idle ${idle}`
+            : `พักอยู่ · ทำไป ${fmtNum(m.done)} จาก ${fmtNum(qty)} · รออีก ${fmtNum(m.bal)} ชิ้น · หยุดมาแล้ว ${idle}`;
 }
 const pmOps = (m) => {
   const names = (Array.isArray(m.ops) ? m.ops : []).map((o) => o && o.name).filter(Boolean);
@@ -7008,7 +7010,9 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     const m = new Map();
     for (const r of releases) {
       const ms = pmMachines(mstat.data[r.id] || mstat.data[String(r.id)], r.qty);
-      m.set(r.id, { ms, st: r.mod_cancelled_at ? "cxl" : pmRowStatus(ms, relProgress(r, unitStats, opProg)) });
+      const st = r.mod_cancelled_at ? "cxl" : pmRowStatus(ms, relProgress(r, unitStats, opProg));
+      // พาร์ทเสร็จครบแล้ว (เครื่องอื่นกด Finished) → เครื่องที่ทำไม่ครบไม่ได้ "รออีก n ชิ้น" แล้ว
+      m.set(r.id, { ms: st === "fin" ? ms.map((x) => (x.st === "bal" ? { ...x, st: "fin", partDone: true, bal: 0 } : x)) : ms, st });
     }
     return m;
   }, [releases, mstat, unitStats, opProg]);
@@ -8299,7 +8303,7 @@ function FinishedPartSection({ releases: relsIn, projectFilter = "", partFilter 
       } else if (prog.needSql) {
         const po = prog.opProg[r.id] || [];
         station = po.reduce((m, o) => Math.max(m, Number(o.finished) || 0), 0);   // ค่าประมาณ: ขั้นตอนที่มีชิ้นเสร็จมากสุด
-        ops = po.filter((o) => (Number(o.done) || 0) > 0).sort((a, b) => (a.seq ?? 999) - (b.seq ?? 999)).map((o) => o.op);
+        ops = po.filter((o) => (Number(o.done) || 0) > 0).sort((a, b) => String(a.first_at || "￿").localeCompare(String(b.first_at || "￿")) || (a.seq ?? 999) - (b.seq ?? 999)).map((o) => o.op);
       }
       const office = Number(prog.unitStats[r.id]?.finished) || 0;
       const raw = Math.max(office, station);
