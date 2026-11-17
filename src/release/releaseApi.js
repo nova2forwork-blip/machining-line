@@ -13,7 +13,7 @@ import {
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest } from "./releaseCore.js";
+import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -140,6 +140,16 @@ export async function signedUrls(bucket, paths) {
   if (error) throw error;
   const m = {}; for (const x of data || []) if (x.signedUrl) m[x.path] = x.signedUrl;
   return m;
+}
+// ★ 2026-11-17 ผู้ใช้: "fab ให้เป็นเบอร์พาร์ท จะได้หางานเวลาเปิดหลายอัน" — ชื่อแท็บของ PDF เดิมมาจากชื่อในไฟล์ ("Fab" ทุกแท็บ)
+//   → เปิดเป็นหน้าเปล่าที่ตั้งชื่อแท็บ = เบอร์ แล้วฝัง PDF เต็มหน้า · w = หน้าต่างที่เปิดไว้ก่อน (window.open("", "_blank")) หรือ null
+export function showPdfTab(w, url, title) {
+  const win = w || window.open("", "_blank"); if (!win) { window.open(url, "_blank", "noopener"); return; }
+  try {
+    const d = win.document; d.open();
+    d.write("<!doctype html><html><head><meta charset=\"utf-8\"><title></title><style>html,body{margin:0;height:100%;background:#525659}iframe,embed{border:0;width:100%;height:100%;display:block}</style></head><body><iframe id=\"f\" title=\"PDF\"></iframe></body></html>");
+    d.close(); d.title = String(title || "PDF"); d.getElementById("f").src = url;
+  } catch (_) { win.location.href = url; }
 }
 export async function getLibPdfUrl(path) {
   const { data, error } = await supabase.storage.from(PDF_BUCKET).createSignedUrl(path, 600);
@@ -422,7 +432,7 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
   const folder = await pdfFolderOf(projectId, projectCode);
   const upOnce = new Map(); for (const d of (pdfs || []).filter((x) => x._file)) { const k = libPdfPath(folder, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
   await pool([...upOnce.values()], 4, async (ds) => { const path = await uploadLibPdf(folder, ds[0]); for (const d of ds) d.path = path; }, (n, m) => onProgress(`เก็บไฟล์ PDF ${n}/${m}`)).then((errs) => errs.forEach((x) => upErrs.push(x)));
-  for (const d of pdfs || []) pdfsOut.push({ file: d.file, kind: d.kind, code: d.code, ...(d.path ? { path: d.path } : {}) });
+  for (const d of pdfs || []) pdfsOut.push({ file: d.file, kind: d.kind, code: d.code, ...(d.path ? { path: d.path } : {}), ...(d.rev != null ? { rev: d.rev } : {}) });   // ★ 2026-11-17 rev = Rev ของแบบที่เก็บ ("" = ยังไม่มี Rev)
   if (upErrs.length) { const m = String(upErrs[0].e?.message || upErrs[0].e || ""); st.errors.push(/bucket|not found|404/i.test(m) ? "ยังไม่ได้รัน migration-release-pdfs.sql — ไม่ได้เก็บตัวไฟล์ PDF (ข้อมูลที่อ่านได้บันทึกแล้ว)" : `เก็บไฟล์ PDF ไม่สำเร็จ ${upErrs.length} ไฟล์ (${m.slice(0, 80)})`); }
   const subItems = { ...(old?.subItems || {}) };
   for (const c of subCodes) { if (newCodes && !newCodes.has(NC(c))) continue; subItems[c] = (bom.subs[c].items || []).filter((it) => (it[4] || "") !== "ยกเลิก").map((it) => [it[0], it[1], it[2]]); }
@@ -439,7 +449,7 @@ export async function storeLibPdfs({ projectId, projectCode, pdfs }, onProgress 
   const folder = await pdfFolderOf(projectId, projectCode);
   const upOnce = new Map(); for (const d of ds) { const k = libPdfPath(folder, d); if (!upOnce.has(k)) upOnce.set(k, []); upOnce.get(k).push(d); }
   const out = [];
-  const errs = await pool([...upOnce.values()], 4, async (g) => { const path = await uploadLibPdf(folder, g[0]); for (const d of g) out.push({ file: d.file, kind: d.kind, code: d.code, path }); }, (n, m) => onProgress(`เก็บไฟล์แบบลงคลัง ${n}/${m}`));
+  const errs = await pool([...upOnce.values()], 4, async (g) => { const path = await uploadLibPdf(folder, g[0]); for (const d of g) out.push({ file: d.file, kind: d.kind, code: d.code, path, rev: d.rev != null ? d.rev : dwgRev(d) }); }, (n, m) => onProgress(`เก็บไฟล์แบบลงคลัง ${n}/${m}`));
   if (!out.length) { const m = errs.length ? String(errs[0].e?.message || errs[0].e || "") : ""; throw new Error(m || "เก็บไฟล์แบบไม่สำเร็จ"); }
   const old = (await listPlans(projectId)).lib;
   const { id: _i, projectId: _p, ro: _r, status: _s, ...keep } = old || {};
@@ -616,4 +626,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

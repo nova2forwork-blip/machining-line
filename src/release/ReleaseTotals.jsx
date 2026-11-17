@@ -7,18 +7,18 @@ import "./i18n-release.js";
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { revLetter, baseOf, otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
+import { dwgRev, readPdfFiles, revLetter, baseOf, otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
 import { useBomEdit } from "./bomEdit.jsx";
 import { XTable } from "./xtable.jsx";
-import { libPdfsWithFallback, getLibPdfUrl } from "./releaseApi.js";
+import { libPdfsWithFallback, getLibPdfUrl, showPdfTab } from "./releaseApi.js";
 // ★ 2026-11-17 ผู้ใช้: "แบบไม่มี rev ทำไมถึงเป็น A" → REV. = ค่าช่อง REV. ที่อ่านจากแบบ (ช่อง "-" = ยังไม่มี Rev → โชว์ —)
 //   ไม่ใช้ตัวอักษรท้ายเบอร์ ("MFA183-5001 A" — A เป็นส่วนของ PART NO. ในแบบ ไม่ใช่ Rev)
 const cleanRev = (v) => { const t = String(v ?? "").trim().toUpperCase(); return t && t !== "-" && t !== "—" ? t : ""; };
-const revOf = (r, plan) => { if (cleanRev(r.rev)) return cleanRev(r.rev); const b = (plan && plan.bom) || {}; const e = (b.parts || {})[findKey(b.parts || {}, r.code)] || (b.subs || {})[findKey(b.subs || {}, r.code)]; return cleanRev(e && e.rev); };
+const planRev = (r, plan) => { if (cleanRev(r.rev)) return cleanRev(r.rev); const b = (plan && plan.bom) || {}; const e = (b.parts || {})[findKey(b.parts || {}, r.code)] || (b.subs || {})[findKey(b.subs || {}, r.code)]; return cleanRev(e && e.rev); };
 // ★ 2026-11-17 ผู้ใช้: "กดดูแบบได้" — กดช่อง REV. = เปิดไฟล์แบบ (PDF) ของเบอร์นั้นจากคลัง "ซับ / พาร์ท ของโปรเจค" ในแท็บใหม่
 //   เปิดไฟล์ของเบอร์ + Rev ตรงตัวก่อน · ไม่มี → Rev ล่าสุดของเบอร์เดียวกัน (บอกว่าเปิด Rev ไหน) · ตึกนี้ไม่มี → ของตึกอื่นที่รหัสโปรเจคเดียวกัน
 const dwgToast = (text, tone = "info") => { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text, tone } })); } catch { /* ignore */ } };
@@ -31,7 +31,7 @@ async function openDrawingOf(projectId, code) {
     const hit = pick(pdfs.filter((x) => !x.from)) || pick(pdfs);
     if (!hit) { if (w) w.close(); dwgToast(`ยังไม่มีไฟล์แบบของ ${code} ในคลังโปรเจค — วางแบบ PDF ที่หน้า “ซับ / พาร์ท ของโปรเจค” หรือตอน Modify`, "error"); return; }
     const url = await getLibPdfUrl(hit.path);
-    if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
+    showPdfTab(w, url, hit.code);   // ชื่อแท็บ = เบอร์ (เดิมเป็นชื่อในไฟล์ PDF เช่น "Fab" ทุกแท็บ)
     const notes = [NC(hit.code) !== NC(code) ? `เปิดแบบ ${hit.code} — ไม่มีไฟล์ของ ${code} ตรงตัว` : "", hit.from ? `แบบจากตึกอื่นที่รหัสเดียวกัน (${hit.from})` : ""].filter(Boolean);
     if (notes.length) dwgToast(notes.join(" · "));
   } catch (e) { if (w) w.close(); dwgToast("เปิดแบบไม่ได้: " + (e?.message || e), "error"); }
@@ -58,6 +58,37 @@ function ClickSelect({ value, options, onChange, label, title = "" }) {
 }
 
 export function TotalsSection({ plan, need, rel, doneOf, leftOf, onPlanChange, onRelease, onMoveReleased = null, onTab = null, madeOf = null, onRowProgress = null, onInlineModify = null }) {
+  // ★ 2026-11-17 ผู้ใช้: "สองอันนี้ แบบเป็น rev. A แล้ว" — REV. = Rev ของ "ไฟล์แบบที่เก็บอยู่ในคลังตอนนี้" (ตัวเดียวกับที่กดดูแบบแล้วเปิด)
+  //   คลังเก็บ rev ไว้กับไฟล์ (ตั้งแต่ 2026-11-17) · ไฟล์ที่เก็บก่อนหน้านั้นยังไม่มี → อ่านจากไฟล์ทีละใบเบื้องหลัง แล้วจำไว้ในเครื่อง (localStorage) · ไม่มีไฟล์ = ใช้ Rev ที่จำไว้ในใบ
+  const [dwgLib, setDwgLib] = useState(() => new Map());
+  const nMods = (plan.mods || []).length;
+  useEffect(() => {
+    let off = false;
+    (async () => {
+      try {
+        const pdfs = await libPdfsWithFallback(plan.projectId);
+        const m = new Map(); for (const x of [...pdfs.filter((x) => x.from), ...pdfs.filter((x) => !x.from)]) m.set(NC(x.code), { path: x.path, file: x.file, code: x.code, rev: x.rev });
+        const ck = (x) => "mls.dwgrev|" + x.path;
+        for (const x of m.values()) if (x.rev == null) { try { const v = localStorage.getItem(ck(x)); if (v != null) x.rev = v; } catch { /* ignore */ } }
+        if (off) return; setDwgLib(new Map(m));
+        const inPlan = new Set([...Object.keys((plan.bom && plan.bom.parts) || {}), ...Object.keys((plan.bom && plan.bom.subs) || {}), ...((need && need.parts) || []).map((r) => r.code), ...((need && need.subs) || []).map((r) => r.code)].map((c) => NC(c)));
+        const todo = [...m.entries()].filter(([k, x]) => x.rev == null && x.path && inPlan.has(k)).slice(0, 80);
+        const byPath = new Map();
+        for (const [k, x] of todo) {
+          if (off) return;
+          try {
+            if (!byPath.has(x.path)) { const blob = await (await fetch(await getLibPdfUrl(x.path))).blob(); byPath.set(x.path, await readPdfFiles([new File([blob], String(x.file || "drawing.pdf").split(" › ")[0], { type: "application/pdf" })])); }
+            const docs = byPath.get(x.path) || []; const d = docs.find((y) => NC(y.code) === k) || docs[0];
+            const rv = d && d.kind !== "unknown" ? dwgRev(d) : null; if (rv == null) continue;
+            try { localStorage.setItem(ck(x), rv); } catch { /* ignore */ }
+            if (off) return; setDwgLib((old) => { const n = new Map(old); n.set(k, { ...x, rev: rv }); return n; });
+          } catch { /* อ่านไม่ได้ = ข้าม ใช้ค่าที่จำไว้ในใบ */ }
+        }
+      } catch { /* ไม่มีคลัง / ต่อไม่ได้ = ใช้ค่าที่จำไว้ในใบ */ }
+    })();
+    return () => { off = true; };
+  }, [plan.projectId, nMods]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const revOf = (r) => { const e = dwgLib.get(NC(r.code)); return e && e.rev != null ? cleanRev(e.rev) : planRev(r, plan); };
   // ★ 2026-11-11 ผู้ใช้: "ให้กดตรงแถวเพื่อดูความคืบหน้าได้เหมือนใบปล่อย" → กดที่แถว (ไม่ใช่ปุ่ม / ช่องติ๊ก / ดรอปดาวน์) = เปิดความคืบหน้าของเบอร์นั้น
   // ★ 2026-11-12 ผู้ใช้: "เอาความคืบหน้าออก · ให้กดได้ที่ช่อง ปล่อยแล้ว / ทำแล้วที่ ที่อื่นไม่ต้อง" → กดเปิดความคืบหน้าได้เฉพาะช่องนี้
   const rowClick = (code, kind) => (onRowProgress ? { onClick: (e) => { if (e.target.closest("button, input, select, a, label, textarea")) return; onRowProgress(code, kind); }, title: "กดเพื่อดูความคืบหน้า", style: { cursor: "pointer" }, className: "rl-donecell rt-progcell" } : { className: "rl-donecell" });

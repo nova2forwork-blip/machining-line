@@ -7,7 +7,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
-import {
+import { dwgRev,
   NC, baseOf, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
@@ -321,7 +321,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         setLibSave({ msg: `กำลังเก็บแบบซับ / พาร์ท ${got.length} ไฟล์เข้าคลังของโปรเจค…` });
         const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
           newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: makeCatOf(merged, ov.catOv || {}, cfg),
-          pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (m) => setLibSave({ msg: m }));
+          pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file, rev: dwgRev(d) })), by: userName || "" }, (m) => setLibSave({ msg: m }));
         const gs = got.filter((d) => d.kind === "sub").length;
         setLibSave({ ok: `เก็บเข้าคลังของโปรเจคแล้ว — ซับ ${nf(gs)} · พาร์ท ${nf(got.length - gs)} เบอร์ (${got.slice(0, 5).map((d) => d.code).join(", ")}${got.length > 5 ? " …" : ""}) · แผงที่ใช้เบอร์เหล่านี้จะดึงจากคลังให้เอง`, warn: [oldTxt, ...((r && r.errors) || [])].filter(Boolean).join(" · ") });
         setLibTick((t) => t + 1);
@@ -1092,7 +1092,7 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
       setReading({ msg: "บันทึกลงคลังของโปรเจค…" });
       const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
         newCodes: new Set(got.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
-        pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (m) => setReading({ msg: m }));
+        pdfs: got.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file, rev: dwgRev(d) })), by: userName || "" }, (m) => setReading({ msg: m }));
       // เลือกเบอร์ที่เพิ่งวางให้เลย ×1 (แก้จำนวนได้) — เบอร์ที่เลือกอยู่แล้วคงจำนวนเดิม
       // เลือกรุ่นล่าสุดของเบอร์นั้นให้ (ไฟล์ที่วางเป็นรุ่นใหม่กว่าอยู่แล้ว · ถ้าเคยเลือกรุ่นเก่าไว้ → เปลี่ยนเป็นรุ่นใหม่)
       setPicks((old) => {

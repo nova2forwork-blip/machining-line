@@ -18,6 +18,8 @@ export const findKey = (obj, c) => { if (!obj || !c) return null; if (obj[c]) re
 const REV_RE = /^(.*?)\s+([A-Z])(\*?)$/;
 export const baseOf = (c) => { const n = NC(c).replace(/\*$/, ""); const m = REV_RE.exec(n); return m ? m[1] : n; };
 export const revRank = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "") + ""); return m ? m[2].charCodeAt(0) - 64 : 0; };
+// Rev ของแบบ: ช่อง REV. ของแถวในตาราง (ถ้าไม่ใช่ "-") → ไม่มี = ช่อง REV. ในกรอบชื่อแบบ · "" = ยังไม่มี Rev
+export const dwgRev = (d) => { const t = (d && d.title) || {}; const c = (v) => { const x = String(v ?? "").trim().toUpperCase(); return x && x !== "-" && x !== "—" ? x : ""; }; return c(t["REV."]) || c(t.SHEET_REV); };
 export const revLetter = (c) => { const m = REV_RE.exec(NC(c).replace(/\*$/, "")); return m ? m[2] : ""; };
 // ★ 2026-11-17 ผู้ใช้ยืนยัน: ตัวอักษรท้ายเบอร์ ("MFA183-5001 A") เป็น "ส่วนของเบอร์" ไม่ใช่ Rev — A กับ B คือคนละชิ้น · Rev จริงอยู่ที่ช่อง REV. ในแบบ
 //   เดิม (2026-11-03) ถือว่าเป็น Rev: มี "X B" แล้ว = ซ่อน / ไม่รับ "X A" และ BOM ที่เขียน "X A" ถูกเปลี่ยนไปปล่อย "X B" → ผิดเมื่อ A กับ B เป็นคนละชิ้น
@@ -239,6 +241,17 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const pj = words.find((w) => /^PROJECT:?$/i.test(w.text) && !words.some((x) => /^NO\.?:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 - w.x1 < 8));
     if (pj) out.title.PROJECT = rightOf(pj.text, ["PROJECT", "STOCK", "FINISH:"]) || null;
     { const m = words.map((w) => w.text).join(" ").match(/\b([A-Z]\d{4,6}-[A-Z]{2})\b/); if (m) out.title.PROJECT_CODE = m[1]; }   // รหัสโปรเจคของเรา (A10035-US) จาก path/ที่ไหนก็ได้ในแบบ — PROJECT NO. บางแบบเป็นเลขของลูกค้า (372-0082)
+  }
+  // ★ 2026-11-17 ผู้ใช้: "สองอันนี้ แบบเป็น rev. A แล้ว" — Rev ของแบบอยู่ที่ช่อง REV. ในกรอบชื่อแบบมุมล่างขวา (ใต้ป้าย "REV." ข้าง PART NO.)
+  //   ช่อง REV. ของตารางด้านบนมักเป็น "-" แม้แบบจะแก้เป็น Rev A แล้ว → เก็บเป็น title.SHEET_REV ("-" = ยังไม่มี Rev)
+  {
+    const labs = words.filter((w) => /^REV\.?$/i.test(w.text) && w.top > vp.height * 0.8 && w.x0 > vp.width * 0.8).sort((a, b) => b.x0 - a.x0 || b.top - a.top);
+    const lb = labs[0];
+    if (lb) {
+      const cx = (lb.x0 + lb.x1) / 2;
+      const v = words.filter((w) => w !== lb && w.top > lb.top + 3 && w.top < lb.top + 40 && Math.abs((w.x0 + w.x1) / 2 - cx) < 22 && /^([A-Z0-9]{1,3}|-)$/i.test(w.text)).sort((a, b) => a.top - b.top)[0];
+      if (v) out.title.SHEET_REV = v.text.toUpperCase();
+    }
   }
   out.title.FINISH = rightOf("FINISH:", ["STOCK"]);
   out.title.STOCK = (rightOf("STOCK", ["PART"]) || "").replace(/^NO\.:\s*/, "") || null;
@@ -512,7 +525,7 @@ export function buildBom({ lib, pdfs, ack, useLib }) {
       if (dm) { set("DEVELOP W", () => (p.bw = +dm[1])); set("DEVELOP H", () => (p.bh = +dm[2])); set("INV.CODE", () => { if (inv && inv !== "-") { p.binv = inv; p.bm = p.bm || inv; } }); }
       else set("INV.CODE", () => { if (inv && inv !== "-") p.m = inv; });
       if (t.DESC) p.d = t.DESC;
-      p.md = fnum(t["M.D."]); p.pdf = d.file; p.mat = t.MATERIAL || ""; p.rev = t["REV."] && t["REV."] !== "-" ? t["REV."] : p.rev;
+      p.md = fnum(t["M.D."]); p.pdf = d.file; p.mat = t.MATERIAL || ""; p.rev = dwgRev(d) || p.rev;
     }
   }
   return { panels: PANELS, subs: SUBS, parts: PARTS };

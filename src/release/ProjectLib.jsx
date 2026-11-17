@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useUndoState } from "../undo.js";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
-import { NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf, suspectLen } from "./releaseCore.js";
+import { dwgRev, NC, ncmp, nf, nlen, findKey, isStar, PART_CATS, QR_CATS, PART_DESTS, UNCAT, ruleCat, ruleDest, destLabel, readPdfFiles, buildBom, makeCatOf, findLatest, newerRevOf, suspectLen } from "./releaseCore.js";
 import { Pill, SubKids } from "./releaseUi.jsx";
 import FileBrowser from "./FileBrowser.jsx";
 import "./release-wizard.css";
@@ -51,7 +51,8 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
   const pdfOf = useMemo(() => new Map(((lib && lib.pdfs) || []).filter((x) => x.path).map((x) => [NC(x.code), x])), [lib]);
   async function openPdf(code) {
     const e = pdfOf.get(NC(code)); if (!e || !api.getLibPdfUrl) return;
-    try { window.open(await api.getLibPdfUrl(e.path), "_blank", "noopener"); } catch (err) { setReading({ err: "เปิดไฟล์ PDF ไม่ได้: " + (err?.message || err) }); }
+    const w = window.open("", "_blank");
+    try { const url = await api.getLibPdfUrl(e.path); if (api.showPdfTab) api.showPdfTab(w, url, code); else if (w) w.location.href = url; } catch (err) { setReading({ err: "เปิดไฟล์ PDF ไม่ได้: " + (err?.message || err) }); }
   }
   async function rereadStored() {
     const list = [...pdfOf.values()]; if (!list.length || !api.downloadLibPdf) return;
@@ -102,7 +103,7 @@ export default function ProjectLib({ projectId, projectCode, api, user, onBack, 
     if (!(await askConfirm({ title: "บันทึกซับ / พาร์ท ของโปรเจค?", message: [`ซับ ${nf(subs.length)} เบอร์ · พาร์ท ${nf(parts.length)} เบอร์`, nNew ? `PDF ใหม่ ${nNew} ไฟล์ → สร้าง/อัปเดตเบอร์ + BOM ซับในระบบ` : "ไม่มี PDF ใหม่ — บันทึกเฉพาะหมวด / งานซับ / ใบงาน", "Release ที่สร้างใหม่จะดึงจากคลังนี้ · Release เดิมที่ยังไม่มี BOM จะดึงให้เมื่อเปิด"].join("\n"), tone: "warn", confirmText: "บันทึก", cancelText: "กลับ" }))) return;
     setSaving({ busy: true, msg: "เริ่มบันทึก…", err: "", done: null });
     try {
-      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
+      const r = await api.saveLibrary({ projectId, projectCode, bom: { panels: {}, subs: bom.subs, parts: bom.parts }, newCodes: new Set(pdfs.map((d) => NC(d.code))), catOv, procOv, destOv, partMode, partGroups, catOf, pdfs: pdfs.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file, rev: dwgRev(d) })), by: user?.name || "" }, (m) => setSaving((s) => ({ ...s, msg: m })));
       setSaving({ busy: false, msg: "", err: "", done: true, errors: r?.errors || [] });
       setPdfs([]);
       let reloadErr = "";

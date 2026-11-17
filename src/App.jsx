@@ -5165,7 +5165,7 @@ function PartProgressModal({ release, user, goTo, onClose }) {
       const hit = pool.find((x) => relNC(x.code) === relNC(partNo)) || fam[0];
       if (!hit) { if (w) w.close(); setDwg({ s: "none", msg: `ยังไม่มีไฟล์แบบของ ${partNo} ในคลังโปรเจค` }); return; }
       const url = await realReleaseApi.getLibPdfUrl(hit.path);
-      if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
+      realReleaseApi.showPdfTab(w, url, hit.code);
       const newer = relRev(hit.code) > relRev(partNo);
       const fromTxt = hit.from ? ` · แบบจากตึกอื่นที่รหัสเดียวกัน (${hit.from}) — ตึกนี้ยังไม่มีแบบนี้ในคลัง` : "";
       setDwg({ s: "idle", msg: (relNC(hit.code) === relNC(partNo) ? "" : `เปิดแบบ ${hit.code} — ไม่มีไฟล์ของ ${partNo} ตรงตัว (แบบตระกูลเดียวกัน)`) + fromTxt });

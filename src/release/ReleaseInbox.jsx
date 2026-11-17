@@ -7,7 +7,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
-import { NC, baseOf, findKey, findLatest, readPdfFiles, roKey, nf, nlen, buildBom, makeCatOf, newerRevOf } from "./releaseCore.js";
+import { dwgRev, NC, baseOf, findKey, findLatest, readPdfFiles, roKey, nf, nlen, buildBom, makeCatOf, newerRevOf } from "./releaseCore.js";
 import { readOrderFile, readOrderPdf } from "./orderSheet.js";
 import { Pill } from "./releaseUi.jsx";
 import "./release-wizard.css";
@@ -89,7 +89,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       setLibMsg((m) => ({ ...m, [j.k]: { busy: "บันทึกลงคลัง…" } }));
       const r = await api.saveLibrary({ projectId: project.id, projectCode: project.code, bom: { panels: {}, subs: merged.subs, parts: merged.parts },
         newCodes: new Set(use.map((d) => NC(d.code))), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, ...cfg, catOf: catOfLib,
-        pdfs: use.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file })), by: userName || "" }, (msg) => setLibMsg((m) => ({ ...m, [j.k]: { busy: msg } })));
+        pdfs: use.map((d) => ({ file: d.file, kind: d.kind, code: d.code, famOf: d.famOf, _file: d._file, rev: dwgRev(d) })), by: userName || "" }, (msg) => setLibMsg((m) => ({ ...m, [j.k]: { busy: msg } })));
       const gs = use.filter((d) => d.kind === "sub").length, gp = use.length - gs; const errs = (r && r.errors) || [];
       setLibMsg((m) => ({ ...m, [j.k]: { ok: `เก็บเข้าคลัง ${project.code} แล้ว — ซับ ${gs} · พาร์ท ${gp} เบอร์${older.length ? ` · ข้ามรุ่นเก่า ${older.length}` : ""}${errs.length ? " · " + errs.join(" · ") : ""}` } }));
       onLibrarySaved && onLibrarySaved(project, use);
