@@ -5325,7 +5325,10 @@ function PartProgressModal({ release, user, goTo, onClose }) {
                       {/* สถานะเดียวต่อเครื่อง — โชว์เฉพาะที่มีจริง (ซ่อนอันที่เป็น 0) */}
                       <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                         {fin > 0 ? <span style={finStyle(fin)}>{lang === "en" ? "finished" : "เสร็จ"} {fmtNum(fin)}</span> : null}
-                        {inp > 0 ? <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span> : null}
+                        {/* ★ 2026-11-17 พาร์ทเสร็จครบแล้ว (เครื่องอื่นกด Finished) → ไม่ขึ้น "กำลังทำ" ค้าง — ตรงกับสถานะในตารางล็อต */}
+                        {inp > 0 ? (totalUnits > 0 && finished >= totalUnits
+                          ? <span style={finStyle(inp)} title={lang === "en" ? "part finished at another machine" : "พาร์ทเสร็จแล้ว (เครื่องอื่นกด Finished)"}>{lang === "en" ? `made ${fmtNum(inp)} · part finished` : `ทำไป ${fmtNum(inp)} · พาร์ทเสร็จแล้ว`}</span>
+                          : <span style={inStyle(inp)}>{lang === "en" ? "in process" : "กำลังทำ"} {fmtNum(inp)}</span>) : null}
                         {fin === 0 && inp === 0 ? <span style={inStyle(0)}>{lang === "en" ? "in process" : "กำลังทำ"} 0</span> : null}
                       </span>
                     </div>
