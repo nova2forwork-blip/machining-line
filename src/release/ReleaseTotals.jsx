@@ -7,15 +7,37 @@ import "./i18n-release.js";
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { revLetter, otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
+import { revLetter, baseOf, otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
 import { useBomEdit } from "./bomEdit.jsx";
 import { XTable } from "./xtable.jsx";
-// Rev ของแบบที่ใช้อยู่ = ตัวอักษรท้ายเบอร์ ("MAL132-5001 B" → B) · ไม่มี → Rev ที่อ่านได้จากหัวกระดาษ
-const revOf = (r) => revLetter(r.code) || String(r.rev || "").trim().toUpperCase();
+import { libPdfsWithFallback, getLibPdfUrl } from "./releaseApi.js";
+// ★ 2026-11-17 ผู้ใช้: "แบบไม่มี rev ทำไมถึงเป็น A" → REV. = ค่าช่อง REV. ที่อ่านจากแบบ (ช่อง "-" = ยังไม่มี Rev → โชว์ —)
+//   ไม่ใช้ตัวอักษรท้ายเบอร์ ("MFA183-5001 A" — A เป็นส่วนของ PART NO. ในแบบ ไม่ใช่ Rev)
+const cleanRev = (v) => { const t = String(v ?? "").trim().toUpperCase(); return t && t !== "-" && t !== "—" ? t : ""; };
+const revOf = (r, plan) => { if (cleanRev(r.rev)) return cleanRev(r.rev); const b = (plan && plan.bom) || {}; const e = (b.parts || {})[findKey(b.parts || {}, r.code)] || (b.subs || {})[findKey(b.subs || {}, r.code)]; return cleanRev(e && e.rev); };
+// ★ 2026-11-17 ผู้ใช้: "กดดูแบบได้" — กดช่อง REV. = เปิดไฟล์แบบ (PDF) ของเบอร์นั้นจากคลัง "ซับ / พาร์ท ของโปรเจค" ในแท็บใหม่
+//   เปิดไฟล์ของเบอร์ + Rev ตรงตัวก่อน · ไม่มี → Rev ล่าสุดของเบอร์เดียวกัน (บอกว่าเปิด Rev ไหน) · ตึกนี้ไม่มี → ของตึกอื่นที่รหัสโปรเจคเดียวกัน
+const dwgToast = (text, tone = "info") => { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text, tone } })); } catch { /* ignore */ } };
+async function openDrawingOf(projectId, code) {
+  if (!projectId) { dwgToast("ไม่รู้โปรเจคของใบนี้ — เปิดแบบไม่ได้", "error"); return; }
+  const w = window.open("", "_blank");   // เปิดแท็บก่อน (กันเบราว์เซอร์บล็อกป๊อปอัพ) แล้วค่อยใส่ลิงก์
+  try {
+    const pdfs = await libPdfsWithFallback(projectId);
+    const pick = (pool) => pool.find((x) => NC(x.code) === NC(code)) || pool.filter((x) => baseOf(x.code) === baseOf(code)).sort((a, b) => revLetter(b.code).localeCompare(revLetter(a.code)))[0];
+    const hit = pick(pdfs.filter((x) => !x.from)) || pick(pdfs);
+    if (!hit) { if (w) w.close(); dwgToast(`ยังไม่มีไฟล์แบบของ ${code} ในคลังโปรเจค — วางแบบ PDF ที่หน้า “ซับ / พาร์ท ของโปรเจค” หรือตอน Modify`, "error"); return; }
+    const url = await getLibPdfUrl(hit.path);
+    if (w) w.location.href = url; else window.open(url, "_blank", "noopener");
+    const notes = [NC(hit.code) !== NC(code) ? `เปิดแบบ ${hit.code} — ไม่มีไฟล์ของ ${code} ตรงตัว` : "", hit.from ? `แบบจากตึกอื่นที่รหัสเดียวกัน (${hit.from})` : ""].filter(Boolean);
+    if (notes.length) dwgToast(notes.join(" · "));
+  } catch (e) { if (w) w.close(); dwgToast("เปิดแบบไม่ได้: " + (e?.message || e), "error"); }
+}
+const RevBtn = ({ projectId, code, rev }) => (
+  <button type="button" className="rt-revbtn" title={`ดูแบบ ${code} · ${rev ? `Rev ${rev}` : "ยังไม่มี Rev (ช่อง REV. ในแบบเป็น -)"} — กดเพื่อเปิด PDF ในแท็บใหม่`} aria-label={`ดูแบบ ${code}`} onClick={(e) => { e.stopPropagation(); openDrawingOf(projectId, code); }}>{rev || "—"}</button>);
 
 const PAGE = 300;
 const sheetOf = (k) => SHEETS.find((s) => s.k === k) || MAT_SHEETS.find((s) => s.k === k) || { k, tab: k, label: k, th: PART_CATS.includes(k) ? (QR_CATS.has(k) ? "ผลิตเอง · มี QR · ส่งไปใบ MACHINING PART / BENDING / STEEL ได้" : k === "SUB-ASSEMBLY PART" ? "ซับทั้งหมด (รายละเอียดดูที่ Total Sub-Assembly)" : k === "SITE ITEM" ? "รายการเบอร์ * ที่ส่งไปประกอบที่ไซต์" : "ใบเบิก · ไม่มี QR") : "" };
@@ -280,7 +302,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       { k: "no", h: "NO.", th: { className: "r" }, td: (r, i) => <td className="r rw-num">{i + 1}</td>, sort: (r) => idxP.get(r) },
       { k: "code", h: "CODE", sort: (r) => r.code, td: (r, i) => <td className="rw-mono">{E(K(r), "rc", "p" + i, <Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />)}{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>,
         foot: () => <td><b>รวม {nf(live.length)} เบอร์</b> <span className="small">· QR {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq"> · ยกเลิก {all.length - live.length}</span> : null}</span></td> },
-      { k: "rev", h: "REV.", th: { className: "c" }, sort: (r) => revOf(r), td: (r) => <td className="c rt-rev" title={revOf(r) ? `แบบที่ใช้ตอนนี้: Rev ${revOf(r)}` : "เบอร์นี้ไม่มี Rev ต่อท้าย"}>{revOf(r) || <span className="rw-muted">—</span>}</td> },
+      { k: "rev", h: "REV.", th: { className: "c" }, sort: (r) => revOf(r, plan), td: (r) => <td className="c rt-rev">{r.qr !== false ? <RevBtn projectId={plan.projectId} code={r.code} rev={revOf(r, plan)} /> : (revOf(r, plan) || <span className="rw-muted">—</span>)}</td> },
       { k: "d", h: "DESCRIPTION", sort: (r) => r.d, td: (r, i) => <td className="rl-desc">{E(K(r), "d", "p" + i, <span>{r.d}</span>)}</td> },
       { k: "l", h: "LENGTH", th: { className: "r" }, sort: (r) => r.l ?? -1, td: (r, i) => <td className="r rw-num">{E({ ...r, kind: r.qr ? "part" : r.k === "hw" ? "hw" : "part" }, "l", "p" + i, <>{r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{nlen(r.l)}</>)}</td> },
       { k: "qty", h: "TOTAL QTY", th: { className: "r" }, sort: (r) => r.qty, td: (r, i) => <td className="r">{fq && !r.cancelled && !(r.u === "m." && r.mm) ? fqCell(r) : r.qr ? E({ ...r, kind: "part" }, "tq", "p" + i, <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} />) : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>,
@@ -313,7 +335,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       { k: "code", h: "CODE", sort: (s) => s.code, td: (s, i) => <td className="rw-mono">{E(S(s), "rc", "s" + i, <Code code={s.code} cancel={!!s.cancelled} added={s.added} />)}</td>,
         kid: (k, s, j) => <td className="rw-mono"><span className="rt-kid-ic">└</span>{E(k, "code", s.code + "k" + j, k.c)}{k.t === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>,
         foot: () => <td><b>รวม {nf(live.length)} เบอร์</b>{rows.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {rows.length - live.length}</span> : null}</td> },
-      { k: "rev", h: "REV.", th: { className: "c" }, sort: (s) => revOf(s), td: (s) => <td className="c rt-rev">{revOf(s) || <span className="rw-muted">—</span>}</td>, kid: (k) => <td className="c rt-rev">{revOf({ code: k.c }) || ""}</td> },
+      { k: "rev", h: "REV.", th: { className: "c" }, sort: (s) => revOf(s, plan), td: (s) => <td className="c rt-rev"><RevBtn projectId={plan.projectId} code={s.code} rev={revOf(s, plan)} /></td>, kid: (k) => <td className="c rt-rev">{k.t === "sub" || findKey(plan.bom.parts || {}, k.c) ? <RevBtn projectId={plan.projectId} code={k.c} rev={revOf({ code: k.c }, plan)} /> : ""}</td> },
       { k: "d", h: "DESCRIPTION", sort: (s) => s.d, td: (s, i) => <td className="rl-desc">{E(S(s), "d", "s" + i, <span>{s.d}</span>)}</td>, kid: (k, s, j) => <td className="rl-desc">{E(k, "d", s.code + "k" + j, <span>{k.d}</span>)}</td> },
       { k: "l", h: "LENGTH (mm.)", th: { className: "r" }, sort: (s) => s.l ?? -1, td: (s, i) => <td className="r rw-num">{E(S(s), "l", "s" + i, nlen(s.l))}</td>, kid: (k, s, j) => <td className="r rw-num">{E(k, "l", s.code + "k" + j, nlen(k.l))}</td> },
       { k: "qty", h: "SUB QTY.", th: { className: "r" }, sort: (s) => s.qty, td: (s, i) => <td className="r">{fq && !s.cancelled ? fqCell(s) : E(S(s), "tq", "s" + i, <ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} />)}</td>, kid: (k, s) => <td className="r rw-num">{nlen(qOf(s))}</td>,
