@@ -1426,3 +1426,11 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rt-matval { border: 0; background: none; padding: 0; margin: 0; font-weight: 700; font-size: inherit; color: inherit; cursor: pointer; text-align: left; }
 .rt-matval.rl-new { color: #5b3ce0; }
 .rw-pick-chip.panel { background: #e6f1ff; border-color: #c5dbf7; }
+
+/* ★ 2026-11-17 ผู้ใช้: "เวลาแก้ไม่ใช้ช่องเกินตาราง และตารางไม่ขยับด้วย" — ช่องพิมพ์พอดีช่องตารางเสมอ (ไม่ล้นไปทับช่องข้าง ๆ) · ขนาดช่อง / แถวไม่เปลี่ยนตอนเปิดแก้ */
+.bm-ghost { padding: 0 !important; display: inline-block; min-height: 1em; max-width: 100%; overflow: hidden; vertical-align: top; }
+.rt-xl td:has(.bm-edhold), .rt .rt-table td:has(.bm-edhold) { position: relative; overflow: hidden; }
+.rt-xl td:has(.bm-edhold) { padding: 3px 8px; }
+.rt-xl td .bm-edhold, .rt .rt-table td .bm-edhold { position: static; display: inline; padding: 0; min-width: 0; }
+.rt-xl td .bm-edhold .bm-in, .rt .rt-table td .bm-edhold .bm-in { position: absolute; inset: 1px; width: calc(100% - 2px) !important; min-width: 0 !important; height: calc(100% - 2px) !important; padding: 0 6px !important; }
+.rt-rev { font-weight: 700; color: #c00000; text-align: center; }

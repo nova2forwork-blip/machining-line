@@ -7,13 +7,15 @@ import "./i18n-release.js";
 //   + ASSEMBLY (แผง) แยกไว้ท้าย (ที่อยู่ / Unit / ปล่อยในล็อตไหน)
 // ══════════════════════════════════════════════════════════════════════════
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
+import { revLetter, otherOf, partGroupsOf, UNCAT, PART_CATS, QR_CATS, NC, ncmp, nf, nlen, findKey, isStar, SHEETS, TOTALS, MAT_SHEETS, PART_DESTS, PROCS, procList, cutMaterials, knownInvs, addrKey, KERF, destLabel, CAT_DEST, hwIssuedOf, floorKey, floorsOf, nextModNo, modVer } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT, PartGroupBar, MatEdit, LotTag } from "./releaseUi.jsx";
 import { getSession } from "../auth.js";
 import { askConfirm } from "../confirm.jsx";
 import { BomView, rowsOfType } from "./ReleaseBom.jsx";
 import { useBomEdit } from "./bomEdit.jsx";
 import { XTable } from "./xtable.jsx";
+// Rev ของแบบที่ใช้อยู่ = ตัวอักษรท้ายเบอร์ ("MAL132-5001 B" → B) · ไม่มี → Rev ที่อ่านได้จากหัวกระดาษ
+const revOf = (r) => revLetter(r.code) || String(r.rev || "").trim().toUpperCase();
 
 const PAGE = 300;
 const sheetOf = (k) => SHEETS.find((s) => s.k === k) || MAT_SHEETS.find((s) => s.k === k) || { k, tab: k, label: k, th: PART_CATS.includes(k) ? (QR_CATS.has(k) ? "ผลิตเอง · มี QR · ส่งไปใบ MACHINING PART / BENDING / STEEL ได้" : k === "SUB-ASSEMBLY PART" ? "ซับทั้งหมด (รายละเอียดดูที่ Total Sub-Assembly)" : k === "SITE ITEM" ? "รายการเบอร์ * ที่ส่งไปประกอบที่ไซต์" : "ใบเบิก · ไม่มี QR") : "" };
@@ -272,12 +274,13 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       inf.set(r, { hd, left: r.qr ? leftOf(r.code, r.qty) : Math.max(0, Math.round((r.qty - hdQ) * 100) / 100), done: r.qr ? doneOf(r.code) : hdQ, o: otherOf(rel, r.code) }); }
     const K = (r) => ({ ...r, kind: r.k === "hw" ? "hw" : "part" });
     // ★ 2026-11-12 (เล็กน้อย): "ปล่อยแล้ว" กับ "เหลือ" (ที่ office ดูบ่อยสุด) มาต่อจาก TOTAL QTY — เดิมอยู่ขวาสุด ต้องเลื่อนแนวนอน · ลากจัดเองได้เหมือนเดิม (↺ = กลับลำดับนี้)
-    const P_ORDER = ["chk", "no", "code", "d", "l", "qty", "left", "done", "inv", "used", "cat", "rem"];
+    const P_ORDER = ["chk", "no", "code", "rev", "d", "l", "qty", "left", "done", "inv", "used", "cat", "rem"];
     const pCols = [
       { k: "chk", h: <Chk keys={all.filter(pickable).map((r) => r.code)} set={pickP} tog={tP} label="เลือกทั้งหมดที่แสดง" />, th: { style: { width: 34 } }, td: (r) => <td>{r.qr ? <input type="checkbox" checked={pickP.has(r.code)} disabled={!pickable(r)} onChange={(e) => tP([r.code], e.target.checked)} aria-label={`เลือก ${r.code}`} /> : null}</td> },
       { k: "no", h: "NO.", th: { className: "r" }, td: (r, i) => <td className="r rw-num">{i + 1}</td>, sort: (r) => idxP.get(r) },
       { k: "code", h: "CODE", sort: (r) => r.code, td: (r, i) => <td className="rw-mono">{E(K(r), "rc", "p" + i, <Code code={r.code} cancel={!!r.cancelled} added={/^จากแบบ /.test(String(r.added || "")) ? null : r.added} />)}{isStar(r.code) ? <> <Pill tone="warn">*</Pill></> : r.siteQty ? <> <Pill tone="warn" title={`${nf(r.siteQty)} ชิ้นในจำนวนนี้เป็น Site Item ส่งไซต์ · เพิ่ม${r.added ? " " + r.added : "จากแบบ"}`}>Site +{nf(r.siteQty)}</Pill></> : /^จากแบบ /.test(String(r.added || "")) ? <> <Pill tone="info" title={`เพิ่ม ${r.added}`}>+ เพิ่ม</Pill></> : null}</td>,
         foot: () => <td><b>รวม {nf(live.length)} เบอร์</b> <span className="small">· QR {nf(live.filter((r) => r.qr).length)} · ใบเบิก {nf(live.filter((r) => !r.qr).length)}{all.length - live.length ? <span className="rl-cxq"> · ยกเลิก {all.length - live.length}</span> : null}</span></td> },
+      { k: "rev", h: "REV.", th: { className: "c" }, sort: (r) => revOf(r), td: (r) => <td className="c rt-rev" title={revOf(r) ? `แบบที่ใช้ตอนนี้: Rev ${revOf(r)}` : "เบอร์นี้ไม่มี Rev ต่อท้าย"}>{revOf(r) || <span className="rw-muted">—</span>}</td> },
       { k: "d", h: "DESCRIPTION", sort: (r) => r.d, td: (r, i) => <td className="rl-desc">{E(K(r), "d", "p" + i, <span>{r.d}</span>)}</td> },
       { k: "l", h: "LENGTH", th: { className: "r" }, sort: (r) => r.l ?? -1, td: (r, i) => <td className="r rw-num">{E({ ...r, kind: r.qr ? "part" : r.k === "hw" ? "hw" : "part" }, "l", "p" + i, <>{r.lOrig != null && r.lOrig !== r.l ? <><s className="rl-old" title={`ความยาวเดิม · เปลี่ยนใน ${r.lenVer || "Modify"}`}>{nlen(r.lOrig)}</s> </> : null}{nlen(r.l)}</>)}</td> },
       { k: "qty", h: "TOTAL QTY", th: { className: "r" }, sort: (r) => r.qty, td: (r, i) => <td className="r">{fq && !r.cancelled && !(r.u === "m." && r.mm) ? fqCell(r) : r.qr ? E({ ...r, kind: "part" }, "tq", "p" + i, <ModQty orig={r.orig} cur={r.qty} ver={r.modVer} cancel={!!r.cancelled} />) : <><b>{nlen(Math.round(r.qty * 100) / 100)}</b> <small className="rw-muted">{r.uom}</small></>}</td>,
@@ -310,6 +313,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       { k: "code", h: "CODE", sort: (s) => s.code, td: (s, i) => <td className="rw-mono">{E(S(s), "rc", "s" + i, <Code code={s.code} cancel={!!s.cancelled} added={s.added} />)}</td>,
         kid: (k, s, j) => <td className="rw-mono"><span className="rt-kid-ic">└</span>{E(k, "code", s.code + "k" + j, k.c)}{k.t === "sub" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>,
         foot: () => <td><b>รวม {nf(live.length)} เบอร์</b>{rows.length - live.length ? <span className="rl-cxq small"> · ยกเลิก {rows.length - live.length}</span> : null}</td> },
+      { k: "rev", h: "REV.", th: { className: "c" }, sort: (s) => revOf(s), td: (s) => <td className="c rt-rev">{revOf(s) || <span className="rw-muted">—</span>}</td>, kid: (k) => <td className="c rt-rev">{revOf({ code: k.c }) || ""}</td> },
       { k: "d", h: "DESCRIPTION", sort: (s) => s.d, td: (s, i) => <td className="rl-desc">{E(S(s), "d", "s" + i, <span>{s.d}</span>)}</td>, kid: (k, s, j) => <td className="rl-desc">{E(k, "d", s.code + "k" + j, <span>{k.d}</span>)}</td> },
       { k: "l", h: "LENGTH (mm.)", th: { className: "r" }, sort: (s) => s.l ?? -1, td: (s, i) => <td className="r rw-num">{E(S(s), "l", "s" + i, nlen(s.l))}</td>, kid: (k, s, j) => <td className="r rw-num">{E(k, "l", s.code + "k" + j, nlen(k.l))}</td> },
       { k: "qty", h: "SUB QTY.", th: { className: "r" }, sort: (s) => s.qty, td: (s, i) => <td className="r">{fq && !s.cancelled ? fqCell(s) : E(S(s), "tq", "s" + i, <ModQty orig={s.orig} cur={s.qty} ver={s.modVer} cancel={!!s.cancelled} />)}</td>, kid: (k, s) => <td className="r rw-num">{nlen(qOf(s))}</td>,
