@@ -19,6 +19,28 @@ import "./i18n-release.js";   // คำแปลอังกฤษของห�
 const DRAFT_KEY = "mls.relwiz.draft.v1";
 const STEPS = ["สร้าง Release", "Address & Unit", "อัพ PDF แผง", "ตรวจ + บันทึก"];
 const SUB_SHORT = { "พับ": "พับ", "เชื่อม": "เชื่อม", "ยิง": "ยิง", "Site Item": "Site Item" };
+// ★ 2026-11-18 ใบปะหน้า → เบอร์ปล่อยตรง (picks): ซับก่อน แล้วพาร์ท "เฉพาะส่วนที่ยังขาด"
+//   ใบจริง (P-005) เขียนทั้งซับ ×2 และพาร์ท ×2 "part สั่งผลิต" ซึ่งพาร์ทพวกนั้นเป็นลูกของซับอยู่แล้ว → หยิบทั้งคู่ตรง ๆ = พาร์ทเบิ้ลเป็น 4
+//   base = แผนที่ไม่มี picks (แผง + BOM) · skip(code) = เบอร์ที่ไม่ต้องหยิบ (เช่น ถือเป็นอุปกรณ์แล้ว) · คืน { picks, hw }
+function picksFromOrder(order, bom, base, skip = () => false) {
+  const picks = []; const hw = [];
+  const qOf = (need, list, code) => { let q = 0; for (const x of need[list] || []) if (!x.cancelled && (NC(x.code) === NC(code) || baseOf(x.code) === baseOf(code))) q += Number(x.qty) || 0; return q; };
+  const items = (order && order.items) || [];
+  const n0 = needOf({ v: 1, units: [], ...base, bom });
+  for (const it of items) {
+    const q = Number(it.qty) || 0; if (!(q > 0) || skip(it.code) || orderItemKind(it) === "panel") continue;
+    const sk = findKey(bom.subs, it.code); if (!sk) continue;
+    const add = q - qOf(n0, "subs", sk); if (add > 0) picks.push({ code: sk, kind: "sub", qty: add });
+  }
+  const n1 = picks.length ? needOf({ v: 1, units: [], ...base, bom, picks }) : n0;
+  for (const it of items) {
+    const q = Number(it.qty) || 0; if (!(q > 0) || skip(it.code) || orderItemKind(it) === "panel" || findKey(bom.subs, it.code)) continue;
+    const pk = findLatest(bom.parts, it.code) || findKey(bom.parts, it.code);
+    if (pk) { if (bom.parts[pk].k === "hw") { hw.push(it.code); continue; } const add = q - qOf(n1, "parts", pk); if (add > 0) picks.push({ code: pk, kind: "part", qty: add }); continue; }
+    if (/^(HP|R&D)/i.test(it.code)) hw.push(it.code);
+  }
+  return { picks, hw };
+}
 const EMPTY_LIB = { panels: {}, subs: {}, parts: {} };
 const NONE = [];   // อาร์เรย์ว่างตัวเดียว (ref คงที่ — ไม่ทำให้ useMemo คำนวณใหม่ทุกครั้ง)
 const todayYmd = () => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
@@ -138,9 +160,16 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const cv = useMemo(() => coverage(units, bom, pdfs, catOf), [units, bom, pdfs, catOf]);
   const roNorm0 = normalizeRO(hdr.ro);
   const orderExtra = useMemo(() => (order ? orderHw.map((c) => { const it = order.items.find((x) => NC(x.code) === NC(c)); return it ? { kind: "hw", code: it.code, qty: Number(it.qty) || 0, d: it.d || "", u: it.unit && /^m/.test(it.unit) ? "m." : "pcs.", src: order.ro || order.file, by: userName } : null; }).filter(Boolean) : []), [order, orderHw, userName]);
-  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : {}),
+  // ★ 2026-11-18 sim-test R1: ปล่อยแผงที่แบบแผงเป็น "MARKING DRAWING" (ไม่มี BILL OF MATERIALS — เช่น P-005: MTG01-5001) แผงไม่มีลูก
+  //   แต่ใบปะหน้าระบุซับ / พาร์ทของรอบนั้นไว้พร้อมจำนวน → เบอร์ในใบปะหน้าที่เป็นซับ / พาร์ท และ "ไม่ได้อยู่ในแผงใดของใบ" ให้ดึงจากคลังของโปรเจค
+  //   เป็นเบอร์ปล่อยตรง (picks) ตามจำนวนในใบ — แบบเดียวกับโหมด "ปล่อยเฉพาะซับ / พาร์ท" (เดิม: ขึ้น "ยังไม่อยู่ในใบ 7 เบอร์" + ปล่อยแล้วได้ QR แค่ตัวแผง)
+  const orderPicks = useMemo(() => {
+    if (itemsMode || !order || !units.length) return [];
+    return picksFromOrder(order, bom, { units, catOv, procOv, destOv, ...partCfg }, (c) => orderHw.some((h) => NC(h) === NC(c))).picks;
+  }, [itemsMode, order, units, bom, catOv, procOv, destOv, partCfg, orderHw]);
+  const draftPlan = useMemo(() => ({ v: 1, ro: roNorm0, projectId: hdr.projectId, projectCode: project?.code || "", date: hdr.date, note: hdr.note, mod: hdr.mod, by: userName, units, bom, catOv, procOv, destOv, ...partCfg, ...(itemsMode ? { mode: "items", picks } : orderPicks.length ? { picks: orderPicks } : {}),
     ...(order ? { order: { file: order.file, ro: order.ro, roRaw: order.roRaw, projectCode: order.projectCode, zone: order.zone, note: order.note, attention: order.attention, issuedBy: order.issuedBy, date: order.date, items: order.items } } : {}), ...(orderExtra.length ? { extra: orderExtra } : {}) }),
-    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg, itemsMode, picks, order, orderExtra]);
+    [roNorm0, hdr.projectId, project?.code, hdr.date, hdr.note, hdr.mod, userName, units, bom, catOv, procOv, destOv, partCfg, itemsMode, picks, orderPicks, order, orderExtra]);
 
   const plan = useMemo(() => { const p = needOf(draftPlan); p.subs.forEach((s) => { s.proc = s.procs.join(", "); }); return p; }, [draftPlan]);   // ยอดทั้งใบ + ใบงานต่อเบอร์
   // เทียบใบปะหน้ากับของที่จะอยู่ในใบ (แผง / ซับ / พาร์ท / อุปกรณ์)
@@ -164,13 +193,14 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ★ 2026-10-16: รวมเบอร์ซับ/พาร์ทที่ "อยู่ใน BOM ของ PDF แผง" ด้วย — เดิมโหลดเฉพาะซับที่ไล่ได้จากแผงเดิมในระบบ แผงใหม่เลยไม่เห็นซับในคลัง
   const [libTick, setLibTick] = useState(0);   // กด "โหลดใหม่" หลังเพิ่มซับที่หน้า ซับ/พาร์ท ของโปรเจค
   const libCodes = [...new Set([...cnt.map((c) => c.unit), ...pdfs.filter((d) => d.kind === "sub" || d.kind === "panel").flatMap((d) => [d.code, ...(d.bom || []).map((b) => NC(b.code))])])].filter(Boolean).sort();
-  const libKey = hdr.projectId + "|" + (itemsMode ? "ALL" : libCodes.join(",")) + "|" + libTick;
+  const libAll = itemsMode || (!!order && order.items.some((it) => orderItemKind(it) !== "panel"));
+  const libKey = hdr.projectId + "|" + (libAll ? "ALL" : libCodes.join(",")) + "|" + libTick;
   const libReq = useRef("");
   useEffect(() => {
     if (step < (itemsMode ? 1 : 2) || !hdr.projectId || libReq.current === libKey) return;
     libReq.current = libKey;
     setLibState({ s: "loading", key: libKey });
-    const codes = itemsMode ? null : libCodes;   // โหมด items = โหลดทั้งคลัง (ไว้ให้เลือก)
+    const codes = libAll ? null : libCodes;   // โหมด items / ใบปะหน้ามีซับ-พาร์ท = โหลดทั้งคลัง
     api.loadBomLibrary(hdr.projectId, codes, undefined, { fallback: true })   // ★ 2026-11-12 ยังไม่มีในคลังตึกนี้ = ใช้ของตึกอื่นที่รหัสเดียวกัน
       .then((l) => { if (libReq.current === libKey) {
         setLib(l); setLibState({ s: "ok", key: libKey });
@@ -268,7 +298,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       if (!hdr.projectId && o.projectCode) {
         const pc = NC(o.projectCode); const full = NC(o.projectFull || "");
         const hit = projects.filter((p) => { const c = NC(p.code); return c === full || c === pc || c.startsWith(pc + "-") || c.startsWith(pc); });
-        if (hit.length === 1) patch.projectId = hit[0].id;
+        if (hit.length === 1) { patch.projectId = hit[0].id; autoPid.current = hit[0].id; }
         else if (hit.length > 1) multiHit = hit;
       }
       if (o.zone && !hdr.note.trim()) patch.note = o.zone;
@@ -299,10 +329,15 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   // ★ 2026-11-17 ผู้ใช้: "ใช่ เก็บให้เอง" — ปล่อยแผง แล้ววางแบบซับ / พาร์ทมาด้วย (เช่น P-005: MARKING + PART + SUB) → เก็บเข้าคลังของโปรเจคให้เลย
   //   (เดิม: "ไม่ได้ใส่ — ลงที่หน้า ซับ / พาร์ท ของโปรเจคก่อน") · รอคลังโหลดเสร็จก่อนเสมอ (กันบันทึกทับคลังด้วยคลังว่าง) · ต้องเลือกโปรเจคก่อน
   const [libQueue, setLibQueue] = useState([]);
+  // ★ 2026-11-18 sim-test R2: โปรเจคที่ "ระบบเลือกให้เอง" จากใบปะหน้า หรือโปรเจคที่เปลี่ยนหลังวางแบบ → ห้ามเก็บแบบเข้าคลังเองโดยไม่ถาม
+  //   (เดิม: วางแบบตอนยังไม่เลือกโปรเจค แล้ววางใบปะหน้า A10042 → ระบบเลือก A10042-US เอง แล้วเก็บแบบลงคลังของโปรเจคนั้นทันที)
+  //   libPid = โปรเจคที่ผู้ใช้อนุญาตให้เก็บเอง: (ก) โปรเจคที่ผู้ใช้เลือกเองอยู่แล้วตอนวางแบบ (ข) กดปุ่ม "เก็บเข้าคลังของโปรเจคนี้"
+  const [libPid, setLibPid] = useState("");
+  const autoPid = useRef("");   // โปรเจคที่ระบบเลือกให้จากใบปะหน้า (ผู้ใช้ยังไม่ได้ยืนยัน)
   const [libSave, setLibSave] = useState(null);   // { msg } | { ok, warn } | { err }
   const libBusy = useRef(false);
   useEffect(() => {
-    if (!libQueue.length || libBusy.current || !project) return;
+    if (!libQueue.length || libBusy.current || !project || libPid !== project.id) return;
     const queue = libQueue; libBusy.current = true;
     (async () => {
       try {
@@ -328,7 +363,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       } catch (e) { setLibSave({ err: "เก็บเข้าคลังไม่สำเร็จ: " + (e?.message || e) }); }
       finally { libBusy.current = false; setLibQueue((q) => q.filter((d) => !queue.includes(d))); }
     })();
-  }, [libQueue, project]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [libQueue, project, libPid]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [pendingPdfs, setPendingPdfs] = useState([]);   // แบบซับ/พาร์ทจาก inbox ที่รอวางในขั้น "เลือกซับ / พาร์ท"
   // ★ 2026-11-12 ใช้ร่วมกัน: ไฟล์จากกล่องรับเอกสาร + ไฟล์ที่วางในช่องใบปะหน้า (ผู้ใช้วางแบบพาร์ทลงช่องนี้ → เดิมขึ้น "อ่านไม่ได้รายการ")
   //   ใบปะหน้า (Excel / PDF ที่ไม่ใช่แบบ) → อ่านเติมหัวใบ · แบบแผง / Site Item → ขั้นอัพ PDF · แบบซับ / พาร์ท → ขั้น "เลือกซับ / พาร์ท" (เก็บเข้าคลัง + เลือกให้)
@@ -355,7 +390,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     if (toPanel) setMode("panel");
     const toItems = subpart.length && !panelish.length && !units.length && !pdfsRaw.length && !sheetPanel;   // 2026-11-17: panel PDFs already dropped -> stay in panel mode
     if (subpart.length && (toItems || imEff)) { setPendingPdfs(subpart.map((d) => d._file).filter(Boolean)); if (!imEff) setMode("items"); }
-    else if (subpart.length) { setLibSave(null); setLibQueue((q) => { const names = new Set(subpart.map((d) => d.file)); return [...q.filter((d) => !names.has(d.file)), ...subpart]; }); }
+    else if (subpart.length) { setLibSave(null); if (hdr.projectId && hdr.projectId !== autoPid.current) setLibPid(hdr.projectId); setLibQueue((q) => { const names = new Set(subpart.map((d) => d.file)); return [...q.filter((d) => !names.has(d.file)), ...subpart]; }); }
     if (drawings.length) {
       const codes = (xs) => `${xs.slice(0, 4).map((d) => d.code).join(", ")}${xs.length > 4 ? " …" : ""}`;
       const lines = [
@@ -568,7 +603,11 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
           {orderMsg ? <div className={`rw-msg ${orderMsg.bad ? "bad" : orderMsg.info ? "info" : "ok"}`} style={{ marginBottom: 10 }}>{orderMsg.bad || orderMsg.info || orderMsg.ok.map((t, i) => <div key={i}>{/^⚠/.test(String(t)) ? t : <>✓ {t}</>}</div>)} {orderMsg.ok || orderMsg.bad ? <button type="button" className="rw-link" onClick={() => setOrderMsg(null)}>ปิด</button> : null}</div> : null}
           {libSave || libQueue.length ? <div className={`rw-msg ${libSave && libSave.err ? "bad" : libSave && libSave.ok ? "ok" : "info"}`} style={{ marginBottom: 10 }} data-testid="lib-save-msg">
             {libSave && libSave.err ? `✗ ${libSave.err}` : libSave && libSave.ok ? <>✓ {libSave.ok}{libSave.warn ? <div className="small">⚠ {libSave.warn}</div> : null}</> : libSave && libSave.msg ? libSave.msg
-              : !project ? `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง — เลือกโปรเจคก่อน` : `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง…`}
+              : !project ? `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง — เลือกโปรเจคก่อน`
+              : libPid !== project.id ? <>แบบซับ / พาร์ท <b>{libQueue.length}</b> ไฟล์ ({libQueue.slice(0, 4).map((d) => d.code).join(", ")}{libQueue.length > 4 ? " …" : ""}) ยังไม่ได้เก็บ — {autoPid.current === project.id ? "ระบบเลือกโปรเจคนี้ให้จากใบปะหน้า" : "โปรเจคถูกเปลี่ยนหลังวางแบบ"} ตรวจว่าถูกโปรเจคก่อน:{" "}
+                  <button type="button" className="btn btn-accent btn-sm" data-testid="lib-confirm" onClick={() => { autoPid.current = ""; setLibPid(project.id); }}>เก็บเข้าคลังของ {project.code}{project.name ? ` — ${project.name}` : ""}</button>{" "}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLibQueue([])}>ไม่เก็บ</button></>
+              : `แบบซับ / พาร์ท ${libQueue.length} ไฟล์รอเก็บเข้าคลัง…`}
             {libSave && (libSave.ok || libSave.err) ? <> <button type="button" className="rw-link" onClick={() => setLibSave(null)}>ปิด</button></> : null}
           </div> : null}
           <div className="rw-mode" role="radiogroup" aria-label="โหมดการปล่อยงาน">
@@ -590,7 +629,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
             <div className={`field ${roTouched && !hdr.projectId ? "fld-err" : ""}`}>
               <div className="label-el">โปรเจค *</div>
               <div className="rw-inline">
-                <select className="select" value={hdr.projectId} onChange={(e) => setHdr({ ...hdr, projectId: e.target.value })}>
+                <select className="select" value={hdr.projectId} onChange={(e) => { autoPid.current = ""; setHdr({ ...hdr, projectId: e.target.value }); }}>
                   <option value="">— เลือกโปรเจค —</option>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
                 </select>
@@ -1044,14 +1083,7 @@ function PicksStep({ project, picks, setPicks, bom, lib, libState, catOf, onRelo
   // ★ 2026-11-10 เลือกตามใบปะหน้า: ซับ/พาร์ท (QR) ที่มีในคลัง → เลือกให้ตามจำนวน · ที่เป็นสกรู/ยางในคลัง (hw) → ติ๊กเป็นอุปกรณ์ให้ · ที่ไม่มีในคลัง → แดง รอวาง PDF หรือติ๊กอุปกรณ์เอง
   const applyOrder = () => {
     if (!order) return;
-    const add = []; const hw = [];
-    for (const it of order.items) {
-      const q = Number(it.qty) || 0; if (!(q > 0)) continue;
-      const sk = findKey(bom.subs, it.code); if (sk) { add.push({ code: sk, kind: "sub", qty: q }); continue; }
-      const pk = findLatest(bom.parts, it.code) || findKey(bom.parts, it.code);
-      if (pk) { if (bom.parts[pk].k === "hw") hw.push(it.code); else add.push({ code: pk, kind: "part", qty: q }); continue; }
-      if (/^(HP|R&D)/i.test(it.code)) hw.push(it.code);
-    }
+    const { picks: add, hw } = picksFromOrder(order, bom, {});   // ซับก่อน · พาร์ทเฉพาะส่วนที่ยังขาด (ไม่เบิ้ลกับลูกของซับ)
     if (add.length) setPicks((old) => { const have = new Map(old.map((p) => [key(p.kind, p.code), p])); for (const a of add) have.set(key(a.kind, a.code), { ...(have.get(key(a.kind, a.code)) || {}), ...a }); return [...have.values()]; });
     if (hw.length) setOrderHw((xs) => [...xs.filter((x) => !hw.some((h) => NC(h) === NC(x))), ...hw]);
   };

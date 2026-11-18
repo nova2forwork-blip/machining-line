@@ -532,7 +532,8 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     const left = leftOf(code, needQty); const before = m.get(code) || 0;
     const nx = Math.max(0, Math.min(left, Number(v) || 0));
     if (nx > 0) m.set(code, nx); else m.delete(code);
-    if (kind === "sub" && viaToggle) addPulled(s, null, new Map([[code, Math.abs(nx - before)]]), nx > before ? 1 : -1);
+    // ★ 2026-11-18 sim-test R3: แก้ "จำนวนที่ปล่อย" ของซับในช่องพิมพ์ ลูกต้องตามด้วย (เดิมตามเฉพาะตอนติ๊ก → ติ๊กซับ 2 SET แล้วแก้เป็น 1 ลูกยังออกเท่า 2 SET)
+    if (kind === "sub" && nx !== before) addPulled(s, null, new Map([[code, Math.abs(nx - before)]]), nx > before ? 1 : -1);
     return s;
   });
   const selectAllVisible = (on) => {
