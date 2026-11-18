@@ -2,7 +2,8 @@
 //   ตารางที่กำหนด title / tip เองแล้ว (BOM · ของในใบ · กล่องปล่อยล็อต · ความคืบหน้า) ไม่ถูกแตะ — ตัวนี้เติมให้หัวที่ยังไม่มีเท่านั้น
 //   หน้าเครื่อง (Station — ใช้บน iPad ชี้เมาส์ไม่ได้) ไม่ทำ · ใบพิมพ์ไม่ทำ
 //   เพิ่ม / แก้คำอธิบาย: แก้ที่ TIPS ด้านล่าง (คีย์ = ข้อความหัวคอลัมน์ ไม่สนตัวพิมพ์เล็ก-ใหญ่) · หัวที่ยังไม่มีคำอธิบายดูได้จาก window.__thMissing()
-import { getLang, translateText } from "./i18n-dom.js";
+import { getLang, translateText, registerI18n } from "./i18n-dom.js";
+import { TIPS_EN, EN_HEAD_ALIAS } from "./th-tips-en.js";
 
 const TIPS = {
   // ── ทั่วไป ──
@@ -217,6 +218,11 @@ const TIPS = {
 const norm = (s) => String(s || "").replace(/[⠿↕▲▼↺▾▴]/g, "").replace(/\s+/g, " ").trim();
 const KEYED = new Map(Object.entries(TIPS).map(([k, v]) => [k.toUpperCase(), v]));
 const GENERIC = /^(กดเพื่อเรียง|ลากที่จับ|Click to sort|Drag ⠿)/;
+// ★ 2026-11-18 โหมด EN: ข้อความหัวตารางถูกแปลเป็นอังกฤษแล้ว → หาคำอธิบายจาก "หัวตารางฉบับแปล" ด้วย · คำอธิบายใช้ฉบับอังกฤษ (TIPS_EN)
+registerI18n({ dict: TIPS_EN });
+let keyedEn = null;
+const enKeys = () => { if (!keyedEn) { keyedEn = new Map(); for (const [k, v] of Object.entries(TIPS)) { const e = norm(translateText(k)).toUpperCase(); if (e && !keyedEn.has(e)) keyedEn.set(e, v); } for (const [e, k] of Object.entries(EN_HEAD_ALIAS)) { const v = KEYED.get(k.toUpperCase()); if (v) keyedEn.set(e, v); } } return keyedEn; };
+const tipOf = (t) => { const k = t.toUpperCase(); const en = getLang() === "en"; const tip = KEYED.get(k) || (en ? enKeys().get(k) : null); if (!tip) return null; return en ? TIPS_EN[tip] || translateText(tip) : tip; };
 // ตารางที่ไม่ทำ: หน้าเครื่อง (คลาส stn-…) · ใบพิมพ์
 const SKIP = '[class^="stn"], [class*=" stn-"], .lot-sheet, .print-only, [data-no-thtips]';
 
@@ -225,7 +231,7 @@ function apply(root) {
   for (const th of ths) {
     if (th.closest(SKIP)) continue;
     const t = norm(th.textContent); if (!t || t.length > 40) continue;
-    const tip = KEYED.get(t.toUpperCase());
+    const tip = tipOf(t);
     if (tip) { th.setAttribute("title", tip); th.setAttribute("data-thtip", "1"); }
   }
   // ตารางที่ลากสลับคอลัมน์ได้ (DataTable): หัวมี title ทั่วไปอยู่แล้ว ("กดเพื่อเรียง · ลากที่จับ ⠿ …") → เอาคำอธิบายขึ้นก่อน แล้วตามด้วยข้อความเดิม
@@ -233,10 +239,8 @@ function apply(root) {
     if (th.closest(SKIP)) continue;
     const cur = th.getAttribute("title") || ""; if (!GENERIC.test(cur)) continue;   // มี title เฉพาะของคอลัมน์ / ใส่คำอธิบายไปแล้ว
     const t = norm(th.textContent); if (!t || t.length > 40) continue;
-    const tip = KEYED.get(t.toUpperCase());
-    if (!tip) continue;
-    // ★ 2026-11-18 โหมด EN: title ทั่วไปเป็นอังกฤษอยู่แล้ว → ใส่คำอธิบายเป็นอังกฤษ (แปลไม่ได้ = ไม่ใส่ ไม่ให้ขึ้นไทยปนอังกฤษ)
-    if (getLang() === "en") { const en = translateText(tip); if (en && !/[฀-๿]/.test(en)) th.setAttribute("title", `${en} · ${cur}`); continue; }
+    const tip = tipOf(t);
+    if (!tip || (getLang() === "en" && /[฀-๿]/.test(tip))) continue;   // โหมด EN: ไม่มีคำแปล = ไม่ใส่ (ไม่ให้ขึ้นไทยปนอังกฤษ)
     th.setAttribute("title", `${tip} · ${cur}`);
   }
 }
