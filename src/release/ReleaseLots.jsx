@@ -1677,7 +1677,6 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
             <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
           </div>
           {/* ★ 2026-11-17 ผู้ใช้: "รายละเอียดทำไมมีแค่ 6 ทั้งที่ทั้งหมดมี 66" — กดแถวเบอร์ในตารางแล้วเปิดมา = กรองเฉพาะเบอร์นั้น แต่ไม่มีอะไรบอก → บอกให้ชัด + ปุ่มดูทั้งหมด */}
-          {only ? <div className="rw-msg info rl-pp-flt" role="status">กำลังดูเฉพาะเบอร์ <b>{only}</b> — ตัวเลขทั้งหน้านี้เป็นของเบอร์นี้เท่านั้น ({nf(data.qty)} ชิ้น · {nf(data.lots.length)} ล็อต)</div> : null}
           <div className="rl-pp-tw"><table className="rl-pp-t">
             <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>
             <tbody>{rows.map((x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
