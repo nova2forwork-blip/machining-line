@@ -383,3 +383,62 @@ def test_issued_hardware_counts_glass(js):
     ])[2]
     m = dict(out["$map"])
     assert m["GL-01"]["qty"] == 2 and m["HP-001"]["qty"] == 20
+
+
+# ── Site Item ไม่มี INV (sim-test 2026-11-18) ──
+@R
+def test_inv_filled_from_released_rows(js):
+    """TC-PLAN-090 พาร์ทที่ใบไม่รู้ INV (Site Item เพิ่มจากแบบ) แต่แถวที่ปล่อยแล้วมีวัสดุ → Total Mat. ต้องรู้ INV"""
+    p = plan_of(extra=[{"code": "MMT004-002 A", "kind": "part", "qty": 1, "l": 652, "inv": "", "cat": "SITE ITEM", "dest": "CUTTING"}])
+    r = rel("P-900.1", "MMT004-002 A", 1)
+    r["material"] = "mt004480d"
+    out = js.steps([
+        {"fn": "needOf", "args": [p]},
+        {"fn": "releasedOf", "args": [[r], p]},
+        {"fn": "fillInvFromReleased", "args": [{"$ref": 0}, {"$ref": 1}, p]},
+    ])
+    assert row(js("needOf", p)["parts"], "MMT004-002 A")["inv"] == ""      # ก่อนเติม (เรียกแยก — ขั้นเติมแก้ค่าในก้อนเดิม)
+    x = row(out[2]["parts"], "MMT004-002 A")
+    assert (x["inv"], x["invSrc"]) == ("MT004480D", "released")
+    mats = js("cutMaterials", out[2]["parts"])
+    assert any(m["inv"] == "MT004480D" and m["pcs"] == 1 for m in mats)
+
+
+@N
+def test_inv_from_released_does_not_override_plan_inv(js):
+    """TC-PLAN-091 เบอร์ที่ใบรู้ INV อยู่แล้ว → ไม่ถูกทับด้วยวัสดุของแถวที่ปล่อย · แถวที่ยกเลิกไม่ใช้"""
+    p = plan_of(extra=[{"code": "MMT004-003 A", "kind": "part", "qty": 1, "inv": ""}])
+    a = rel("P-900.1", "HZ02-025", 5)
+    a["material"] = "OTHER600C"
+    b = rel("P-900.1", "MMT004-003 A", 1, cancelled="2026-11-18")
+    b["material"] = "MT004480D"
+    out = js.steps([
+        {"fn": "needOf", "args": [p]},
+        {"fn": "releasedOf", "args": [[a, b], p]},
+        {"fn": "fillInvFromReleased", "args": [{"$ref": 0}, {"$ref": 1}, p]},
+    ])[2]
+    assert row(out["parts"], "HZ02-025")["inv"] == "23HZ02600C"
+    assert row(out["parts"], "MMT004-003 A")["inv"] == ""
+
+
+@P
+def test_added_part_takes_inv_from_plan_library(js):
+    """TC-PLAN-092 เบอร์ที่เพิ่มโดยไม่ใส่ INV แต่คลังของใบรู้วัสดุ → ใช้วัสดุจากคลังของใบ"""
+    p = plan_of(extra=[{"code": "HZ77-001", "kind": "part", "qty": 2, "inv": ""}])
+    p["bom"]["parts"]["HZ77-001"] = {"d": "X", "l": 500, "m": "23HZ77600C", "k": "part"}
+    assert row(js("needOf", p)["parts"], "HZ77-001")["inv"] == "23HZ77600C"
+
+
+# ── Modify: ลูกใหม่ที่เป็นอุปกรณ์ (แบบ MARKING) ──
+@R
+def test_bom_edit_add_hardware_child_has_no_qr(js):
+    """TC-PLAN-095 เพิ่มสกรูเป็นลูกของแผงผ่าน Modify → เข้าใบเบิกอุปกรณ์ ไม่กลายเป็นพาร์ทมี QR"""
+    p = plan_of()
+    edits = [{"scope": "panel", "owner": "UA1001", "type": "add", "kind": "hw", "code": "HP-777", "qty": 4, "d": "SCREW", "u": "pcs."},
+             {"scope": "panel", "owner": "UA1001", "type": "add", "kind": "part", "code": "HZ88-001", "qty": 1, "d": "NEW PART"},
+             {"scope": "panel", "owner": "UA1001", "type": "add", "kind": "sub", "code": "MSA101-5001", "qty": 2}]
+    bom = js("applyBomEdits", p["bom"], edits, "M-001")
+    assert bom["parts"]["HP-777"]["k"] == "hw" and bom["parts"]["HZ88-001"]["k"] == "part"
+    n = js("needOf", {**p, "bom": bom})
+    assert qty(n["hw"])["HP-777"] == 12 and "HP-777" not in qty(n["parts"])
+    assert qty(n["parts"])["HZ88-001"] == 3 and qty(n["subs"])["MSA101-5001"] == 6

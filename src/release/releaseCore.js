@@ -1191,6 +1191,20 @@ export function releasedOf(releases, plan) {
   }
   return { lots: [...lots.values()].sort((a, b) => lotOf(a.no) - lotOf(b.no)), byCode, addrLot, other };
 }
+// ★ 2026-11-18 sim-test: Site Item ที่เพิ่มจากแบบ mock-up (plan.extra) ไม่มี INV ในใบ → Total Mat. ขึ้น "ไม่มี INV" ทั้งที่ตอนปล่อยล็อตใส่วัสดุไว้แล้ว
+//   พาร์ทที่ใบไม่รู้ INV → ใช้วัสดุของแถวที่ปล่อยแล้วของเบอร์นั้นในใบนี้ (ล็อตล่าสุดที่มีค่า · ไม่นับแถวที่ยกเลิก) · invSrc = "released" ไว้บอกที่มา
+export function fillInvFromReleased(need, rel, plan = null) {
+  const mat = new Map();
+  for (const L of (rel && rel.lots) || []) for (const r of L.rows || []) { const m = String(r.material || "").trim().toUpperCase(); if (r.kind === "part" && !r.mod_cancelled_at && m && m !== "-") mat.set(NC(r.code), m); }
+  if (!mat.size) return need;
+  for (const p of need.parts || []) {
+    if (String(p.inv || "").trim()) continue;
+    const m = mat.get(NC(p.code)); if (!m) continue;
+    p.inv = m; p.invSrc = "released";
+    if (!(Number(p.ml) > 0) && plan && plan.projectId) { const v = matLenOf(plan.projectId, m); if (v) { p.ml = v; p.mlSrc = "material"; } }
+  }
+  return need;
+}
 // ของเบอร์นี้ที่ปล่อยไว้แล้วใน Release อื่น (ใช้เป็นลูก) → { qty, ros } หรือ null
 export function otherOf(rel, code) {
   const e = rel && rel.other && rel.other.get(NC(code)); return e && e.qty > 0 ? e : null;
@@ -1256,7 +1270,7 @@ export function needOf(plan) {
       if (ex) { ex.qty += Number(x.qty) || 0; ex.added = ex.added || addTag(x); ex.extraQty = (ex.extraQty || 0) + (Number(x.qty) || 0); }
       else p.hw.push({ code: x.code, qty: Number(x.qty) || 0, cat: "FASTENER & GASKET", base: "FASTENER & GASKET", k: "hw", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", ml: null, u: x.u || "pcs.", mm: false, rev: "", added: addTag(x) });
     }
-    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || "", u: "", mm: false, rev: "", added: addTag(x) });
+    else if (!p.parts.some((s) => NC(s.code) === NC(x.code))) p.parts.push({ code: x.code, qty: x.qty, cat: x.cat || ruleCat(x.code, "part"), base: x.cat && PART_CATS.includes(x.cat) ? x.cat : ruleCat(x.code, "part"), k: "part", d: x.d || "", l: x.l ?? null, h: null, f: "", inv: x.inv || ((plan.bom.parts || {})[findKey(plan.bom.parts, x.code)] || {}).binv || ((plan.bom.parts || {})[findKey(plan.bom.parts, x.code)] || {}).m || "", u: "", mm: false, rev: "", added: addTag(x) });
     else partMerge.push(x);   // ★ 2026-11-09 เบอร์มีอยู่แล้ว (เช่น อยู่ใน BOM แผง) → บวกจำนวนเพิ่ม (เช่น Site Item ส่งไซต์เพิ่มจากแบบ mock-up) — ใส่หลังปรับ adj/cancel
   }
   const adj = plan.adj || {}, cancel = plan.cancel || {};
@@ -1410,9 +1424,10 @@ export function applyBomEdits(bom, edits, ver = "") {
     const o = own(e.scope, e.owner); if (!o) continue;
     const it = o.items[e.idx];
     if (e.type === "add") {
-      const kind = e.kind === "sub" ? "sub" : "part";
+      // ★ 2026-11-18 ลูกใหม่ที่เป็นอุปกรณ์ (สกรู / ยาง จากแบบ MARKING) = hw ไม่มี QR — เดิมทุกอย่างที่ไม่ใช่ซับถูกเพิ่มเป็นพาร์ท (ได้ QR)
+      const kind = e.kind === "sub" ? "sub" : e.kind === "hw" ? "hw" : "part";
       o.items.push([kind, e.code, Number(e.qty) || 0, "", "", ver, null, undefined, "add"]);
-      if (kind === "part" && !findKey(out.parts, e.code)) out.parts[e.code] = { k: "part", d: e.d || "" };
+      if (kind !== "sub" && !findKey(out.parts, e.code)) out.parts[e.code] = kind === "hw" ? { k: "hw", d: e.d || "", u: e.u || "pcs." } : { k: "part", d: e.d || "" };
       continue;
     }
     if (!it) continue;

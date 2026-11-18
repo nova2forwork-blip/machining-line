@@ -11,7 +11,7 @@ import { askConfirm } from "../confirm.jsx";
 import { getSession } from "../auth.js";
 import {
   NC, normalizeRO, ncmp, nf, nlen, inchToMm, suspectLen, staleReleasedRows, findKey, isStar, SHEETS, PART_DESTS, isPartSheet, TOTALS, PROCS, procList, needOf, releasedOf, nextLotNo, lotOf, lotRows, explodeFrom, roKey,
-  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
+  otherOf, bomGaps, pullBomFromPlans, modifyOps, applyModToPlan, bomEditEffects, ruleDest, modVer, nextModNo, lotModMap, addrKey, addrsFromNote, lotMaterials, refreshBomFromLib, sheetKeyOf, markingAsPanel, fillInvFromReleased, ruleCat, QR_CATS, destLabel, readPdfFiles, findLatest, baseOf, hwIssuedOf, CAT_DEST, replayMods } from "./releaseCore.js";
 import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
@@ -28,8 +28,8 @@ const sheetOf = (k) => SHEETS.find((s) => s.k === k) || { k, label: k, th: "" };
 // แผนกับยอดคงเหลือ (ใช้ทั้งหน้า Release และตัวสร้างล็อต)
 function usePlanState(plan, releases) {
   const matVer = useMatLens(plan.projectId);   // ความยาวเส้นจากหน้า บันทึก Material (โหลดเสร็จ → คิดยอด / Total Mat. ใหม่)
-  const need = useMemo(() => needOf(plan), [plan, matVer]);   // eslint-disable-line react-hooks/exhaustive-deps
   const rel = useMemo(() => releasedOf(releases, plan), [releases, plan]);
+  const need = useMemo(() => fillInvFromReleased(needOf(plan), rel, plan), [plan, rel, matVer]);   // eslint-disable-line react-hooks/exhaustive-deps
   const doneOf = (code) => (rel.byCode.get(NC(code)) || { qty: 0 }).qty;
   // เหลือปล่อย = ต้องใช้ − ปล่อยใน Release นี้ − ที่ปล่อยไว้แล้วใน Release อื่น (ใช้เป็นเบอร์ลูก ไม่ปล่อยซ้ำ)
   const leftOf = (code, needQty) => Math.max(0, Math.round((needQty - doneOf(code) - (otherOf(rel, code)?.qty || 0)) * 1000) / 1000);
@@ -836,7 +836,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       else if (v.type === "qty" && String(v.qty).trim() !== "" && Number(v.qty) >= 0 && Number(v.qty) !== it[2]) out.push({ scope, owner, idx: Number(idx), type: "qty", kind: it[0], code: it[1], before: it[2], qty: Number(v.qty), orig });
       else if (v.type === "replace" && String(v.newCode || "").trim() && NC(v.newCode) !== NC(it[1])) out.push({ scope, owner, idx: Number(idx), type: "replace", kind: it[0], code: it[1], before: it[2], newCode: v.newCode.trim().toUpperCase(), qty: String(v.qty ?? "").trim() === "" ? it[2] : Number(v.qty) });
     }
-    for (const a of badds) out.push({ scope: a.scope, owner: a.owner, type: "add", kind: a.kind, code: a.code, qty: Number(a.qty), d: a.d, before: 0 });
+    for (const a of badds) out.push({ scope: a.scope, owner: a.owner, type: "add", kind: a.kind, code: a.code, qty: Number(a.qty), d: a.d, ...(a.u ? { u: a.u } : {}), before: 0 });
     return out;
   }, [bchg, badds, plan]);                       // eslint-disable-line react-hooks/exhaustive-deps
   const bomFx = useMemo(() => (edits.length ? bomEditEffects(plan, edits) : { changes: [], adds: [] }), [plan, edits]);
@@ -1024,7 +1024,9 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         if (d.kind === "unknown" && d._file) { try { const o = await readOrderPdf(d._file); if (o.items.length) { applySheet(o); continue; } } catch { /* ไม่ใช่ใบปะหน้า */ } }
         rest.push(d);
       }
-      all = rest;
+      // ★ 2026-11-18 แบบ MARKING ที่เป็น "แผงของใบนี้" (เช่น MTG01-5001 · รายการลูกอยู่ใน BILL OF EXTRUSION) → เทียบเป็นแผงเหมือนตอนสร้างใบ
+      //   (เดิม Modify มองเป็นแบบ Site Item เสมอ → เสนอ "เพิ่ม Site Item" ทั้งที่เป็นลูกของแผงอยู่แล้ว และไม่เทียบจำนวนลูกที่แบบแก้)
+      all = markingAsPanel(rest, new Set([...Object.keys(plan.bom.panels || {}), ...(plan.units || []).map((u) => u.unit)].map(NC).filter(Boolean)), plan.bom);
       for (const d of all) if (d && d._file && d.code && ["part", "sub", "panel"].includes(d.kind)) { dropPdfs.current = [...dropPdfs.current.filter((x) => !(NC(x.code) === NC(d.code) && x.kind === d.kind)), d]; }
     } catch (e) { setPdfMsg({ bad: "อ่านไฟล์ไม่ได้: " + (e?.message || e) }); return; }
     const exists = (c) => need.parts.concat(need.subs).some((x) => NC(x.code) === NC(c)) || adds.some((a) => NC(a.code) === NC(c));
@@ -1034,18 +1036,20 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       if (scope && ok) {
         // เทียบ BOM: แถวเดิม (ไม่นับที่ยกเลิก) vs แถวใน PDF (รวมเบอร์ซ้ำ)
         const items = col[ok].items || []; const pdfQ = new Map();
-        for (const b of d.bom || []) { const c = NC(b.code); if (!c) continue; const e = pdfQ.get(c) || { code: String(b.code).trim().toUpperCase(), qty: 0, d: b.desc || "" }; e.qty += Number(b.qty) || 0; pdfQ.set(c, e); }
-        let nq = 0, nc = 0, na = 0; const seen = new Set();
+        for (const b of d.bom || []) { const c = NC(b.code); if (!c) continue; const e = pdfQ.get(c) || { code: String(b.code).trim().toUpperCase(), qty: 0, d: b.desc || "", k: b._k || "", u: b.qty_unit === "m" || b.qty_unit === "mm" ? "m." : "pcs." }; e.qty += Number(b.qty) || 0; pdfQ.set(c, e); }
+        let nq = 0, nc = 0, na = 0, npk = 0; const seen = new Set();
+        // ใบเก่า (ก่อน 18/11/2026): แผง MARKING ไม่มีรายการลูก แต่ซับ / พาร์ทของรอบนั้นถูกปล่อยเป็น "รายการตรง" จากใบปะหน้าแล้ว → ไม่เสนอเพิ่มเป็นลูกซ้ำ (ยอดจะซ้อน)
+        const picked = (c) => d.marking && (plan.picks || []).some((x) => NC(x.code) === c && Number(x.qty) > 0);
         items.forEach((it, idx) => {
           if (it[4] === "ยกเลิก") return; const c = NC(it[1]); seen.add(c); const k = `${scope}|${ok}|${idx}`; const e = pdfQ.get(c);
           const where = `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`;
           if (!e) { nc++; foundL.push({ act: { t: "bchg", k, v: { type: "cancel" } }, code: it[1], what: "ลูกถูกเอาออก", from: `${nf(Number(it[2]))}/ชุด`, to: "ยกเลิก", where, tone: "bad" }); }
           else if (Math.abs(e.qty - Number(it[2])) > 1e-9) { nq++; foundL.push({ act: { t: "bchg", k, v: { type: "qty", qty: String(e.qty) } }, code: it[1], what: "จำนวนลูก/ชุด", from: nf(Number(it[2]), 2), to: nf(e.qty, 2), where, tone: "chg" }); }
         });
-        for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { const na1 = ({ scope, owner: ok, kind: /^SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d }); na++; foundL.push({ act: { t: "badd", a: na1 }, code: e.code, what: "ลูกใหม่", from: "—", to: `${nf(e.qty, 2)}/ชุด`, where: `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`, tone: "new" }); }
+        for (const [c, e] of pdfQ) if (!seen.has(c) && e.qty > 0) { if (picked(c)) { npk++; continue; } const na1 = ({ scope, owner: ok, kind: e.k === "hw" ? "hw" : e.k === "sub" || /^M?SA/i.test(e.code) || findKey(plan.bom.subs, e.code) ? "sub" : "part", code: e.code, qty: String(e.qty), d: e.d, ...(e.k === "hw" ? { u: e.u } : {}) }); na++; foundL.push({ act: { t: "badd", a: na1 }, code: e.code, what: "ลูกใหม่", from: "—", to: `${nf(e.qty, 2)}/ชุด`, where: `ลูกใน${scope === "panel" ? "แผง" : "ซับ"} ${ok}`, tone: "new" }); }
         // ความยาวซับตามหัวกระดาษ
         if (scope === "sub") { const cs = need.subs.find((x) => NC(x.code) === NC(ok)); const Ls = parseFloat(d.title?.LENGTH); if (cs && Number.isFinite(Ls) && Ls > 0 && (cs.l == null || Math.abs(Ls - Number(cs.l)) > 0.05)) { const ent = { id: `${NC(ok)}|len`, code: ok, kind: "sub", field: "len", from: cs.l ?? "—", to: Ls, file: d.file, on: false }; setMatChg((m) => [...m.filter((x) => x.id !== ent.id), ent]); foundL.push({ code: ok, what: "ความยาวซับ", from: cs.l ?? "—", to: Ls, where: "ซับ", tone: "chg" }); } }
-        const sum = [nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน";
+        const sum = [nq && `จำนวนเปลี่ยน ${nq}`, nc && `ยกเลิก ${nc}`, na && `ลูกใหม่ ${na}`, npk && `ปล่อยเป็นรายการตรงอยู่แล้ว ${npk}`].filter(Boolean).join(" · ") || "ตรงกับ BOM เดิม ไม่มีอะไรเปลี่ยน";
         drops[NC(ok)] = sum;
         notes.push(`${scope === "panel" ? "แผง" : "ซับ"} ${ok}: ${sum}`);
         if (nq || nc || na) jump = jump || { scope, owner: ok };
