@@ -5575,7 +5575,7 @@ function ReleaseModifyModal({ releases, projectId, releaseOrder, info, onClose, 
     if (l.key === "qty-") {
       if (n <= 0) return { inc: L("ใส่จำนวน", "enter qty") };
       if (b.qty - n < 1) return { err: L("ลดจนเหลือ 0 ไม่ได้ — ใช้ “ยกเลิก Part”", "can't reduce to 0 — use “Cancel part”") };
-      if (b.qty - n < b.produced) return { err: L(`ทำไปแล้ว ${fmtNum(b.produced)} ชิ้น — ลดได้ถึง ${fmtNum(b.produced)}`, `${fmtNum(b.produced)} pcs already made — min ${fmtNum(b.produced)}`) };
+      if (b.qty - n < b.produced) return { err: L(`ทำไปแล้ว ${fmtNum(b.produced)} ชิ้น — ลดได้ไม่เกิน ${fmtNum(Math.max(0, b.qty - b.produced))} ชิ้น (เหลืออย่างน้อย ${fmtNum(b.produced)})`, `${fmtNum(b.produced)} pcs already made — reduce by at most ${fmtNum(Math.max(0, b.qty - b.produced))} (keep at least ${fmtNum(b.produced)})`) };
       if (n > b.free) return { err: L(`QR ที่ยังไม่ใช้มี ${fmtNum(b.free)} ใบ`, `only ${fmtNum(b.free)} unused QR`) };
       return { ok: L(`→ ใหม่ ${fmtNum(b.qty - n)} ชิ้น`, `→ new ${fmtNum(b.qty - n)} pcs`) };
     }
@@ -8690,6 +8690,16 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     setSelected(() => (selCount === displayed.length ? new Set() : new Set(displayed.map((u) => u.id))));
   }
 
+  // ★ 2026-11-18 sim-test SIM4: ขนาดกำหนดเองเดิมรับ 1 × 1 และ 5000 × 5000 มม. โดยไม่เตือน → จำกัด 8–300 มม. ต่อด้าน (เล็กกว่า 8 มม. QR สแกนไม่ออก · ใหญ่กว่า 300 มม. เกินกระดาษ A4 / ม้วนป้าย)
+  const LABEL_MIN_MM = 8, LABEL_MAX_MM = 300;
+  const customSizeErr = (() => {
+    if (labelPreset !== "custom") return "";
+    const w = Number(customW), h = Number(customH);
+    if (!(w > 0) || !(h > 0)) return "ใส่กว้างและสูงของป้าย (มม.)";
+    if (w < LABEL_MIN_MM || h < LABEL_MIN_MM) return `ป้ายเล็กเกินไป — แต่ละด้านอย่างน้อย ${LABEL_MIN_MM} มม. (เล็กกว่านี้ QR สแกนไม่ออก)`;
+    if (w > LABEL_MAX_MM || h > LABEL_MAX_MM) return `ป้ายใหญ่เกินไป — แต่ละด้านไม่เกิน ${LABEL_MAX_MM} มม.`;
+    return "";
+  })();
   function currentSize() {
     if (labelPreset === "custom") return { w: Number(customW) || 20, h: Number(customH) || 20 };
     const p = LABEL_PRESETS.find((x) => x.value === labelPreset);
@@ -8699,6 +8709,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
   function doPrint(only) {
     const picked = displayed.filter((u) => selected.has(u.id) && (!only || scopeOf(u.release_id) === only));
     if (!picked.length) { mlsToast("กรุณาเลือกอย่างน้อย 1 ใบ", "warn"); return; }
+    if (customSizeErr) { mlsToast(customSizeErr, "warn"); return; }
     // ใบที่เลือกแต่ไม่อยู่ในพรีวิว 600 ใบแรก ต้องเรนเดอร์ QR ซ่อนก่อน (printLabels อ่านจาก DOM)
     const first600 = new Set(displayed.slice(0, 600).map((u) => u.id));
     const needHidden = picked.filter((u) => !first600.has(u.id));
@@ -8768,7 +8779,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       <div className="page-head">
         <div>
           <div className="page-title">พิมพ์ QR / ป้าย</div>
-          <div className="page-sub">ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 2×2 ซม.</div>
+          <div className="page-sub">ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 7.6 × 1.2 ซม. (Part Label)</div>
         </div>
       </div>
 
@@ -8918,6 +8929,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
               <>
                 <Field label="กว้าง (มม.)"><NumField value={customW} onChange={(e) => setCustomW(e.target.value)} style={{ width: 78 }} /></Field>
                 <Field label="สูง (มม.)"><NumField value={customH} onChange={(e) => setCustomH(e.target.value)} style={{ width: 78 }} /></Field>
+                {customSizeErr ? <div role="alert" data-testid="label-size-err" style={{ alignSelf: "flex-end", color: "var(--alert, #d97a00)", fontSize: 12.5, fontWeight: 700, paddingBottom: 9 }}>⚠ {customSizeErr}</div>
+                  : (Number(customW) - 2.8 - Number(customH) < 8 ? <div data-testid="label-size-note" style={{ alignSelf: "flex-end", color: "var(--muted)", fontSize: 12, paddingBottom: 9 }}>ป้ายขนาดนี้พิมพ์เฉพาะ QR (ไม่มีที่ให้ข้อความ)</div> : null)}
               </>
             )}
             <Field label="รูปแบบการพิมพ์">
@@ -9243,7 +9256,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
       return;
     }
     if (delta < 0 && Math.abs(delta) > releasedCount) {
-      setErr(`ลบได้สูงสุด ${nc(releasedCount)} ชิ้น (เหลือเฉพาะชิ้นที่ยังไม่สแกน)`);
+      setErr(`ลดได้สูงสุด ${nc(releasedCount)} ชิ้น (ลบได้เฉพาะป้าย QR ที่ยังไม่เริ่ม)`);
       return;
     }
     // ลดจำนวน = ลบ QR ชิ้นที่ยังไม่สแกนออกถาวร → ต้องเตือนก่อนเสมอ (กันลบพลาด)
@@ -9521,7 +9534,7 @@ function ReleaseEditModal({ release, modLocked = false, onClose, onSaved, onDele
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
             สั่ง <b>{fmtNum(qtyNum)}</b> ชิ้น · สแกนแล้ว <b>{fmtNum(doneMax)}</b> ชิ้น
             {spare > 0 && <span style={{ color: "var(--alert, #d97a00)", fontWeight: 700 }}> · เกิน {fmtNum(spare)} (สแปร์)</span>}
-            {releasedCount > 0 && <>{" "}· ยังไม่สแกน {fmtNum(releasedCount)} ชิ้น</>}
+            {releasedCount > 0 && <span title="จำนวนป้าย QR ที่ยังอยู่สถานะรอ (ยังไม่เริ่ม / ยังไม่เสร็จ) — ลดจำนวนได้ไม่เกินนี้ · คนละตัวเลขกับ สแกนแล้ว ซึ่งนับเป็นชิ้นงาน">{" "}· ป้าย QR ที่ยังไม่เริ่ม {fmtNum(releasedCount)} ใบ</span>}
             {delta > 0 && <><br />จะสร้าง QR เพิ่มอีก <b>{delta}</b> ใบ ต่อท้ายล็อตเดิม</>}
             {delta < 0 && <><br />จะลบ QR ที่ยังไม่สแกนออก <b>{Math.abs(delta)}</b> ใบ</>}
           </div>

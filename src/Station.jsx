@@ -1400,10 +1400,10 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
         if (dupCount > 0) {
           errorBeep();
           await askConfirm({ title: t("ป้ายนี้บันทึกไปแล้ว", "Label already recorded"), tone: "danger",
-            message: t(`${pn}: ป้ายนี้บันทึกขั้นตอนนี้ไปแล้ว ${nc(dupCount)} ครั้ง และยอดครบจำนวนสั่งแล้ว (${nc(doneNow)}/${nc(tot)}) — ไม่บันทึกซ้ำ
+            message: t(`${pn}: ป้ายนี้บันทึกขั้นตอนนี้ไปแล้ว ${nc(dupCount)} ครั้ง ${doneNow >= tot ? `และยอดครบจำนวนสั่งแล้ว (${nc(doneNow)}/${nc(tot)})` : `และบันทึกอีก ${nc(qty)} ชิ้นจะเกินจำนวนสั่ง (ทำแล้ว ${nc(doneNow)}/${nc(tot)} · เหลือ ${nc(tot - doneNow)})`} — ไม่บันทึกซ้ำ
 
 สแกนชิ้นถัดไป · ถ้าทำชิ้นนี้ใหม่จริง (งานแก้ / ของเสีย) แจ้งออฟฟิศ`,
-                       `${pn}: this label was already recorded for this step ${dupCount}× and the order is complete (${doneNow}/${tot}) — not saved again
+                       `${pn}: this label was already recorded for this step ${dupCount}× ${doneNow >= tot ? `and the order is complete (${doneNow}/${tot})` : `and ${qty} more would exceed the order (${doneNow}/${tot} done · ${tot - doneNow} left)`} — not saved again
 
 Scan the next piece · if this piece was really remade, tell the office`),
             confirmText: t("ตกลง", "OK"), cancelText: t("ปิด", "Close") });
@@ -1912,6 +1912,9 @@ Add anyway?`),
       // ★ รอบ 24: server รองรับรอบ → ถามจำนวนเบอร์แม่ "ทุกรอบ" (ทำเพิ่ม / ใส่ของเพิ่มในชิ้นเดิม)
       //   ยังไม่รัน SQL รอบ 24 → แบบรอบ 23: เบอร์ที่เคยบันทึกแล้วไม่ถามซ้ำ (ยอดผลิตนับครั้งแรกครั้งเดียว)
       setAsmQtyLocked((dept === "assembly" || dept === "panel") && !batchOk && st.parent?.status === "finished");
+      // ★ 2026-11-18 sim-test SIM4: แผง 1 QR = แผงเดียว (1 ที่อยู่) — เปิดแผงที่เคยบันทึกแล้ว = "ใส่ของเพิ่มในแผงเดิม" ไม่ใช่ทำแผงเพิ่ม
+      //   เดิมค่าเริ่ม "รอบนี้ทำเพิ่ม 1 ชิ้น" → จำนวนลูกที่ต้องใช้ถูกคิดเป็น 2 เท่า (แบบ 2 กลายเป็น 4) และยอดผลิตแผงบวกซ้ำ · ยังกด "แก้จำนวน" ได้ถ้าจะทำเพิ่มจริง
+      if (dept === "panel" && (madeSum || 0) > 0) { setAsmParentQty(0); setAsmQtyLocked(true); }
       setAsmChildren([]); asmClientRef.current = null; asmGlzClientRef.current = null;
       return true;
     }

@@ -2855,3 +2855,19 @@ registerI18n({
     "เบอร์แม่ / บั้ง ที่ยังเปิดอยู่": "Parent codes / frames still open",
   },
 });
+
+// ★ 2026-11-18 ข้อความใหม่ของหน้าพิมพ์ QR / กล่องแก้ไข Release (จากรอบทดสอบหน้าเครื่อง)
+registerI18n({
+  dict: {
+    "ใส่กว้างและสูงของป้าย (มม.)": "Enter the label width and height (mm)",
+    "ป้ายขนาดนี้พิมพ์เฉพาะ QR (ไม่มีที่ให้ข้อความ)": "This size prints the QR only (no room for text)",
+    "จำนวนป้าย QR ที่ยังอยู่สถานะรอ (ยังไม่เริ่ม / ยังไม่เสร็จ) — ลดจำนวนได้ไม่เกินนี้ · คนละตัวเลขกับ สแกนแล้ว ซึ่งนับเป็นชิ้นงาน": "QR labels still waiting (not started / not finished) — the quantity can be reduced by at most this · not the same figure as Scanned, which counts pieces",
+  },
+  tpls: [
+    ["ค้นหาล็อตที่เคย Release แล้วพิมพ์ป้ายซ้ำได้ทุกเมื่อ — ค่าเริ่มต้นขนาด 7.6 × 1.2 ซม. (Part Label)", "Find any released lot and reprint its labels any time — default size 7.6 × 1.2 cm (Part Label)"],
+    ["ป้ายเล็กเกินไป — แต่ละด้านอย่างน้อย {1} มม. (เล็กกว่านี้ QR สแกนไม่ออก)", "Label too small — each side at least {1} mm (a smaller QR can't be scanned)"],
+    ["ป้ายใหญ่เกินไป — แต่ละด้านไม่เกิน {1} มม.", "Label too large — each side at most {1} mm"],
+    ["· ป้าย QR ที่ยังไม่เริ่ม {1} ใบ", "· QR labels not started: {1}"],
+    ["ลดได้สูงสุด {1} ชิ้น (ลบได้เฉพาะป้าย QR ที่ยังไม่เริ่ม)", "Reduce by at most {1} (only QR labels not started can be removed)"],
+  ],
+});
