@@ -101,7 +101,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const rowProgress = (code, kind) => {
     const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
     if (!hit.length) { setRowMsg(`${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
-    if (hit.length === 1 && onOpenPart && onOpenPart(hit[0].id)) return;
+    // ★ 2026-11-18 ทุกเบอร์เปิดหน้าต่างแบบเดียวกัน (การ์ดความคืบหน้าของเบอร์) — ปล่อยหลายล็อต = มีปุ่มสลับล็อตในหน้าต่างนั้น (เดิม: หลายล็อตเปิดป็อปอัพทั้งใบที่กรองไว้ → หน้าตาคนละแบบ)
+    if (onOpenPart && onOpenPart(hit[0].id, hit.map((h) => h.id))) return;
     setProgOpen(String(code));
   };
   const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
@@ -1676,7 +1677,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
             <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
           </div>
           {/* ★ 2026-11-17 ผู้ใช้: "รายละเอียดทำไมมีแค่ 6 ทั้งที่ทั้งหมดมี 66" — กดแถวเบอร์ในตารางแล้วเปิดมา = กรองเฉพาะเบอร์นั้น แต่ไม่มีอะไรบอก → บอกให้ชัด + ปุ่มดูทั้งหมด */}
-          {only ? <div className="rw-msg info rl-pp-flt" role="status">กำลังดูเฉพาะเบอร์ <b>{only}</b> — ตัวเลขทั้งหน้านี้เป็นของเบอร์นี้เท่านั้น ({nf(data.qty)} ชิ้น · {nf(data.lots.length)} ล็อต) <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setOnly(""); setQ(""); setFlt("all"); }}>ดูทั้งใบ {plan.ro} (ทุกเบอร์)</button></div> : null}
+          {only ? <div className="rw-msg info rl-pp-flt" role="status">กำลังดูเฉพาะเบอร์ <b>{only}</b> — ตัวเลขทั้งหน้านี้เป็นของเบอร์นี้เท่านั้น ({nf(data.qty)} ชิ้น · {nf(data.lots.length)} ล็อต)</div> : null}
           <div className="rl-pp-tw"><table className="rl-pp-t">
             <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>
             <tbody>{rows.map((x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;

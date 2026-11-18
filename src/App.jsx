@@ -5134,7 +5134,7 @@ function ProgressBar({ pct, finished, total }) {
 // ── รายละเอียดความคืบหน้าของ Part เดียว (แยกตามขั้นตอน) ─────────────────────
 // กดจากแถว Part ในหน้ารายละเอียด Release — แสดงว่าเบอร์นี้ ตัดไปกี่ชิ้น เหลือเจาะ
 // เหลือบาก ฯลฯ โดยนับ "จำนวนชิ้น (distinct) ที่ผ่านแต่ละขั้นตอน" จาก scan_logs จริง
-function PartProgressModal({ release, user, goTo, onClose }) {
+function PartProgressModal({ release, user, goTo, onClose, siblings = [], onPick = null }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (ใช้คิดยอดรวมบนสุด)
@@ -5241,6 +5241,15 @@ function PartProgressModal({ release, user, goTo, onClose }) {
       sub={`${partName}${partName ? " · " : ""}ทั้งหมด ${fmtNum(totalUnits)} ชิ้น`}
       onClose={onClose}
     >
+      {/* ★ 2026-11-18 ผู้ใช้: "part ทำไมหน้าตาไม่เหมือนกัน" — เบอร์ที่ปล่อยหลายล็อตเปิดหน้าต่างนี้เหมือนเบอร์อื่นแล้ว · เลือกดูทีละล็อตได้ตรงนี้ */}
+      {siblings.length > 1 && onPick ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 12, fontSize: 13 }} role="group" aria-label="ล็อตของเบอร์นี้">
+          <span style={{ color: "var(--muted)" }}>ปล่อย {siblings.length} ล็อต · รวม {fmtNum(siblings.reduce((a, x) => a + (Number(x.qty) || 0), 0))} ชิ้น — ดูล็อต</span>
+          {siblings.map((x) => { const on = String(x.id) === String(release.id); return (
+            <button key={x.id} type="button" aria-pressed={on} onClick={() => { if (!on) onPick(x); }}
+              style={{ font: "inherit", fontSize: 12.5, fontWeight: on ? 700 : 500, padding: "4px 12px", borderRadius: 999, cursor: on ? "default" : "pointer", border: on ? "1px solid var(--accent)" : "1px solid var(--border)", background: on ? "var(--accent-soft, #e5f9f1)" : "var(--surface)", color: "var(--text)" }}>
+              {x.release_order} · {fmtNum(Number(x.qty) || 0)} ชิ้น</button>); })}
+        </div>) : null}
       {loading ? (
         <div style={{ color: "var(--muted)", fontSize: 13, padding: "12px 2px" }}>กำลังโหลด...</div>
       ) : err ? (
@@ -7760,6 +7769,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
   const saveErrRef = useRef(""); saveErrRef.current = saveErr;
   const reload = async () => { await flush(); await onReload(); };
   const [partView, setPartView] = useState(null);   // ★ 2026-11-11 กดแถวในใบหลัก → ความคืบหน้าแยกขั้นตอน (ป็อปอัพเดียวกับหน้าล็อต)
+  const [partSibs, setPartSibs] = useState([]);   // ★ 2026-11-18 แถวของเบอร์เดียวกันในล็อตอื่น (เบอร์เดียวปล่อยหลายล็อต) → สลับล็อตในหน้าต่างเดียวกัน
   const applyPlan = (p) => {
     // ★ R1: ย้อน/ทำซ้ำ (Ctrl+Z) = ใบรุ่นเก่า แต่ฐานข้อมูลเป็นรุ่นที่หน้านี้บันทึกล่าสุด → ใช้ _at ของใบที่แสดงอยู่ (ไม่ใช่ของรุ่นเก่า)
     if (planRef.current && planRef.current.id === p.id && planRef.current._at) p = { ...p, _at: planRef.current._at };
@@ -7794,7 +7804,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
         </div>) : null}
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null} onInboxUsed={() => setView((v) => (v && v.inbox ? { ...v, inbox: null } : v))}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
-        onOpenPart={(id) => { const r = (releases || []).find((x) => String(x.id) === String(id)); if (!r) return false; setPartView(r); return true; }}
+        onOpenPart={(id, sibIds) => { const find = (i) => (releases || []).find((x) => String(x.id) === String(i)); const r = find(id); if (!r) return false; setPartSibs((sibIds || []).map(find).filter(Boolean)); setPartView(r); return true; }}
         onOpenLot={onOpenGroup ? (lotNo) => {
           // ★ 2026-11-04 เปิดหน้าล็อต (ReleaseGroupDetail) จากหน้าใบหลัก — กด "กลับ" แล้วกลับมาที่ใบหลัก
           const k = String(lotNo || "").trim().toUpperCase().replace(/\s+/g, "");
@@ -7830,7 +7840,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
           mlsToast(rows.length ? `ปล่อย ${lotNo} สำเร็จ — ${rows.length} เบอร์ · สร้าง QR ${nc(q)} ดวง${hw ? ` · เบิกอุปกรณ์ ${nc(hw)} รายการ (ใบเบิก)` : ""}` : `บันทึกใบเบิกอุปกรณ์ ${lotNo} แล้ว — ${nc(hw)} รายการ (ไม่มี QR)`, "success");
           await reload();
         }} />
-      {partView ? <PartProgressModal release={partView} user={user} goTo={goTo} onClose={() => setPartView(null)} /> : null}
+      {partView ? <PartProgressModal key={partView.id} release={partView} siblings={partSibs} onPick={(r) => setPartView(r)} user={user} goTo={goTo} onClose={() => setPartView(null)} /> : null}
     </Suspense>
   );
 }
