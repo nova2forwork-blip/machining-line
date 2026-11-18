@@ -1211,3 +1211,20 @@ table.asw-tab th.c-len, table.asw-tab th.c-qty, table.asw-tab th.c-prog { text-a
 .stn-moved-x { min-width: 44px; min-height: 44px; font-size: 26px; }
 /* ★ 2026-11-17 (SIM4 F9) ปุ่ม "ใช้เครื่องนี้แทน" ที่หน้าล็อกอินเครื่อง */
 .stn-takeover { display: block; width: 100%; min-height: 48px; margin: 10px 0 0; border-radius: 12px; border: 2px solid #f0b429; background: transparent; color: #f0b429; font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ★ 2026-11-18 sim-test SIM4: ปุ่มรองบนหน้าเครื่องเล็กกว่า 44 px (ใส่ถุงมือ / นิ้วกดพลาด)
+   ขยาย "พื้นที่แตะ" ให้ถึง 44 px โดยไม่เปลี่ยนขนาดที่เห็น (หน้าเครื่องจัดวางแน่น — ขยายตัวปุ่มจริงจะดันเลขเครื่อง / ตาราง)
+   · ปุ่มมุมบน (ภาษา · เต็มจอ · ออก): ขยายลงล่างเป็นหลัก ไม่ล้นขอบบนของช่อง
+   · ปุ่มในแถว (ย้อนกลับ · เปลี่ยนเบอร์ · ตัวกรอง): ขยายบน-ล่าง ไม่ขยายข้าง (กันทับปุ่มข้าง ๆ)
+   ═══════════════════════════════════════════════════════════════════════ */
+.stn-asm-topbar .stn-logout, .asw-change, .asw-pick-chip, .stn-asm-tools .stn-lang { position: relative; }
+.stn-lang::after, .stn-code .stn-logout::after, .stn-asm-topbar .stn-logout::after, .asw-change::after, .asw-pick-chip::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 46px; min-width: 46px; transform: translateY(-50%);
+}
+.stn-code .stn-lang::after, .stn-code .stn-logout::after { top: -4px; transform: none; height: 48px; left: -6px; right: -6px; }
+.stn-code .stn-toplogout::after { left: -6px; right: -6px; }
+/* ปุ่มปิด ✕ ของกล่องบนหน้าเครื่อง: อย่างน้อย 44 × 44 */
+.stn-rep-close, .stn-rej-x, .stn-moved-x, .stn-cam-close { min-width: 44px; min-height: 44px; }
+/* ช่องความยาววัสดุ: ทั้งกรอบเป็นพื้นที่แตะ (เดิมแตะได้เฉพาะตัวช่องสูง 22 px) */
+label.stn-mat { display: block; cursor: text; }

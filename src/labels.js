@@ -35,7 +35,11 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   const bodyH = fullH - codeH;
 
   // ขนาดสัมพัทธ์กับความสูงป้าย เพื่อให้ย่อ/ขยายป้ายแล้วสัดส่วนคงเดิม
-  const qrMm = bodyH.toFixed(2);              // QR ใหญ่เต็มความสูงป้าย
+  // ★ 2026-11-18 sim-test SIM4: ป้ายเกือบจัตุรัส (เช่น กำหนดเอง 20 × 20 มม.) — QR เต็มความสูง = กว้างกว่าที่ว่างในป้าย (หักขอบซ้าย-ขวา 1.4 มม.) → ถูกตัดขอบ สแกนไม่ออก
+  //   ป้ายที่ไม่เหลือที่ให้ข้อความ (เหลือน้อยกว่า 8 มม.) = ป้าย "QR อย่างเดียว": QR ย่อให้พอดี เว้นขอบขาวรอบ 5% และอยู่กลางป้าย · ป้ายยาวตามปกติไม่เปลี่ยน
+  const innerW = widthMm - 2.8;
+  const qrOnly = innerW - bodyH < 8;
+  const qrMm = (qrOnly ? Math.max(1, Math.min(bodyH, innerW) * 0.9) : bodyH).toFixed(2);
   const fSmall = (bodyH * 0.17).toFixed(2);
   const fProj = (bodyH * 0.17 * 1.3).toFixed(2);   // ★ 2026-10-12: เลขโปรเจค / ชื่อโปรเจค ใหญ่ขึ้น 30% (มีที่ว่างเหลือ)
   // ★ 2026-10-12: Part No. ใหญ่ขึ้น + ฐานตัวอักษรชิดขอบล่างของ QR (เดิม 0.27 × สูง ลอยกลาง)
@@ -49,7 +53,7 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
-    return `<div class="lbl${showCode ? " wc" : ""}">${showCode ? '<div class="lrow">' : ""}
+    return `<div class="lbl${showCode ? " wc" : ""}${qrOnly ? " qo" : ""}">${showCode ? '<div class="lrow">' : ""}
       <div class="qr">${svg}</div>
       <div class="body">
         <div class="col left">
@@ -82,6 +86,8 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     .lcode { height: ${codeH.toFixed(2)}mm; line-height: ${codeH.toFixed(2)}mm; font-size: ${(codeH * 0.78).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700;
              letter-spacing: .02em; white-space: nowrap; overflow: hidden; color: #000; }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
+    .lbl.qo, .lbl.qo .lrow { justify-content: center; gap: 0; }
+    .lbl.qo .body { display: none; }
     .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
     /* ห้าม !important ทับ fill ทั้งหมด — เดิมทำให้ "พื้นหลัง QR ดำ" กลายเป็นกล่องดำทึบ
        QRCodeSVG วาดพื้นหลังขาว + โมดูลดำมาให้อยู่แล้ว จึงปล่อยตามค่าเดิม (ดำล้วนคมชัด) */

@@ -2779,15 +2779,15 @@ Add anyway?`),
                 </div>
               ) : <>
               <div className={`stn-clock${timerLive ? " live" : ""}`}>{hms(elapsed)}</div>
-              <div className={`stn-mat${recording ? " live" : ""}`}
+              <label className={`stn-mat${recording ? " live" : ""}`}
                 style={step === STEP.IDLE && !matReady ? { outline: "2px solid #f59e0b", outlineOffset: 2, borderRadius: 8 } : undefined}>
-                <div className="lbl">{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· ① กรอกก่อน", "· ① fill first") : ""}</div>
+                <span className="lbl" style={{ display: "block" }}>{t("ความยาววัสดุ", "Material Length")} {step === STEP.IDLE && !matReady ? t("· ① กรอกก่อน", "· ① fill first") : ""}</span>
                 <NumInput
                   inputMode="numeric" disabled={recording}
                   value={materialLen} placeholder="0"
                   onChange={(e) => setMaterialLen(e.target.value.replace(/[^\d.]/g, ""))}
                 />
-              </div>
+              </label>
               {/* START ไม่ disable เพราะ !matReady — ปล่อยให้กดได้แล้ว flash บอกเหตุผล (เดิมกดไม่ได้เงียบ) */}
               {/* ★ รอบ 15: ปุ่ม "ขั้นถัดไป" เป็นสีทึบ (ยังไม่เริ่ม + กรอกความยาวแล้ว = เริ่ม · รอสแกน = สแกน) คนใหม่รู้ว่าต้องกดอะไรต่อ */}
               <button className={`stn-ctl-btn${recording ? " recording" : ""}${step === STEP.IDLE && matReady && !hold && !busy ? " next" : ""}`} onClick={onRecord}
@@ -3142,7 +3142,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           <span style={{ fontSize: 13, color: "#9fd8bf" }}>{t("ชิ้น", "pcs")}</span>
           </>)}
           <button type="button" onClick={() => setQtyLocked && setQtyLocked(false)} disabled={busy}
-            style={{ marginLeft: 6, padding: "9px 13px", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#cfe7dc", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{t("แก้จำนวน", "Edit")}</button>
+            style={{ marginLeft: 6, minHeight: 44, padding: "9px 13px", borderRadius: 9, border: "1px solid #2f5f49", background: "#0f1b15", color: "#cfe7dc", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{t("แก้จำนวน", "Edit")}</button>
         </div>
       ) : null}
 

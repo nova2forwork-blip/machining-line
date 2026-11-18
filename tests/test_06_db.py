@@ -447,3 +447,45 @@ def test_operator_cannot_delete_release_row(db, actors, project):
     with pytest.raises(Exception) as e:
         db.execute("select public.authz_delete_release(%s,%s)", (actors.tok["operator"], a))
     assert "forbidden" in str(e.value)
+
+
+# ── สิทธิ์พนักงานหน้าเครื่อง (sim-test SIM4 2026-11-18) ──
+INSERT = "select public.authz_insert(%s,%s,%s::jsonb)"
+
+
+@R
+@N
+def test_operator_cannot_release(db, actors, project):
+    """TC-DB-080 พนักงานหน้าเครื่องเรียกฟังก์ชันปล่อยงาน (ทั้งแบบตรวจยอดและแบบเดิม) ไม่ได้ และไม่มีอะไรถูกสร้าง"""
+    with pytest.raises(Exception) as e:
+        release(db, actors, project, "P-900.1", [{"code": "PYT-A", "qty": 2}], [], role="operator")
+    assert "forbidden" in str(e.value)
+    with pytest.raises(Exception) as e2:
+        one(db, "select public.create_release_batch(%s,%s,%s,now(),%s,true,%s::jsonb)", (actors.tok["operator"], project, "P-900.1", actors.emp["operator"], json.dumps([{"code": "PYT-A", "qty": 2}])))
+    assert "forbidden" in str(e2.value)
+    assert one(db, "select count(*) from part_master where project_id=%s", (project,)) == 0 and unit_count(db, project) == 0
+
+
+@R
+@N
+@pytest.mark.parametrize("tid,tbl", [("TC-DB-081", "projects"), ("TC-DB-082", "part_master"), ("TC-DB-083", "releases"), ("TC-DB-084", "part_units")])
+def test_operator_cannot_insert_release_tables(db, actors, project, tid, tbl):
+    """พนักงานหน้าเครื่องเพิ่มโปรเจค / เบอร์ / แถวปล่อย / QR ทางฐานข้อมูลตรง ๆ ไม่ได้"""
+    payload = {"projects": {"code": "PYT-OPHACK", "name": "x"}, "part_master": {"project_id": str(project), "part_no": "PYT-OP", "part_name": "x"},
+               "releases": {"qty": 1, "release_order": "P-OPHACK"}, "part_units": {"unit_no": 1, "qr_code": "PYT-OPHACK-0001"}}[tbl]
+    with pytest.raises(Exception) as e:
+        one(db, INSERT, (actors.tok["operator"], tbl, json.dumps(payload)))
+    assert "forbidden" in str(e.value), tid
+    assert one(db, "select count(*) from projects where code='PYT-OPHACK'") == 0
+    assert one(db, "select count(*) from releases where release_order='P-OPHACK'") == 0
+    assert one(db, "select count(*) from part_units where qr_code='PYT-OPHACK-0001'") == 0
+
+
+@P
+def test_office_can_still_add_project_and_part(db, actors, project):
+    """TC-DB-085 ออฟฟิศยังเพิ่มโปรเจค (ตอนปล่อยงาน) และเบอร์ได้ตามเดิม"""
+    code = "PYT-OFFADD"
+    r = one(db, INSERT, (actors.tok["office"], "projects", json.dumps({"code": code, "name": "pytest"})))
+    assert r["code"] == code
+    r2 = one(db, INSERT, (actors.tok["office"], "part_master", json.dumps({"project_id": str(project), "part_no": "PYT-OFF", "part_name": "x"})))
+    assert r2["part_no"] == "PYT-OFF"
