@@ -5134,7 +5134,10 @@ function ProgressBar({ pct, finished, total }) {
 // ── รายละเอียดความคืบหน้าของ Part เดียว (แยกตามขั้นตอน) ─────────────────────
 // กดจากแถว Part ในหน้ารายละเอียด Release — แสดงว่าเบอร์นี้ ตัดไปกี่ชิ้น เหลือเจาะ
 // เหลือบาก ฯลฯ โดยนับ "จำนวนชิ้น (distinct) ที่ผ่านแต่ละขั้นตอน" จาก scan_logs จริง
-function PartProgressModal({ release, user, goTo, onClose, siblings = [], onPick = null }) {
+// ★ 2026-11-18 embed = ฝังเนื้อหา (น้ำหนัก · จำนวน · งานแยกตามเครื่อง · พิมพ์ QR · ดูแบบ) ในหน้าต่างอื่น โดยไม่มีกรอบ Modal ของตัวเอง
+const PartEmbedWrap = ({ children }) => <div className="pp-embed">{children}</div>;
+function PartProgressModal({ release, user, goTo, onClose, siblings = [], onPick = null, embed = false }) {
+  const Wrap = embed ? PartEmbedWrap : Modal;
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [opProg, setOpProg] = useState([]);   // [{op, seq, done, finished}] ความคืบหน้าแยกขั้นตอน (ใช้คิดยอดรวมบนสุด)
@@ -5236,7 +5239,7 @@ function PartProgressModal({ release, user, goTo, onClose, siblings = [], onPick
     : { ...pillBase, color: "var(--muted)", background: "var(--surface)", border: "1px solid var(--border)" };
 
   return (
-    <Modal
+    <Wrap
       title={`ความคืบหน้า — ${partNo}`}
       sub={`${partName}${partName ? " · " : ""}ทั้งหมด ${fmtNum(totalUnits)} ชิ้น`}
       onClose={onClose}
@@ -5382,10 +5385,10 @@ function PartProgressModal({ release, user, goTo, onClose, siblings = [], onPick
         <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {dwg.msg ? <span style={{ fontSize: 12.5, color: dwg.s === "idle" ? "var(--muted)" : "#a15c00" }} role="status">{dwg.msg}</span> : null}
           <Btn type="button" variant="ghost" onClick={openDrawing} disabled={dwg.s === "loading"} style={{ color: "var(--accent-dk)" }}><Icon name="folder" size={14} /> {dwg.s === "loading" ? "กำลังเปิด…" : lang === "en" ? "Drawing" : "ดูแบบ"}</Btn>
-          <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>
+          {embed ? null : <Btn type="button" variant="ghost" onClick={onClose}>ปิด</Btn>}
         </span>
       </div>
-    </Modal>
+    </Wrap>
   );
 }
 
@@ -7804,6 +7807,7 @@ function ReleasePlanPage({ view, setView, releases, plans = [], user, setPlans, 
         </div>) : null}
       <ReleasePlanViewLazy plan={view.plan} releases={releases} plans={plans} api={realReleaseApi} user={user} openBuilder={!!view.openBuilder} inbox={view.inbox || null} onInboxUsed={() => setView((v) => (v && v.inbox ? { ...v, inbox: null } : v))}
         onPrintQr={goTo ? (ids) => goTo("labels", { releaseIds: ids }) : null}
+        renderPart={(id, close) => { const r = (releases || []).find((x) => String(x.id) === String(id)); return r ? <PartProgressModal key={r.id} embed release={r} user={user} goTo={goTo} onClose={close || (() => {})} /> : null; }}
         onOpenPart={(id, sibIds) => { const find = (i) => (releases || []).find((x) => String(x.id) === String(i)); const r = find(id); if (!r) return false; setPartSibs((sibIds || []).map(find).filter(Boolean)); setPartView(r); return true; }}
         onOpenLot={onOpenGroup ? (lotNo) => {
           // ★ 2026-11-04 เปิดหน้าล็อต (ReleaseGroupDetail) จากหน้าใบหลัก — กด "กลับ" แล้วกลับมาที่ใบหลัก

@@ -1434,3 +1434,6 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rl-pp-flt .btn { margin-left: auto; }
 .rl-pp-lotcell { white-space: nowrap; }
 .rl-pp-lot { display: inline-flex; align-items: baseline; gap: 4px; margin-right: 10px; }
+.rl-pp-sec { margin-top: 14px; padding: 14px 16px; background: var(--surface); border-radius: 16px; }
+.rl-pp-sec > h3 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+.rl-pp-sec .pp-embed .modal-actions { margin-top: 12px; }

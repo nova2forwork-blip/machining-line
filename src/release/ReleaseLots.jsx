@@ -35,7 +35,7 @@ function usePlanState(plan, releases) {
 }
 
 // ══ หน้า Release (แผน) ══
-export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onInboxUsed = null, onSheetMoved = null, onOpenPart = null, onConflict = null }) {
+export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack, onPlanChange, onReleased, onModified, openBuilder = false, onPrintQr = null, onOpenLot = null, onDelete = null, inbox = null, onInboxUsed = null, onSheetMoved = null, onOpenPart = null, onConflict = null, renderPart = null }) {
   const { need, rel, doneOf, leftOf } = usePlanState(plan, releases);
   // ★ 2026-11-10 ปล่อยผิดใบ (งานพับไปอยู่ MACHINING PART) → ย้ายหมวดของเบอร์ที่ปล่อยแล้ว: แก้ "ใบ: …" ในแถวที่ปล่อย + หมวดในแผน (QR เดิมใช้ต่อ)
   async function moveReleased(codes, cat) {
@@ -397,7 +397,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       )}
       </div>
       {rowMsg ? <div className="rl-rowmsg" role="status">{rowMsg}</div> : null}
-      {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} initQ={typeof progOpen === "string" ? progOpen : ""} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
+      {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} initQ={typeof progOpen === "string" ? progOpen : ""} renderPart={renderPart} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
         <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
@@ -1604,7 +1604,7 @@ function ModEditor({ m, need, doneOf = () => 0, onCancel, onSave }) {
 
 // ★ 2026-11-11 ป็อปอัพความคืบหน้าทั้ง Release: การ์ดสรุป (ทั้งใบ / ตามใบงาน / ตามล็อต) + ตารางรายการ เรียงจากที่ทำได้น้อยสุด
 //   ผลิตแล้ว = ยอดจากหน้าเครื่อง (prod: release_id → ชิ้น) · ไม่นับแถวที่ Modify ยกเลิก · เบอร์เดียวกันหลายล็อตรวมกัน
-function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, initQ = "" }) {
+function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, initQ = "", renderPart = null }) {
   const [big, setBig] = useState(false);   // ขยายเต็มจอ
   // ★ 2026-11-11 ลากขอบซ้าย / ขวา / ล่าง / มุมล่าง เพื่อย่อ-ขยาย (ป็อปอัพอยู่กลางจอ → ลากขอบข้าง = กว้างขึ้นสองฝั่ง) · จำขนาดไว้
   const [size, setSize] = useState(() => { try { return JSON.parse(localStorage.getItem("rl-pop-size") || "null"); } catch { return null; } });
@@ -1627,12 +1627,13 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
   const [flt, setFlt] = useState(initQ ? "all" : "left");
   const [q, setQ] = useState("");
   const data = useMemo(() => {
-    const items = new Map(), sheets = new Map(), lots = [];
+    const items = new Map(), sheets = new Map(), lots = []; const partRows = [];
     for (const L of rel.lots) {
       if (L.hwOnly) continue; let ld = 0, lt = 0;
       for (const r of L.rows) {
         if (r.mod_cancelled_at) continue; const qy = Number(r.qty) || 0; if (!qy) continue;
         if (only && NC(r.code) !== NC(only)) continue;
+        if (only) partRows.push({ id: r.id, lot: L.no, qty: qy, kind: r.kind });
         const m = prod ? Math.min(qy, prod.get(String(r.id)) || 0) : 0; ld += m; lt += qy;
         const sk = rowSheets(r)[0] || (r.kind === "panel" ? "panel" : "—");
         const key = r.kind + "|" + NC(r.code);
@@ -1646,7 +1647,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
       if (!only || lt) lots.push({ no: L.no, made: ld, qty: lt });
     }
     const list = [...items.values()];
-    return { list, sheets: SHEETS.filter((x) => sheets.has(x.k)).map((x) => ({ ...sheets.get(x.k), label: x.label })), lots, made: list.reduce((a, x) => a + x.made, 0), qty: list.reduce((a, x) => a + x.qty, 0) };
+    return { partRows, list, sheets: SHEETS.filter((x) => sheets.has(x.k)).map((x) => ({ ...sheets.get(x.k), label: x.label })), lots, made: list.reduce((a, x) => a + x.made, 0), qty: list.reduce((a, x) => a + x.qty, 0) };
   }, [rel, prod, only]);   // eslint-disable-line react-hooks/exhaustive-deps
   const descOf = (it) => (it.kind === "panel" ? "แผง" : (it.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(it.code))?.d || "");
   const pc = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
@@ -1696,6 +1697,12 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
               {!rows.length ? <tr><td colSpan={11} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
             </tbody>
           </table></div>
+          {/* ★ 2026-11-18 ผู้ใช้: "ใช่ เพิ่มเลย" — งานแยกตามเครื่องจักร + น้ำหนัก + พิมพ์ QR / ดูแบบ ของเบอร์นี้ (ทีละล็อต — หน้าเครื่องบันทึกงานแยกตามล็อต) */}
+          {only && renderPart ? data.partRows.filter((x) => x.kind !== "panel").map((x) => (
+            <section key={x.id} className="rl-pp-sec" aria-label={`รายละเอียด ${only} ล็อต ${x.lot}`}>
+              <h3>{data.partRows.length > 1 ? <>ล็อต <span className="rw-mono">{x.lot}</span> · {nf(x.qty)} ชิ้น</> : <>รายละเอียดของเบอร์นี้ <small className="rw-muted">ล็อต {x.lot}</small></>}</h3>
+              {renderPart(x.id, onClose)}
+            </section>)) : null}
         </div>
       </div>
     </>
