@@ -1430,3 +1430,7 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rt-rev { font-weight: 700; color: #c00000; text-align: center; }
 .rt-revbtn { border: 0; background: none; font: inherit; font-weight: 700; color: #c00000; cursor: pointer; padding: 2px 10px; border-radius: 6px; text-decoration: underline dotted; text-underline-offset: 3px; }
 .rt-revbtn:hover, .rt-revbtn:focus-visible { background: #fdecea; text-decoration: underline; }
+.rl-pp-flt { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+.rl-pp-flt .btn { margin-left: auto; }
+.rl-pp-lotcell { white-space: nowrap; }
+.rl-pp-lot { display: inline-flex; align-items: baseline; gap: 4px; margin-right: 10px; }
