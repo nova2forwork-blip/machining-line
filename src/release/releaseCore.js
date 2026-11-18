@@ -483,6 +483,7 @@ export async function readPdfFiles(files, onEach) {
 // ★ 2026-11-18 ผู้ใช้: "MTG01-5001 รายการลูกอยู่ใน BILL OF EXTRUSION" — แบบ MARKING / แบบ Site Item (kind "loose": ตารางเบอร์ + จำนวน SHIP LOOSE
 //   + รายการสกรู) ที่ "ถูกใช้เป็นแบบแผงในตาราง Address & Unit" → ถือเป็นแบบแผง: ลูกของแผง = เบอร์ในตารางนั้น (ซับ / พาร์ท) + อุปกรณ์
 //   (เดิม: แผงไม่มี BOM → ได้ QR แค่ตัวแผง ตรวจประกอบไม่ได้) · แบบ loose ที่ไม่ได้เป็นแบบของแผงใด = เหมือนเดิม (ใช้เพิ่มรายการที่หน้า Modify)
+// ★ 2026-11-18 ผู้ใช้ยืนยัน: QTY ใน BILL OF EXTRUSION = ต่อ 1 แผง → ยอดปล่อย = QTY × จำนวนแผงที่ใช้แบบนี้ (QTY 12 ลง 2 แผง = 24)
 export function markingAsPanel(pdfs, unitCodes, lib = null) {
   if (!unitCodes || !unitCodes.size) return pdfs;
   const isSub = (c) => /^M?SA/i.test(NC(c)) || !!(lib && findKey(lib.subs || {}, c));

@@ -311,7 +311,7 @@ def test_marking_drawing_not_a_unit_stays_loose(js):
 
 @R
 def test_marking_drawing_builds_panel_bom_and_explodes(js):
-    """TC-PLAN-072 MARKING → BOM ของแผง → ยอดทั้งใบ = จำนวนแผง × จำนวนในแบบ (สมมติฐาน A3: จำนวนในแบบ = ต่อ 1 แผง)"""
+    """TC-PLAN-072 MARKING → BOM ของแผง → ยอดทั้งใบ = จำนวนแผง × จำนวนในแบบ (ผู้ใช้ยืนยัน 2026-11-18: QTY ในแบบ = ต่อ 1 แผง · 12 ลง 2 แผง = 24)"""
     out = js.steps([
         {"fn": "markingAsPanel", "args": [[LOOSE], jset(["MTG01-5001"])]},
         {"fn": "buildBom", "args": [{"lib": None, "pdfs": {"$ref": 0}, "ack": {}, "useLib": False}]},
