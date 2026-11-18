@@ -16,6 +16,7 @@ import { Pill, ModQty, Code, SUB_SHORT } from "./releaseUi.jsx";
 import { TotalsSection } from "./ReleaseTotals.jsx";
 import LotSheetPreview from "./LotSheetPreview.jsx";
 import { compareOrder, readOrderFile, readOrderPdf } from "./orderSheet.js";
+import { useMatLens } from "./matLens.js";
 import "./release-wizard.css";
 import "./i18n-release.js";   // คำแปลอังกฤษของหน้า Release
 
@@ -26,7 +27,8 @@ const sheetOf = (k) => SHEETS.find((s) => s.k === k) || { k, label: k, th: "" };
 
 // แผนกับยอดคงเหลือ (ใช้ทั้งหน้า Release และตัวสร้างล็อต)
 function usePlanState(plan, releases) {
-  const need = useMemo(() => needOf(plan), [plan]);
+  const matVer = useMatLens(plan.projectId);   // ความยาวเส้นจากหน้า บันทึก Material (โหลดเสร็จ → คิดยอด / Total Mat. ใหม่)
+  const need = useMemo(() => needOf(plan), [plan, matVer]);   // eslint-disable-line react-hooks/exhaustive-deps
   const rel = useMemo(() => releasedOf(releases, plan), [releases, plan]);
   const doneOf = (code) => (rel.byCode.get(NC(code)) || { qty: 0 }).qty;
   // เหลือปล่อย = ต้องใช้ − ปล่อยใน Release นี้ − ที่ปล่อยไว้แล้วใน Release อื่น (ใช้เป็นเบอร์ลูก ไม่ปล่อยซ้ำ)

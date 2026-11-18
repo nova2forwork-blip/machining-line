@@ -480,6 +480,24 @@ export async function readPdfFiles(files, onEach) {
 // ══ สร้าง BOM ที่ใช้จริง: (BOM เดิมในระบบ ถ้าเปิด) + ทับด้วย PDF · ยกเว้นจุดที่เลือก "ใช้ค่าเดิม" ══
 //   lib = { panels:{code:{d,items}}, subs:{code:{d,l,f,lvl,items}}, parts:{code:{d,l,h,f,m,k,u,...}} }
 //   ack = { "<file>|<key>": "pdf" | "lib" | "ok" }
+// ★ 2026-11-18 ผู้ใช้: "MTG01-5001 รายการลูกอยู่ใน BILL OF EXTRUSION" — แบบ MARKING / แบบ Site Item (kind "loose": ตารางเบอร์ + จำนวน SHIP LOOSE
+//   + รายการสกรู) ที่ "ถูกใช้เป็นแบบแผงในตาราง Address & Unit" → ถือเป็นแบบแผง: ลูกของแผง = เบอร์ในตารางนั้น (ซับ / พาร์ท) + อุปกรณ์
+//   (เดิม: แผงไม่มี BOM → ได้ QR แค่ตัวแผง ตรวจประกอบไม่ได้) · แบบ loose ที่ไม่ได้เป็นแบบของแผงใด = เหมือนเดิม (ใช้เพิ่มรายการที่หน้า Modify)
+export function markingAsPanel(pdfs, unitCodes, lib = null) {
+  if (!unitCodes || !unitCodes.size) return pdfs;
+  const isSub = (c) => /^M?SA/i.test(NC(c)) || !!(lib && findKey(lib.subs || {}, c));
+  let changed = false;
+  const out = (pdfs || []).map((d) => {
+    if (!d || d.kind !== "loose" || !unitCodes.has(NC(d.code))) return d;
+    changed = true;
+    const bom = [
+      ...(d.site || []).filter((r) => r && r.code).map((r, i) => ({ item: i + 1, code: String(r.code).trim().toUpperCase(), desc: r.desc || "", qty: Number(r.qty) || 0, len: r.len ?? null, ht: null, fin: null, _k: isSub(r.code) ? "sub" : "part" })),
+      ...(d.hw || []).filter((r) => r && r.code).map((r, i) => ({ item: 900 + i, code: String(r.code).trim().toUpperCase(), desc: r.desc || "", qty: Number(r.qty) || 0, len: null, ht: null, fin: null, qty_unit: r.u === "m." ? "m" : r.u === "mm." ? "mm" : "pcs", _k: "hw" })),
+    ];
+    return { ...d, kind: "panel", marking: true, bom };
+  });
+  return changed ? out : pdfs;
+}
 export function buildBom({ lib, pdfs, ack, useLib }) {
   const L = lib || { panels: {}, subs: {}, parts: {} };
   const kept = (d, key) => ack[d.file + "|" + key] === "lib";
@@ -493,7 +511,7 @@ export function buildBom({ lib, pdfs, ack, useLib }) {
       for (const b of d.bom) {
         const c = NC(b.code); if (!c) continue;
         if (lh && kept(d, "miss:" + c)) continue;
-        const k = guessKind(b);
+        const k = b._k === "sub" || b._k === "hw" ? b._k : b._k === "part" ? (findKey(SUBS, b.code) ? "sub" : "part") : guessKind(b);
         if (k === "sub") {
           const sk = findKey(SUBS, b.code);
           if (!sk) SUBS[b.code] = { d: b.desc, l: b.len, f: b.fin || "", lvl: d.kind === "panel" ? 1 : 2, items: [] };
@@ -1006,8 +1024,14 @@ export const TOTALS = [
 ];
 // ความยาวเส้นวัตถุดิบ: จาก BOM (ml) → จากรหัส INV (3 หลักก่อนตัวอักษรท้าย ×10 เช่น 23HZ02600C = 6,000 · 23BL01327B+C = 3,270) → 6,000
 export const STOCK_DEFAULT = 6000;
-export function stockLen(inv, ml) {
+// ★ 2026-11-18 ทะเบียน "ความยาว/เส้น" จากหน้า บันทึก Material ต่อโปรเจค (โหลดโดย matLens.js) — ใช้เมื่อพาร์ทไม่ได้ระบุความยาวเส้นเองในใบ
+const MATLEN = new Map();   // projectId → Map(INV → มม.)
+const invKeyOf = (v) => String(v || "").trim().toUpperCase().replace(/\s+/g, "");
+export function setMatLens(projectId, map) { MATLEN.set(String(projectId || ""), map || new Map()); }
+export function matLenOf(projectId, inv) { const m = MATLEN.get(String(projectId || "")); const v = m ? m.get(invKeyOf(inv)) : null; return Number(v) > 0 ? Number(v) : null; }
+export function stockLen(inv, ml, projectId = null) {
   if (Number(ml) > 0) return { len: Number(ml), src: "bom" };
+  { const pl = projectId ? matLenOf(projectId, inv) : null; if (pl) return { len: pl, src: "material" }; }
   const m = /(\d{3})[A-Z]*(?:\+[A-Z]+)?\d?$/i.exec(String(inv || "").trim());
   if (m && Number(m[1]) >= 100) return { len: Number(m[1]) * 10, src: "code" };
   return { len: STOCK_DEFAULT, src: "default" };
@@ -1276,6 +1300,8 @@ export function applyMatOv(p, plan) {
     // ความยาวเส้น: ที่ใส่เอง > ของพาร์ทอื่นในแบบที่ใช้ INV นี้ > อ่านจากรหัส (stockLen)
     r.ml = Number(o.ml) > 0 ? Number(o.ml) : mlOfInv(plan, r.inv);
   }
+  // ความยาวเส้นที่ยังไม่มี (ไม่ได้ใส่ในใบ และไม่มีพาร์ทอื่นของ INV นี้บอกไว้) → ใช้ของหน้า บันทึก Material
+  if (plan.projectId) for (const r of p.parts) { if (Number(r.ml) > 0 || !r.inv) continue; const v = mlOfInv(plan, r.inv) || matLenOf(plan.projectId, r.inv); if (v) { r.ml = v; r.mlSrc = "material"; } }
   for (const key of ["glass", "hw", "other"]) {
     const out = new Map();
     for (const r of p[key] || []) {

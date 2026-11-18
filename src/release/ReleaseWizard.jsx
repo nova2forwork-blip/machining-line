@@ -7,7 +7,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../icons.jsx";
 import { askConfirm } from "../confirm.jsx";
-import { dwgRev,
+import { markingAsPanel, dwgRev,
   NC, baseOf, ncmp, nf, nlen, findKey, isStar, CATS, PART_CATS, PROCS, QR_CATS, ruleCat, ruleProc, procList,
   readPdfFiles, buildBom, runChecks, countUnits, coverage, unitIssues, parseUnitsPaste, normMockUnits, mockType, bomForSave,
   RELEASE_ORDER_RE, normalizeRO, roKey, inPlan, needOf, trimBom, lotRows, SHEETS, PART_DESTS, ruleDest, isPartSheet, TOTALS, cutMaterials, destLabel, CAT_DEST, loadPdfJs, readUnitsPdf, releasedOf, otherOf, makeCatOf, findLatest, newerRevOf, revLetter, expandUnits, mockQty } from "./releaseCore.js";
@@ -105,7 +105,9 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const startedRef = useRef(false);   // ผู้ใช้เริ่มกรอก / วางอะไรในหน้านี้แล้วหรือยัง (ใช้ตัดสินว่าจะเสนอร่างเก่าไหม)
   startedRef.current = !!(hdr.ro || unitsRaw.length || pdfsRaw.length || picks.length || order);
   // ★ 2026-11-03 แถว Mockup ที่ใส่จำนวน → กางเป็นแผงละแถว (1 QR ต่อแผง) ก่อนใช้คำนวณ/บันทึก · ตาราง Address & Unit ยังแสดงแถวดิบ
-  const pdfs = itemsMode ? NONE : pdfsRaw;
+  // แบบ MARKING ที่เป็นแบบของแผงในตาราง Address & Unit = แบบแผงที่มีรายการลูก (BILL OF EXTRUSION)
+  const unitCodeSet = useMemo(() => new Set(unitsRaw.map((u) => NC(u.unit)).filter(Boolean)), [unitsRaw]);
+  const pdfs = useMemo(() => (itemsMode ? NONE : markingAsPanel(pdfsRaw, unitCodeSet)), [itemsMode, pdfsRaw, unitCodeSet]);
   const [ack, setAck] = useState({});
   const [ackMeta, setAckMeta] = useState({});
   const [useLib, setUseLib] = useState(true);   // ซับ/พาร์ทมาจากคลังของโปรเจคเสมอ (Release ลงแค่แผง)

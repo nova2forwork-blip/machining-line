@@ -15,8 +15,9 @@ const MIN_OFFCUT = 500;
 const has = (q, ...xs) => !q || xs.some((x) => String(x || "").toUpperCase().includes(q));
 
 // แตก BOM ของแบบแผงเป็นแถว (ลำดับตามไฟล์) พร้อมจำนวนต่อแผง
-export function rowsOfType(plan, unit) {
-  const pk = findKey(plan.bom.panels, unit); if (!pk) return [];
+// root (ไม่บังคับ) = รายการชั้นบนสุดที่ "ไม่ใช่แผง" — ใช้กับซับ / พาร์ทที่ปล่อยตรง (picks): แถวชั้นบนแก้ในตารางไม่ได้ (ไม่ได้อยู่ในรายการของใคร) ส่วนลูกของซับแก้ได้ตามปกติ
+export function rowsOfType(plan, unit, root = null) {
+  const pk = root ? unit : findKey(plan.bom.panels, unit); if (!pk) return [];
   const out = [];
   // ★ 2026-11-12 ผู้ใช้: "ให้ข้อมูลลิงก์กันถูกต้อง" → BOM ใช้ค่าที่มีผลจริงเหมือน Total Part / Total Mat.: วัสดุที่เปลี่ยน (matOv) · ความยาวที่ Modify เปลี่ยน (lenOv)
   const mOv = (c) => { const k = findKey(plan.matOv || {}, c); const o = k ? plan.matOv[k] : null; return o && String(o.to || "").trim() ? o : null; };
@@ -46,7 +47,8 @@ export function rowsOfType(plan, unit) {
       }
     });
   };
-  walk(plan.bom.panels[pk].items, [], 1, new Set(), "panel", pk);
+  if (root) walk(root, [], 1, new Set(), "pick", unit, 0);
+  else walk(plan.bom.panels[pk].items, [], 1, new Set(), "panel", pk);
   return out;
 }
 
@@ -108,13 +110,24 @@ export function BomView({ plan, need, ed }) {
       const rows = rowsOfType(plan, unit); const pk = findKey(plan.bom.panels, unit);
       types.set(unit, { unit, n, has: !!pk, desc: pk ? plan.bom.panels[pk].d || "" : "", rows, off: 0, fresh: 0 });
     }
+    // ★ 2026-11-18 ผู้ใช้: "BOM ของใบ เฉพาะซับ / พาร์ท ว่าง ควรแสดงลูกของซับ" — ซับ / พาร์ทที่ปล่อยตรง (plan.picks) ไม่ได้อยู่ในแผง จึงไม่เคยขึ้นแท็บ BOM
+    //   → ซับที่ปล่อยตรง 1 เบอร์ = 1 "แบบ" (จำนวน = จำนวน SET) แตกลูกเหมือนซับในแผง · พาร์ทที่ปล่อยตรงรวมเป็นแบบ "พาร์ทปล่อยตรง"
+    const vunits = [];
+    const live = (list, c) => { const n0 = (list || []).find((x) => NC(x.code) === NC(c)); return !n0 || !n0.cancelled; };
+    for (const pk0 of (plan.picks || []).filter((x) => x.kind === "sub" && Number(x.qty) > 0 && live(need.subs, x.code))) {
+      const sk = findKey(plan.bom.subs, pk0.code) || pk0.code; if (types.has(sk)) continue; const n = Math.round(Number(pk0.qty));
+      types.set(sk, { unit: sk, n, has: !!findKey(plan.bom.subs, pk0.code), desc: `${(plan.bom.subs[sk] || {}).d || ""} · ซับปล่อยตรง`.replace(/^ · /, ""), rows: rowsOfType(plan, sk, [["sub", sk, 1]]), off: 0, fresh: 0, pick: "sub" });
+      for (let i = 0; i < n; i++) vunits.push({ unit: sk });
+    }
+    { const direct = (plan.picks || []).filter((x) => x.kind !== "sub" && Number(x.qty) > 0 && live(need.parts, x.code));
+      if (direct.length) { const U0 = "พาร์ทปล่อยตรง"; types.set(U0, { unit: U0, n: 1, has: true, desc: "พาร์ทที่ปล่อยตรง ไม่ได้อยู่ในแผง / ซับ", rows: rowsOfType(plan, U0, direct.map((x) => ["part", findKey(plan.bom.parts, x.code) || x.code, Number(x.qty)])), off: 0, fresh: 0, pick: "part" }); vunits.push({ unit: U0 }); } }
     // ไล่ตัดตามลำดับแผง: ใช้เศษที่ MATERIAL ตรงกันก่อน
     const pool = new Map(); const opened = [];   // material → [{ rem, from }]
-    for (const u of units) {
+    for (const u of [...units, ...vunits]) {
       const T = types.get(String(u.unit).trim());
       for (const r of T.rows) {
         if (r.kind !== "part" || !r.m || !(r.l > 0)) continue;
-        const stock = stockLen(r.m, r.ml).len; const need1 = r.l + KERF;
+        const stock = stockLen(r.m, r.ml, plan.projectId).len; const need1 = r.l + KERF;
         const n = Math.round(r.per); if (!(n > 0)) continue;
         r.cut = r.cut || { reuse: 0, fresh: 0, src: "", lens: new Map(), stock, over: stock + 1e-6 < r.l, srcs: new Map(), outs: new Map(), label: `${T.unit} · ${r.code}` };
         const bars = pool.get(r.m) || pool.set(r.m, []).get(r.m);
@@ -134,8 +147,8 @@ export function BomView({ plan, need, ed }) {
       T.hw = new Set(T.rows.filter((r) => !r.cx && r.kind === "hw").map((r) => r.code)).size;
       T.pcs = T.rows.filter((r) => r.kind === "part").reduce((a, r) => a + r.per * T.n, 0);
     }
-    return { types, total: units.length };
-  }, [plan.bom, plan.units, need]);
+    return { types, total: units.length + vunits.length };
+  }, [plan.bom, plan.units, plan.picks, need]);
 
   const list = useMemo(() => {
     let a = [...model.types.values()].filter((t) => has(lq.trim().toUpperCase(), t.unit, t.desc));
@@ -194,12 +207,13 @@ export function BomView({ plan, need, ed }) {
       const itemOf = new Map(); for (const r of flat) if (!itemOf.has(r.unit)) itemOf.set(r.unit, itemOf.size + 1);
       const full = flat.flatMap((r) => {
         const base = {
-          ITEM: itemOf.get(r.unit), PANEL: r.unit, "จำนวนแผง": r.n, "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
-          "PART NO.": r.code, "ประเภท": r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: r.d || "", LENGTH: num(r.l), FINISH: r.f || "",
-          MATERIAL: r.kind === "sub" ? "" : r.m || "" };
+          ITEM: itemOf.get(r.unit), Panel: r.unit, "Panel Description": r.pdesc || "", "Panel Qty": r.n, "Panel U.M.": "SET", Rev: r.rev || "",
+          "SUB-01": r.path[0] || (r.kind === "sub" ? r.code : ""), "SUB-02": r.path[1] || (r.kind === "sub" && r.depth === 1 ? r.code : ""),
+          Code: r.code, "ประเภท": r.kind === "sub" ? (r.depth ? "SUB 2nd" : "SUB 1st") : r.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", Description: r.d || "", "L (mm.)": num(r.l), "H (mm.)": num(r.h), Finish: r.f || "",
+          Material: r.kind === "sub" ? "SUB" : r.m || "" };
         const note = r.cx ? (r.to ? `แทนด้วย ${r.to} ${r.ver || ""}` : `ยกเลิก ${r.ver || ""}`).trim() : r.add ? `เพิ่ม ${r.ver || ""}`.trim() : r.q0 != null ? `เดิม ${r.q0} (${r.ver || "Modify"})` : "";
         const total = r.cx ? 0 : Math.round(r.sum * 1000) / 1000;
-        const mk = (wast, ml, src, pcs) => ({ ...base, WAST: wast, "MAT. LENGTH": ml, "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": pcs, "ทั้งเบอร์": total, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
+        const mk = (wast, ml, src, pcs) => ({ ...base, Wast: wast, "Stock L (mm.)": ml, "Qty / Set": r.cx ? 0 : num(r.q), Sum: pcs, "ทั้งเบอร์": total, "U.M.": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "หมายเหตุ": note });
         if (r.cx || !r.cut || !r.cut.reuse) return [mk("", r.cut ? num(r.cut.stock) : num(r.ml), r.cut ? "เส้นเต็ม" : "", total)];
         const out = [];
         if (r.cut.fresh) out.push(mk("", num(r.cut.stock), "เส้นเต็ม", r.cut.fresh));
@@ -207,11 +221,11 @@ export function BomView({ plan, need, ed }) {
         return out;
       });
       const sum = [...merged].sort((a, b) => (a.kind === b.kind ? ncmp(a.code, b.code) : a.kind === "sub" ? -1 : 1)).map((e) => ({
-        "PART NO.": e.code, "ประเภท": e.kind === "sub" ? "ซับ" : e.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", DESCRIPTION: e.d || "", LENGTH: num(e.l), MATERIAL: e.m || "",
-        "รวมทั้งใบ (ตามแบบ)": Math.round(e.total * 1000) / 1000, "ยอดที่ใช้ (หลังแก้)": e.adj != null ? Math.round(e.adj * 1000) / 1000 : Math.round(e.total * 1000) / 1000, "แก้ใน": e.adjVer || "", "หน่วย": e.uom, "ใช้ใน (ซับ/แผง × จำนวน)": [...e.uses.entries()].map(([p, u]) => `${p} ×${nlen(u.q)}`).join(", "),
-        "ตัดจากเศษ": e.reuse || "", "เส้นใหม่": e.fresh || "",
+        "เบอร์": e.code, "ประเภท": e.kind === "sub" ? "ซับ" : e.kind === "hw" ? "สกรู/ยาง" : "พาร์ท", "รายละเอียด": e.d || "", "ยาว (มม.)": num(e.l), MATERIAL: e.m || "",
+        "รวมในแผง": Math.round(e.total * 1000) / 1000, "ยอดหลังแก้": e.adj != null ? Math.round(e.adj * 1000) / 1000 : Math.round(e.total * 1000) / 1000, "แก้ใน": e.adjVer || "", "หน่วย": e.uom,
+        "ตัดจาก: เศษ": e.reuse || "", "ตัดจาก: เส้นใหม่": e.fresh || "", "ใช้ใน (ซับ ×จำนวน)": [...e.uses.entries()].map(([p, u]) => `${p} ×${nlen(u.q)}`).join(", "),
       }));
-      const tree = scope.flatMap((T) => T.rows.map((r) => ({ "แบบแผง": T.unit, "จำนวนแผง": T.n, "ชั้น": r.depth + 1, "โครงสร้าง": `${"    ".repeat(r.depth)}${r.kind === "sub" ? "▸ " : ""}${r.code}`, DESCRIPTION: r.d || "", LENGTH: num(r.l), MATERIAL: r.kind === "sub" ? "" : r.m || "", "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.per * T.n * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "หมายเหตุ": r.cx ? "ยกเลิก" : r.add ? "เพิ่ม" : "" })));
+      const tree = scope.flatMap((T) => T.rows.map((r) => ({ "แบบแผง": T.unit, "จำนวนแผง": T.n, "ระดับ": r.depth + 1, "เบอร์": `${"    ".repeat(r.depth)}${r.kind === "sub" ? "▸ " : ""}${r.code}`, "รายละเอียด": r.d || "", "ส่งไปใบ": destOf(r).map(destLabel).join(", "), "ยาว (มม.)": num(r.l), MATERIAL: r.kind === "sub" ? "" : r.m || "", "ต่อชุด": r.cx ? 0 : num(r.q), "รวม": r.cx ? 0 : Math.round(r.per * T.n * 1000) / 1000, "หน่วย": r.uom || (r.kind === "sub" ? "SET" : "pcs."), "หมายเหตุ": r.cx ? "ยกเลิก" : r.add ? "เพิ่ม" : "" })));
       const tag = ALL ? "ALL" : cur?.unit || "BOM";
       await downloadSheets(`BOM_${plan.ro}_${tag}.xlsx`.replace(/[\\/:*?"<>|\s]+/g, "_"), [{ name: "ตารางเต็ม", rows: full }, { name: "รวมเบอร์", rows: sum }, { name: "โครงสร้าง", rows: tree }]);
     } catch (e) { alert("สร้างไฟล์ Excel ไม่สำเร็จ: " + (e?.message || e)); }
@@ -288,7 +302,7 @@ export function BomView({ plan, need, ed }) {
           note={(sorted) => <>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง{sorted ? " · กำลังเรียงอยู่ — กดหัวเดิมจนครบ 3 ครั้งเพื่อกลับลำดับแผง" : ""}</>}
           cols={[
             { k: "unit", h: "Panel", tip: "แบบแผง (เลขแบบของแผง)", sort: (r) => r.unit, td: (r) => <td className="pn">{r.unit}</td> },
-            { k: "pd", h: "Panel Description", tip: "รายละเอียดของแบบแผง", sort: (r) => r.pdesc, td: (r) => <td className="pd">{eCell(r, "pd", U(r), r.pdesc)}</td> },
+            { k: "pd", h: "Panel Description", tip: "รายละเอียดของแบบแผง", sort: (r) => r.pdesc, td: (r) => <td className="pd">{(model.types.get(r.unit) || {}).pick ? r.pdesc : eCell(r, "pd", U(r), r.pdesc)}</td> },
             { k: "n", h: "Panel Qty", tip: "จำนวนแผงของแบบนี้ในใบ", th: { className: "r" }, sort: (r) => r.n, td: (r) => <td className="r">{nf(r.n)}</td> },
             { k: "pum", h: "Panel U.M.", tip: "หน่วยของแผง (SET = ชุด)", td: () => <td>SET</td> },
             { k: "rev", h: "Rev", tip: "Rev ที่จดไว้ในใบของบรรทัดนี้ (พิมพ์แก้ได้ · ว่าง = ไม่มี) — คนละค่ากับคอลัมน์ REV. ในแท็บ Total Part ซึ่งเป็น Rev ของไฟล์แบบที่เก็บอยู่", sort: (r) => r.rev, td: (r) => <td className="rev">{eCell(r, "rev", U(r), r.rev || "")}</td> },
