@@ -1620,14 +1620,18 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); document.body.style.userSelect = ""; try { localStorage.setItem("rl-pop-size", JSON.stringify(last)); } catch { /* ignore */ } };
     document.body.style.userSelect = "none"; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
+  // ★ 2026-11-18 ผู้ใช้: "ทำไมถึงมีเบอร์อื่นๆ ที่ไม่เกี่ยวมาด้วย" — เปิดจากแถวของเบอร์ = ดูเฉพาะเบอร์นั้นทั้งหน้า (การ์ดสรุป / ตามล็อต / ตาราง เป็นของเบอร์นั้น)
+  //   เดิม: การ์ดเป็นยอดทั้งใบ (66) แต่ตารางกรองเบอร์เดียว (6) → งง · ดูทั้งใบได้ด้วยปุ่ม "ดูทั้งใบ"
+  const [only, setOnly] = useState(initQ || "");
   const [flt, setFlt] = useState(initQ ? "all" : "left");
-  const [q, setQ] = useState(initQ);
+  const [q, setQ] = useState("");
   const data = useMemo(() => {
     const items = new Map(), sheets = new Map(), lots = [];
     for (const L of rel.lots) {
       if (L.hwOnly) continue; let ld = 0, lt = 0;
       for (const r of L.rows) {
         if (r.mod_cancelled_at) continue; const qy = Number(r.qty) || 0; if (!qy) continue;
+        if (only && NC(r.code) !== NC(only)) continue;
         const m = prod ? Math.min(qy, prod.get(String(r.id)) || 0) : 0; ld += m; lt += qy;
         const sk = rowSheets(r)[0] || (r.kind === "panel" ? "panel" : "—");
         const key = r.kind + "|" + NC(r.code);
@@ -1638,11 +1642,11 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
         const sh = sheets.get(sk) || sheets.set(sk, { k: sk, qty: 0, made: 0, codes: new Set() }).get(sk);
         sh.qty += qy; sh.made += m; sh.codes.add(key);
       }
-      lots.push({ no: L.no, made: ld, qty: lt });
+      if (!only || lt) lots.push({ no: L.no, made: ld, qty: lt });
     }
     const list = [...items.values()];
     return { list, sheets: SHEETS.filter((x) => sheets.has(x.k)).map((x) => ({ ...sheets.get(x.k), label: x.label })), lots, made: list.reduce((a, x) => a + x.made, 0), qty: list.reduce((a, x) => a + x.qty, 0) };
-  }, [rel, prod]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rel, prod, only]);   // eslint-disable-line react-hooks/exhaustive-deps
   const descOf = (it) => (it.kind === "panel" ? "แผง" : (it.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(it.code))?.d || "");
   const pc = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
   const left = data.list.filter((x) => x.made < x.qty), done = data.list.filter((x) => x.made >= x.qty);
@@ -1656,11 +1660,11 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
       <div className="rl-back" onClick={onClose} />
       <div ref={popRef} className={`rl-pop ${big ? "big" : ""}`} role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`} style={!big && size ? { width: size.w, height: size.h } : undefined}>
         {big ? null : ["w", "e", "s", "sw", "se"].map((d) => <div key={d} className={`rl-pop-rz ${d}`} onPointerDown={startDrag(d)} aria-hidden="true" />)}
-        <div className="rl-pop-h"><h2>Release {plan.ro} ทำไปแค่ไหนแล้ว</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x rl-pop-max" onClick={() => setBig((v) => !v)} aria-label={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"} title={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"}>{big ? "❐" : "□"}</button><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
+        <div className="rl-pop-h"><h2>{only ? <>{only} <small className="rw-muted" style={{ fontWeight: 500 }}>ใน Release {plan.ro}</small> ทำไปแค่ไหนแล้ว</> : <>Release {plan.ro} ทำไปแค่ไหนแล้ว</>}</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x rl-pop-max" onClick={() => setBig((v) => !v)} aria-label={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"} title={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"}>{big ? "❐" : "□"}</button><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
         {!prod ? <div className="rw-msg warn">ยังโหลดยอดผลิตไม่ได้ (หรือยังไม่ได้ติดตั้งส่วน Modify) — ตัวเลขผลิตแล้วจะเป็น 0</div> : null}
         <div className="rl-pop-body">
           <div className="rl-pp-cards">
-            <div className="rl-pp-card main"><div className="rl-pp-card-t"><b>ทั้งใบ</b><span>{pc(data.made, data.qty)}%</span></div><small>ผลิตแล้ว {nf(data.made)} / {nf(data.qty)} ชิ้น · {nf(data.list.length)} รายการ</small><Bar m={data.made} t={data.qty} /></div>
+            <div className="rl-pp-card main"><div className="rl-pp-card-t"><b>{only ? "เบอร์นี้ (ทุกล็อต)" : "ทั้งใบ"}</b><span>{pc(data.made, data.qty)}%</span></div><small>ผลิตแล้ว {nf(data.made)} / {nf(data.qty)} ชิ้น · {nf(data.list.length)} รายการ</small><Bar m={data.made} t={data.qty} /></div>
             {data.sheets.map((sh) => <div key={sh.k} className="rl-pp-card"><div className="rl-pp-card-t"><b>{sh.label}</b><span>{pc(sh.made, sh.qty)}%</span></div><small>{nf(sh.codes.size)} {sh.k === "panel" ? "แบบ" : "เบอร์"}</small><Bar m={sh.made} t={sh.qty} /></div>)}
             <div className="rl-pp-card"><div className="rl-pp-card-t"><b>ตามล็อต</b></div>
               <div className="rl-pp-lots">{[...data.lots].reverse().map((L) => <div key={L.no}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(L.no)}>{L.no}</button> : <span className="rw-mono">{L.no}</span>}<Bar m={L.made} t={L.qty} /></div>)}</div></div>
@@ -1672,7 +1676,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
             <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
           </div>
           {/* ★ 2026-11-17 ผู้ใช้: "รายละเอียดทำไมมีแค่ 6 ทั้งที่ทั้งหมดมี 66" — กดแถวเบอร์ในตารางแล้วเปิดมา = กรองเฉพาะเบอร์นั้น แต่ไม่มีอะไรบอก → บอกให้ชัด + ปุ่มดูทั้งหมด */}
-          {ql ? <div className="rw-msg info rl-pp-flt" role="status">กำลังดูเฉพาะที่ค้นหา “<b>{q.trim()}</b>” — แสดง <b>{nf(rows.length)}</b> จาก {nf(data.list.length)} รายการ · รวม <b>{nf(rows.reduce((a, x) => a + x.qty, 0))}</b> จาก {nf(data.qty)} ชิ้นของทั้งใบ <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setQ(""); setFlt("all"); }}>ดูทุกรายการ</button></div> : null}
+          {only ? <div className="rw-msg info rl-pp-flt" role="status">กำลังดูเฉพาะเบอร์ <b>{only}</b> — ตัวเลขทั้งหน้านี้เป็นของเบอร์นี้เท่านั้น ({nf(data.qty)} ชิ้น · {nf(data.lots.length)} ล็อต) <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setOnly(""); setQ(""); setFlt("all"); }}>ดูทั้งใบ {plan.ro} (ทุกเบอร์)</button></div> : null}
           <div className="rl-pp-tw"><table className="rl-pp-t">
             <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>
             <tbody>{rows.map((x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
