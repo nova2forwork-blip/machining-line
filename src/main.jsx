@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
+import { installThTips } from "./th-tips.js";
 
 // ★ 2026-10-15: กันจอพัง "Failed to execute 'removeChild' on 'Node'" (เจอที่แท็บเล็ตหน้าเครื่องที่เปิด "แปลหน้านี้" ของ Chrome)
 //   ตัวแปลของเบราว์เซอร์/ส่วนขยาย ย้ายข้อความไปห่อใน <font> → React จะลบ/แทรก node ที่ไม่ได้อยู่ที่เดิมแล้ว → โยน error ทั้งหน้า
@@ -98,6 +99,7 @@ if (import.meta.env.DEV && "serviceWorker" in navigator) {
   });
 }
 
+installThTips();   // คำอธิบายหัวตาราง (ชี้เมาส์) ทั้งฝั่งออฟฟิศ
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
 // ปิดหน้าโหลดชั่วคราว (boot-splash) หลังแอปเรนเดอร์แล้ว — เฟดออกนุ่มๆ กันจอมืด
