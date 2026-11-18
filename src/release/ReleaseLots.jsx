@@ -437,6 +437,8 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                   const ok = await askConfirm({ title: `บันทึกการแก้ ${m.ver}?`, message: `ยอดต้องใช้ / ของที่เพิ่ม / วัสดุ / ความยาว ในใบจะคำนวณใหม่ตาม ${m.ver} ที่แก้\nล็อตที่ปล่อยแล้วไม่เปลี่ยน · ประวัติการแก้เก็บไว้ใน ${m.ver}`, tone: "warn", confirmText: "บันทึกการแก้", cancelText: "กลับ" });
                   if (!ok) return;
                   onPlanChange(replayMods(plan, nmods)); setModEdit(null); setCmpOpen((o) => new Set([...o, m.ver]));
+                  // วันที่ของ M เปลี่ยน → ประวัติ Modify ของล็อตในฐานข้อมูลตามด้วย (เดิมค้างเป็นวันที่เก่า)
+                  if (api.syncModDate && nm.date && nm.date !== m.date) api.syncModDate({ plan, lots: rel.lots.map((L) => L.no), mod: nm, date: nm.date }).then((r) => { if (r && r.failed.length) { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text: `วันที่ของ ${m.ver} ในประวัติล็อตอัปเดตไม่ครบ: ${r.failed.slice(0, 3).join(" · ")}`, tone: "error" } })); } catch { /* ignore */ } } }).catch(() => {});
                 }} /> : null}
                 {cmpOpen.has(m.ver) && modEdit !== m.ver ? <ModCompare m={m} need={needAsOf(m.ver)} last={plan.mods[plan.mods.length - 1].ver === m.ver} /> : null}
                 <ul className="rl-mod-items" hidden={cmpOpen.has(m.ver) || modEdit === m.ver}>

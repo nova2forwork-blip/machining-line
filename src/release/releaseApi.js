@@ -9,6 +9,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   supabase, listRows, insertRows, createReleaseBatch, releaseOrderExists, updateRow, setBom, getBom, updatePartMaster,
+  setReleaseModDate,
   listReleaseIdsOfOrder, setReleaseMdf, addMaterialsFromRelease, getMaterials, getReleaseModifyInfo, applyReleaseModify, revertReleaseModify,
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
@@ -487,13 +488,34 @@ export async function releaseLot({ plan, lotNo, date, userId, rows, append = fal
   let wOf = () => 0;
   try { wOf = await weightIndex(plan.projectId); } catch (_) { /* ไม่มีบันทึก Material = น้ำหนัก 0 */ }
   onProgress(`สร้างล็อต ${lotNo} + QR (${rows.length} เบอร์)…`);
+  // ยอดต้องใช้ทั้งใบของเบอร์ที่กำลังจะปล่อย → ให้ฐานข้อมูลตรวจซ้ำแบบล็อก (กันกดพร้อมกันเป๊ะ)
+  const need2 = needOf(plan);
+  const limits = rows.filter((r) => r.kind !== "panel").map((r) => { const sub = r.kind === "subassembly" || r.kind === "sub"; const n = (sub ? need2.subs : need2.parts).find((x) => NC(x.code) === NC(r.code)); return n ? { code: r.code, max: Number(n.qty) || 0 } : null; }).filter(Boolean);
   const res = await createReleaseBatch({
+    planRo: plan.ro, limits,
     projectId: plan.projectId, releaseOrder: lotNo, releaseDate: date, releasedBy: userId, makeQr: true,
     rows: rows.map((r) => ({ code: r.code, qty: r.qty, unit_weight: r.kind === "part" ? wOf(r.material, r.length_mm) || 0 : 0, length_mm: r.length_mm ?? null, material: r.material || null, remark: r.remark || null, routing: [] })),
   });
   try { const ids = await listReleaseIdsOfOrder(plan.projectId, lotNo); await setReleaseMdf(ids, String(plan.mod || "").trim() || "0"); } catch (_) { /* DB เก่า */ }
   try { const invs = [...new Set(rows.filter((r) => r.kind === "part").map((r) => r.material).filter(Boolean))].map((inv) => ({ inv, wpm: null })); if (invs.length) await addMaterialsFromRelease(plan.projectId, lotNo, invs); } catch (_) { /* ignore */ }
   return res;
+}
+
+// ★ 2026-11-18 sim-test: แก้วันที่ของ M ในใบหลักแล้ว ประวัติ Modify ของล็อตในฐานข้อมูล (doc_date) ไม่ตาม → เรียก set_release_mod_date ให้ทุกล็อตที่ M นั้นแตะ
+//   lots = เลขล็อตของใบ · คืน { n: จำนวนที่อัปเดต, failed: [เหตุผล] } · ล็อตที่ M ไม่ได้แตะ = ไม่มีแถว (ข้าม)
+export async function syncModDate({ plan, lots, mod, date }) {
+  const out = { n: 0, failed: [] }; if (!date || !mod) return out;
+  for (const lot of lots || []) {
+    let info = null; try { info = await getReleaseModifyInfo(plan.projectId, lot); } catch (_) { info = null; }
+    for (const m of ((info && info.mods) || [])) {
+      if (Number(m.version_no) !== Number(mod.no) || m.reverted) continue;
+      if (!String(m.reason || "").includes(`(Release ${plan.ro} ${mod.ver})`)) continue;
+      if (String(m.doc_date || "").slice(0, 10) === String(date).slice(0, 10)) continue;
+      const r = await setReleaseModDate({ modId: m.id, target: "modify", date, note: `แก้วันที่ ${mod.ver} ในใบ ${plan.ro}` });
+      if (r && r.ok) out.n++; else if (!r || r.reason !== "same_date") out.failed.push(`${lot}: ${(r && (r.detail || r.reason)) || "error"}`);
+    }
+  }
+  return out;
 }
 
 // ══ Modify Release ══
@@ -644,4 +666,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { weightIndex, showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { syncModDate, weightIndex, showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

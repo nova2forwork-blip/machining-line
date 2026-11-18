@@ -2260,7 +2260,21 @@ export async function getReleaseMachineStatus(releaseIds) {
 // สร้าง release ทั้งใบ (หลาย Part) แบบ atomic — พังกลางคัน = rollback ทั้งใบ
 // rows: [{ code, qty, unit_weight, length_mm, material, remark, routing:[] }]
 // คืน { releasesCreated, partsCreated, unitsCreated }
-export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows }) {
+export async function createReleaseBatch({ projectId, releaseOrder, releaseDate, releasedBy, makeQr, rows, planRo = "", limits = null }) {
+  // ★ 2026-11-18 ปล่อยล็อตแบบตรวจยอดในฐานข้อมูล (migration-sim-fixes-2026-11-18.sql) — ล็อกต่อใบ + ตรวจ + สร้างใน transaction เดียว
+  //   ยังไม่ได้รัน migration = ถอยไปใช้ create_release_batch เดิม (หน้าจอตรวจยอดให้ก่อนอยู่แล้ว)
+  if (planRo && Array.isArray(limits) && limits.length) {
+    const r = await supabase.rpc("create_release_batch_checked", {
+      p_token: authToken(), p_project_id: projectId, p_release_order: releaseOrder || null, p_release_date: releaseDate || null,
+      p_released_by: releasedBy || null, p_make_qr: !!makeQr, p_rows: rows, p_plan_ro: planRo, p_limits: limits,
+    });
+    if (!r.error) return r.data || { releasesCreated: 0, partsCreated: 0, unitsCreated: 0 };
+    if (!isMissingFnErr(r.error, "create_release_batch_checked")) {
+      const m = String(r.error.message || "");
+      if (/over_release:/.test(m)) { const e = new Error("ปล่อยไม่ได้ — จะเกินยอดที่ต้องใช้ (มีคนปล่อยไปก่อนในอีกหน้าต่าง):\n" + m.replace(/^.*over_release:\s*/, "").split("; ").filter(Boolean).join("\n") + "\nรีเฟรชหน้าแล้วเลือกใหม่"); e.code = "over"; throw e; }
+      console.warn("create_release_batch_checked error", r.error); throw r.error;
+    }
+  }
   const { data, error } = await supabase.rpc("create_release_batch", {
     p_token: authToken(),
     p_project_id: projectId,
