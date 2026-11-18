@@ -102,7 +102,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
     const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
     if (!hit.length) { setRowMsg(`${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
     // ★ 2026-11-18 ทุกเบอร์เปิดหน้าต่างแบบเดียวกัน (การ์ดความคืบหน้าของเบอร์) — ปล่อยหลายล็อต = มีปุ่มสลับล็อตในหน้าต่างนั้น (เดิม: หลายล็อตเปิดป็อปอัพทั้งใบที่กรองไว้ → หน้าตาคนละแบบ)
-    if (onOpenPart && onOpenPart(hit[0].id, hit.map((h) => h.id))) return;
+    // ★ 2026-11-18 (รอบ 2) ผู้ใช้: "ให้หน้าตาแบบนี้สิ" → ทุกเบอร์เปิดหน้าต่างใหญ่แบบเดียวกัน (ดูเฉพาะเบอร์นั้น: การ์ดสรุป · ตามล็อต · ตาราง) ทั้งเบอร์ที่ปล่อยล็อตเดียวและหลายล็อต
     setProgOpen(String(code));
   };
   const [modEdit, setModEdit] = useState(null);   // ★ 2026-11-10 M ที่กำลังแก้ (บันทึกผิด)   // ★ 2026-11-10 แบบ B: ประวัติ Modify เปิดเป็นแผงด้านขวา
