@@ -172,7 +172,7 @@ export function BomView({ plan, need, ed }) {
       if (r.cx) continue;
       const e = m.get(r.code) || m.set(r.code, { code: r.code, kind: r.kind, d: r.d, l: r.l, m: r.m, uom: r.uom || (r.kind === "sub" ? "SET" : "pcs."), total: 0, reuse: 0, fresh: 0, uses: new Map() }).get(r.code);
       e.total += r.per * T.n; if (r.cut) { e.reuse += r.cut.reuse; e.fresh += r.cut.fresh; }
-      const par = r.path.length ? r.path[r.path.length - 1] : "(ติดแผงตรง)";
+      const par = r.path.length ? r.path[r.path.length - 1] : T.pick ? "(ปล่อยตรง)" : "(ติดแผงตรง)";   // ★ 2026-11-18 ซับ / พาร์ทที่ปล่อยตรงไม่ได้ "ติดแผง"
       const u = e.uses.get(par) || { q: 0, panels: new Set() }; u.q += r.per * T.n; u.panels.add(T.unit); e.uses.set(par, u);
     }
     // ★ 2026-11-12 S3: ยอดทั้งใบที่แก้แล้ว (Modify / แก้ตรงไม่นับ M · ยกเลิก) — ตรงกับ Total Part / Total Sub · ใช้เมื่อดูทุกแบบแผง (ยอดทั้งใบ)

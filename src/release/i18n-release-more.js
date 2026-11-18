@@ -5,6 +5,7 @@ import { registerI18n } from "../i18n-dom.js";
 const DICT = {
   // ── ข้อความบนจอ ──
   "เหลือปล่อย": "Left to release",
+  "(ปล่อยตรง)": "(released directly)",
   "ปล่อยไว้ที่": "Released in",
   "ปล่อยแล้ว / ปล่อยไว้ที่": "Released / released in",
   "— วัตถุดิบ": "— material",

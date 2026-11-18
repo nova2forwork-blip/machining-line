@@ -2843,3 +2843,15 @@ registerI18n({
     ["แบบไม่ได้แก้ความยาว — ปรับเป็นค่าช่อง A ของตาราง ({1} มม.) แทนค่าที่แปลงจากนิ้ว ({2})", "The drawing length is unchanged — switching to column A of the table ({1} mm) instead of the value converted from inches ({2})"],
   ],
 });
+
+// ★ 2026-11-18 หน้าตรวจงานประกอบ — คำที่ยังเป็นไทยในโหมด EN (เก็บจากการไล่เปิดทุกเมนูฝั่งออฟฟิศ)
+registerI18n({
+  dict: {
+    "สแกน QR หรือค้นหา": "Scan a QR or search",
+    "สแกน QR หรือค้นหาเบอร์ / โปรเจค — กด Enter เพื่อเปิด (เบอร์ที่เสร็จแล้วก็เปิดได้)": "Scan a QR or search a code / project — press Enter to open (finished codes can be opened too)",
+    "เทียบของที่ต้องใส่ตามแผน (Release) กับที่หน้างานสแกนจริง — ครบไหม · ผิดเบอร์ไหม · เกินไหม · แตะแถวเพื่อดูผล หรือสแกน QR (เบอร์ที่เสร็จแล้วก็ได้)": "Compares what the plan (Release) requires with what was actually scanned on the floor — complete? wrong code? too many? · tap a row to see the result, or scan a QR (finished codes too)",
+    "เบอร์ที่เสร็จแล้วไม่อยู่ในรายการ — สแกน / พิมพ์ QR ในช่องค้นหาแล้วกด Enter": "Finished codes are not listed — scan / type the QR in the search box and press Enter",
+    "เบอร์แม่ / บั้ง": "Parent code / frame",
+    "เบอร์แม่ / บั้ง ที่ยังเปิดอยู่": "Parent codes / frames still open",
+  },
+});
