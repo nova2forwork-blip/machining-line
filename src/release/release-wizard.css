@@ -1440,3 +1440,7 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 /* ★ 2026-11-18 ผู้ใช้: "ปล่อยหลายรีลีสแล้ว ทำไมไม่มีตาราง" — มุมมองเบอร์เดียว: ส่วนรายละเอียดต่อล็อตดันตารางจนหด → ห้ามหด ให้เลื่อนทั้งหน้าต่างแทน */
 .rl-pop-body.one > * { flex-shrink: 0; }
 .rl-pp-tw.in { padding: 0; border-radius: 0; margin-bottom: 12px; }
+/* ★ 2026-11-18 ผู้ใช้: "ตารางปล่อยงาน มันตกขอบ" — แถบใบงานในกล่องปล่อยล็อตยาวเกินจอ (ต้องเลื่อนข้าง · แท็บ ASSEMBLY ถูกตัด) → ขึ้นบรรทัดใหม่แทน */
+.rl-tabs.grouped { flex-wrap: wrap; overflow-x: visible; row-gap: 8px; }
+.rl-tabs.grouped .rl-tabgrp-row { flex-wrap: wrap; }
+.rl-tabs.grouped .rl-tabgrp { max-width: 100%; }
