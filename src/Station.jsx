@@ -203,6 +203,7 @@ function reasonText(code, t) {
     not_found: t("ไม่พบ QR/ล็อตในระบบ", "QR/lot not found"), unit_not_found: t("ไม่พบ QR/ล็อตในระบบ", "QR/lot not found"),
     project_closed: t("โปรเจคปิดแล้ว", "project closed"),
     qr_cancelled: t("QR ถูกยกเลิกใน Modify", "QR cancelled in Modify"),
+    wrong_station: t("แผง / แพ็ก บันทึกที่เครื่องนี้ไม่ได้ — ใช้สเตชันแผง / แพ็ก", "panels / packages can't be recorded at this machine"),
     release_cancelled: t("Part ถูกยกเลิกใน Modify", "part cancelled in Modify"),
     unauthorized: t("เซสชันหมดอายุ — ล็อกอินใหม่", "session expired — log in again"),
     forbidden: t("ไม่มีสิทธิ์", "not allowed"),
@@ -1160,6 +1161,15 @@ function MachineStation({ user, onLogout, onKicked, onExpired, dept = "machine" 
               "This project is closed — can't add work · ask admin to reopen for rework"), "warn");
       return false;
     }
+    // ★ 2026-11-18 sim-test SIM4 · ผู้ใช้: "กัน" — แผง / แพ็ก สแกนที่เครื่องงานตัด-เจาะไม่ได้ (เดิมบันทึกเป็นงาน "ตัด" ของแผงได้ ยอดปนกับสเตชันแผง)
+    //   พาร์ท / ซับ ไม่เปลี่ยน (ซับยังไปเครื่องพับ / เชื่อมได้) · ฐานข้อมูลกันซ้ำอีกชั้น (reason wrong_station)
+    { const pk = u?.part_master?.kind || "part"; const opTy = (op || user.operation || {}).op_type || "machining";
+      if ((pk === "panel" || pk === "package") && opTy === "machining") {
+        errorBeep();
+        const nm = pk === "panel" ? t("แผง", "a panel") : t("แพ็ก", "a package");
+        flash(t(`⛔ ${u.part_master?.part_no || ""} เป็น${nm} — บันทึกที่เครื่องนี้ไม่ได้ · ใช้สเตชัน${nm}`, `⛔ ${u.part_master?.part_no || ""} is ${nm} — it can't be recorded at this machine · use the ${pk} station`), "warn");
+        return false;
+      } }
     // ★ Modify: Part นี้ถูกยกเลิกในออฟฟิศ (M-xx) → จอแดงบล็อก ไม่ให้เข้าหน้าทำงาน
     if (u?.release?.mod_cancelled_at) {
       errorBeep();
@@ -2210,9 +2220,32 @@ Add anyway?`),
       flash(t("บันทึกไม่สำเร็จ: ", "save failed: ") + (e?.message || e?.details || e?.hint || e?.code || String(e)), "warn");
     } finally { setBusy(false); savingRef.current = false; }
   }
+  // ★ 2026-11-18 sim-test SIM4 · ผู้ใช้: "แค่เตือนแต่ก็บันทึกได้" — ก่อนบันทึกที่สเตชันแผง / ซับ: ลูกตามแบบยัง "ขาด" หรือ "เกิน" → บอกรายการให้เห็นก่อน แล้วเลือกบันทึกต่อได้
+  //   (เดิมบันทึกเงียบ ไปรู้ทีหลังที่หน้าตรวจงานประกอบของออฟฟิศ) · นับสะสม = ที่ใส่ไปแล้ว + รอบนี้ · ต้องใช้ = จำนวนในแบบ × จำนวนที่ทำ · กระจกไม่นับว่าขาด (ไปติดที่สเตชันกระจก)
+  async function asmWarnBeforeSave() {
+    if (!(dept === "panel" || dept === "assembly") || !asmParent) return true;
+    const bom = asmParent.bom || []; if (!bom.length) return true;
+    const made = Math.max(1, (Number(asmParent.madeSum) || 0) + Math.max(0, Math.floor(Number(asmParentQty) || 0)));
+    const short = [], over = [];
+    for (const b of bom) {
+      const need = Math.max(1, Math.floor(Number(b.qty) || 1)) * made; const have = asmGotByPm[b.child_pm_id] || 0; const name = b.part_no || "?";
+      if (have > need) over.push(`${name}: ${t("ใส่", "added")} ${nc(have)} / ${t("แบบ", "BOM")} ${nc(need)} (+${nc(have - need)})`);
+      else if (have < need && !isGlassName(`${b.part_no || ""} ${b.part_name || ""}`)) short.push(`${name}: ${t("ใส่", "added")} ${nc(have)} / ${t("แบบ", "BOM")} ${nc(need)} (${t("ขาด", "short")} ${nc(need - have)})`);
+    }
+    if (!short.length && !over.length) return true;
+    const cut = (l) => (l.length > 6 ? [...l.slice(0, 6), t(`… อีก ${nc(l.length - 6)} เบอร์`, `… ${nc(l.length - 6)} more`)] : l);
+    const msg = [over.length ? t(`เกินแบบ ${nc(over.length)} เบอร์`, `Over the BOM: ${nc(over.length)}`) + "\n" + cut(over).join("\n") : "", short.length ? t(`ยังไม่ครบ ${nc(short.length)} เบอร์`, `Not complete yet: ${nc(short.length)}`) + "\n" + cut(short).join("\n") : ""].filter(Boolean).join("\n\n");
+    errorBeep();
+    const v = await askChoice({
+      title: over.length && short.length ? t("ลูกเกิน / ยังไม่ครบตามแบบ", "Children over / not complete") : over.length ? t("ลูกเกินแบบ", "More children than the BOM") : t("ลูกยังไม่ครบตามแบบ", "Children not complete yet"), tone: "warn", cancelText: false, message: msg,
+      choices: [{ value: "back", label: t("กลับไปแก้ / ใส่ต่อ", "Go back"), primary: true }, { value: "save", label: t("บันทึกเท่านี้", "Save as is"), tone: "warn" }],
+    });
+    return v === "save";
+  }
   async function asmConfirm() {
     if (dept === "glazing") return glazeConfirm();
     if (!asmParent || asmChildren.length === 0 || savingRef.current) return;
+    if (!(await asmWarnBeforeSave())) return;
     if (asmParent.batchOk) return asmBatchConfirm();   // ★ รอบ 24–25: ซับ/แผง/บั้ง = บันทึกเป็นรอบ
     const isPack = isPackingDept(dept);
     const free = asmParent.parentKind !== "package";   // ประกอบอิสระ = ปิดเมื่อกดยืนยัน (แพ็ก = ครบตาม BOM)
@@ -4127,6 +4160,7 @@ function RejectedPanel({ t, onClose, onRetry, onClear }) {
   const rejReasonText = (r) => {
     if (r === "not_found" || r === "unit_not_found") return t("ไม่พบ QR/ล็อตในระบบ (อาจถูกลบ)", "QR/lot not found (may be deleted)");
     if (r === "qr_cancelled") return t("QR ถูกยกเลิกใน Modify (ออฟฟิศลดจำนวน/ยกเลิก Part)", "QR cancelled by an office Modify");
+    if (r === "wrong_station") return t("แผง / แพ็ก บันทึกที่เครื่องงานตัด-เจาะไม่ได้ — ทำที่สเตชันแผง / แพ็ก", "Panels / packages can't be recorded at a machining station");
     if (r === "release_cancelled") return t("Part ถูกยกเลิกใน Modify — ออฟฟิศต้องตัดสิน (สแปร์/คืนงาน)", "Part cancelled by an office Modify");
     if (r === "retry_exhausted") return t("ลองซิงค์หลายครั้งไม่สำเร็จ", "Failed after several retries");
     if (r === "forbidden" || r === "unauthorized") return t("สิทธิ์/เซสชันมีปัญหา", "Permission/session issue");

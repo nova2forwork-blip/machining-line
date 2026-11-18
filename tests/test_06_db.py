@@ -489,3 +489,79 @@ def test_office_can_still_add_project_and_part(db, actors, project):
     assert r["code"] == code
     r2 = one(db, INSERT, (actors.tok["office"], "part_master", json.dumps({"project_id": str(project), "part_no": "PYT-OFF", "part_name": "x"})))
     assert r2["part_no"] == "PYT-OFF"
+
+
+# ── แผง / แพ็ก บนเครื่องงานตัด (sim-test SIM4 · ผู้ใช้ 2026-11-18: "กัน") ──
+@pytest.fixture()
+def station(db, actors):
+    """สถานีจำลอง 2 แบบ (งานตัด · แผง) พร้อมบัญชีหน้าเครื่องและ session — ลบเมื่อจบ"""
+    if "wrong_station" not in (one(db, "select pg_get_functiondef(p.oid) from pg_proc p where p.proname='record_machine_work'") or ""):
+        pytest.skip("ฐานข้อมูลในเครื่องยังไม่ได้รัน migration-wrong-station-2026-11-18.sql")
+    tag = uuid.uuid4().hex[:6].upper()
+    out = {}
+    ids = {"op": [], "m": [], "e": []}
+    for key, op_type, is_asm in (("cut", "machining", False), ("panel", "panel", True)):
+        op = one(db, "insert into operations(name, seq, is_assembly, op_type) values(%s, 990, %s, %s) returning id", (f"PYT-{tag}-{key}", is_asm, op_type))
+        m = one(db, "insert into machines(code, name, active) values(%s, %s, true) returning id", (f"PYT-{tag}-{key}", f"pytest {key}"))
+        db.execute("insert into machine_operations(machine_id, operation_id) values(%s,%s)", (m, op))
+        e = one(db, "insert into employees(code,name,role,active,password_hash,multi_session,machine_id,operation_id) values(%s,%s,'operator',true,extensions.crypt(%s,extensions.gen_salt('bf',6)),true,%s,%s) returning id",
+                (f"PYT-{tag}-{key}", f"pytest {key}", uuid.uuid4().hex, m, op))
+        tok = one(db, "insert into sessions(employee_id, role) values(%s,'operator') returning token", (e,))
+        out[key] = {"token": str(tok), "op": op, "machine": m}
+        ids["op"].append(op); ids["m"].append(m); ids["e"].append(e)
+    yield out
+    for sql, key in (("delete from machine_active_jobs where machine_id = any(%s)", "m"), ("delete from machine_records where machine_id = any(%s)", "m"), ("delete from station_status where machine_id = any(%s)", "m"),
+                     ("delete from sessions where employee_id = any(%s)", "e"), ("delete from audit_log where actor_id = any(%s)", "e"), ("delete from employees where id = any(%s)", "e"),
+                     ("delete from machine_operations where machine_id = any(%s)", "m"), ("delete from machines where id = any(%s)", "m"), ("delete from operations where id = any(%s)", "op")):
+        try:
+            db.execute(sql, (ids[key],))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+WORK = "select public.record_machine_work(p_token => %s, p_qr => %s, p_quantity => 1, p_material_length => 6000, p_process_seconds => 5, p_status => 'finished')"
+
+
+def _qr(db, project, code, kind=None):
+    if kind:
+        db.execute("update part_master set kind=%s where project_id=%s and part_no=%s", (kind, project, code))
+    return one(db, "select u.qr_code from part_units u join part_master m on m.id=u.part_master_id where m.project_id=%s and m.part_no=%s order by u.unit_no limit 1", (project, code))
+
+
+def _records(db, project):
+    return one(db, "select count(*) from machine_records r join part_master m on m.id=r.part_master_id where m.project_id=%s", (project,))
+
+
+@R
+@N
+@pytest.mark.parametrize("tid,kind", [("TC-DB-090", "panel"), ("TC-DB-091", "package")])
+def test_panel_or_package_rejected_at_machining_station(db, actors, project, station, tid, kind):
+    """แผง / แพ็ก สแกนที่เครื่องงานตัด → ปฏิเสธ (wrong_station) และไม่มีบันทึกงานเกิดขึ้น"""
+    release(db, actors, project, "P-900.1", [{"code": "PYT-PNL", "qty": 1}], [])
+    r = one(db, WORK, (station["cut"]["token"], _qr(db, project, "PYT-PNL", kind)))
+    assert (r["ok"], r.get("reason")) == (False, "wrong_station"), tid
+    assert _records(db, project) == 0
+
+
+@P
+def test_part_still_recorded_at_machining_station(db, actors, project, station):
+    """TC-DB-092 พาร์ทธรรมดาที่เครื่องงานตัด → บันทึกได้ตามเดิม"""
+    release(db, actors, project, "P-900.1", [{"code": "PYT-A", "qty": 2}], [])
+    r = one(db, WORK, (station["cut"]["token"], _qr(db, project, "PYT-A")))
+    assert r["ok"] is True and _records(db, project) == 1
+
+
+@B
+def test_subassembly_still_recorded_at_machining_station(db, actors, project, station):
+    """TC-DB-093 ซับที่เครื่องชนิดงานตัด-พับ-เชื่อม → ยังบันทึกได้ (ซับไปเครื่องพับ / เชื่อมเป็นงานปกติ)"""
+    release(db, actors, project, "P-900.1", [{"code": "PYT-SUB", "qty": 1}], [])
+    r = one(db, WORK, (station["cut"]["token"], _qr(db, project, "PYT-SUB", "subassembly")))
+    assert r["ok"] is True
+
+
+@P
+def test_panel_not_rejected_as_wrong_station_at_panel_station(db, actors, project, station):
+    """TC-DB-094 แผงที่สเตชันแผง → ไม่ถูกปฏิเสธด้วยเหตุผลผิดสเตชัน"""
+    release(db, actors, project, "P-900.1", [{"code": "PYT-PNL", "qty": 1}], [])
+    r = one(db, WORK, (station["panel"]["token"], _qr(db, project, "PYT-PNL", "panel")))
+    assert r.get("reason") != "wrong_station"
