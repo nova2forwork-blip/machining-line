@@ -235,6 +235,50 @@ def test_plan_save_duplicate_same_number_different_zeros(db, actors, project):
     assert (r["ok"], r.get("reason")) == (False, "duplicate")
 
 
+@B
+def test_plan_save_suffix_makes_a_different_release(db, actors, project):
+    """TC-DB-042 ส่วนท้าย "(…)" ต้องตรงกันจึงนับว่าซ้ำ: P-009 กับ P-009 (A) เป็นคนละใบ · P-9(A) ซ้ำกับ P-009 (A)"""
+    assert save(db, actors.tok["office"], project, "P-009")["ok"] is True
+    assert save(db, actors.tok["office"], project, "P-009 (A)")["ok"] is True
+    assert save(db, actors.tok["office"], project, "P-9(A)").get("reason") == "duplicate"
+
+
+@R
+def test_ro_key_same_in_database_and_app(db, js):
+    """TC-DB-043 กุญแจเทียบเลขใบในฐานข้อมูล (_ro_key) ต้องให้ผลเดียวกับหน้าจอ (roKey) ทุกรูปแบบ"""
+    if not has_fn(db, "_ro_key"):
+        pytest.skip("ฐานข้อมูลในเครื่องยังไม่ได้รัน migration-ro-key-2026-11-18.sql")
+    samples = ["P-9", "P-09", "P-009", "p - 009", "P-002.01", "P-002.10", "P-012 (A)", "P-12( a b )", "P-000", "P-1234", "LIB", " lib ",
+               "DRAFT:abc def", "", "ABC", "P-2.0", "7"]
+    app = js.steps([{"fn": "roKey", "args": [s]} for s in samples])
+    dbk = [one(db, "select public._ro_key(%s)", (s,)) for s in samples]
+    assert dbk == app
+
+
+@R
+def test_plan_save_same_number_two_windows_at_once(db, actors, project):
+    """TC-DB-044 สองหน้าต่างสร้างใบเลขเดียวกัน (สะกดต่างกัน) พร้อมกัน → ได้ใบเดียว"""
+    res = []
+    gate = threading.Barrier(2)
+
+    def worker(ro):
+        c = connect()
+        try:
+            gate.wait(timeout=10)
+            r = save(c, actors.tok["office"], project, ro)
+            res.append("ok" if r["ok"] else r.get("reason"))
+        except Exception as e:  # noqa: BLE001
+            res.append(f"error: {e}")
+        finally:
+            c.close()
+
+    ts = [threading.Thread(target=worker, args=(ro,)) for ro in ("P-009", "P-9")]
+    [t.start() for t in ts]
+    [t.join(30) for t in ts]
+    assert sorted(res) == ["duplicate", "ok"], res
+    assert one(db, "select count(*) from release_plans where project_id=%s", (project,)) == 1
+
+
 @N
 @pytest.mark.parametrize("tid,ro", [("TC-DB-034", ""), ("TC-DB-035", "   "), ("TC-DB-036", None)])
 def test_plan_save_bad_input(db, actors, project, tid, ro):
