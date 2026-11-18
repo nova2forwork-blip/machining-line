@@ -132,7 +132,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       const best = list.filter(draftWorth).sort((a, b) => (b.at || 0) - (a.at || 0))[0]; if (!best) return;
       if (startedRef.current) return;   // ★ 2026-11-18 sim-test S8: ผู้ใช้เริ่มทำงานในหน้านี้ไปแล้ว → ไม่เสนอร่างเก่า (เดิมแถบโผล่ทีหลัง กด "ทำต่อ" แล้วงานที่ทำอยู่หาย)
       setDraftOffer((cur) => { if (cur && (cur.at || 0) >= (best.at || 0)) return cur; return { ...best, fromServer: true }; });
-      setDraftSrv((v) => (v.id ? v : { id: best.serverId, at: best.at || 0 }));
+      setDraftSrv((v) => (v.id ? v : { id: best.serverId, at: best.at || 0, pid: best.projectId || "" }));
     }).catch(() => { /* ยังไม่รัน SQL / ออฟไลน์ — ใช้ร่างในเครื่องอย่างเดียว */ });
     return () => { alive = false; };
   }, [api, user?.id]);
@@ -225,8 +225,14 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     // ★ 2026-11-10 ร่างบนเซิร์ฟเวอร์ (หน่วง 3 วิ · ต้องเลือกโปรเจคแล้ว) — ไม่สำเร็จ = เงียบ ยังมีร่างในเครื่อง
     const t2 = setTimeout(() => {
       if (!api?.saveDraft || !user?.id || !hdr.projectId) return;
+      // ★ 2026-11-18 โปรเจคที่ระบบเลือกให้จากใบปะหน้า และผู้ใช้ยังอยู่ขั้นแรก (ยังไม่ได้ยืนยัน / ไปต่อ) → ยังไม่เก็บร่างบนเซิร์ฟเวอร์ (เดิมร่างไปอยู่โปรเจคที่ระบบเดาทันที · ร่างในเครื่องยังเก็บตามปกติ)
+      if (step === 0 && autoPid.current && hdr.projectId === autoPid.current) return;
+      // เปลี่ยนโปรเจคหลังมีร่างบนเซิร์ฟเวอร์แล้ว → ลบร่างของโปรเจคเดิม แล้วเก็บใหม่ที่โปรเจคปัจจุบัน (เดิมบันทึกไม่ผ่านเงียบ ๆ ร่างค้างที่โปรเจคเดิม)
+      const moved = !!(draftSrv.id && draftSrv.pid && draftSrv.pid !== hdr.projectId);
+      if (moved && api?.dropDraft) api.dropDraft(draftSrv.id).catch(() => {});
+      const pidNow = hdr.projectId;
       const draft = { v: 1, at: Date.now(), step, hdr, units: unitsRaw, pdfs: pdfsRaw.map(({ _file, ...d }) => d), ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, order, orderHw, by: userName };
-      api.saveDraft({ projectId: hdr.projectId, userId: user.id, draft, id: draftSrv.id }).then((id) => { if (id) setDraftSrv({ id, at: draft.at }); }).catch(() => {});
+      api.saveDraft({ projectId: pidNow, userId: user.id, draft, id: moved ? null : draftSrv.id }).then((id) => { if (id) setDraftSrv({ id, at: draft.at, pid: pidNow }); }).catch(() => {});
     }, 3000);
     return () => { clearTimeout(t); clearTimeout(t2); };
   }, [step, hdr, unitsRaw, pdfsRaw, ack, ackMeta, useLib, catOv, procOv, destOv, afterSave, mode, picks, order, orderHw, draftOffer, saving.done, userName]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -236,7 +242,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     setMode(d.mode === "items" ? "items" : "panel"); setPicks(d.picks || []); setOrder(d.order || null); setOrderHw(d.orderHw || []);
     setUseLib(true); setCatOv(d.catOv || {}); setProcOv(d.procOv || {}); setDestOv(d.destOv || {}); setAfterSave(d.afterSave || "lots");
     setStep(Math.min(3, d.step === 2 && d.mode === "items" ? 1 : d.step || 0)); setDraftOffer(null);
-    if (d.serverId) setDraftSrv({ id: d.serverId, at: d.at || 0 });
+    if (d.serverId) setDraftSrv({ id: d.serverId, at: d.at || 0, pid: d.projectId || "" });
   }
   // ลบร่างบนเซิร์ฟเวอร์ (บันทึกใบสำเร็จ / กดเริ่มใหม่)
   const dropSrvDraft = (id) => { const k = id || draftSrv.id; if (k && api?.dropDraft) api.dropDraft(k).catch(() => {}); setDraftSrv({ id: null, at: 0 }); };

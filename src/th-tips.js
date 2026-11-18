@@ -2,6 +2,7 @@
 //   ตารางที่กำหนด title / tip เองแล้ว (BOM · ของในใบ · กล่องปล่อยล็อต · ความคืบหน้า) ไม่ถูกแตะ — ตัวนี้เติมให้หัวที่ยังไม่มีเท่านั้น
 //   หน้าเครื่อง (Station — ใช้บน iPad ชี้เมาส์ไม่ได้) ไม่ทำ · ใบพิมพ์ไม่ทำ
 //   เพิ่ม / แก้คำอธิบาย: แก้ที่ TIPS ด้านล่าง (คีย์ = ข้อความหัวคอลัมน์ ไม่สนตัวพิมพ์เล็ก-ใหญ่) · หัวที่ยังไม่มีคำอธิบายดูได้จาก window.__thMissing()
+import { getLang, translateText } from "./i18n-dom.js";
 
 const TIPS = {
   // ── ทั่วไป ──
@@ -233,7 +234,10 @@ function apply(root) {
     const cur = th.getAttribute("title") || ""; if (!GENERIC.test(cur)) continue;   // มี title เฉพาะของคอลัมน์ / ใส่คำอธิบายไปแล้ว
     const t = norm(th.textContent); if (!t || t.length > 40) continue;
     const tip = KEYED.get(t.toUpperCase());
-    if (tip) th.setAttribute("title", `${tip} · ${cur}`);
+    if (!tip) continue;
+    // ★ 2026-11-18 โหมด EN: title ทั่วไปเป็นอังกฤษอยู่แล้ว → ใส่คำอธิบายเป็นอังกฤษ (แปลไม่ได้ = ไม่ใส่ ไม่ให้ขึ้นไทยปนอังกฤษ)
+    if (getLang() === "en") { const en = translateText(tip); if (en && !/[฀-๿]/.test(en)) th.setAttribute("title", `${en} · ${cur}`); continue; }
+    th.setAttribute("title", `${tip} · ${cur}`);
   }
 }
 

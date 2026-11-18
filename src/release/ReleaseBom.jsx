@@ -156,6 +156,9 @@ export function BomView({ plan, need, ed }) {
     a.sort((x, y) => f(x, y) * lsort.d || ncmp(x.unit, y.unit)); return a;
   }, [model, lq, lsort]);
   const ALL = sel === "__ALL__";
+  // ★ 2026-11-18 หน่วยของ "แบบ" ในแท็บ BOM: แผง = แผง · ซับที่ปล่อยตรง = ชุด · กลุ่มพาร์ทปล่อยตรง = รายการ (เดิมเรียก "แผง" ทุกอย่าง)
+  const uw = (t) => (t && t.pick === "sub" ? "ชุด" : t && t.pick === "part" ? "รายการ" : "แผง");
+  const uwAll = [...model.types.values()].some((t) => t.pick) ? ([...model.types.values()].every((t) => t.pick) ? "ชุด" : "แผง / ชุด") : "แผง";
   const cur = ALL ? null : model.types.get(sel) || list[0] || [...model.types.values()][0] || null;
   const v = ALL && view === "tree" ? "merge" : view;
   const destOf = (r) => (r.kind === "sub" ? (need.subs.find((x) => NC(x.code) === NC(r.code))?.procs || []) : r.kind === "part" ? [need.parts.find((x) => NC(x.code) === NC(r.code))?.dest].filter(Boolean) : []);
@@ -261,7 +264,7 @@ export function BomView({ plan, need, ed }) {
             { k: "m", h: "MATERIAL", tip: "รหัสวัตถุดิบ (INV) ที่ใช้ตัดชิ้นนี้", td: (r, i) => <td className={`c ${r.kind === "sub" ? "subm" : ""}`}>{r.kind === "sub" ? "SUB" : eCell(r, "m", T(r, i).u, r.m)}</td> },
             { k: "cut", h: "ตัดจาก", tip: "ชิ้นเหล่านี้ตัดจากอะไร — ป้ายแดง \"เศษ ×n\" = n ชิ้นตัดจากเศษของเส้นอื่น · ป้ายเทา \"เส้นใหม่ ×n\" = ต้องเบิกเส้นเต็ม n เส้น · นับไล่ตามลำดับแผง (ประมาณการ) — จำนวนเส้นที่ต้องเบิกจริงดูที่ Total Mat. ช่อง ACTUAL ISSUE ซึ่งจัดชิ้นลงเส้นใหม่ทั้งใบ อาจได้น้อยกว่า", td: (r) => <td>{r.kind === "sub" ? null : cutChip(r)}</td> },
             { k: "q", h: "ต่อชุด", tip: "จำนวนชิ้นนี้ต่อแผง 1 ชุด (หรือต่อซับ 1 ตัว ถ้าเป็นลูกในซับ)", th: { className: "r" }, td: (r, i) => <td className="r">{qCell(r, T(r, i).u)}</td> },
-            { k: "sum", h: `รวม (× ${nf(cur.n)} แผง)`, tip: "จำนวนรวม = จำนวนต่อชุด × จำนวนแผงของแบบนี้", th: { className: "r" }, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b></td> },
+            { k: "sum", h: `รวม (× ${nf(cur.n)} ${uw(cur)})`, tip: "จำนวนรวม = จำนวนต่อชุด × จำนวนแผง (หรือจำนวนชุดของซับที่ปล่อยตรง) ของแบบนี้", th: { className: "r" }, td: (r) => <td className="r"><b>{r.cx ? "0" : nlen(Math.round(r.per * cur.n * 1000) / 1000)}</b></td> },
             { k: "um", h: "หน่วย", tip: "หน่วยนับ (pcs. / m.)", td: (r) => <td>{r.kind === "sub" ? "SET" : String(r.uom || "pcs.").replace(/\.$/, "").toUpperCase()}</td> },
           ]} />) : <div className="rw-muted small rt-empty">ไม่พบรายการ</div>}
       </div>);
@@ -298,7 +301,7 @@ export function BomView({ plan, need, ed }) {
       <div className="table-wrap rw-tw rt-tw">
         <XTable id={`bom-full${wasteOn ? "-w" : ""}`} className="rt-xl" rows={rows} limit={limit} rowKey={(r, i) => r.unit + r.i + "-" + i} tableProps={{ onClick: ed.tableClick }}
           trProps={(r, i, sorted) => ({ className: `${sorted ? "" : shade[i]} ${r.kind === "sub" ? "sub" : ""} ${r.cx ? "cx" : ""}` })}
-          group={(r) => ({ key: r.unit, render: (n) => <tr key={"pg" + r.unit} className="xl-pgap"><td colSpan={n}><b>{r.unit}</b><span>{r.pdesc}</span><small>{nf(r.n)} แผง</small></td></tr> })}
+          group={(r) => ({ key: r.unit, render: (n) => <tr key={"pg" + r.unit} className="xl-pgap"><td colSpan={n}><b>{r.unit}</b><span>{r.pdesc}</span><small>{nf(r.n)} {uw(model.types.get(r.unit))}</small></td></tr> })}
           note={(sorted) => <>{nf(rows.length)} บรรทัด · SUB = ซับ (โค้ดเขียวตัวหนา) · โค้ดเขียว = ลูกในซับ · <span className="xl-off">OFF</span> = ตัดจากเศษ{wasteOn ? "" : " (กด \"การคำนวณเศษ\" ด้านบนเพื่อดูรายละเอียด)"} · Sum = Quantity × ซับชั้นบน × จำนวนแผง{sorted ? " · กำลังเรียงอยู่ — กดหัวเดิมจนครบ 3 ครั้งเพื่อกลับลำดับแผง" : ""}</>}
           cols={[
             { k: "unit", h: "Panel", tip: "แบบแผง (เลขแบบของแผง)", sort: (r) => r.unit, td: (r) => <td className="pn">{r.unit}</td> },
@@ -345,18 +348,18 @@ export function BomView({ plan, need, ed }) {
                 onBlur={() => setPickTxt(null)}
                 onKeyDown={(e) => { if (e.key === "Enter") { const q0 = String(e.target.value || "").trim().toUpperCase(); const one = q0 ? list.filter((x) => NC(x.unit).includes(NC(q0))) : []; if (one.length === 1) setSel(one[0].unit); else pickBy(e.target.value); setPickTxt(null); setLimit(PAGE); e.target.blur(); } else if (e.key === "Escape") { setPickTxt(null); e.target.blur(); } }} />
               <datalist id={`bm-units-${plan.ro}`}>
-                <option value={ALLTXT}>{nf(model.types.size)} แบบ · {nf(model.total)} แผง</option>
-                {list.map((t) => <option key={t.unit} value={t.unit}>{`${nf(t.n)} แผง · ${t.has ? `${nf(t.subs)} ซับ · ${nf(t.parts)} พาร์ท${t.off ? ` · เศษ ${nf(t.off)}` : ""}` : "ไม่มี BOM"}`}</option>)}
+                <option value={ALLTXT}>{nf(model.types.size)} แบบ · {nf(model.total)} {uwAll}</option>
+                {list.map((t) => <option key={t.unit} value={t.unit}>{`${nf(t.n)} ${uw(t)} · ${t.has ? `${nf(t.subs)} ซับ · ${nf(t.parts)} พาร์ท${t.off ? ` · เศษ ${nf(t.off)}` : ""}` : "ไม่มี BOM"}`}</option>)}
               </datalist>
               {!ALL ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSel("__ALL__"); setLimit(PAGE); }}>× แสดงทั้งหมด</button> : null}
-              <span className="rw-muted small">{ALL ? `${nf(model.types.size)} แบบ · ${nf(model.total)} แผง` : `${nf(cur?.n || 0)} แผง · ${cur?.desc || ""}`}</span>
+              <span className="rw-muted small">{ALL ? `${nf(model.types.size)} แบบ · ${nf(model.total)} ${uwAll}` : `${nf(cur?.n || 0)} ${uw(cur)} · ${cur?.desc || ""}`}</span>
             </div>); })()}
         {stat ? (
           <>
             <div className="bm-head">
               <div className="bm-title"><b className="rw-mono">{ALL ? "ทุกแบบแผง" : cur.unit}</b><span>{ALL ? `${nf(model.types.size)} แบบ` : cur.desc}</span></div>
               <div className="bm-kpis">
-                <span><b>{nf(stat.n)}</b><small>แผง</small></span><span><b>{nf(stat.subs)}</b><small>ซับ</small></span><span><b>{nf(stat.parts)}</b><small>พาร์ท</small></span><span><b>{nf(stat.hw)}</b><small>สกรู/ยาง</small></span><span><b>{nf(stat.pcs)}</b><small>ชิ้นต้องตัด</small></span>
+                <span><b>{nf(stat.n)}</b><small>{ALL ? uwAll : uw(cur)}</small></span><span><b>{nf(stat.subs)}</b><small>ซับ</small></span><span><b>{nf(stat.parts)}</b><small>พาร์ท</small></span><span><b>{nf(stat.hw)}</b><small>สกรู/ยาง</small></span><span><b>{nf(stat.pcs)}</b><small>ชิ้นต้องตัด</small></span>
                 <span className={stat.off ? "off" : ""}><b>{nf(stat.off)}</b><small>ใช้เศษ</small></span>
               </div>
             </div>

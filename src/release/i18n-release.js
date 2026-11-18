@@ -3,6 +3,7 @@
 //   สร้างจากซอร์สของ src/release/* (ดึงข้อความไทยทุกจุด) + ชื่อใบงานจาก SHEETS · เพิ่ม/แก้คำได้ที่นี่
 import { registerI18n } from "../i18n-dom.js";
 import { SHEETS } from "./releaseCore.js";
+import "./i18n-release-more.js";
 
 const DICT = {
  "BOM ของ Release นี้ตรงกับคลังแล้ว — ไม่มีอะไรต้องเติม": "This Release's BOM already matches the library — nothing to fill in",

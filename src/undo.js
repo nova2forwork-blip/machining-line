@@ -61,6 +61,22 @@ function useRegister(api) {
   }, [api]);
 }
 
+// เนื้อหาเท่ากันไหม (ลำดับคีย์ไม่มีผล) — เทียบเฉพาะค่าธรรมดา: ตัวเลข / ข้อความ / array / object ธรรมดา
+//   เจอของชนิดอื่น (Map · Set · Date · File · ฟังก์ชัน) = ถือว่า "ไม่เท่า" เสมอ (แปลงเป็น JSON แล้วเนื้อหาหาย เทียบไม่ได้ — เช่น Map ของรายการที่เลือกปล่อย)
+function sameValue(a, b, depth = 0) {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== "object" || typeof b !== "object" || depth > 40) return false;
+  const arrA = Array.isArray(a), arrB = Array.isArray(b);
+  if (arrA !== arrB) return false;
+  if (arrA) { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (!sameValue(a[i], b[i], depth + 1)) return false; return true; }
+  const plain = (o) => { const p = Object.getPrototypeOf(o); return p === Object.prototype || p === null; };
+  if (!plain(a) || !plain(b)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) { if (!Object.prototype.hasOwnProperty.call(b, k) || !sameValue(a[k], b[k], depth + 1)) return false; }
+  return true;
+}
+
 // ── useState ที่ย้อน/ทำซ้ำได้ (ฟอร์ม / ตารางในหน้าจอ ที่ยังไม่บันทึก) ──
 //   label = ข้อความใน toast · coalesceMs = แก้ต่อเนื่องเร็ว ๆ (เช่นพิมพ์) รวมเป็นขั้นเดียว
 export function useUndoState(initial, { label = "", coalesceMs = 0 } = {}) {
@@ -73,6 +89,8 @@ export function useUndoState(initial, { label = "", coalesceMs = 0 } = {}) {
     setState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       if (next === prev) return prev;
+      // ★ 2026-11-18 sim-test: ค่าเท่าเดิม (เปิดช่องแล้วกด Esc / พิมพ์ค่าเดิมซ้ำ → ได้ก้อนใหม่แต่เนื้อหาเดิม) ไม่นับเป็นขั้น — เดิม Ctrl+Z "กินครั้งเปล่า"
+      if (sameValue(prev, next)) return prev;
       const now = Date.now();
       if (!(coalesceMs && now - h.current.last < coalesceMs && h.current.past.length)) h.current.past = [...h.current.past, prev].slice(-MAX);
       h.current.last = now; h.current.future = [];
@@ -99,7 +117,7 @@ export function useUndoState(initial, { label = "", coalesceMs = 0 } = {}) {
 //   หน้าใบหลักถูกปิดตอนเปิดหน้าล็อต → เดิมประวัติหายทั้งหมด · ตอนนี้ hist.keep(key, ค่าที่แสดงอยู่) ตอนออก
 //   แล้ว hist.resume(key, ค่าที่โหลดมาใหม่) ตอนกลับ = ใช้ประวัติเดิมต่อ ถ้าค่าไม่เปลี่ยนระหว่างไม่อยู่ (เปลี่ยน เช่น ย้ายใบในหน้าล็อต → เริ่มใหม่ กันย้อนทับของใหม่)
 const kept = new Map();      // key → { H, v } · เก็บล่าสุด 10 อัน
-const stableJson = (x) => JSON.stringify(x, (k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).sort().reduce((o, kk) => { o[kk] = v[kk]; return o; }, {}) : v));
+function stableJson(x) { return JSON.stringify(x, (k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).sort().reduce((o, kk) => { o[kk] = v[kk]; return o; }, {}) : v)); }
 export function useUndoHistory(apply, label = "", coalesceMs = 1000) {
   const h = useRef({ past: [], future: [], last: 0, cur: undefined, busy: false });
   const ap = useRef(apply); ap.current = apply;
@@ -131,6 +149,7 @@ export function useUndoHistory(apply, label = "", coalesceMs = 1000) {
   useRegister(a);
   const record = useCallback((prev, next, step = null) => {
     touch(a);
+    if (!step && sameValue(prev, next)) return;   // ★ 2026-11-18 บันทึกค่าเท่าเดิม = ไม่นับเป็นขั้น
     const H = h.current; const now = Date.now(); const top = H.past[H.past.length - 1];
     if (step || !(coalesceMs && now - H.last < coalesceMs && top && !top.step)) H.past = [...H.past, step ? { v: prev, step } : { v: prev }].slice(-MAX);
     H.last = step ? 0 : now; H.future = []; H.cur = next;
