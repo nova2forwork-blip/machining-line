@@ -65,7 +65,7 @@ function XTableOne({ id, cols, rows, rowKey, trProps = null, kids = null, kidTrP
             onDrop={(e) => { e.preventDefault(); drop(c.k); setDrag(null); setOver(null); }} onDragEnd={() => { setDrag(null); setOver(null); }}>
             <span className="xt-h">
               {!fixed ? <span className="xt-grip" title="ลากเพื่อย้ายคอลัมน์" aria-hidden="true">⠿</span> : null}
-              {c.sort && sortOn ? <button type="button" className={`xt-sort ${on ? "on" : ""}`} onClick={() => clickSort(c)} title={c.tip ? `${c.tip} · กดเพื่อเรียง` : "กดเพื่อเรียง"}>{c.h}<i>{on ? (sort.d > 0 ? "▲" : "▼") : "↕"}</i></button> : <span>{c.h}</span>}
+              {c.sort && sortOn ? <button type="button" className={`xt-sort ${on ? "on" : ""}`} onClick={() => clickSort(c)} title={c.tip || (c.th && c.th.title) ? `${c.tip || c.th.title} · กดเพื่อเรียง` : "กดเพื่อเรียง"}>{c.h}<i>{on ? (sort.d > 0 ? "▲" : "▼") : "↕"}</i></button> : <span title={c.tip || undefined}>{c.h}</span>}
               {ci === Math.min(lock, n - 1) && moved ? <button type="button" className="xt-reset" onClick={() => setOrder(null)} title="คืนลำดับคอลัมน์เดิม">↺</button> : null}{/* ★ 2026-11-17 ย้ายมาหัวคอลัมน์แรก (ถัดจากคอลัมน์ล็อก) — เดิมอยู่คอลัมน์ท้าย ต้องเลื่อนขวาถึงจะเห็น */}
             </span>
           </th>);

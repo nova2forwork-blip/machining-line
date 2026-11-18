@@ -663,7 +663,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
           <table className="data-table rw-table">
             {tab === "__hw" ? (
               <>
-                <thead><tr><th style={{ width: 36 }} /><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">TOTAL QTY</th><th>UOM</th><th>เบิกแล้ว</th><th className="r">เหลือ</th><th className="r">เบิกรอบนี้</th></tr></thead>
+                <thead><tr><th style={{ width: 36 }} /><th className="r" title="ลำดับในตาราง">NO.</th><th title="รหัสสกรู / ยาง / อุปกรณ์ (ไม่มี QR — ออกเป็นใบเบิก)">CODE</th><th title="รายละเอียดของรายการ">DESCRIPTION</th><th className="r" title="จำนวนที่ต้องใช้ทั้งใบ">TOTAL QTY</th><th title="หน่วย (pcs. / m.)">UOM</th><th title="จำนวนที่เบิกไปแล้วในล็อตก่อนหน้า">เบิกแล้ว</th><th className="r" title="จำนวนที่ยังไม่ได้เบิก = ต้องใช้ทั้งใบ − เบิกแล้ว">เหลือเบิก</th><th className="r" title="จำนวนที่จะเบิกในล็อตนี้ — พิมพ์แก้ได้ (ไม่เกินที่เหลือ)">เบิกรอบนี้</th></tr></thead>
                 <tbody>{rows.slice(0, 600).map((h, ri) => { const left = hwLeft(h); const cur = selHw.get(h.code) || 0; const on = cur > 0; const dn = hwDone.get(NC(h.code)); const step = h.u === "m." || h.u === "mm." ? "0.01" : "1"; return (
                   <tr key={h.code} className={`${on ? "rl-sel" : ""} ${left <= 0 ? "rl-done" : ""}`}>
                     <td><input type="checkbox" checked={on} disabled={left <= 0} onChange={(e) => setHw(h, e.target.checked ? hwQ(h, left) : 0)} aria-label={`เลือก ${h.code}`} /></td>
@@ -679,7 +679,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
               </>
             ) : sheet.kind === "panel" && tab !== "__none" ? (
               <>
-                <thead><tr><th style={{ width: 36 }} /><th>Address</th><th>Unit</th><th>BOM</th><th>สถานะ</th></tr></thead>
+                <thead><tr><th style={{ width: 36 }} /><th title="ที่อยู่ของแผง (ตำแหน่งติดตั้ง) — 1 ที่อยู่ = 1 แผง = 1 QR">ADDRESS</th><th title="แบบแผงที่ใช้กับที่อยู่นี้">UNIT</th><th title="✓ = แบบแผงนี้มี BOM ในใบแล้ว (ปล่อยได้)">BOM</th><th title="ปล่อยแล้วในล็อตไหน / ยังไม่ปล่อย (ติ๊กเพื่อปล่อยรอบนี้)">สถานะ</th></tr></thead>
                 <tbody>{rows.slice(0, 600).map((u) => { const a = String(u.addr).toUpperCase(); const done = rel.addrLot.get(a); const cx = need.cancelledAddr[a]; const on = sel.addrs.has(a); return (
                   <tr key={a} className={`${on ? "rl-sel" : ""} ${done || cx ? "rl-done" : ""} ${cx ? "rl-cancelrow" : ""}`}>
                     <td><input type="checkbox" checked={on} disabled={!!done || !!cx} onChange={(e) => toggleAddr([a], e.target.checked)} aria-label={`เลือก ${a}`} /></td>
@@ -690,7 +690,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
               </>
             ) : (
               <>
-                <thead><tr><th style={{ width: 36 }} /><th className="r">NO.</th><th>CODE</th><th>DESCRIPTION</th><th className="r">LENGTH</th><th className="r">{sheet.kind === "part" ? "TOTAL QTY" : "SUB QTY."}</th>{sheet.kind === "part" ? <th>MATERIAL</th> : <th>UOM</th>}<th>{sheet.kind === "part" ? "ส่งไปใบ" : "งาน (ติ๊กได้หลายงาน)"}</th><th>ปล่อยแล้ว</th><th className="r">เหลือ</th><th className="r">ปล่อยรอบนี้</th></tr></thead>
+                <thead><tr><th style={{ width: 36 }} /><th className="r" title="ลำดับในตาราง">NO.</th><th title="เบอร์พาร์ท / ซับ">CODE</th><th title="ชื่อ / รายละเอียดจากแบบ">DESCRIPTION</th><th className="r" title="ความยาวตัดต่อชิ้น (มม.)">LENGTH (mm.)</th><th className="r" title="จำนวนที่ต้องใช้ทั้งใบ">{sheet.kind === "part" ? "TOTAL QTY" : "SUB QTY."}</th>{sheet.kind === "part" ? <th title="รหัสวัตถุดิบ (INV) ที่ใช้ตัด">MATERIAL</th> : <th title="หน่วยนับ">UOM</th>}<th title={sheet.kind === "part" ? "ใบงานที่พาร์ทนี้จะไปอยู่ (เปลี่ยนได้ที่นี่)" : "งานของซับ = ใบงานที่จะส่งไป · ซับหนึ่งเบอร์ไปได้หลายใบ"}>{sheet.kind === "part" ? "ส่งไปใบ" : "งาน (ติ๊กได้หลายงาน)"}</th><th title="จำนวนที่ปล่อยไปแล้ว และล็อตที่ปล่อย">ปล่อยแล้ว</th><th className="r" title="จำนวนที่ยังไม่ได้ปล่อย = ต้องใช้ทั้งใบ − ปล่อยแล้ว">เหลือปล่อย</th><th className="r" title="จำนวนที่จะปล่อยในล็อตนี้ — ติ๊กแถวแล้วพิมพ์แก้ได้ (ไม่เกินที่เหลือ)">ปล่อยรอบนี้</th></tr></thead>
                 <tbody>{rows.slice(0, 600).map((r, ri) => {
                   const kind = sheet.kind === "part" ? "part" : "sub"; const m = kind === "sub" ? sel.subs : sel.parts;
                   const left = leftOf(r.code, r.qty); const cur = m.get(r.code) || 0; const on = cur > 0;
@@ -1657,7 +1657,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
   const rows = (flt === "left" ? left : flt === "done" ? done : flt === "wait" ? wait : flt === "doing" ? doing : data.list).filter((x) => !ql || x.code.toUpperCase().includes(ql) || descOf(x).toUpperCase().includes(ql)).sort((a, b) => a.made / a.qty - b.made / b.qty || ncmp(a.code, b.code));
   const Bar = ({ m, t }) => <div className={`rl-pp-bar ${m >= t && t ? "full" : ""}`}><i><b style={{ width: `${pc(m, t)}%` }} /></i><span>{nf(m)} / {nf(t)}</span></div>;
   const stOf = (x) => (x.made >= x.qty ? ["full", "เสร็จ"] : x.made > 0 ? ["part", "กำลังทำ"] : ["zero", "รอเริ่ม"]);
-  const theadEl = <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>;
+  const theadEl = <thead><tr><th className="r" title="ลำดับในตาราง">ITEM</th><th title="เบอร์ + สถานะ (Pending = ยังไม่เริ่ม · In Process = กำลังทำ · Finish = ครบแล้ว)">PART NO.</th><th className="r" title="จำนวนที่ปล่อยแล้ว (ชิ้น)">QTY</th><th title="จำนวนที่ผลิตเสร็จแล้ว นับจากการสแกนหน้าเครื่อง">FINISHED</th><th title="ผลิตเสร็จแล้วกี่ % ของที่ปล่อย">PROGRESS</th><th className="r" title="น้ำหนักต่อชิ้น (กก.) — ว่าง = ยังไม่มีน้ำหนักในระบบ">WEIGHT/PC (KG)</th><th className="r" title="น้ำหนักรวม = น้ำหนักต่อชิ้น × จำนวน">TOTAL WEIGHT (KG)</th><th className="r" title="ความยาวต่อชิ้น (มม.)">LENGTH/PC (MM)</th><th title="รหัสวัตถุดิบ (INV) ที่ใช้ตัด">INV CODE</th><th title="ใบงานที่ชิ้นนี้อยู่ (MACHINING PART / SUB … / ASSEMBLY)">ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>;
   const rowEl = (x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
               const len = x.len ?? np?.l ?? null, inv = x.inv || np?.inv || ""; return (
               <tr key={x.kind + x.code + (x._lot || "")}>
