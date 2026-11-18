@@ -1657,32 +1657,10 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
   const rows = (flt === "left" ? left : flt === "done" ? done : flt === "wait" ? wait : flt === "doing" ? doing : data.list).filter((x) => !ql || x.code.toUpperCase().includes(ql) || descOf(x).toUpperCase().includes(ql)).sort((a, b) => a.made / a.qty - b.made / b.qty || ncmp(a.code, b.code));
   const Bar = ({ m, t }) => <div className={`rl-pp-bar ${m >= t && t ? "full" : ""}`}><i><b style={{ width: `${pc(m, t)}%` }} /></i><span>{nf(m)} / {nf(t)}</span></div>;
   const stOf = (x) => (x.made >= x.qty ? ["full", "เสร็จ"] : x.made > 0 ? ["part", "กำลังทำ"] : ["zero", "รอเริ่ม"]);
-  return (
-    <>
-      <div className="rl-back" onClick={onClose} />
-      <div ref={popRef} className={`rl-pop ${big ? "big" : ""}`} role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`} style={!big && size ? { width: size.w, height: size.h } : undefined}>
-        {big ? null : ["w", "e", "s", "sw", "se"].map((d) => <div key={d} className={`rl-pop-rz ${d}`} onPointerDown={startDrag(d)} aria-hidden="true" />)}
-        <div className="rl-pop-h"><h2>{only ? <>{only} <small className="rw-muted" style={{ fontWeight: 500 }}>ใน Release {plan.ro}</small> ทำไปแค่ไหนแล้ว</> : <>Release {plan.ro} ทำไปแค่ไหนแล้ว</>}</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x rl-pop-max" onClick={() => setBig((v) => !v)} aria-label={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"} title={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"}>{big ? "❐" : "□"}</button><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
-        {!prod ? <div className="rw-msg warn">ยังโหลดยอดผลิตไม่ได้ (หรือยังไม่ได้ติดตั้งส่วน Modify) — ตัวเลขผลิตแล้วจะเป็น 0</div> : null}
-        <div className="rl-pop-body">
-          <div className="rl-pp-cards">
-            <div className="rl-pp-card main"><div className="rl-pp-card-t"><b>{only ? "เบอร์นี้ (ทุกล็อต)" : "ทั้งใบ"}</b><span>{pc(data.made, data.qty)}%</span></div><small>ผลิตแล้ว {nf(data.made)} / {nf(data.qty)} ชิ้น · {nf(data.list.length)} รายการ</small><Bar m={data.made} t={data.qty} /></div>
-            {data.sheets.map((sh) => <div key={sh.k} className="rl-pp-card"><div className="rl-pp-card-t"><b>{sh.label}</b><span>{pc(sh.made, sh.qty)}%</span></div><small>{nf(sh.codes.size)} {sh.k === "panel" ? "แบบ" : "เบอร์"}</small><Bar m={sh.made} t={sh.qty} /></div>)}
-            <div className="rl-pp-card"><div className="rl-pp-card-t"><b>ตามล็อต</b></div>
-              <div className="rl-pp-lots">{[...data.lots].reverse().map((L) => <div key={L.no}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(L.no)}>{L.no}</button> : <span className="rw-mono">{L.no}</span>}<Bar m={L.made} t={L.qty} /></div>)}</div></div>
-          </div>
-          <div className="rl-pp-tools">
-            <b>รายละเอียดแต่ละรายการ</b>
-            <div className="rl-pp-status"><span>สถานะ</span>
-              {[["all", "ทั้งหมด", data.list.length, ""], ["left", "ยังค้าง", left.length, ""], ["wait", "Pending", wait.length, "zero"], ["doing", "In Process", doing.length, "part"], ["done", "Finish", done.length, "full"]].map(([k, l, n, c]) => <button key={k} type="button" className={`rl-pp-chip ${flt === k ? "on" : ""}`} onClick={() => setFlt(k)}>{c ? <i className={c} /> : null}{l} <small>{nf(n)}</small></button>)}</div>
-            <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
-          </div>
-          {/* ★ 2026-11-17 ผู้ใช้: "รายละเอียดทำไมมีแค่ 6 ทั้งที่ทั้งหมดมี 66" — กดแถวเบอร์ในตารางแล้วเปิดมา = กรองเฉพาะเบอร์นั้น แต่ไม่มีอะไรบอก → บอกให้ชัด + ปุ่มดูทั้งหมด */}
-          <div className="rl-pp-tw"><table className="rl-pp-t">
-            <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>
-            <tbody>{rows.map((x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
+  const theadEl = <thead><tr><th className="r">ITEM</th><th>PART NO.</th><th className="r">QTY</th><th>FINISHED</th><th>PROGRESS</th><th className="r">WEIGHT/PC (KG)</th><th className="r">TOTAL WEIGHT (KG)</th><th className="r">LENGTH/PC (MM)</th><th>INV CODE</th><th>ใบงาน</th><th title="ล็อตที่ปล่อยเบอร์นี้ · ตัวเลข = ผลิตแล้ว / จำนวนที่ปล่อยในล็อตนั้น">ล็อต (ผลิตแล้ว / ปล่อย)</th></tr></thead>;
+  const rowEl = (x, i) => { const [c] = stOf(x); const np = x.kind === "part" ? need.parts.find((p) => NC(p.code) === NC(x.code)) : x.kind === "subassembly" ? need.subs.find((p) => NC(p.code) === NC(x.code)) : null;
               const len = x.len ?? np?.l ?? null, inv = x.inv || np?.inv || ""; return (
-              <tr key={x.kind + x.code}>
+              <tr key={x.kind + x.code + (x._lot || "")}>
                 <td className="r rw-muted">{i + 1}</td>
                 <td><div className="rl-pp-pn"><b>{x.code}</b><span className={`rl-pp-st ${c}`}>{c === "full" ? "Finish" : c === "part" ? "In Process" : "Pending"}</span></div><div className="rw-muted small">{descOf(x)}</div></td>
                 <td className="r">{nf(x.qty)}</td>
@@ -1693,16 +1671,43 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
                 <td className="small">{sheetOf(x.sheet).label}</td>
                 <td className="small rl-pp-lotcell">{x.lots.map((l) => { const e = (x.byLot && x.byLot.get(l)) || { qty: 0, made: 0 }; return (
                   <span key={l} className="rl-pp-lot" title={`ล็อต ${l}: ปล่อย ${nf(e.qty)} ชิ้น · ผลิตแล้ว ${nf(e.made)}`}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(l)}>{l}</button> : <span className="rw-mono">{l}</span>} <b>{nf(e.made)}/{nf(e.qty)}</b></span>); })}</td>
-              </tr>); })}
+              </tr>); };
+  return (
+    <>
+      <div className="rl-back" onClick={onClose} />
+      <div ref={popRef} className={`rl-pop ${big ? "big" : ""}`} role="dialog" aria-modal="true" aria-label={`ความคืบหน้า ${plan.ro}`} style={!big && size ? { width: size.w, height: size.h } : undefined}>
+        {big ? null : ["w", "e", "s", "sw", "se"].map((d) => <div key={d} className={`rl-pop-rz ${d}`} onPointerDown={startDrag(d)} aria-hidden="true" />)}
+        <div className="rl-pop-h"><h2>{only ? <>{only} <small className="rw-muted" style={{ fontWeight: 500 }}>ใน Release {plan.ro}</small> ทำไปแค่ไหนแล้ว</> : <>Release {plan.ro} ทำไปแค่ไหนแล้ว</>}</h2><span className="rw-muted small">ผลิตแล้ว = นับจากหน้าเครื่อง · เฉพาะของที่ปล่อยแล้ว · รวมทุกล็อต</span><button type="button" className="rl-x rl-pop-max" onClick={() => setBig((v) => !v)} aria-label={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"} title={big ? "ย่อหน้าต่าง" : "ขยายเต็มจอ"}>{big ? "❐" : "□"}</button><button type="button" className="rl-x" onClick={onClose} aria-label="ปิด">×</button></div>
+        {!prod ? <div className="rw-msg warn">ยังโหลดยอดผลิตไม่ได้ (หรือยังไม่ได้ติดตั้งส่วน Modify) — ตัวเลขผลิตแล้วจะเป็น 0</div> : null}
+        <div className={`rl-pop-body ${only ? "one" : ""}`}>
+          <div className="rl-pp-cards">
+            <div className="rl-pp-card main"><div className="rl-pp-card-t"><b>{only ? "เบอร์นี้ (ทุกล็อต)" : "ทั้งใบ"}</b><span>{pc(data.made, data.qty)}%</span></div><small>ผลิตแล้ว {nf(data.made)} / {nf(data.qty)} ชิ้น · {nf(data.list.length)} รายการ</small><Bar m={data.made} t={data.qty} /></div>
+            {data.sheets.map((sh) => <div key={sh.k} className="rl-pp-card"><div className="rl-pp-card-t"><b>{sh.label}</b><span>{pc(sh.made, sh.qty)}%</span></div><small>{nf(sh.codes.size)} {sh.k === "panel" ? "แบบ" : "เบอร์"}</small><Bar m={sh.made} t={sh.qty} /></div>)}
+            <div className="rl-pp-card"><div className="rl-pp-card-t"><b>ตามล็อต</b></div>
+              <div className="rl-pp-lots">{[...data.lots].reverse().map((L) => <div key={L.no}>{onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(L.no)}>{L.no}</button> : <span className="rw-mono">{L.no}</span>}<Bar m={L.made} t={L.qty} /></div>)}</div></div>
+          </div>
+          {only ? null : <><div className="rl-pp-tools">
+            <b>รายละเอียดแต่ละรายการ</b>
+            <div className="rl-pp-status"><span>สถานะ</span>
+              {[["all", "ทั้งหมด", data.list.length, ""], ["left", "ยังค้าง", left.length, ""], ["wait", "Pending", wait.length, "zero"], ["doing", "In Process", doing.length, "part"], ["done", "Finish", done.length, "full"]].map(([k, l, n, c]) => <button key={k} type="button" className={`rl-pp-chip ${flt === k ? "on" : ""}`} onClick={() => setFlt(k)}>{c ? <i className={c} /> : null}{l} <small>{nf(n)}</small></button>)}</div>
+            <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด" aria-label="ค้นหารายการ" />
+          </div>
+          {/* ★ 2026-11-17 ผู้ใช้: "รายละเอียดทำไมมีแค่ 6 ทั้งที่ทั้งหมดมี 66" — กดแถวเบอร์ในตารางแล้วเปิดมา = กรองเฉพาะเบอร์นั้น แต่ไม่มีอะไรบอก → บอกให้ชัด + ปุ่มดูทั้งหมด */}
+          <div className="rl-pp-tw"><table className="rl-pp-t">
+            {theadEl}
+            <tbody>{rows.map(rowEl)}
               {!rows.length ? <tr><td colSpan={11} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
             </tbody>
-          </table></div>
+          </table></div></>}
           {/* ★ 2026-11-18 ผู้ใช้: "ใช่ เพิ่มเลย" — งานแยกตามเครื่องจักร + น้ำหนัก + พิมพ์ QR / ดูแบบ ของเบอร์นี้ (ทีละล็อต — หน้าเครื่องบันทึกงานแยกตามล็อต) */}
-          {only && renderPart ? data.partRows.filter((x) => x.kind !== "panel").map((x) => (
-            <section key={x.id} className="rl-pp-sec" aria-label={`รายละเอียด ${only} ล็อต ${x.lot}`}>
-              <h3>{data.partRows.length > 1 ? <>ล็อต <span className="rw-mono">{x.lot}</span> · {nf(x.qty)} ชิ้น</> : <>รายละเอียดของเบอร์นี้ <small className="rw-muted">ล็อต {x.lot}</small></>}</h3>
-              {renderPart(x.id, onClose)}
-            </section>)) : null}
+          {/* ★ 2026-11-18 ผู้ใช้: "ตารางแยกกันแต่ละ p" — มุมมองเบอร์เดียว: แต่ละล็อตมีตารางของตัวเอง (จำนวน / ผลิตแล้วของล็อตนั้น) ตามด้วยงานแยกตามเครื่อง · น้ำหนัก · พิมพ์ QR / ดูแบบ ของล็อตนั้น */}
+          {only ? data.partRows.map((pr) => { const it = data.list.find((x) => NC(x.code) === NC(only) && x.kind === pr.kind) || data.list[0]; const e = (it && it.byLot && it.byLot.get(pr.lot)) || { qty: pr.qty, made: 0 };
+            const one = it ? { ...it, qty: e.qty, made: e.made, lots: [pr.lot], byLot: new Map([[pr.lot, e]]), _lot: pr.lot } : null; return (
+            <section key={pr.id} className="rl-pp-sec" aria-label={`${only} ล็อต ${pr.lot}`}>
+              <h3>ล็อต {onOpenLot ? <button type="button" className="rw-link rw-mono" onClick={() => onOpenLot(pr.lot)}>{pr.lot}</button> : <span className="rw-mono">{pr.lot}</span>} · {nf(e.qty)} ชิ้น <small className="rw-muted">ผลิตแล้ว {nf(e.made)}</small></h3>
+              {one ? <div className="rl-pp-tw in"><table className="rl-pp-t">{theadEl}<tbody>{rowEl(one, 0)}</tbody></table></div> : null}
+              {renderPart && pr.kind !== "panel" ? renderPart(pr.id, onClose) : null}
+            </section>); }) : null}
         </div>
       </div>
     </>

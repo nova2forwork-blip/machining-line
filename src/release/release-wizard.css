@@ -1437,3 +1437,6 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rl-pp-sec { margin-top: 14px; padding: 14px 16px; background: var(--surface); border-radius: 16px; }
 .rl-pp-sec > h3 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
 .rl-pp-sec .pp-embed .modal-actions { margin-top: 12px; }
+/* ★ 2026-11-18 ผู้ใช้: "ปล่อยหลายรีลีสแล้ว ทำไมไม่มีตาราง" — มุมมองเบอร์เดียว: ส่วนรายละเอียดต่อล็อตดันตารางจนหด → ห้ามหด ให้เลื่อนทั้งหน้าต่างแทน */
+.rl-pop-body.one > * { flex-shrink: 0; }
+.rl-pp-tw.in { padding: 0; border-radius: 0; margin-bottom: 12px; }
