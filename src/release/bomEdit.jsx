@@ -188,7 +188,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     if (!onSaveDirect || !list.length || busy) return;
     const { np, errs } = buildDirect(list); const { diff, low } = needDiff(np);
     const relTouched = list.filter((e) => e.attr && (e.f === "m" || e.f === "l" || e.f === "ml") && relQ(e.code) > 0).map((e) => e.code);
-    if (errs.length || low.length) { await askConfirm({ title: "บันทึกแบบไม่นับ Modify ไม่ได้", message: [...errs, ...(low.length ? ["ยอดใหม่ต่ำกว่าที่ปล่อยไปแล้ว:", ...low] : []), "", `ใช้ "บันทึกเป็น ${modVer(nextModNo(plan))}" แทน — ระบบจะลด/ยกเลิกในล็อตให้และเก็บประวัติ`].join("\n"), tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
+    if (errs.length || low.length) { await askConfirm({ title: "บันทึกแบบไม่นับ Modify ไม่ได้", message: [...errs, ...(low.length ? ["ยอดใหม่ต่ำกว่าที่ปล่อยไปแล้ว:", ...low] : []), "", low.length || errs.some((x) => /ต้องบันทึกเป็น M/.test(x)) ? `ใช้ "บันทึกเป็น ${modVer(nextModNo(plan))}" แทน — ระบบจะลด/ยกเลิกในล็อตให้และเก็บประวัติ` : "แก้ค่าที่ผิดก่อน แล้วบันทึกใหม่"].join("\n"), tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
     const ok = await askConfirm({ title: `บันทึก ${list.length} จุด โดยไม่นับ Modify?`, message: [...list.slice(0, 20).map((e) => `• ${lineOf(e)}`), list.length > 20 ? `… อีก ${list.length - 20}` : "", "", diff.length ? `ยอดต้องใช้ทั้งใบที่เปลี่ยน: ${diff.slice(0, 12).join(" · ")}${diff.length > 12 ? " …" : ""}` : "ยอดต้องใช้ทั้งใบไม่เปลี่ยน",
       relTouched.length ? `\n⚠ ${[...new Set(relTouched)].join(", ")} ปล่อยไปแล้ว — ใบงาน / แถวที่ปล่อยแล้วยังเป็นค่าเดิม (กด "อัปเดตความยาว · วัสดุ · น้ำหนัก" ที่แถบด้านข้างถ้าจะตามค่าใหม่)` : "", "", "ไม่มีเลข M · ไม่ลงประวัติ Modify · ใช้กับล็อตที่ปล่อยต่อจากนี้ · Ctrl+Z ย้อนได้"].filter(Boolean).join("\n"), tone: "warn", confirmText: "บันทึก", cancelText: "กลับไปแก้" });
     if (!ok) return;
@@ -210,7 +210,7 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     // เปลี่ยนเบอร์ของเบอร์ที่ปล่อยตรง ๆ → ยกเลิกเบอร์เดิม + เพิ่มเบอร์ใหม่ (ค่าเดิม) · เบอร์ใหม่ซ้ำกับที่มีในใบ = ไม่ให้
     const nd = rest.some((e) => e.rc && !e.occ.length) ? needOf(plan) : null;
     if (nd) {
-      const dup = rest.filter((e) => e.rc && !e.occ.length && [...nd.parts, ...nd.subs].some((x) => NC(x.code) === NC(e.to) && !x.cancelled));
+      const dup = rest.filter((e) => e.rc && !e.occ.length && [...nd.parts, ...nd.subs].some((x) => NC(x.code).replace(/\s+/g, "") === NC(e.to).replace(/\s+/g, "") && !x.cancelled));
       if (dup.length) { await askConfirm({ title: "เปลี่ยนเบอร์ไม่ได้", message: dup.map((e) => `${e.from} → ${e.to}: ${e.to} มีอยู่ในใบนี้แล้ว — แก้จำนวนของ ${e.to} แล้วยกเลิก ${e.from} แทน`).join("\n"), tone: "warn", confirmText: "ตกลง", cancelText: "ปิด" }); return; }
     }
     for (const e of rest) {

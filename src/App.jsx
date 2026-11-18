@@ -8130,7 +8130,7 @@ function ReleasePage({ user, goTo }) {
       </div>
       {relLoadErr && <LoadStateBanner state={{ error: relLoadErr }} onRetry={load} />}
       <Suspense fallback={null}>
-        <ReleaseInboxLazy plans={plans} projects={projects} docs={inboxDocs} setDocs={setInboxDocs} api={realReleaseApi} userName={user?.name || ""}
+        <ReleaseInboxLazy plans={plans} projects={projects} docs={inboxDocs} setDocs={setInboxDocs} api={realReleaseApi} userName={user?.name || ""} filterCode={projectFilter}
           onLibrarySaved={(project, got) => mlsToast(`เก็บแบบเข้าคลังโปรเจค ${project.code} แล้ว ${got.length} เบอร์ — ปล่อยงานใหม่จะดึงจากคลังนี้`, "success")}
           onOpenModify={(plan, files) => setPlanView({ plan, inbox: { mode: "modify", files } })}
           onAddItems={(plan, files) => setPlanView({ plan, inbox: { mode: "add", files } })}

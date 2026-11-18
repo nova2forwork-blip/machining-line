@@ -1127,7 +1127,7 @@ export function hwIssuedOf(plan, need, rel) {
   const m = new Map();
   for (const L of rel.lots) {
     const lm = lotMaterials(plan, need, L.rows, () => [], L.no);
-    for (const x of lm.hw) { const k = NC(x.code); const e = m.get(k) || { qty: 0, lots: [] }; e.qty += Number(x.qty) || 0; if (!e.lots.includes(L.no)) e.lots.push(L.no); m.set(k, e); }
+    for (const x of [...(lm.hw || []), ...(lm.glass || []), ...(lm.other || [])]) { const k = NC(x.code); const e = m.get(k) || { qty: 0, lots: [] }; e.qty += Number(x.qty) || 0; if (!e.lots.includes(L.no)) e.lots.push(L.no); m.set(k, e); }   // ★ 2026-11-18 + กระจก / อื่นๆ (เดิมนับเฉพาะ FIXING → ช่อง "ปล่อยแล้ว" ของกระจกว่าง)
   }
   return m;
 }

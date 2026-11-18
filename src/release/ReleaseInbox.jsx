@@ -50,7 +50,7 @@ function projectOfDrawing(d, projects) {
   if (nm) { const hit = projects.find((p) => String(p.name || "").trim().toLowerCase() === nm) || projects.find((p) => nm && String(p.name || "").toLowerCase().includes(nm)); if (hit) return hit; }
   return null;
 }
-export default function ReleaseInbox({ plans = [], projects = [], api = null, userName = "", onOpenModify, onAddItems, onNewRelease, onOpenPlan, onBunk = null, onLibrarySaved = null, docs: docsIn, setDocs: setDocsIn }) {
+export default function ReleaseInbox({ plans = [], projects = [], api = null, userName = "", onOpenModify, onAddItems, onNewRelease, onOpenPlan, onBunk = null, onLibrarySaved = null, docs: docsIn, setDocs: setDocsIn, filterCode = "" }) {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState("");
   const [docsLocal, setDocsLocal] = useState([]);     // { file, type: "modify"|"order"|"drawing"|"bad", data, note }
@@ -68,6 +68,9 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
     const hit = (plans || []).filter((p) => roKey(p.ro) === roKey(ro)); const pc = NC(prjCode || ""), pf = NC(prjFull || "");
     const pcOf = (p) => NC(p.projectCode || "");
     const cand = pf ? hit.filter((p) => pcOf(p) === pf) : pc ? hit.filter((p) => pcOf(p) === pc || pcOf(p).startsWith(pc + "-")) : hit;
+    // ★ 2026-11-18 sim-test: ตั้งตัวกรองโปรเจคไว้ (เช่น ตึก B) แล้ววางใบปะหน้า → เดิมจับไปใบของโปรเจคที่รหัสตรงในใบเสมอ ไม่สนตัวกรอง (เสี่ยงเพิ่มรายการผิดโปรเจค)
+    //   มีตัวกรอง: ใบเลขเดียวกันในโปรเจคที่กรองอยู่มาก่อน · ไม่มีในโปรเจคนั้น = ไม่เลือกให้เอง ให้ผู้ใช้เลือกเองจากรายการ
+    if (filterCode) { const inF = hit.filter((p) => pcOf(p) === NC(filterCode)); if (inF.length === 1) return { plan: inF[0], choices: [] }; return { plan: null, choices: inF.length ? inF : cand }; }
     return cand.length === 1 ? { plan: cand[0], choices: [] } : { plan: null, choices: cand };
   };
   const [roPick, setRoPick] = useState({});   // job key → plan id ที่ผู้ใช้เลือก (เลข Release ซ้ำหลายโปรเจค)
@@ -160,7 +163,7 @@ export default function ReleaseInbox({ plans = [], projects = [], api = null, us
       if (none.length) list.push({ k: "loose:none", drawings: none, loose: true, none: true, project: detect(none) });
     }
     return list;
-  }, [docs, plans, projects, roPick]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docs, plans, projects, roPick, filterCode]);   // eslint-disable-line react-hooks/exhaustive-deps
   const bad = docs.filter((x) => x.type === "bad");
   const bunkDocs = docs.filter((x) => x.type === "bunk");
   const filesOf = (j) => [...new Set([...(j.sheet ? [j.sheet.file] : []), ...j.drawings.map((d) => d.file)].filter((f) => f instanceof File))];   // ไฟล์เดียวที่แตกหลายเบอร์ → ส่งไฟล์ครั้งเดียว

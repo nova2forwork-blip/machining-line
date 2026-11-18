@@ -118,7 +118,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   useEffect(() => { if (!rowMsg) return undefined; const t = setTimeout(() => setRowMsg(""), 3500); return () => clearTimeout(t); }, [rowMsg]);
   const rowProgress = (code, kind) => {
     const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
-    if (!hit.length) { setRowMsg(`${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
+    if (!hit.length) { const was = rel.lots.some((L) => !L.hwOnly && L.rows.some((r) => r.mod_cancelled_at && NC(r.code) === NC(code))); setRowMsg(was ? `${code} ถูกยกเลิกไปแล้ว (Modify) — ไม่มีความคืบหน้าให้ดู` : `${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
     // ★ 2026-11-18 ทุกเบอร์เปิดหน้าต่างแบบเดียวกัน (การ์ดความคืบหน้าของเบอร์) — ปล่อยหลายล็อต = มีปุ่มสลับล็อตในหน้าต่างนั้น (เดิม: หลายล็อตเปิดป็อปอัพทั้งใบที่กรองไว้ → หน้าตาคนละแบบ)
     // ★ 2026-11-18 (รอบ 2) ผู้ใช้: "ให้หน้าตาแบบนี้สิ" → ทุกเบอร์เปิดหน้าต่างใหญ่แบบเดียวกัน (ดูเฉพาะเบอร์นั้น: การ์ดสรุป · ตามล็อต · ตาราง) ทั้งเบอร์ที่ปล่อยล็อตเดียวและหลายล็อต
     setProgOpen(String(code));
@@ -554,6 +554,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
     const m = kind === "sub" ? s.subs : s.parts;
     const left = leftOf(code, needQty); const before = m.get(code) || 0;
     const nx = Math.max(0, Math.min(left, Number(v) || 0));
+    if ((Number(v) || 0) > left && !viaToggle) { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text: `${code}: ปล่อยได้ไม่เกินที่เหลือ ${nf(left)} — ปรับให้แล้ว`, tone: "info" } })); } catch { /* ignore */ } }
     if (nx > 0) m.set(code, nx); else m.delete(code);
     // ★ 2026-11-18 sim-test R3: แก้ "จำนวนที่ปล่อย" ของซับในช่องพิมพ์ ลูกต้องตามด้วย (เดิมตามเฉพาะตอนติ๊ก → ติ๊กซับ 2 SET แล้วแก้เป็น 1 ลูกยังออกเท่า 2 SET)
     if (kind === "sub" && nx !== before) addPulled(s, null, new Map([[code, Math.abs(nx - before)]]), nx > before ? 1 : -1);
@@ -852,7 +853,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const undecided = addOnly ? 0 : found.filter((f) => askRow(f) && !f.dec).length;
   const nChange = realChanges.length + addrs.size + adds.length + edits.length + matOn.length;
   dirtyRef.current = nChange > 0 || !!reason.trim() || found.length > 0;
-  const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
+  const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code).replace(/\s+/g, "") === NC(form.code).replace(/\s+/g, ""))) || adds.some((a) => NC(a.code).replace(/\s+/g, "") === NC(form.code).replace(/\s+/g, "")) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
   // ★ 2026-11-18 sim-test S3: เบอร์ใหม่รับจำนวนทศนิยม (2.5) / ความยาวติดลบ (−5) / 1e9 แล้วบันทึกลงจริง → กันไว้ก่อนบันทึก
   const addErrs = adds.flatMap((a) => { const q = Number(a.qty), l = a.l === "" || a.l == null ? null : Number(a.l); const e = [];
     if (q > 0 && a.kind !== "hw" && !Number.isInteger(q)) e.push(`${a.code}: จำนวนต้องเป็นจำนวนเต็ม (ใส่ ${a.qty})`);
@@ -1185,11 +1186,11 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         {askIdx.length ? <><button type="button" className="btn btn-ghost btn-sm" onClick={() => decide(askIdx, true)}>ใช้ตามแบบทั้งหมด</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => decide(askIdx, false)}>คงเดิมทั้งหมด</button></> : null}
         <button type="button" className="rw-link small" onClick={() => setFound((l) => l.filter((f) => askRow(f) && !f.dec))}>ซ่อนที่เลือกแล้ว</button></div>
       <div className="rl-found-tw"><table className="rl-sc-table rl-cmp-t">
-        <thead><tr><th style={{ width: 190 }}>จะเอาแบบไหน</th><th>เบอร์</th><th>อยู่ที่</th><th>ต่างตรงไหน</th><th className="r">เดิม</th><th /><th>ตามแบบ</th></tr></thead>
+        <thead><tr><th style={{ width: 250 }}>จะเอาแบบไหน</th><th>เบอร์</th><th>อยู่ที่</th><th>ต่างตรงไหน</th><th className="r">เดิม</th><th /><th>ตามแบบ</th></tr></thead>
         <tbody>{found.map((f, i) => { const c = isMatRow(f) ? chgOf(f) : null; const ask = askRow(f);
           const ai = !f.act && f.tone === "new" ? adds.findIndex((a) => NC(a.code) === NC(f.code)) : -1; const an = ai >= 0 ? adds[ai] : null; const needQ = !!an && !(Number(an.qty) > 0); return (
           <tr key={i} className={`rl-cmp-${f.tone === "same" ? "same" : f.tone} ${(ask && !f.dec) || needQ ? "rl-ask" : ""}`}>
-            <td>{ask ? <span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button>{f.auto && f.dec === "use" ? <small className="rw-muted"> ตามใบ Modify</small> : null}</span> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
+            <td>{ask ? <><span className="rl-dec" role="group" aria-label={`${f.what} ของ ${f.code}`}><button type="button" className={f.dec === "use" ? "on use" : ""} aria-pressed={f.dec === "use"} onClick={() => decide([i], true)}>ใช้ตามแบบ</button><button type="button" className={f.dec === "keep" ? "on keep" : ""} aria-pressed={f.dec === "keep"} onClick={() => decide([i], false)}>คงเดิม</button></span>{f.auto && f.dec === "use" ? <small className="rw-muted rl-dec-note">ตามใบ Modify</small> : null}</> : f.tone === "same" ? <span className="rw-muted">=</span> : needQ ? <b className="rl-errtxt small">ใส่จำนวน →</b> : <span className="rw-ok" title="ใส่ให้แล้ว — แก้ต่อได้ที่แท็บด้านล่าง">✓ {an ? "เพิ่มให้แล้ว" : "ใส่ให้แล้ว"}</span>}</td>
             <td className="rw-mono"><b>{f.code}</b></td><td className="small">{f.where}</td><td className="small"><b>{f.what}</b>{c && c.sameDim ? <div className="rw-muted small">{`แบบไม่ได้แก้ความยาว — ค่าช่อง A ของตาราง (${c.to} มม.) ละเอียดกว่าค่าที่แปลงจากนิ้ว (${c.inch})`}</div> : null}</td>
             <td className="r rw-mono">{f.from !== "" ? (f.dec === "keep" ? <b>{String(f.from)}</b> : <s className="rl-old">{String(f.from)}</s>) : null}</td><td className="rw-muted">{f.tone === "same" ? "" : "→"}</td>
             <td className="rw-mono">{an ? <label className="rl-inq">{an.sheetQ ? "จำนวนตามใบ" : "จำนวน"} <input className="input rw-cell rl-qty" type="number" min={an.kind === "hw" ? "0.01" : "1"} step={an.kind === "hw" ? "0.01" : "1"} placeholder="จำนวน" value={an.qty} onChange={(e) => { const v = e.target.value; setAdds((xs) => xs.map((x, k) => (k === ai ? { ...x, qty: v } : x))); }} aria-label={`จำนวน ${an.code}`} /></label> : f.dec === "keep" ? <s className="rl-old">{String(f.to)}</s> : <b className={f.tone === "bad" ? "rl-errtxt" : f.tone === "same" ? "rw-muted" : "rl-new"}>{String(f.to)}</b>}</td>
@@ -1665,6 +1666,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
   };
   // ★ 2026-11-18 ผู้ใช้: "ทำไมถึงมีเบอร์อื่นๆ ที่ไม่เกี่ยวมาด้วย" — เปิดจากแถวของเบอร์ = ดูเฉพาะเบอร์นั้นทั้งหน้า (การ์ดสรุป / ตามล็อต / ตาราง เป็นของเบอร์นั้น)
   //   เดิม: การ์ดเป็นยอดทั้งใบ (66) แต่ตารางกรองเบอร์เดียว (6) → งง · ดูทั้งใบได้ด้วยปุ่ม "ดูทั้งใบ"
+  useEffect(() => { const k = (e) => { if (e.key !== "Escape") return; const t = e.target; if (t && t.closest && t.closest("input, select, textarea")) return; if (document.querySelector(".mls-confirm-card")) return; onClose(); }; document.addEventListener("keydown", k); return () => document.removeEventListener("keydown", k); }, [onClose]);   // ★ 2026-11-18 Esc ปิดได้
   const [only, setOnly] = useState(initQ || "");
   const [flt, setFlt] = useState(initQ ? "all" : "left");
   const [q, setQ] = useState("");
@@ -1738,7 +1740,7 @@ function ProgressPop({ plan, need, rel, prod, rowSheets, onClose, onOpenLot, ini
           <div className="rl-pp-tw"><table className="rl-pp-t">
             {theadEl}
             <tbody>{rows.map(rowEl)}
-              {!rows.length ? <tr><td colSpan={11} className="rw-muted">{flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
+              {!rows.length ? <tr><td colSpan={11} className="rw-muted">{!data.list.length ? "ไม่มีรายการที่ปล่อยอยู่ (ยังไม่ได้ปล่อย หรือถูกยกเลิกทั้งหมด)" : flt === "left" ? "ไม่มีรายการค้าง — ผลิตครบทุกรายการที่ปล่อยแล้ว" : "ไม่มีรายการ"}</td></tr> : null}
             </tbody>
           </table></div></>}
           {/* ★ 2026-11-18 ผู้ใช้: "ใช่ เพิ่มเลย" — งานแยกตามเครื่องจักร + น้ำหนัก + พิมพ์ QR / ดูแบบ ของเบอร์นี้ (ทีละล็อต — หน้าเครื่องบันทึกงานแยกตามล็อต) */}

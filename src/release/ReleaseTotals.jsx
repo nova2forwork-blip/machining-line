@@ -24,7 +24,8 @@ const planRev = (r, plan) => { if (cleanRev(r.rev)) return cleanRev(r.rev); cons
 const dwgToast = (text, tone = "info") => { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text, tone } })); } catch { /* ignore */ } };
 async function openDrawingOf(projectId, code) {
   if (!projectId) { dwgToast("ไม่รู้โปรเจคของใบนี้ — เปิดแบบไม่ได้", "error"); return; }
-  const w = window.open("", "_blank");   // เปิดแท็บก่อน (กันเบราว์เซอร์บล็อกป๊อปอัพ) แล้วค่อยใส่ลิงก์
+  const w = window.open("", "mls-dwg-" + NC(code).replace(/[^A-Z0-9]+/g, "_"));   // เปิดแท็บก่อน (กันป๊อปอัพถูกบล็อก) · ตั้งชื่อหน้าต่างตามเบอร์ → กดซ้ำ = แท็บเดิม
+  try { if (w) w.focus(); } catch { /* ignore */ }
   try {
     const pdfs = await libPdfsWithFallback(projectId);
     const pick = (pool) => pool.find((x) => NC(x.code) === NC(code)) || pool.filter((x) => baseOf(x.code) === baseOf(code)).sort((a, b) => revLetter(b.code).localeCompare(revLetter(a.code)))[0];
@@ -140,7 +141,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
     const m = { ...cur }; for (const c of hit) delete m[c]; onPlanChange({ ...plan, matOv: m });
     toastMat(`กลับไปใช้วัสดุเดิมของ ${hit.slice(0, 3).join(", ")}${hit.length > 3 ? " …" : ""} แล้ว — กด Ctrl+Z เพื่อย้อน`);
   } : null;
-  const setSwap = onPlanChange ? (codes, v) => onPlanChange({ ...plan, matSwap: { ...(plan.matSwap || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } }) : null;
+  const setSwap = onPlanChange ? (codes, v) => { onPlanChange({ ...plan, matSwap: { ...(plan.matSwap || {}), ...Object.fromEntries(codes.map((c) => [c, stamp(v)])) } }); toastMat(`เปลี่ยน ${codes.slice(0, 3).join(", ")}${codes.length > 3 ? " …" : ""} → ${String(v.to).trim().toUpperCase()} (Ctrl+Z ย้อนได้)`); } : null;
   const resetSwap = onPlanChange ? (codes) => { const m = { ...(plan.matSwap || {}) }; for (const c of codes) delete m[c]; onPlanChange({ ...plan, matSwap: m }); } : null;
   const invList = useMemo(() => knownInvs(plan, need), [plan, need]);
   const fromsOf = (x) => [...new Set([x.from, ...(x.froms || [])].filter((c) => c && c !== x.code))];
@@ -402,7 +403,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
       { k: "uses", h: "ใช้กับ", tip: "พาร์ทที่ตัดจากวัตถุดิบนี้: กี่เบอร์ กี่ชิ้น — กดเพื่อดูรายการ", sort: (m) => m.pcs, td: (m) => { const open = openMat === mkey(m); return <td><button type="button" className="rt-uses" onClick={() => setOpenMat(open ? null : mkey(m))} aria-expanded={open}>{nf(m.parts.length)} เบอร์ · {nf(m.pcs)} ชิ้น {open ? "▴" : "▾"}</button>
           {m.over ? <div><Pill tone="bad">ยาวกว่าเส้น {nf(m.over)} ชิ้น</Pill></div> : null}{m.noLen ? <div><Pill tone="warn">ไม่มีความยาว {nf(m.noLen)} ชิ้น</Pill></div> : null}</td>; } },
       { k: "len", h: "ยาวรวม (ม.)", tip: "ความยาวรวมของทุกชิ้นที่ต้องตัดจากวัตถุดิบนี้ (เมตร)", th: { className: "r" }, sort: (m) => m.len, td: (m) => <td className="r rw-num">{nf(m.len / 1000, 1)}</td>, foot: () => <td className="r"><b>{nf(rows.reduce((a, m) => a + m.len, 0) / 1000, 1)}</b></td> },
-      { k: "req", h: "REQUIRED QTY", th: { className: "r", title: `ความยาวพาร์ท + รอยตัด ${KERF} มม. ÷ ความยาวเส้น` }, sort: (m) => m.req, td: (m) => <td className="r rw-num">{nf(m.req, 2)}</td>, foot: () => <td className="r"><b>{nf(rows.reduce((a, m) => a + m.req, 0), 2)}</b></td> },
+      { k: "req", h: "REQUIRED QTY", th: { className: "r", title: `ผลรวมของ (ความยาวพาร์ท + รอยตัด ${KERF} มม.) × จำนวนชิ้น ÷ ความยาวเส้น — เป็นค่าทศนิยม (เส้นที่ต้องเบิกจริงดูช่อง ACTUAL ISSUE)` }, sort: (m) => m.req, td: (m) => <td className="r rw-num">{nf(m.req, 2)}</td>, foot: () => <td className="r"><b>{nf(rows.reduce((a, m) => a + m.req, 0), 2)}</b></td> },
       { k: "issue", h: "ACTUAL ISSUE", th: { className: "r", title: `ค่าเริ่ม = จัดชิ้นลงเส้นจริง (ยาวก่อน · รอยตัด ${KERF} มม.) · แก้เป็นยอดเบิกจริงได้` }, sort: (m) => issueOf(m), td: (m) => { const key = mkey(m); const mi = matIssue[key] || {}; return <td className="r">{onPlanChange ? <input className="input rw-cell rt-issue" type="number" min="0" step="1" value={mi.n ?? ""} placeholder={String(m.bars)} onChange={(e) => setIssue(key, { n: e.target.value })} aria-label={`เบิกจริง ${key}`} /> : <b>{nf(issueOf(m))}</b>}
           {mi.n !== undefined && mi.n !== "" && Number(mi.n) !== m.bars ? <div className="rw-muted small">คำนวณ {nf(m.bars)}</div> : null}</td>; },
         foot: () => <td className="r"><b>{nf(rows.reduce((a, m) => a + issueOf(m), 0))}</b> <small className="rw-muted">เส้น</small></td> },
@@ -567,7 +568,7 @@ ${codes.slice(0, 6).join(", ")}${codes.length > 6 ? " …" : ""} จะใช้
           {grp === "panel" && !hasFloors ? <span className="rw-muted small">ยังไม่มีชั้น — พิมพ์ในช่อง "ชั้น" ของแต่ละแถว หรือใช้ "ตั้งชั้น" ใต้ตาราง</span> : null}
         </div>) : null}
       {grp === "mat" && cur !== "MAT" ? <div className="rt-note"><b>✎ ที่เบอร์ = ใช้เบอร์อื่นแทน</b> (ของตามแบบไม่มี / หมด) · ใบเบิกของทุกล็อตใช้เบอร์ใหม่ + หมายเหตุ "ใช้แทน …" · ↺ = กลับไปตามแบบ</div> : null}
-      {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>✎ ที่รหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
+      {grp === "mat" && cur === "MAT" ? <div className="rt-note">คำนวณจากความยาวพาร์ท MACHINING PART ตามรหัส INV ในแบบ · รอยตัด {KERF} มม. · ช่อง ACTUAL ISSUE ใส่ยอดเบิกจริงได้ (เช่นใช้เส้นยาวอื่น / ใช้เศษ) — บันทึกไว้กับ Release นี้ · <b>กดที่ช่องรหัส = เปลี่ยนวัสดุ</b> (ของตามแบบไม่มี / หมด → ใช้ INV อื่น ทุกพาร์ทในแถว · เปลี่ยนทีละเบอร์ได้ที่ Total Part)</div> : null}
       <div className="table-wrap rw-tw rt-tw" onClickCapture={(e) => {
         // ★ 2026-11-12 คลิกที่ไหนในช่องที่แก้ได้ = เปิดแก้ช่องนั้น (ก่อนที่แถวจะเปิดความคืบหน้า)
         if (e.target.closest("button, [role=button], input, a, select, label, textarea, .rt-usedpop")) return; const td = e.target.closest("td"); const btn = td && (td.querySelector(".bm-qbtn") || td.querySelector(".rt-matbtn")); if (btn) { e.stopPropagation(); btn.click(); } }}>

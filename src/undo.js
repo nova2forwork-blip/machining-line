@@ -44,7 +44,7 @@ function install() {
           return;
         }
       }
-      if (undoers.some((u) => u.seq)) notify(isUndo ? "ไม่มีอะไรให้ย้อนแล้ว" : "ไม่มีอะไรให้ทำซ้ำ");
+      if (undoers.some((u) => u.seq)) notify(isUndo ? "ไม่มีอะไรให้ย้อนแล้ว" : "ไม่มีอะไรให้ทำซ้ำ (Modify ที่แก้ล็อตที่ปล่อยแล้ว ทำซ้ำด้วย Ctrl+Y ไม่ได้ — ต้องทำ Modify ใหม่)");
     }, 0);
   }, true);
 }

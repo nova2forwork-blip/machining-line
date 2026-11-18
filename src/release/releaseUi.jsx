@@ -194,7 +194,7 @@ export function MatEdit({ cur, orig, note, list = [], withDesc = false, desc = "
       <div className="rt-matpop-h"><b>เปลี่ยนวัสดุ</b>{label && label !== "noinv" ? <span className="rw-mono rw-muted"> {label}</span> : null}<button type="button" className="rl-x" onClick={() => setOpen(false)} aria-label="ปิด">×</button></div>
       <div className="rt-matpop-cur">ตอนนี้ใช้ <b className="rw-mono">{cur || "—"}</b>{orig ? <> · ตามแบบ <span className="rw-mono">{orig}</span></> : null}{orig && note ? <div className="rw-muted small">{note}</div> : null}</div>
       <input className="input rw-mono" autoFocus value={f.to} placeholder={`ค้นหา หรือพิมพ์ ${placeholder}`} onChange={(e) => setF({ ...f, to: e.target.value.toUpperCase() })}
-        onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter") { if (!exact && shown.length === 1 && ql) setF({ ...f, to: shown[0].c }); else go(); } }} aria-label={`วัสดุใหม่ ${label}`} />
+        onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!exact && shown.length === 1 && ql) setF({ ...f, to: shown[0].c }); else setTimeout(go, 60); } }} maxLength={40} aria-label={`วัสดุใหม่ ${label}`} />
       <div className="rt-matpop-list" role="listbox" aria-label="วัสดุในใบนี้">
         {shown.length ? shown.map((x) => (
           <button key={x.c} type="button" role="option" aria-selected={x.c === ql} className={`rt-matpop-i ${x.c === ql ? "on" : ""}`} onClick={() => setF({ ...f, to: x.c })}>

@@ -1444,3 +1444,8 @@ tr.rl-flash > td { animation: rl-flash 1.5s ease-out; }
 .rl-tabs.grouped { flex-wrap: wrap; overflow-x: visible; row-gap: 8px; }
 .rl-tabs.grouped .rl-tabgrp-row { flex-wrap: wrap; }
 .rl-tabs.grouped .rl-tabgrp { max-width: 100%; }
+/* ★ 2026-11-18 sim-test (เล็กน้อย): กล่อง Modify ที่จอ 1440×900 เนื้อหาส่วนบนถูกบีบ → ให้สูงขึ้น · ป้าย "ตามใบ Modify" ไม่ทับปุ่ม · ข้อความยาวไม่ล้นจอ */
+.rl-dr-top { max-height: 58vh; }
+.rl-dec-note { margin-left: 6px; white-space: nowrap; font-size: 11.5px; }
+.rl-dr-foot .btn, .rt-matpop-f .btn { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-sum { overflow-wrap: anywhere; }
