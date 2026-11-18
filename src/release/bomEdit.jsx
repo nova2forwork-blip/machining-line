@@ -80,7 +80,8 @@ export function useBomEdit({ plan, rel = null, onSaveDirect = null, onModify = n
     if (why) { try { window.dispatchEvent(new CustomEvent("mls-toast", { detail: { text: `ไม่ได้ใส่ — ${why}`, tone: "error" } })); } catch { /* ignore */ } return; }   // ค่าผิด = คงที่แก้ค้างไว้เดิม
     const v0 = parse(f, raw); const c0 = curVal(r, f);
     const same = v0 === undefined || (typeof v0 === "number" ? Math.abs(v0 - Number(c0)) < 1e-9 : String(v0) === String(c0 ?? "").trim() || ((f === "code" || f === "rc") && NC(v0) === NC(c0)));
-    const v = same ? undefined : v0;
+    const mixed = f === "mml" && v0 !== undefined && new Set((r.codes || []).map((c) => { const k = findKey(plan.bom.parts, c); return k && plan.bom.parts[k].ml != null ? Number(plan.bom.parts[k].ml) : "auto"; })).size > 1;
+    const v = same && !mixed ? undefined : v0;
     if (ITEM_F.has(f)) put("b", okey(r), f, v);
     else if (f === "tq") put("t", tkey(r), null, v === undefined ? undefined : { to: v, from: r.qty, base: r.orig ?? r.qty });
     else if (f === "rc") put("c", tkey(r), null, v);

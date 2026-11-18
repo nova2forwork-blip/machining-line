@@ -73,18 +73,36 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [modsOpen, setModsOpen] = useState(false);
   // ★ 2026-11-11 (1) ความยาวน่าสงสัย (เลขฟุตที่อ่านผิดเป็นมม.) → เตือน + พาไปวางแบบแก้ · (2) แถวที่ปล่อยแล้วยังเป็นค่าเดิม → ปุ่มอัปเดตความยาว / น้ำหนัก / วัสดุ
   const suspects = useMemo(() => [...need.parts.filter((x) => x.qr !== false), ...need.subs].filter((x) => !x.cancelled && suspectLen(x.l)).map((x) => ({ code: x.code, l: x.l })), [need]);
-  const stale = useMemo(() => staleReleasedRows(need, rel.lots), [need, rel]);
+  // ★ 2026-11-18 sim-test S1: น้ำหนัก/ชิ้น = 0 เพราะตอนปล่อยล็อตวัตถุดิบยังไม่มี Weight/M — กรอก W/M ที่ "บันทึก Material" ทีหลังแล้วไม่มีทางเติมย้อนหลัง
+  //   → แถวพาร์ทที่ปล่อยแล้ว น้ำหนักยังเป็น 0 แต่ตอนนี้คิดน้ำหนักได้ (มี W/M + ความยาว) ให้เข้ารายการ "อัปเดต" ด้วย
+  const [wOf, setWOf] = useState(null); const [wTick, setWTick] = useState(0);
+  useEffect(() => { let off = false; if (!api.weightIndex || !plan.projectId) return undefined; api.weightIndex(plan.projectId).then((f) => { if (!off) setWOf(() => f); }).catch(() => {}); return () => { off = true; }; }, [plan.projectId, wTick, rel.lots.length]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const stale = useMemo(() => {
+    const base = staleReleasedRows(need, rel.lots); if (!wOf) return base;
+    const have = new Set(base.map((x) => String(x.id))); const pBy = new Map(need.parts.map((x) => [NC(x.code), x])); const out = [...base];
+    for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows || []) {
+      if (r.mod_cancelled_at || r.kind === "panel" || r.kind === "subassembly" || have.has(String(r.id)) || Number(r.unit_weight) > 0) continue;
+      const p = pBy.get(NC(r.code)); const inv = String((p && p.inv) || r.material || "").trim().toUpperCase(); const len = Number(r.length_mm) || Number(p && p.l) || 0;
+      if (!inv || !(len > 0) || !(wOf(inv, len) > 0)) continue;
+      out.push({ id: r.id, lot: L.no, code: r.code, kind: "part", qty: Number(r.qty) || 0, len: null, mat: null, toLen: len, toInv: inv, uw: 0, w: wOf(inv, len) });
+    } }
+    return out;
+  }, [need, rel, wOf]);
+  // INV ของพาร์ทที่ปล่อยแล้วน้ำหนัก 0 และ "ยังไม่มี Weight/M" (บอกให้ไปกรอก)
+  const noWpm = useMemo(() => { if (!wOf) return []; const s = new Set(); const pBy = new Map(need.parts.map((x) => [NC(x.code), x]));
+    for (const L of rel.lots) for (const r of L.rows || []) { if (r.mod_cancelled_at || r.kind === "panel" || r.kind === "subassembly" || Number(r.unit_weight) > 0) continue; const p = pBy.get(NC(r.code)); const inv = String((p && p.inv) || r.material || "").trim().toUpperCase(); const len = Number(r.length_mm) || Number(p && p.l) || 0; if (inv && len > 0 && !(wOf(inv, len) > 0)) s.add(inv); }
+    return [...s].sort(); }, [need, rel, wOf]);
   const [suspOpen, setSuspOpen] = useState(false);
   const [syncBusy, setSyncBusy] = useState("");
   async function syncReleased() {
     if (!stale.length || !api.syncReleasedRows) return;
-    const line = (x) => `${x.code} · ${x.lot}: ${[x.len && `ยาว ${x.len.from ?? "—"} → ${x.len.to}`, x.mat && `วัสดุ ${x.mat.from || "—"} → ${x.mat.to}`].filter(Boolean).join(" · ")}`;
+    const line = (x) => `${x.code} · ${x.lot}: ${[x.len && `ยาว ${x.len.from ?? "—"} → ${x.len.to}`, x.mat && `วัสดุ ${x.mat.from || "—"} → ${x.mat.to}`, x.w && `น้ำหนัก/ชิ้น 0 → ${x.w} กก.`].filter(Boolean).join(" · ")}`;
     const ok = await askConfirm({ title: `อัปเดต ${stale.length} แถวที่ปล่อยแล้วให้ตรงใบหลัก?`, message: `${stale.slice(0, 12).map(line).join("\n")}${stale.length > 12 ? `\n… อีก ${stale.length - 12} แถว` : ""}\n\nจะเขียนทับในฐานข้อมูล: ความยาว · วัสดุ · น้ำหนัก/ชิ้น (คิดใหม่จากบันทึก Material)\nQR / ประวัติสแกน / จำนวน ไม่เปลี่ยน · น้ำหนักในประวัติสแกนเก่าไม่ถูกแก้ย้อนหลัง`, tone: "warn", confirmText: "อัปเดต", cancelText: "ยกเลิก" });
     if (!ok) return;
     try {
       const r = await api.syncReleasedRows(plan.projectId, stale, (m) => setSyncBusy(m)); setSyncBusy("");
       const bits = [`อัปเดต ${r.n} แถว`, r.weight ? `คิดน้ำหนักใหม่ ${r.weight} แถว` : "", r.noWeight.length ? `ไม่มีน้ำหนักในบันทึก Material: ${r.noWeight.slice(0, 5).join(", ")}${r.noWeight.length > 5 ? " …" : ""} (น้ำหนักเดิมไม่เปลี่ยน)` : "", r.matFailed ? `วัสดุเขียนไม่ได้ ${r.matFailed} แถว (ความยาว/น้ำหนักเขียนแล้ว)` : "", r.errors.length ? `ผิดพลาด ${r.errors.length}: ${r.errors[0]}` : ""].filter(Boolean);
-      onSheetMoved && onSheetMoved({ msg: bits.join(" · ") });
+      onSheetMoved && onSheetMoved({ msg: bits.join(" · ") }); setWTick((t) => t + 1);
     } catch (e) { setSyncBusy(""); alert("อัปเดตไม่สำเร็จ: " + (e?.message || e)); }
   }
   // ★ 2026-11-11 ประวัติ Modify: ตารางทุกเบอร์ของ M-00k = ค่า "ณ ตอนบันทึก M นั้น" (เล่น Modify ซ้ำถึง M นั้น) — เดิมใช้ค่าปัจจุบัน ทำให้ M เก่าโชว์ค่าหลัง M ใหม่
@@ -350,8 +368,13 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
             </div>) : null}
           {stale.length && api.syncReleasedRows ? (
             <div className="rl-snote warn">
-              <b>แถวที่ปล่อยแล้ว {nf(stale.length)} แถว ยังเป็นค่าเดิม</b> — ความยาว {nf(stale.filter((x) => x.len).length)} · วัสดุ {nf(stale.filter((x) => x.mat).length)} แถว ไม่ตรงกับใบหลัก (น้ำหนัก/ชิ้นจึงยังคิดจากค่าเดิม)
+              <b>แถวที่ปล่อยแล้ว {nf(stale.length)} แถว ยังเป็นค่าเดิม</b> — ความยาว {nf(stale.filter((x) => x.len).length)} · วัสดุ {nf(stale.filter((x) => x.mat).length)} แถว ไม่ตรงกับใบหลัก{stale.some((x) => x.w) ? <> · <b>น้ำหนัก/ชิ้นยังเป็น 0 อีก {nf(stale.filter((x) => x.w).length)} แถว</b> (ตอนนี้มี Weight/M แล้ว คิดให้ได้)</> : " (น้ำหนัก/ชิ้นจึงยังคิดจากค่าเดิม)"}
               <div className="rl-snote-act"><button type="button" className="rw-link" disabled={!!syncBusy} onClick={syncReleased}>{syncBusy || "อัปเดตความยาว · วัสดุ · น้ำหนัก ›"}</button></div>
+            </div>) : null}
+          {noWpm.length ? (
+            <div className="rl-snote warn" data-testid="no-wpm">
+              <b>น้ำหนัก/ชิ้นเป็น 0</b> — วัตถุดิบ {nf(noWpm.length)} รหัสยังไม่มี Weight/M: <span className="rw-mono">{noWpm.slice(0, 6).join(", ")}{noWpm.length > 6 ? " …" : ""}</span>
+              <div className="rw-muted small">กรอก Weight/M ที่เมนู “บันทึก Material” แล้วกลับมากด “อัปเดต … น้ำหนัก” ที่นี่ · รายงานน้ำหนักจะเป็น 0 จนกว่าจะเติม</div>
             </div>) : null}
           {(() => { const left = (nUnits - addrDone) + (liveSubs.length - subDone) + (liveParts.length - partDone); const tot = nUnits + liveSubs.length + liveParts.length;
             return !tot ? <div className="rw-muted small">ยังไม่มีของในใบ</div> : left > 0 ? <div className="rl-snote warn">ยังไม่ปล่อย {[nUnits - addrDone > 0 && `แผง ${nf(nUnits - addrDone)} ที่`, liveSubs.length - subDone > 0 && `ซับ ${nf(liveSubs.length - subDone)} เบอร์`, liveParts.length - partDone > 0 && `พาร์ท ${nf(liveParts.length - partDone)} เบอร์`].filter(Boolean).join(" · ")} <button type="button" className="rw-link" onClick={() => { setPreset(null); setBuilder(true); }}>ปล่อยต่อ →</button></div> : <div className="rl-snote ok">ปล่อยครบแล้ว</div>; })()}
@@ -612,7 +635,7 @@ function LotBuilder({ plan, need, rel, doneOf, leftOf, api, user, onPlanChange, 
       }
       setBusy("");
       await onSaved({ lotNo: no, rows: lr, res, hw: nHw, plan: np });
-    } catch (e) { setBusy(""); setErr([e?.message || String(e)]); }
+    } catch (e) { setBusy(""); setErr(String(e?.message || e).split("\n")); }
   }
 
   const lotsChip = (code) => { const e = rel.byCode.get(NC(code)); return e ? e.lots.map((l) => <Pill key={l} tone="info">{l}</Pill>) : null; };
@@ -830,13 +853,21 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
   const nChange = realChanges.length + addrs.size + adds.length + edits.length + matOn.length;
   dirtyRef.current = nChange > 0 || !!reason.trim() || found.length > 0;
   const formErr = !form.code.trim() ? "" : (form.kind !== "hw" && need.parts.concat(need.subs).some((x) => NC(x.code) === NC(form.code))) || adds.some((a) => NC(a.code) === NC(form.code)) ? "เบอร์นี้มีอยู่แล้ว — ใช้ “แก้จำนวน” แทน" : !(Number(form.qty) > 0) ? "ใส่จำนวน" : "";
+  // ★ 2026-11-18 sim-test S3: เบอร์ใหม่รับจำนวนทศนิยม (2.5) / ความยาวติดลบ (−5) / 1e9 แล้วบันทึกลงจริง → กันไว้ก่อนบันทึก
+  const addErrs = adds.flatMap((a) => { const q = Number(a.qty), l = a.l === "" || a.l == null ? null : Number(a.l); const e = [];
+    if (q > 0 && a.kind !== "hw" && !Number.isInteger(q)) e.push(`${a.code}: จำนวนต้องเป็นจำนวนเต็ม (ใส่ ${a.qty})`);
+    if (q > 100000) e.push(`${a.code}: จำนวนมากเกินไป (${a.qty})`);
+    if (a.kind !== "hw" && l != null && (!Number.isFinite(l) || l <= 0 || l > 30000)) e.push(`${a.code}: ความยาวต้องมากกว่า 0 และไม่เกิน 30,000 มม. (ใส่ ${a.l})`);
+    return e; });
   const blockers = addOnly ? [
     !adds.length && "ยังไม่ได้เพิ่มอะไร",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
+    ...addErrs,
   ].filter(Boolean) : [
     undecided > 0 && `เลือก "ใช้ตามแบบ" หรือ "คงเดิม" อีก ${undecided} จุด (แถวสีเหลือง)`,
     !nChange && !undecided && "ยังไม่ได้แก้อะไร",
     adds.some((a) => !(Number(a.qty) > 0)) && `ใส่จำนวนเบอร์ใหม่ ${adds.filter((a) => !(Number(a.qty) > 0)).length} เบอร์`,
+    ...addErrs,
     verErr,
     ops.errors.length && `${ops.errors.length} รายการลดไม่ได้ (ดูแถวสีแดง)`,
     needAdmin && "แก้ของที่ปล่อยแล้ว (ลด/ยกเลิกในล็อต) ต้องเป็นออฟฟิศหรือแอดมิน",
@@ -968,7 +999,8 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
           if (!reason.trim()) setReason(`ตามใบ Modify ${o.roRaw || o.mVer}${o.items.length ? " — " + o.items.map((x) => x.code + (x.rev ? " REV." + x.rev : "")).join(", ") : ""}${o.note ? " · " + o.note : ""}`);
         }
         notes.push(`ใบ Modify ${o.roRaw || o.mVer}${o.refRo ? ` (อ้างถึง ${o.refRo})` : ""}: แบบที่แก้ ${o.items.length} รายการ — ${o.items.map((x) => x.code + (x.rev ? " REV." + x.rev : "")).join(", ")}${o.issuedBy ? ` · โดย ${o.issuedBy}` : ""}`);
-        if (o.refRo && roKey(o.refRo) !== roKey(plan.ro)) notes.push(`⚠ ใบ Modify นี้อ้างถึง ${o.refRo} แต่กำลังแก้ Release ${plan.ro} — ตรวจว่าเปิดใบถูก`);
+        const refNo = (String(o.refRo || "").match(/[PM]-\s*\d+(?:\.\d+)?/i) || [String(o.refRo || "")])[0].replace(/\s+/g, "");
+        if (o.refRo && roKey(refNo) !== roKey(plan.ro) && roKey(o.refRo) !== roKey(plan.ro)) notes.push(`⚠ ใบ Modify นี้อ้างถึง ${o.refRo} แต่กำลังแก้ Release ${plan.ro} — ตรวจว่าเปิดใบถูก`);
         if (addOnly) notes.push(`นี่คือใบ Modify — ถ้าจะแก้ของเดิม (จำนวน/ยกเลิก/แบบ Rev ใหม่) ให้ใช้ ✎ Modify · หน้านี้ใช้เพิ่มรายการใหม่เท่านั้น`);
       } else {
         notes.push(`ใบปะหน้า ${o.roRaw || o.ro || o.file}: ${o.items.length} รายการ${o.zone ? ` · Zone ${o.zone}` : ""}`);
@@ -1092,10 +1124,19 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
       </div>
       <input ref={pdfRef} type="file" accept=".pdf,.xls,.xlsx,.xlsm,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden onChange={(e) => { onModPdfs(e.target.files); e.target.value = ""; }} />
       <div className="rl-1drop-st">
-        <span className={`rl-1drop-chip ${sheet ? "ok" : ""}`}>{sheet ? "✓" : "○"} {addOnly ? "ใบปะหน้า" : "ใบ Modify"}: {sheet ? <><b>{sheet.roRaw || sheet.mVer || sheet.ro || sheet.file}</b> · {sheet.items.length} รายการ{sheet.refRo ? ` · อ้างถึง ${sheet.refRo}` : ""} <button type="button" className="rw-link" onClick={() => setSheet(null)}>เอาออก</button></> : <span className="rw-muted">ยังไม่มี (ไม่มีก็ข้ามได้)</span>}</span>
+        <span className={`rl-1drop-chip ${sheet ? "ok" : ""}`}>{sheet ? "✓" : "○"} {addOnly ? "ใบปะหน้า" : "ใบ Modify"}: {sheet ? <><b>{sheet.roRaw || sheet.mVer || sheet.ro || sheet.file}</b> · {sheet.items.length} รายการ{sheet.refRo ? ` · อ้างถึง ${sheet.refRo}` : ""} <button type="button" className="rw-link" onClick={() => dropSheet()}>เอาออก</button></> : <span className="rw-muted">ยังไม่มี (ไม่มีก็ข้ามได้)</span>}</span>
         <span className={`rl-1drop-chip ${nDrawn && !nMiss ? "ok" : nMiss ? "warn" : ""}`}>{nDrawn && !nMiss ? "✓" : "○"} แบบ: {nDrawn ? <b>วางแล้ว {nDrawn} แบบ</b> : <span className="rw-muted">ยังไม่มี</span>}{sheet ? (nMiss ? <span className="rl-errtxt"> · ตามใบยังขาด {nMiss} แบบ</span> : nDrawn ? " · ครบตามใบ" : "") : ""}</span>
       </div>
     </div>);
+  // ★ 2026-11-18 sim-test S9: กด "เอาออก" ที่ใบ Modify / ใบปะหน้า แล้วค่าที่ใบเลือกให้ยังค้าง (วัสดุ "ตามใบ Modify" · จำนวนจากใบ · เหตุผล) → บันทึกได้ทั้งที่ไม่มีใบ
+  //   → คืนเป็น "ยังไม่ได้เลือก" · จำนวนที่เติมจากใบว่างกลับ · เหตุผลที่ระบบใส่จากใบถูกล้าง (ที่ผู้ใช้เลือก / พิมพ์เองไม่แตะ)
+  const dropSheet = () => {
+    const autos = found.map((f, i) => (f.auto && f.dec === "use" ? i : -1)).filter((i) => i >= 0);
+    if (autos.length) { decide(autos, false); const set = new Set(autos); setFound((l) => l.map((f, i) => (set.has(i) ? { ...f, dec: undefined, auto: false } : f))); }
+    if (adds.some((a) => a.sheetQ)) setAdds((xs) => xs.map((a) => (a.sheetQ ? { ...a, qty: "", sheetQ: false, note: String(a.note || "").split(" · ").filter((t) => !/^จำนวน .* จาก(ใบ Modify|ใบปะหน้า)$/.test(t)).join(" · ") } : a)));
+    if (/^ตามใบ Modify /.test(reason)) setReason("");
+    setSheet(null);
+  };
   const sheetBad = !!sheet && sheetCmp.some((x) => (sheet.kind === "modify" ? !x.drop : x.status === "missing"));
   const sheetEl = sheet ? (
     <div className={`rw-order-check ${sheetBad ? "warn" : "ok"}`} style={{ marginBottom: 10 }}>
@@ -1104,7 +1145,7 @@ function ModifyDrawer({ plan, need, rel, api, user, onClose, onSaved, addOnly = 
         <span className="rw-muted">{[sheet.refRo && `อ้างถึง ${sheet.refRo}`, sheet.zone && `Zone ${sheet.zone}`, sheet.issuedBy && `โดย ${sheet.issuedBy}`, sheet.date].filter(Boolean).join(" · ")} · {sheet.items.length} รายการ{sheet.kind === "modify" ? ` · วางแบบแล้ว ${sheetCmp.filter((x) => x.drop).length}/${sheet.items.length}` : ""}</span>
         {sheetBad ? null : <span className="rw-ok small">✓ ครบทุกรายการ</span>}
         {sheetBad ? null : <button type="button" className="rw-link" onClick={() => setSheetOpen((o) => !o)} aria-expanded={sheetOpen}>{sheetOpen ? "ซ่อนรายการ" : "ดูรายการ"}</button>}
-        <button type="button" className="rw-link" style={sheetBad ? undefined : { marginLeft: 0 }} onClick={() => { setSheet(null); }}>เอาออก</button>
+        <button type="button" className="rw-link" style={sheetBad ? undefined : { marginLeft: 0 }} onClick={() => dropSheet()}>เอาออก</button>
       </div>
       {sheetBad || sheetOpen ? <table className="data-table rw-table rw-order-tbl">
         <thead><tr><th className="r">#</th><th>Part No.</th><th>Description</th><th>{sheet.kind === "modify" ? "Remarks" : "จำนวน"}</th><th>ในใบ {plan.ro}</th><th>แบบที่วางรอบนี้</th></tr></thead>

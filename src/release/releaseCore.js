@@ -808,7 +808,8 @@ export function parseUnitsPaste(text) {
     // ★ 2026-11-12 ผู้ใช้: "Address ขึ้นก่อน" → ดูไม่ออกว่าคอลัมน์ไหนเป็น Unit = ถือว่าเรียง Address | Unit (เดิม Unit | Address)
     if (score(best) === 0 && w > 1) best = 1;
     ui = best; ai = ui === 0 ? 1 : 0;
-    if (sample.length && !unitLike(cells[0][ui]) && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
+    // ★ 2026-11-18 sim-test S10: วางแถวเดียว (ไม่มีหัวตาราง) ที่ Unit ไม่ใช่รูป UAxxxx (เช่น A-101 | MTG01-5001) เดิมถูกถือเป็นหัวตาราง → "ไม่พบข้อมูล"
+    if (sample.length > 1 && !unitLike(cells[0][ui]) && score(ui) >= Math.min(2, sample.length - 1)) start = 1;
   }
   // ★ 2026-11-11 คอลัมน์ "ชั้น" (ไม่บังคับ): หัวตาราง ชั้น/Floor/Level หรือคอลัมน์ที่ 3 ที่หน้าตาเป็นชั้น (L13 · B1 · LOB · 14)
   let fi = h.findIndex((c) => /ชั้น|floor|level|^lv/.test(c)); if (!(hu >= 0 && ha >= 0)) fi = -1;

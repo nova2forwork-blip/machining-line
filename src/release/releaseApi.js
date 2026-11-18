@@ -13,7 +13,7 @@ import {
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest } from "./releaseCore.js";
+import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -466,6 +466,24 @@ export async function releaseLot({ plan, lotNo, date, userId, rows, append = fal
   const used = await releaseOrderExists(plan.projectId, lotNo);
   if (used && !append) { const e = new Error(`เลขล็อต ${lotNo} ถูกใช้แล้ว (อาจมีคนปล่อยไปก่อน) — รีเฟรชแล้วเลือกใหม่`); e.code = "exists"; throw e; }
   if (!used && append) { const e = new Error(`ไม่พบล็อต ${lotNo} ที่จะเพิ่มเข้า — รีเฟรชแล้วลองใหม่`); e.code = "not_found"; throw e; }
+  // ★ 2026-11-18 sim-test S2: สองหน้าต่างปล่อยเบอร์เดียวกันพร้อมกัน → ปล่อยเกินยอดได้เงียบ ๆ (ต้องใช้ 4 ปล่อยไป 8)
+  //   อ่านยอดที่ปล่อยแล้ว "ตอนนี้" ของใบนี้จากฐานข้อมูลอีกครั้งก่อนสร้างล็อต (หน้าจออาจเก่า) — เกินยอดต้องใช้ทั้งใบ = ไม่ปล่อย
+  onProgress("ตรวจยอดที่ปล่อยแล้วล่าสุด…");
+  {
+    const base = roKey(plan.ro).split(".")[0];
+    const { data, error } = await supabase.from("releases").select("qty, release_order, mod_cancelled_at, part_master!inner(part_no, kind, project_id)").eq("part_master.project_id", plan.projectId).ilike("release_order", `${plan.ro}%`).limit(5000);
+    if (error) throw new Error("ตรวจยอดที่ปล่อยแล้วไม่ได้: " + (error.message || error));
+    const done = new Map();
+    for (const r of data || []) { if (r.mod_cancelled_at || roKey(r.release_order).split(".")[0] !== base) continue; const k = (r.part_master.kind === "subassembly" ? "s|" : r.part_master.kind === "panel" ? "x|" : "p|") + NC(r.part_master.part_no); done.set(k, (done.get(k) || 0) + (Number(r.qty) || 0)); }
+    const need = needOf(plan); const over = [];
+    for (const r of rows) {
+      if (r.kind === "panel") continue; const sub = r.kind === "subassembly" || r.kind === "sub";
+      const n = (sub ? need.subs : need.parts).find((x) => NC(x.code) === NC(r.code)); if (!n) continue;
+      const had = done.get((sub ? "s|" : "p|") + NC(r.code)) || 0; const q = Number(r.qty) || 0;
+      if (had + q > (Number(n.qty) || 0) + 1e-9) over.push(`${r.code}: ต้องใช้ ${n.qty} · ปล่อยไปแล้ว ${had} · กำลังจะปล่อยอีก ${q}`);
+    }
+    if (over.length) { const e = new Error(`ปล่อยไม่ได้ — จะเกินยอดที่ต้องใช้ (อาจมีคนปล่อยไปก่อนในอีกหน้าต่าง):\n${over.slice(0, 8).join("\n")}${over.length > 8 ? `\n… อีก ${over.length - 8} เบอร์` : ""}\nรีเฟรชหน้าแล้วเลือกใหม่`); e.code = "over"; throw e; }
+  }
   let wOf = () => 0;
   try { wOf = await weightIndex(plan.projectId); } catch (_) { /* ไม่มีบันทึก Material = น้ำหนัก 0 */ }
   onProgress(`สร้างล็อต ${lotNo} + QR (${rows.length} เบอร์)…`);
@@ -626,4 +644,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { weightIndex, showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };

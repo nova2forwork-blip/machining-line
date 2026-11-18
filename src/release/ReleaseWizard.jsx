@@ -102,6 +102,8 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const itemsMode = mode === "items";
   const [unitsRaw, setUnits] = useState([]);
   const [pdfsRaw, setPdfs] = useState([]);
+  const startedRef = useRef(false);   // ผู้ใช้เริ่มกรอก / วางอะไรในหน้านี้แล้วหรือยัง (ใช้ตัดสินว่าจะเสนอร่างเก่าไหม)
+  startedRef.current = !!(hdr.ro || unitsRaw.length || pdfsRaw.length || picks.length || order);
   // ★ 2026-11-03 แถว Mockup ที่ใส่จำนวน → กางเป็นแผงละแถว (1 QR ต่อแผง) ก่อนใช้คำนวณ/บันทึก · ตาราง Address & Unit ยังแสดงแถวดิบ
   const pdfs = itemsMode ? NONE : pdfsRaw;
   const [ack, setAck] = useState({});
@@ -126,6 +128,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
     api.listDrafts(user.id).then((list) => {
       if (!alive || !list.length) return;
       const best = list.filter(draftWorth).sort((a, b) => (b.at || 0) - (a.at || 0))[0]; if (!best) return;
+      if (startedRef.current) return;   // ★ 2026-11-18 sim-test S8: ผู้ใช้เริ่มทำงานในหน้านี้ไปแล้ว → ไม่เสนอร่างเก่า (เดิมแถบโผล่ทีหลัง กด "ทำต่อ" แล้วงานที่ทำอยู่หาย)
       setDraftOffer((cur) => { if (cur && (cur.at || 0) >= (best.at || 0)) return cur; return { ...best, fromServer: true }; });
       setDraftSrv((v) => (v.id ? v : { id: best.serverId, at: best.at || 0 }));
     }).catch(() => { /* ยังไม่รัน SQL / ออฟไลน์ — ใช้ร่างในเครื่องอย่างเดียว */ });
@@ -554,7 +557,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       {draftOffer ? (
         <div className="rw-banner info">
           <Icon name="clock" size={18} />
-          <div><b>มีร่างค้างไว้</b>{draftOffer.fromServer ? <> <span className="rw-muted">(จากเครื่องอื่น · {draftOffer.by || user?.name || ""})</span></> : null} — {draftOffer.hdr?.ro || "(ยังไม่ใส่เลข)"} · ขั้น {Math.min(4, (draftOffer.step || 0) + 1)} · {draftOffer.mode === "items" ? `${nf(draftOffer.picks?.length || 0)} รายการ` : `${nf(draftOffer.units?.length || 0)} แผง`} · {draftOffer.pdfs?.length || 0} PDF · {new Date(draftOffer.at).toLocaleString("th-TH")}{draftOffer.pdfs?.length ? <span className="rw-muted"> · ข้อมูลที่อ่านจาก PDF อยู่ครบ (ตัวไฟล์ต้องวางใหม่ถ้าจะเก็บเข้าคลัง)</span> : null}</div>
+          <div><b>มีร่างค้างไว้</b>{draftOffer.fromServer ? <> <span className="rw-muted">(ร่างที่เก็บไว้บนระบบ · {draftOffer.by || user?.name || ""})</span></> : null} — {draftOffer.hdr?.ro || "(ยังไม่ใส่เลข)"} · ขั้น {Math.min(4, (draftOffer.step || 0) + 1)} · {draftOffer.mode === "items" ? `${nf(draftOffer.picks?.length || 0)} รายการ` : `${nf(draftOffer.units?.length || 0)} แผง`} · {draftOffer.pdfs?.length || 0} PDF · {new Date(draftOffer.at).toLocaleString("th-TH")}{draftOffer.pdfs?.length ? <span className="rw-muted"> · ข้อมูลที่อ่านจาก PDF อยู่ครบ (ตัวไฟล์ต้องวางใหม่ถ้าจะเก็บเข้าคลัง)</span> : null}</div>
           <div className="rw-banner-act"><button type="button" className="btn btn-accent btn-sm" onClick={resumeDraft}>ทำต่อ</button><button type="button" className="btn btn-ghost btn-sm" onClick={dropDraft}>เริ่มใหม่</button></div>
         </div>
       ) : null}
