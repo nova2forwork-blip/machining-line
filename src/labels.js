@@ -66,9 +66,21 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
         <div class="p4">${escapeHtml([L.relNo, L.qtyText, L.mdf != null && L.mdf !== "" && L.mdf !== "-" ? `MDF ${L.mdf}` : ""].filter(Boolean).join(" · "))}${showCode ? ` · ${escapeHtml(u.qr_code || "")}` : ""}</div>
       </div>
     </div>`;
+  // ★ 2026-11-19 ป้ายกระจกแบบบล็อก (ป้ายสูง ≥ 20 มม.) — หน้าตาเดียวกับป้ายแผง: เบอร์กระจก · PANEL · ADDR · โปรเจค · เลขล็อต
+  const glassBlock = (u, L, svg) => `<div class="lbl pb">
+      <div class="qr pbq">${svg}</div>
+      <div class="pinfo">
+        <div class="p1">${escapeHtml(L.partNo || "")}</div>
+        <div class="p2">PANEL: ${escapeHtml(L.panelNo)}</div>
+        <div class="p2">ADDR: ${escapeHtml(L.panelAddr || "-")}</div>
+        <div class="p3 p3n">${escapeHtml([L.projCode, L.projName].filter(Boolean).join(" · "))}</div>
+        <div class="p4">${escapeHtml([L.relNo, L.qtyText].filter(Boolean).join(" · "))}${showCode ? ` · ${escapeHtml(u.qr_code || "")}` : ""}</div>
+      </div>
+    </div>`;
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
+    if (L.panelNo && blockOk) return glassBlock(u, L, svg);
     if (L.addr && !L.panelNo && blockOk) return panelBlock(u, L, svg);
     return `<div class="lbl${showCode ? " wc" : ""}${qrOnly ? " qo" : ""}">${showCode ? '<div class="lrow">' : ""}
       <div class="qr">${svg}</div>
