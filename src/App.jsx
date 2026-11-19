@@ -31,7 +31,7 @@ import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
 import { modUndoStep } from "./release/modUndo.js";
-import { NC as relNC, baseOf as relBaseOf, revLetter as relRev, glassOfNote } from "./release/releaseCore.js";
+import { NC as relNC, baseOf as relBaseOf, revLetter as relRev, glassOfNote, addrsFromNote } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
@@ -6758,11 +6758,33 @@ function ReleaseGroupDetail({ group, user, onBack, goTo, onHome, onChanged }) {
     } catch (e) { setBulkBusy(""); mlsToast("ตรวจประวัติไม่สำเร็จ: " + (e?.message || e), "error"); return; }
     setBulkBusy("");
     if (!okRows.length) { await askConfirm({ title: "ยกเลิกการปล่อยไม่ได้", message: `ทุกแถวที่เลือกมีประวัติการทำงานแล้ว:\n${blocked.join("\n")}\n\nถ้าจะเอาออกจริง ใช้ "แก้ไข" → ลบ Release (แอดมิน) ซึ่งจะลบประวัติด้วย`, tone: "warn", confirmText: "ตกลง", cancelText: "" }); return; }
-    const q = okRows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
-    const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${nc(okRows.length)} แถวของ ${hdr.ro}?`, message: `${okRows.map((r) => `${r.part_master?.part_no} (${fmtNum(r.qty)})`).join(", ")}\n\nลบแถวพร้อม QR ${nc(q)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" ในใบหลัก → ปล่อยใหม่ในใบ/ล็อตที่ถูกได้${blocked.length ? `\n\nข้าม ${blocked.length} แถวที่มีประวัติแล้ว: ${blocked.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
+    // ★ 2026-11-19 QR กระจกของแผงที่ยกเลิก ไปด้วยกัน (เดิมยกเลิกแผงแล้ว QR กระจกของแผงนั้นค้างอยู่ในล็อต) · กระจกแผ่นไหนถูกสแกนแล้ว = ยกเลิกแผงนั้นไม่ได้
+    const glassGo = [];
+    {
+      const want = new Set();
+      for (const r of okRows) if (r.part_master?.kind === "panel") for (const a of addrsFromNote(r.note)) want.add(`${String(r.release_order || "").trim().toUpperCase()}|${relNC(r.part_master?.part_no)}|${a}`);
+      if (want.size) {
+        const picked = new Set(okRows.map((r) => r.id));
+        const cand = releases.filter((g) => { if (picked.has(g.id)) return false; const go = glassOfNote(g.note); return !!go && want.has(`${String(g.release_order || "").trim().toUpperCase()}|${relNC(go.unit)}|${String(go.addr || "").trim().toUpperCase()}`); });
+        const used = [];
+        setBulkBusy("กำลังตรวจ QR กระจกของแผง…");
+        try {
+          for (const g of cand) {
+            const [units, recs] = await Promise.all([listRows("part_units", { filters: { release_id: g.id }, strict: true }), countReleaseStationRecords(g.id)]);
+            if (units.some((u) => u.status !== "released") || recs > 0) used.push(`${g.part_master?.part_no} (${(glassOfNote(g.note) || {}).addr || ""})`); else glassGo.push(g);
+          }
+        } catch (e) { setBulkBusy(""); mlsToast("ตรวจ QR กระจกไม่สำเร็จ: " + (e?.message || e), "error"); return; }
+        setBulkBusy("");
+        if (used.length) { await askConfirm({ title: "ยกเลิกการปล่อยไม่ได้", message: `กระจกของแผงที่เลือกถูกสแกน / ใช้งานแล้ว:\n${used.slice(0, 8).join("\n")}\n\nเอาแผงนั้นออกจากที่เลือก หรือแจ้งแอดมิน`, tone: "warn", confirmText: "ตกลง", cancelText: false }); return; }
+      }
+    }
+    const gq = glassGo.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+    const q = okRows.reduce((a, r) => a + (Number(r.qty) || 0), 0) + gq;
+    const ok = await askConfirm({ title: `ยกเลิกการปล่อย ${nc(okRows.length)} แถวของ ${hdr.ro}?`, message: `${okRows.map((r) => `${r.part_master?.part_no} (${fmtNum(r.qty)})`).join(", ")}${gq ? `\n+ QR กระจกของแผงที่ยกเลิก ${nc(gq)} แผ่น` : ""}\n\nลบแถวพร้อม QR ${nc(q)} ดวง (ยังไม่มีการสแกน) · ยอดกลับไปเป็น "เหลือ" ในใบหลัก → ปล่อยใหม่ในใบ/ล็อตที่ถูกได้${blocked.length ? `\n\nข้าม ${blocked.length} แถวที่มีประวัติแล้ว: ${blocked.join(", ")}` : ""}`, tone: "danger", confirmText: "ยกเลิกการปล่อย", cancelText: "กลับ" });
     if (!ok) return;
     setBulkBusy("กำลังยกเลิก…");
     let n = 0; const ids = new Set();
+    for (const g of glassGo) { try { await deleteReleaseCascade(g.id); ids.add(g.id); auditRecord("unrelease", "release", g.id, { part_no: g.part_master?.part_no, release_order: g.release_order, qty: g.qty, glass_of: g.note }); } catch (e) { mlsToast(`${g.part_master?.part_no}: ${e?.message || e}`, "error"); setBulkBusy(""); return; } }
     for (const r of okRows) { try { await deleteReleaseCascade(r.id); ids.add(r.id); n++; auditRecord("unrelease", "release", r.id, { part_no: r.part_master?.part_no, release_order: r.release_order, qty: r.qty }); } catch (e) { mlsToast(`${r.part_master?.part_no}: ${e?.message || e}`, "error"); break; } }
     setBulkBusy("");
     const next = releases.filter((r) => !ids.has(r.id)); setReleases(next); setSel(new Set());

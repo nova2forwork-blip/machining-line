@@ -21,6 +21,10 @@ import {
 import { enterFullscreen, toggleFullscreen, armFullscreenOnFirstTap, isStandalone, warmCameraPermission, getSharedCameraStream, releaseSharedCamera, camPermissionPersists, listRearCameras, getCameraErrorKind } from "./fullscreen.js";
 import { useUpdateReady, applyUpdate } from "./updatePrompt.js";
 import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx";
+// ★ 2026-11-19 ตัวอ่านหมายเหตุของแถวปล่อย (สำเนาย่อจาก release/releaseCore.js — ไม่ import ทั้งไฟล์ ให้หน้าเครื่องเบาเหมือนเดิม · ต้องตรงกับ GLASS_TAG / ADDR_TAG ที่นั่น)
+const relNC = (v) => String(v || "").trim().toUpperCase().replace(/\s+/g, " ");
+const glassOfNote = (note) => { const TAG = "กระจกของแผง:"; const x = String(note || ""); const i = x.indexOf(TAG); if (i < 0) return null; const t0 = x.slice(i + TAG.length).split("·")[0].trim(); const j = t0.lastIndexOf("@"); return j < 0 ? { unit: t0, addr: "" } : { unit: t0.slice(0, j).trim(), addr: t0.slice(j + 1).trim() }; };
+const addrsFromNote = (note) => { const TAG = "ที่อยู่:"; const x = String(note || ""); const i = x.indexOf(TAG); if (i < 0) return []; return x.slice(i + TAG.length).split(/[,\n]/).map((v) => v.trim().toUpperCase()).filter(Boolean); };
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ 2026-10-26 คำแปลอังกฤษ (หน้าเครื่องโหลดแยกจากแอปสำนักงาน)
@@ -1962,6 +1966,26 @@ Add anyway?`),
     }
     // ── ประกอบอิสระ: สแกนลูกเบอร์ไหนก็ได้เข้าไป (ไม่เช็ก BOM) · เช็กลิสต์อยู่หลังบ้าน ──
     const cno = u.part_master?.part_no || u.qr_code;
+    // ★ 2026-11-19 QR กระจกรู้ว่าเป็นของแผงไหน (แบบแผง + ที่อยู่) → สแกนเข้าแผงอื่น = ถามก่อน (ค่าเริ่ม = ไม่ใส่)
+    //   แผง 1 แถวปล่อยมีได้หลายที่อยู่ และระบบไม่ได้ผูก QR แผงกับที่อยู่ทีละใบ → ตรวจได้ถึง "แบบแผงตรงกัน + ที่อยู่ของกระจกอยู่ในชุดที่อยู่ของแถวแผงนี้ + โปรเจคเดียวกัน"
+    {
+      const go = glassOfNote(u.release?.note);
+      if (go && asmParent.parentKind === "panel") {
+        const pno = asmParent.unit?.part_master?.part_no || ""; const pAddrs = addrsFromNote(asmParent.unit?.release?.note);
+        const sameProj = !u.part_master?.project_id || !asmParent.unit?.part_master?.project_id || u.part_master.project_id === asmParent.unit.part_master.project_id;
+        const sameType = relNC(go.unit) === relNC(pno); const addrOk = !pAddrs.length || pAddrs.includes(String(go.addr || "").trim().toUpperCase());
+        if (!sameProj || !sameType || !addrOk) {
+          errorBeep();
+          const v = await askChoice({
+            title: t("กระจกของแผงอื่น", "Glass of another panel"), tone: "warn", cancelText: false,
+            message: t(`${cno}: กระจกแผ่นนี้เป็นของแผง ${go.unit} @ ${go.addr || "-"}\nแผงที่เปิดอยู่: ${pno}${pAddrs.length ? ` (ที่อยู่ ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nและเป็นของคนละโปรเจค"}\n\nใส่ต่อไหม?`,
+                       `${cno}: this glass belongs to panel ${go.unit} @ ${go.addr || "-"}\nOpen panel: ${pno}${pAddrs.length ? ` (addresses ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nand it is from another project"}\n\nAdd anyway?`),
+            choices: [{ value: "skip", label: t("ไม่ใส่", "Don't add"), primary: true }, { value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }],
+          });
+          if (v !== "add") return false;
+        }
+      }
+    }
     // ★ 2026-11-17 (SIM4 F7): ยังใส่ได้อิสระ (หน้างานทำตามแบบกระดาษ) แต่ถามก่อนเมื่อ "ไม่อยู่ในแบบ" หรือ "เกินจำนวนในแบบ"
     //   (เดิมรับเงียบ ๆ → ใส่ผิดเบอร์ / เกิน แล้วไปเห็นที่ออฟฟิศทีหลัง) · ค่าเริ่ม = ไม่ใส่ · ขาด (ยังใส่ไม่ครบ) ไม่ถาม — ประกอบหลายรอบได้
     let bomOk = false;   // ผู้ใช้กด "ใส่ต่อ" ไปแล้วตอนสแกน → แผงจำนวนไม่ถามซ้ำ
