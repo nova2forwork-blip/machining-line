@@ -57,29 +57,27 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   //     ★ ผู้ใช้ 2026-11-19: "เอาพวกนี้ออก ทั้งแผงกับกระจก" → ไม่มีบรรทัดเลขล็อต · ลำดับ · MDF แล้ว (เปิด "แสดงรหัสใต้ QR" = มีบรรทัดรหัส QR แทน)
   const blockOk = heightMm >= 20 && innerW - heightMm >= 25;
   const pbQr = (heightMm * 0.84).toFixed(2);
-  const panelBlock = (u, L, svg) => `<div class="lbl pb">
+  // ★ 2026-11-19 ผู้ใช้: "ออกแบบให้สวยงามด้วย · ป้ายกระจก ADDR เอาออก"
+  //   โครงเดียวกันทั้งป้ายแผงและป้ายกระจก (พิมพ์ขาว-ดำ): QR ซ้าย │ เส้นตั้ง │ ข้อความ 3 ชั้น คั่นด้วยเส้นบาง
+  //     ชั้น 1  หัวเล็ก (PANEL / GLASS) + ชื่อตัวใหญ่หนา
+  //     ชั้น 2  หัวเล็ก (ADDRESS / PANEL) + ค่า
+  //     ชั้น 3  รหัสโปรเจคในแถบดำตัวขาว + ชื่อโปรเจค (ยาว = ย่อตัวอักษรให้พอดี)
+  //   เปิด "แสดงรหัสใต้ QR" = มีบรรทัดรหัส QR เล็ก ๆ ต่อท้าย (ใช้แยกใบด้วยตา)
+  const blockLabel = (u, L, svg, { cap1, name, cap2, value }) => `<div class="lbl pb">
       <div class="qr pbq">${svg}</div>
       <div class="pinfo">
-        <div class="p1">${escapeHtml(L.partNo || "")}</div>
-        <div class="p2">ADDR: ${escapeHtml(L.addr)}</div>
-        <div class="p3">${escapeHtml(L.projCode || "")}</div>
-        <div class="p3 p3n">${escapeHtml(L.projName || "")}</div>
-${showCode ? `
-        <div class="p4">${escapeHtml(u.qr_code || "")}</div>` : ""}
+        <div class="cap">${cap1}</div>
+        <div class="p1">${escapeHtml(name || "")}</div>
+        <div class="rule"></div>
+        <div class="cap">${cap2}</div>
+        <div class="pv">${escapeHtml(value || "-")}</div>
+        <div class="rule"></div>
+        <div class="pj">${L.projCode ? `<span class="chip">${escapeHtml(L.projCode)}</span>` : ""}<span class="pjn">${escapeHtml(L.projName || "")}</span></div>${showCode ? `
+        <div class="pcode">${escapeHtml(u.qr_code || "")}</div>` : ""}
       </div>
     </div>`;
-  // ★ 2026-11-19 ป้ายกระจกแบบบล็อก (ป้ายสูง ≥ 20 มม.) — หน้าตาเดียวกับป้ายแผง: เบอร์กระจก · PANEL · ADDR · โปรเจค · เลขล็อต
-  const glassBlock = (u, L, svg) => `<div class="lbl pb">
-      <div class="qr pbq">${svg}</div>
-      <div class="pinfo">
-        <div class="p1">${escapeHtml(L.partNo || "")}</div>
-        <div class="p2">PANEL: ${escapeHtml(L.panelNo)}</div>
-        <div class="p2">ADDR: ${escapeHtml(L.panelAddr || "-")}</div>
-        <div class="p3 p3n">${escapeHtml([L.projCode, L.projName].filter(Boolean).join(" · "))}</div>
-${showCode ? `
-        <div class="p4">${escapeHtml(u.qr_code || "")}</div>` : ""}
-      </div>
-    </div>`;
+  const panelBlock = (u, L, svg) => blockLabel(u, L, svg, { cap1: "PANEL", name: L.partNo, cap2: "ADDRESS", value: L.addr });
+  const glassBlock = (u, L, svg) => blockLabel(u, L, svg, { cap1: "GLASS", name: L.partNo, cap2: "PANEL", value: L.panelNo });
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
@@ -96,10 +94,10 @@ ${showCode ? `
         <div class="vline"></div>
         <div class="col right">
           <div class="kv">${L.panelNo
-            /* ★ 2026-11-19 ป้ายกระจก: แบบแผง + ที่อยู่แผง แทน MDF / REL (เลขล็อตย้ายไปต่อท้ายรหัสโปรเจค) */
+            /* ★ 2026-11-19 ป้ายกระจก: แบบแผง แทน MDF (ผู้ใช้: "ป้ายกระจก ADDR เอาออก" — ที่อยู่ยังผูกอยู่ใน QR ใช้ตรวจตอนสแกน) */
             ? `
             <span class="k">PANEL</span><span class="v">${escapeHtml(L.panelNo)}</span>
-            <span class="k">ADDR.</span><span class="v">${escapeHtml(L.panelAddr || "-")}</span>`
+            <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>`
             : L.addr
             /* ★ 2026-11-19 ป้ายแผง (รายใบ): ที่อยู่ของแผงใบนี้ แทนบรรทัด MDF (MDF ย้ายไปต่อท้ายรหัสโปรเจค) */
             ? `
@@ -128,16 +126,21 @@ ${showCode ? `
     .lcode { height: ${codeH.toFixed(2)}mm; line-height: ${codeH.toFixed(2)}mm; font-size: ${(codeH * 0.78).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700;
              letter-spacing: .02em; white-space: nowrap; overflow: hidden; color: #000; }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
-    /* ป้ายแผงแบบบล็อก */
-    .lbl.pb { gap: ${(heightMm * 0.08).toFixed(2)}mm; padding: 0 ${(heightMm * 0.07).toFixed(2)}mm; }
+    /* ป้ายแผง / ป้ายกระจก แบบบล็อก */
+    .lbl.pb { gap: ${(heightMm * 0.07).toFixed(2)}mm; padding: 0 ${(heightMm * 0.07).toFixed(2)}mm; }
     .lbl.pb .qr.pbq { width: ${pbQr}mm; height: ${pbQr}mm; }
-    .pinfo { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: ${(heightMm * 0.025).toFixed(2)}mm; color: #000; }
-    .pinfo > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.08; }
-    .pinfo .p1 { font-size: ${(heightMm * 0.25).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; text-overflow: clip; }
-    .pinfo .p2 { font-size: ${(heightMm * 0.17).toFixed(2)}mm; font-weight: 700; }
-    .pinfo .p3 { font-size: ${(heightMm * 0.13).toFixed(2)}mm; font-weight: 700; }
-    .pinfo .p3n { font-size: ${(heightMm * 0.12).toFixed(2)}mm; font-weight: 600; text-overflow: clip; }
-    .pinfo .p4 { font-size: ${(heightMm * 0.095).toFixed(2)}mm; }
+    .pinfo { flex: 1; min-width: 0; align-self: stretch; margin: ${(heightMm * 0.08).toFixed(2)}mm 0; padding-left: ${(heightMm * 0.07).toFixed(2)}mm; border-left: 0.3mm solid #000;
+             display: flex; flex-direction: column; justify-content: center; color: #000; }
+    .pinfo > div { white-space: nowrap; overflow: hidden; }
+    .pinfo .cap { font-size: ${(heightMm * 0.062).toFixed(2)}mm; font-weight: 700; letter-spacing: .16em; line-height: 1.15; }
+    .pinfo .p1 { font-size: ${(heightMm * 0.24).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; line-height: 1.02; }
+    .pinfo .pv { font-size: ${(heightMm * 0.165).toFixed(2)}mm; font-weight: 700; line-height: 1.05; }
+    .pinfo .rule { height: 0; border-top: 0.2mm solid #000; margin: ${(heightMm * 0.03).toFixed(2)}mm 0 ${(heightMm * 0.025).toFixed(2)}mm; flex-shrink: 0; }
+    .pinfo .pj { display: flex; align-items: center; gap: 0.4em; font-size: ${(heightMm * 0.1).toFixed(2)}mm; }   /* รหัส + ชื่อโปรเจค ใช้ขนาดเดียวกัน (em) → ย่อพร้อมกันได้เมื่อชื่อยาว */
+    .pinfo .chip { flex-shrink: 0; background: #000; color: #fff; font-size: 1em; font-weight: 800; letter-spacing: .02em; line-height: 1;
+                   padding: 0.22em 0.4em; border-radius: 0.25em; }
+    .pinfo .pjn { flex: 1; min-width: 0; font-size: 1em; font-weight: 600; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pinfo .pcode { font-size: ${(heightMm * 0.07).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700; margin-top: ${(heightMm * 0.02).toFixed(2)}mm; }
     .lbl.qo, .lbl.qo .lrow { justify-content: center; gap: 0; }
     .lbl.qo .body { display: none; }
     .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
@@ -214,15 +217,24 @@ ${showCode ? `
   window.onafterprint = closeSelf;               // ยิงเมื่อปิดกล่องพิมพ์ (เซฟหรือยกเลิก)
   // ★ 2026-10-12: Part No. ยาวจนล้นช่อง → ย่อทีละ 3% จนพอดี (ไม่ต่ำกว่า 45% ของขนาดเริ่ม)
   function fitParts(){
-    var els = document.querySelectorAll('.c.part, .pinfo .p1, .pinfo .p2, .pinfo .p3n, .pinfo .p4');
+    var els = document.querySelectorAll('.c.part, .pinfo .p1, .pinfo .pv, .pinfo .pcode');
     for (var i = 0; i < els.length; i++) {
       var el = els[i], base = parseFloat(getComputedStyle(el).fontSize), f = base, n = 0;
-      var lim = el.parentNode && el.parentNode.className === 'pinfo' ? 0.3 : 0.45;   // ป้ายแบบบล็อก: ตัวอักษรเริ่มใหญ่กว่า จึงยอมให้ย่อได้มากกว่า
+      var lim = el.closest && el.closest('.pinfo') ? 0.3 : 0.45;   // ป้ายแบบบล็อก: ตัวอักษรเริ่มใหญ่กว่า จึงยอมให้ย่อได้มากกว่า · ชื่อแผง / กระจก ต้องครบเสมอ   // ป้ายแบบบล็อก: ตัวอักษรเริ่มใหญ่กว่า จึงยอมให้ย่อได้มากกว่า
       while (el.scrollWidth > el.clientWidth + 0.5 && f > base * lim && n < 60) { f *= 0.97; el.style.fontSize = f + 'px'; n++; }
     }
   }
+  // แถวโปรเจค (รหัสในแถบดำ + ชื่อ): ชื่อยาวเกิน → ย่อทั้งแถวพร้อมกันได้ถึง 60% แล้วจึงตัดด้วย … (เล็กกว่านี้อ่านไม่ออก)
+  function fitProject(){
+    var rows = document.querySelectorAll('.pinfo .pj');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i], nm = row.querySelector('.pjn'); if (!nm) continue;
+      var base = parseFloat(getComputedStyle(row).fontSize), f = base, n = 0;
+      while (nm.scrollWidth > nm.clientWidth + 0.5 && f > base * 0.6 && n < 40) { f *= 0.97; row.style.fontSize = f + 'px'; n++; }
+    }
+  }
   window.onload = function () {
-    fitParts();
+    fitParts(); fitProject();
     if (window.__noPrint) return;
     setTimeout(function () {
       window.print();                            // Chrome จะค้างตรงนี้จนกว่าจะปิดกล่อง

@@ -8783,7 +8783,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
           ...(glassOf ? { panelNo: glassOf.unit, panelAddr: glassOf.addr } : {}),
           ...(pAddr ? { addr: pAddr } : {}),
           projCode: proj.code || "", projName: proj.name || "", mdf: mdfTxt ?? "",   // ป้ายแผงแบบบล็อกใช้ค่าดิบ (ไม่ปนกับข้อความอื่น)
-          projectNumber: glassOf ? [proj.code, rel.release_order].filter(Boolean).join(" · ") : pAddr ? [proj.code, mdfTxt != null && mdfTxt !== "" && mdfTxt !== "-" ? `MDF ${mdfTxt}` : ""].filter(Boolean).join(" · ") : proj.code || "",
+          projectNumber: glassOf ? proj.code || "" : pAddr ? [proj.code, mdfTxt != null && mdfTxt !== "" && mdfTxt !== "-" ? `MDF ${mdfTxt}` : ""].filter(Boolean).join(" · ") : proj.code || "",
           projectName: proj.name || "",
           partNo: part.part_no || "",
           mdfNo: releaseMdf(rel, part) ?? "-",   // ★ รอบ 11 (A6): MDF ของใบนี้ (ไม่ใช่ของเบอร์ที่อาจมาจากใบอื่น)
