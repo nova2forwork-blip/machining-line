@@ -53,7 +53,8 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
 
   // ★ 2026-11-19 ผู้ใช้: "ออกแบบ QR code ของเราเอง มี ชื่อแผง address ชื่อและรหัสโปรเจค" — ป้ายแผงแบบบล็อก (QR ซ้าย · ข้อความเรียง 4 บรรทัดทางขวา)
   //   ใช้เมื่อเป็นป้ายแผงรายใบ (รู้ที่อยู่ของแผงใบนั้น) และป้ายสูงพอ (≥ 20 มม.) และกว้างพอให้ข้อความ (เหลือ ≥ 25 มม. ข้าง QR) · ป้ายเตี้ย (7.6 × 1.2) ยังใช้แบบแถวเดียวเดิม
-  //     บรรทัด 1 ชื่อแผง (ตัวใหญ่หนา)   2 ADDR: ที่อยู่   3 รหัสโปรเจค   4 ชื่อโปรเจค (ยาว = ย่อตัวอักษรให้พอดี)   5 เลขล็อต · ลำดับ · MDF
+  //     บรรทัด 1 ชื่อแผง (ตัวใหญ่หนา)   2 ADDR: ที่อยู่   3 รหัสโปรเจค   4 ชื่อโปรเจค (ยาว = ย่อตัวอักษรให้พอดี)
+  //     ★ ผู้ใช้ 2026-11-19: "เอาพวกนี้ออก ทั้งแผงกับกระจก" → ไม่มีบรรทัดเลขล็อต · ลำดับ · MDF แล้ว (เปิด "แสดงรหัสใต้ QR" = มีบรรทัดรหัส QR แทน)
   const blockOk = heightMm >= 20 && innerW - heightMm >= 25;
   const pbQr = (heightMm * 0.84).toFixed(2);
   const panelBlock = (u, L, svg) => `<div class="lbl pb">
@@ -63,7 +64,8 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
         <div class="p2">ADDR: ${escapeHtml(L.addr)}</div>
         <div class="p3">${escapeHtml(L.projCode || "")}</div>
         <div class="p3 p3n">${escapeHtml(L.projName || "")}</div>
-        <div class="p4">${escapeHtml([L.relNo, L.qtyText, L.mdf != null && L.mdf !== "" && L.mdf !== "-" ? `MDF ${L.mdf}` : ""].filter(Boolean).join(" · "))}${showCode ? ` · ${escapeHtml(u.qr_code || "")}` : ""}</div>
+${showCode ? `
+        <div class="p4">${escapeHtml(u.qr_code || "")}</div>` : ""}
       </div>
     </div>`;
   // ★ 2026-11-19 ป้ายกระจกแบบบล็อก (ป้ายสูง ≥ 20 มม.) — หน้าตาเดียวกับป้ายแผง: เบอร์กระจก · PANEL · ADDR · โปรเจค · เลขล็อต
@@ -74,7 +76,8 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
         <div class="p2">PANEL: ${escapeHtml(L.panelNo)}</div>
         <div class="p2">ADDR: ${escapeHtml(L.panelAddr || "-")}</div>
         <div class="p3 p3n">${escapeHtml([L.projCode, L.projName].filter(Boolean).join(" · "))}</div>
-        <div class="p4">${escapeHtml([L.relNo, L.qtyText].filter(Boolean).join(" · "))}${showCode ? ` · ${escapeHtml(u.qr_code || "")}` : ""}</div>
+${showCode ? `
+        <div class="p4">${escapeHtml(u.qr_code || "")}</div>` : ""}
       </div>
     </div>`;
   const labelCells = units.map((u) => {
@@ -130,10 +133,10 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     .lbl.pb .qr.pbq { width: ${pbQr}mm; height: ${pbQr}mm; }
     .pinfo { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: ${(heightMm * 0.025).toFixed(2)}mm; color: #000; }
     .pinfo > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.08; }
-    .pinfo .p1 { font-size: ${(heightMm * 0.225).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; text-overflow: clip; }
-    .pinfo .p2 { font-size: ${(heightMm * 0.155).toFixed(2)}mm; font-weight: 700; }
-    .pinfo .p3 { font-size: ${(heightMm * 0.12).toFixed(2)}mm; font-weight: 700; }
-    .pinfo .p3n { font-size: ${(heightMm * 0.11).toFixed(2)}mm; font-weight: 600; text-overflow: clip; }
+    .pinfo .p1 { font-size: ${(heightMm * 0.25).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; text-overflow: clip; }
+    .pinfo .p2 { font-size: ${(heightMm * 0.17).toFixed(2)}mm; font-weight: 700; }
+    .pinfo .p3 { font-size: ${(heightMm * 0.13).toFixed(2)}mm; font-weight: 700; }
+    .pinfo .p3n { font-size: ${(heightMm * 0.12).toFixed(2)}mm; font-weight: 600; text-overflow: clip; }
     .pinfo .p4 { font-size: ${(heightMm * 0.095).toFixed(2)}mm; }
     .lbl.qo, .lbl.qo .lrow { justify-content: center; gap: 0; }
     .lbl.qo .body { display: none; }
@@ -214,7 +217,8 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     var els = document.querySelectorAll('.c.part, .pinfo .p1, .pinfo .p2, .pinfo .p3n, .pinfo .p4');
     for (var i = 0; i < els.length; i++) {
       var el = els[i], base = parseFloat(getComputedStyle(el).fontSize), f = base, n = 0;
-      while (el.scrollWidth > el.clientWidth + 0.5 && f > base * 0.45 && n < 40) { f *= 0.97; el.style.fontSize = f + 'px'; n++; }
+      var lim = el.parentNode && el.parentNode.className === 'pinfo' ? 0.3 : 0.45;   // ป้ายแบบบล็อก: ตัวอักษรเริ่มใหญ่กว่า จึงยอมให้ย่อได้มากกว่า
+      while (el.scrollWidth > el.clientWidth + 0.5 && f > base * lim && n < 60) { f *= 0.97; el.style.fontSize = f + 'px'; n++; }
     }
   }
   window.onload = function () {
