@@ -24,6 +24,8 @@ import { askConfirm, askChoice, ConfirmHost, NumInput, nc } from "./confirm.jsx"
 // ★ 2026-11-19 ตัวอ่านหมายเหตุของแถวปล่อย (สำเนาย่อจาก release/releaseCore.js — ไม่ import ทั้งไฟล์ ให้หน้าเครื่องเบาเหมือนเดิม · ต้องตรงกับ GLASS_TAG / ADDR_TAG ที่นั่น)
 const relNC = (v) => String(v || "").trim().toUpperCase().replace(/\s+/g, " ");
 const glassOfNote = (note) => { const TAG = "กระจกของแผง:"; const x = String(note || ""); const i = x.indexOf(TAG); if (i < 0) return null; const t0 = x.slice(i + TAG.length).split("·")[0].trim(); const j = t0.lastIndexOf("@"); return j < 0 ? { unit: t0, addr: "" } : { unit: t0.slice(0, j).trim(), addr: t0.slice(j + 1).trim() }; };
+// QR แผงใบที่ n ของแถวปล่อย = ที่อยู่ลำดับที่ n (ตรงกับ unitAddrOf ใน releaseCore.js)
+const panelAddrOf = (u) => (u && u.part_master?.kind === "panel" ? addrsFromNote(u.release?.note)[Math.floor(Number(u.unit_no) || 0) - 1] || "" : "");
 const addrsFromNote = (note) => { const TAG = "ที่อยู่:"; const x = String(note || ""); const i = x.indexOf(TAG); if (i < 0) return []; return x.slice(i + TAG.length).split(/[,\n]/).map((v) => v.trim().toUpperCase()).filter(Boolean); };
 import Icon from "./icons.jsx";
 import { useLang } from "./i18n-dom.js";
@@ -1973,13 +1975,15 @@ Add anyway?`),
       if (go && asmParent.parentKind === "panel") {
         const pno = asmParent.unit?.part_master?.part_no || ""; const pAddrs = addrsFromNote(asmParent.unit?.release?.note);
         const sameProj = !u.part_master?.project_id || !asmParent.unit?.part_master?.project_id || u.part_master.project_id === asmParent.unit.part_master.project_id;
-        const sameType = relNC(go.unit) === relNC(pno); const addrOk = !pAddrs.length || pAddrs.includes(String(go.addr || "").trim().toUpperCase());
+        const myAddr = panelAddrOf(asmParent.unit);   // ที่อยู่ของแผงใบนี้ (รู้ = ต้องตรงเป๊ะ · ไม่รู้ = ถอยไปเทียบกับชุดที่อยู่ของแถว)
+        const gAddr = String(go.addr || "").trim().toUpperCase();
+        const sameType = relNC(go.unit) === relNC(pno); const addrOk = myAddr ? gAddr === myAddr : (!pAddrs.length || pAddrs.includes(gAddr));
         if (!sameProj || !sameType || !addrOk) {
           errorBeep();
           const v = await askChoice({
             title: t("กระจกของแผงอื่น", "Glass of another panel"), tone: "warn", cancelText: false,
-            message: t(`${cno}: กระจกแผ่นนี้เป็นของแผง ${go.unit} @ ${go.addr || "-"}\nแผงที่เปิดอยู่: ${pno}${pAddrs.length ? ` (ที่อยู่ ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nและเป็นของคนละโปรเจค"}\n\nใส่ต่อไหม?`,
-                       `${cno}: this glass belongs to panel ${go.unit} @ ${go.addr || "-"}\nOpen panel: ${pno}${pAddrs.length ? ` (addresses ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nand it is from another project"}\n\nAdd anyway?`),
+            message: t(`${cno}: กระจกแผ่นนี้เป็นของแผง ${go.unit} @ ${go.addr || "-"}\nแผงที่เปิดอยู่: ${pno}${myAddr ? ` @ ${myAddr}` : pAddrs.length ? ` (ที่อยู่ ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nและเป็นของคนละโปรเจค"}\n\nใส่ต่อไหม?`,
+                       `${cno}: this glass belongs to panel ${go.unit} @ ${go.addr || "-"}\nOpen panel: ${pno}${myAddr ? ` @ ${myAddr}` : pAddrs.length ? ` (addresses ${pAddrs.slice(0, 6).join(", ")}${pAddrs.length > 6 ? " …" : ""})` : ""}${sameProj ? "" : "\nand it is from another project"}\n\nAdd anyway?`),
             choices: [{ value: "skip", label: t("ไม่ใส่", "Don't add"), primary: true }, { value: "add", label: t("ใส่ต่อ", "Add anyway"), tone: "warn" }],
           });
           if (v !== "add") return false;
@@ -3095,7 +3099,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
           <button className="asw-change" onClick={subBack} title={t("ย้อนกลับ / เปลี่ยนเบอร์", "Back / change")}>← {t("ย้อนกลับ", "Back")}</button>
           <div className="asw-hgrow">
             <div className="asw-hlabel">{isGlz ? (asmParent.parentKind === "panel" ? t("ติดกระจก · แผง", "GLAZING · PANEL") : t("ติดกระจก · หน้าต่าง/ซับ", "GLAZING · WINDOW/SUB")) : isPnl ? t("เบอร์แม่ (แผง)", "PANEL") : t("เบอร์แม่ (ซับ)", "SUBASSEMBLY")}</div>
-            <div className="asw-hno">{subNo}{subName ? <span className="asw-hname">{subName}</span> : null}</div>
+            <div className="asw-hno">{subNo}{panelAddrOf(asmParent.unit) ? <span className="asw-hname" data-testid="panel-addr"> @ {panelAddrOf(asmParent.unit)}</span> : null}{subName ? <span className="asw-hname">{subName}</span> : null}</div>
           </div>
           <button className="asw-change" onClick={subBack}>{t("เปลี่ยนเบอร์", "Change")}</button>
         </div>
@@ -3199,7 +3203,7 @@ function AsmWorksheet({ asmParent, asmChildren, asmType, asmComplete, asmReset, 
         <button className="asw-change" onClick={asmBack} title={t("ย้อนกลับ / ยกเลิก", "Back / cancel")}>← {t("ย้อนกลับ", "Back")}</button>
         <div className="asw-hgrow">
           <div className="asw-hlabel">{isPack ? t("บั้งที่กำลังแพ็ก", "PACKING") : t("เบอร์แม่ที่กำลังทำ", "PARENT")}{kindTh ? ` · ${kindTh}` : ""}</div>
-          <div className="asw-hno">{parentNo}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
+          <div className="asw-hno">{parentNo}{panelAddrOf(asmParent.unit) ? <span className="asw-hname" data-testid="panel-addr"> @ {panelAddrOf(asmParent.unit)}</span> : null}{parentName ? <span className="asw-hname">{parentName}</span> : null}</div>
         </div>
         <div className="asw-scount"><b>{free ? scannedCount : `${nc(doneUnits)}/${nc(totalUnits)}`}</b><span>{isPack ? t("แพ็กแล้ว", "packed") : free ? t("สแกนเข้าไปแล้ว", "scanned in") : t("ประกอบแล้ว", "assembled")}</span></div>
         <button className="asw-change" onClick={asmBack}>{isPack ? t("เปลี่ยนบั้ง", "Change") : t("เปลี่ยนเบอร์", "Change")}</button>

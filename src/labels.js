@@ -68,6 +68,11 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
             ? `
             <span class="k">PANEL</span><span class="v">${escapeHtml(L.panelNo)}</span>
             <span class="k">ADDR.</span><span class="v">${escapeHtml(L.panelAddr || "-")}</span>`
+            : L.addr
+            /* ★ 2026-11-19 ป้ายแผง (รายใบ): ที่อยู่ของแผงใบนี้ แทนบรรทัด MDF (MDF ย้ายไปต่อท้ายรหัสโปรเจค) */
+            ? `
+            <span class="k">ADDR.</span><span class="v">${escapeHtml(L.addr)}</span>
+            <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>`
             : `
             <span class="k">MDF NO.</span><span class="v">${escapeHtml(L.mdfNo || "-")}</span>
             <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>`}

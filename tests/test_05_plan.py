@@ -516,3 +516,37 @@ def test_released_of_keeps_glass_qr_out_of_part_totals(js):
     assert [(g["code"], g["qty"], g["unit"], g["addr"]) for g in lot["glassQr"]] == [("GL-01", 1, "UA1001", "25-E-301")]
     assert "GL-01" not in dict(r["byCode"]["$map"]) and "GL-01" not in dict(r["other"]["$map"])
     assert [x["code"] for x in lot["rows"]] == ["UA1001", "HZ02-025"]
+
+
+# ── QR แผงผูกกับที่อยู่ทีละใบ (ผู้ใช้ 2026-11-19: "ผูกทีละใบ") ──
+NOTE3 = "ใบ: ASSEMBLY · ที่อยู่: 25-E-301, 25-e-302, 25-E-303"
+
+
+@P
+@pytest.mark.parametrize("tid,unit_no,exp", [("TC-PLAN-110", 1, "25-E-301"), ("TC-PLAN-111", 2, "25-E-302"), ("TC-PLAN-112", 3, "25-E-303"), ("TC-PLAN-113", "2", "25-E-302")])
+def test_unit_addr_of_nth_unit(js, tid, unit_no, exp):
+    """QR แผงใบที่ n = ที่อยู่ลำดับที่ n ของแถวปล่อย (ตัวพิมพ์ใหญ่)"""
+    assert js("unitAddrOf", NOTE3, unit_no) == exp, tid
+
+
+@B
+@pytest.mark.parametrize("tid,note,unit_no", [
+    ("TC-PLAN-114", NOTE3, 4),            # ลำดับเกินจำนวนที่อยู่
+    ("TC-PLAN-115", NOTE3, 0),
+    ("TC-PLAN-116", NOTE3, None),
+    ("TC-PLAN-117", "ใบ: CUTTING", 1),    # แถวที่ไม่มีที่อยู่
+    ("TC-PLAN-118", None, 1),
+])
+def test_unit_addr_of_unknown_is_blank(js, tid, note, unit_no):
+    """หาไม่ได้ = ว่าง (ไม่เดาที่อยู่)"""
+    assert js("unitAddrOf", note, unit_no) == "", tid
+
+
+@R
+def test_unit_addr_matches_glass_rows_of_same_lot(js):
+    """TC-PLAN-119 ที่อยู่ของ QR แผงแต่ละใบ ตรงกับที่อยู่ในแถว QR กระจกที่ออกในล็อตเดียวกัน (ใช้เทียบตอนสแกน)"""
+    need, rows, glass = lot_rows(js, glass_plan(), ["25-E-303", "25-E-301"])
+    panel = rows[0]
+    addrs = [js("unitAddrOf", panel["remark"], i + 1) for i in range(panel["qty"])]
+    assert sorted(addrs) == ["25-E-301", "25-E-303"]
+    assert sorted({g["glassOf"]["addr"] for g in glass}) == sorted(addrs)

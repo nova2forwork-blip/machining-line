@@ -31,7 +31,7 @@ import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
 import { modUndoStep } from "./release/modUndo.js";
-import { NC as relNC, baseOf as relBaseOf, revLetter as relRev, glassOfNote, addrsFromNote } from "./release/releaseCore.js";
+import { NC as relNC, baseOf as relBaseOf, revLetter as relRev, glassOfNote, addrsFromNote, unitAddrOf } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
@@ -8768,11 +8768,15 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       const part = parts.find((p) => p.id === u.part_master_id) || {};
       const proj = projects.find((p) => p.id === part.project_id) || {};
       const glassOf = glassOfNote(rel.note);   // ★ 2026-11-19 ป้ายกระจก: เบอร์กระจก · แบบแผง + ที่อยู่ · รหัส + ชื่อโปรเจค
+      // ★ 2026-11-19 ป้ายแผงรายใบ: ที่อยู่ของแผงใบนี้ (QR ใบที่ n = ที่อยู่ลำดับที่ n ของแถวปล่อย) · ป้ายรวมล็อตไม่มีที่อยู่เดียว จึงไม่ใส่
+      const pAddr = !glassOf && part.kind === "panel" && scopeOf(u.release_id) !== "lot" ? unitAddrOf(rel.note, u.unit_no) : "";
+      const mdfTxt = releaseMdf(rel, part);
       return {
         ...u,
         _label: {
           ...(glassOf ? { panelNo: glassOf.unit, panelAddr: glassOf.addr } : {}),
-          projectNumber: glassOf ? [proj.code, rel.release_order].filter(Boolean).join(" · ") : proj.code || "",
+          ...(pAddr ? { addr: pAddr } : {}),
+          projectNumber: glassOf ? [proj.code, rel.release_order].filter(Boolean).join(" · ") : pAddr ? [proj.code, mdfTxt != null && mdfTxt !== "" && mdfTxt !== "-" ? `MDF ${mdfTxt}` : ""].filter(Boolean).join(" · ") : proj.code || "",
           projectName: proj.name || "",
           partNo: part.part_no || "",
           mdfNo: releaseMdf(rel, part) ?? "-",   // ★ รอบ 11 (A6): MDF ของใบนี้ (ไม่ใช่ของเบอร์ที่อาจมาจากใบอื่น)
