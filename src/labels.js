@@ -63,21 +63,22 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   //     ชั้น 2  หัวเล็ก (ADDRESS / PANEL) + ค่า
   //     ชั้น 3  รหัสโปรเจคในแถบดำตัวขาว + ชื่อโปรเจค (ยาว = ย่อตัวอักษรให้พอดี)
   //   เปิด "แสดงรหัสใต้ QR" = มีบรรทัดรหัส QR เล็ก ๆ ต่อท้าย (ใช้แยกใบด้วยตา)
-  const blockLabel = (u, L, svg, { cap1, name, cap2, value }) => `<div class="lbl pb">
+  // ★ 2026-11-19 (รอบ 2) ผู้ใช้: "เอา panel glass ออก และทำให้ชื่อโปรเจคไม่โดนตัด ให้เห็นเต็ม"
+  //   → ไม่มีหัวเล็ก PANEL / GLASS แล้ว (ป้ายแผงยังมีหัว ADDRESS บอกว่าบรรทัดนั้นคือที่อยู่) · ชื่อโปรเจคต่อจากแถบรหัส ยาวก็ขึ้นบรรทัดใหม่ได้ ไม่ตัดด้วย …
+  const blockLabel = (u, L, svg, { name, cap2, value }) => `<div class="lbl pb">
       <div class="qr pbq">${svg}</div>
       <div class="pinfo">
-        <div class="cap">${cap1}</div>
         <div class="p1">${escapeHtml(name || "")}</div>
-        <div class="rule"></div>
-        <div class="cap">${cap2}</div>
+        <div class="rule"></div>${cap2 ? `
+        <div class="cap">${cap2}</div>` : ""}
         <div class="pv">${escapeHtml(value || "-")}</div>
         <div class="rule"></div>
         <div class="pj">${L.projCode ? `<span class="chip">${escapeHtml(L.projCode)}</span>` : ""}<span class="pjn">${escapeHtml(L.projName || "")}</span></div>${showCode ? `
         <div class="pcode">${escapeHtml(u.qr_code || "")}</div>` : ""}
       </div>
     </div>`;
-  const panelBlock = (u, L, svg) => blockLabel(u, L, svg, { cap1: "PANEL", name: L.partNo, cap2: "ADDRESS", value: L.addr });
-  const glassBlock = (u, L, svg) => blockLabel(u, L, svg, { cap1: "GLASS", name: L.partNo, cap2: "PANEL", value: L.panelNo });
+  const panelBlock = (u, L, svg) => blockLabel(u, L, svg, { name: L.partNo, cap2: "ADDRESS", value: L.addr });
+  const glassBlock = (u, L, svg) => blockLabel(u, L, svg, { name: L.partNo, cap2: "", value: L.panelNo });
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
@@ -129,17 +130,17 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     /* ป้ายแผง / ป้ายกระจก แบบบล็อก */
     .lbl.pb { gap: ${(heightMm * 0.07).toFixed(2)}mm; padding: 0 ${(heightMm * 0.07).toFixed(2)}mm; }
     .lbl.pb .qr.pbq { width: ${pbQr}mm; height: ${pbQr}mm; }
-    .pinfo { flex: 1; min-width: 0; align-self: stretch; margin: ${(heightMm * 0.08).toFixed(2)}mm 0; padding-left: ${(heightMm * 0.07).toFixed(2)}mm; border-left: 0.3mm solid #000;
+    .pinfo { flex: 1; min-width: 0; align-self: stretch; margin: ${(heightMm * 0.06).toFixed(2)}mm 0; padding-left: ${(heightMm * 0.07).toFixed(2)}mm; border-left: 0.3mm solid #000;
              display: flex; flex-direction: column; justify-content: center; color: #000; }
     .pinfo > div { white-space: nowrap; overflow: hidden; }
     .pinfo .cap { font-size: ${(heightMm * 0.062).toFixed(2)}mm; font-weight: 700; letter-spacing: .16em; line-height: 1.15; }
     .pinfo .p1 { font-size: ${(heightMm * 0.24).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; line-height: 1.02; }
     .pinfo .pv { font-size: ${(heightMm * 0.165).toFixed(2)}mm; font-weight: 700; line-height: 1.05; }
     .pinfo .rule { height: 0; border-top: 0.2mm solid #000; margin: ${(heightMm * 0.03).toFixed(2)}mm 0 ${(heightMm * 0.025).toFixed(2)}mm; flex-shrink: 0; }
-    .pinfo .pj { display: flex; align-items: center; gap: 0.4em; font-size: ${(heightMm * 0.1).toFixed(2)}mm; }   /* รหัส + ชื่อโปรเจค ใช้ขนาดเดียวกัน (em) → ย่อพร้อมกันได้เมื่อชื่อยาว */
-    .pinfo .chip { flex-shrink: 0; background: #000; color: #fff; font-size: 1em; font-weight: 800; letter-spacing: .02em; line-height: 1;
-                   padding: 0.22em 0.4em; border-radius: 0.25em; }
-    .pinfo .pjn { flex: 1; min-width: 0; font-size: 1em; font-weight: 600; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pinfo .pj { white-space: normal; overflow: visible; line-height: 1.1; font-size: ${(heightMm * 0.1).toFixed(2)}mm; }   /* รหัส + ชื่อโปรเจค ใช้ขนาดเดียวกัน (em) → ย่อพร้อมกันได้ */
+    .pinfo .chip { display: inline-block; vertical-align: baseline; background: #000; color: #fff; font-size: 1em; font-weight: 800; letter-spacing: .02em; line-height: 1;
+                   padding: 0.2em 0.4em; border-radius: 0.25em; white-space: nowrap; }
+    .pinfo .pjn { display: block; margin-top: 0.18em; font-size: 1em; font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }   /* ★ ผู้ใช้: "ย้ายลงไปบรรทัดล่างก็ได้" — ชื่อโปรเจคอยู่บรรทัดของตัวเองใต้แถบรหัส (ยาว = ขึ้นบรรทัดต่อ / ย่อ ไม่ตัด) */
     .pinfo .pcode { font-size: ${(heightMm * 0.07).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700; margin-top: ${(heightMm * 0.02).toFixed(2)}mm; }
     .lbl.qo, .lbl.qo .lrow { justify-content: center; gap: 0; }
     .lbl.qo .body { display: none; }
@@ -224,13 +225,14 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
       while (el.scrollWidth > el.clientWidth + 0.5 && f > base * lim && n < 60) { f *= 0.97; el.style.fontSize = f + 'px'; n++; }
     }
   }
-  // แถวโปรเจค (รหัสในแถบดำ + ชื่อ): ชื่อยาวเกิน → ย่อทั้งแถวพร้อมกันได้ถึง 60% แล้วจึงตัดด้วย … (เล็กกว่านี้อ่านไม่ออก)
+  // แถวโปรเจค (รหัสในแถบดำ + ชื่อ): ชื่อยาว = ขึ้นบรรทัดใหม่ได้ · ถ้ารวมแล้วสูงเกินป้าย → ย่อแถวโปรเจคทีละ 3% จนพอดี (ไม่ตัดชื่อด้วย …)
   function fitProject(){
-    var rows = document.querySelectorAll('.pinfo .pj');
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i], nm = row.querySelector('.pjn'); if (!nm) continue;
-      var base = parseFloat(getComputedStyle(row).fontSize), f = base, n = 0;
-      while (nm.scrollWidth > nm.clientWidth + 0.5 && f > base * 0.6 && n < 40) { f *= 0.97; row.style.fontSize = f + 'px'; n++; }
+    var boxes = document.querySelectorAll('.pinfo');
+    for (var i = 0; i < boxes.length; i++) {
+      var box = boxes[i], row = box.querySelector('.pj'); if (!row) continue;
+      var kids = box.children, n = 0, base = parseFloat(getComputedStyle(row).fontSize), f = base;
+      var tall = function () { var a = kids[0], b = kids[kids.length - 1]; return b.offsetTop + b.offsetHeight - a.offsetTop; };   // offset* = หน่วยเดียวกับ clientHeight (ไม่เพี้ยนเมื่อหน้าถูกย่อ / ขยาย)
+      while (tall() > box.clientHeight + 0.5 && f > base * 0.4 && n < 60) { f *= 0.97; row.style.fontSize = f + 'px'; n++; }
     }
   }
   window.onload = function () {
