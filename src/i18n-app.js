@@ -2871,3 +2871,6 @@ registerI18n({
     ["ลดได้สูงสุด {1} ชิ้น (ลบได้เฉพาะป้าย QR ที่ยังไม่เริ่ม)", "Reduce by at most {1} (only QR labels not started can be removed)"],
   ],
 });
+
+// ★ 2026-11-19 แท็บ Glass ของหน้าพิมพ์ QR
+registerI18n({ dict: { "กระจก · QR ต่อแผ่น": "Glass · one QR per pane" } });

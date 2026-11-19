@@ -7984,8 +7984,11 @@ const deptOfKind = (k) => (k === "package" ? "packing" : k === "panel" ? "panel"
 // ★ 2026-11-04 แท็บ "ทั้งหมด" (หน้าโปรเจค) — ผู้ใช้: ".2 ทำไมไม่มี" (ล็อตแผงอยู่แท็บ Assembly · ล็อตพาร์ทอยู่แท็บ Machine)
 const DEPT_ALL = { value: "all", label: "ทั้งหมด", sub: "ทุกใบ · ทุกแผนก", color: "#334155", soft: "rgba(51,65,85,.08)", icon: "folder" };
 // only = เฉพาะแผนกที่ระบุ (เช่น หน้าตรวจงานประกอบ ไม่มี Machine) · allSub = คำใต้ "ทั้งหมด"
-function DeptTabs({ value, onChange, counts, withAll = false, only = null, allSub = null }) {
-  const tabs = (withAll ? [allSub ? { ...DEPT_ALL, sub: allSub } : DEPT_ALL, ...DEPT_TABS] : DEPT_TABS).filter((d) => !only || d.value === "all" || only.includes(d.value));
+// ★ 2026-11-19 ผู้ใช้: "แยกกระจกออกจากพาร์ท จะได้หาง่าย" — แท็บ Glass ของหน้าพิมพ์ QR (ป้าย QR กระจกของแผง · เดิมปนอยู่ในแท็บ Machine)
+const DEPT_GLASS = { value: "glass", label: "Glass", sub: "กระจก · QR ต่อแผ่น", color: "#0891b2", soft: "rgba(8,145,178,.10)", icon: "qr" };
+// extra = แท็บเพิ่มเฉพาะหน้า (ต่อท้าย) เช่น DEPT_GLASS ของหน้าพิมพ์ QR
+function DeptTabs({ value, onChange, counts, withAll = false, only = null, allSub = null, extra = null }) {
+  const tabs = [...(withAll ? [allSub ? { ...DEPT_ALL, sub: allSub } : DEPT_ALL, ...DEPT_TABS] : DEPT_TABS).filter((d) => !only || d.value === "all" || only.includes(d.value)), ...(extra || [])];
   return (
     <div style={{ display: "flex", gap: 10, margin: "0 0 16px", flexWrap: "wrap" }}>
       {tabs.map((d) => {
@@ -8547,24 +8550,27 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
     const r = releases.find((x) => x.id === rid);
     if (!r) return;
     initDeptRef.current = null;
-    const d = deptOfKind(parts.find((p) => p.id === r.part_master_id)?.kind);
+    const d = glassOfNote(r.note) ? "glass" : deptOfKind(parts.find((p) => p.id === r.part_master_id)?.kind);
     if (d && d !== deptFilter) setDeptFilter(d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [releases, parts]);
 
   function partOf(r) { return parts.find((p) => p.id === r.part_master_id); }
+  // แท็บของแถวปล่อยในหน้านี้: แถว QR กระจกของแผง (หมายเหตุ "กระจกของแผง: …") = glass · ที่เหลือตามชนิดเบอร์
+  const labelDeptOf = (r) => (glassOfNote(r.note) ? "glass" : deptOfKind(partOf(r)?.kind));
 
   // ── ตัวกรองลูกโซ่ + ช่องค้นหาอิสระ (คำนวณก่อน effect โหลด QR) ─────────────
   const q = search.trim().toLowerCase();
   const relHay = (r) => {
     const part = partOf(r);
     const proj = projects.find((p) => p.id === part?.project_id);
-    return [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name]
+    const go = glassOfNote(r.note);   // กระจก: ค้นด้วยแบบแผง / ที่อยู่แผงได้
+    return [fmtDT(r.release_date), part?.part_no, part?.part_name, r.release_order, proj?.code, proj?.name, go?.unit, go?.addr]
       .filter(Boolean).join(" ").toLowerCase();
   };
   const matchSearch = (r) => !q || relHay(r).includes(q);
   const relsInProject = releases.filter((r) =>
-    (!deptFilter || deptOfKind(partOf(r)?.kind) === deptFilter)
+    (!deptFilter || labelDeptOf(r) === deptFilter)
     && (!projectFilter || partOf(r)?.project_id === projectFilter) && matchSearch(r));
   const releaseOrders = Array.from(new Set(relsInProject.map((r) => r.release_order).filter(Boolean))).sort();
   const filteredReleases = relsInProject.filter((r) => !releaseOrder || r.release_order === releaseOrder);
@@ -8811,7 +8817,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </div>
       </div>
 
-      <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseIds([]); }} />
+      <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseIds([]); }} extra={[DEPT_GLASS]} />
 
       {/* ★ 2026-11-11 ผู้ใช้: "ออกแบบใหม่" → แถวเดียว: ค้นหา · Projects · Release · Part · ปุ่มค้นหา QR / ล้าง (เดิมช่องค้นหาเต็มแถว + ดรอปดาว 3 ช่อง + ปุ่มอีกแถว) */}
       <Card title="เลือกล็อตที่ต้องการพิมพ์">
