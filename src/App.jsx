@@ -8782,6 +8782,7 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         _label: {
           ...(glassOf ? { panelNo: glassOf.unit, panelAddr: glassOf.addr } : {}),
           ...(pAddr ? { addr: pAddr } : {}),
+          projCode: proj.code || "", projName: proj.name || "", mdf: mdfTxt ?? "",   // ป้ายแผงแบบบล็อกใช้ค่าดิบ (ไม่ปนกับข้อความอื่น)
           projectNumber: glassOf ? [proj.code, rel.release_order].filter(Boolean).join(" · ") : pAddr ? [proj.code, mdfTxt != null && mdfTxt !== "" && mdfTxt !== "-" ? `MDF ${mdfTxt}` : ""].filter(Boolean).join(" · ") : proj.code || "",
           projectName: proj.name || "",
           partNo: part.part_no || "",
@@ -8817,7 +8818,8 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </div>
       </div>
 
-      <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseIds([]); }} extra={[DEPT_GLASS]} />
+      {/* ★ 2026-11-19 เข้าแท็บ Assembly = ตั้งขนาดเป็น "ป้ายแผง 9 × 3 ซม." ให้ (เปลี่ยนเองได้) · ออกจากแท็บ = กลับค่าเริ่มต้น ถ้ายังเป็นขนาดป้ายแผงอยู่ */}
+      <DeptTabs value={deptFilter} onChange={(v) => { setDeptFilter(v); setReleaseOrder(""); setReleaseIds([]); setLabelPreset((cur) => (v === "panel" ? (cur === "76x12" ? "90x30" : cur) : (cur === "90x30" ? "76x12" : cur))); }} extra={[DEPT_GLASS]} />
 
       {/* ★ 2026-11-11 ผู้ใช้: "ออกแบบใหม่" → แถวเดียว: ค้นหา · Projects · Release · Part · ปุ่มค้นหา QR / ล้าง (เดิมช่องค้นหาเต็มแถว + ดรอปดาว 3 ช่อง + ปุ่มอีกแถว) */}
       <Card title="เลือกล็อตที่ต้องการพิมพ์">

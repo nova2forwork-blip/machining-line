@@ -10,6 +10,7 @@ export const LABEL_PRESETS = [
   { value: "76x12", label: "7.6 × 1.2 ซม. (Part Label)", w: 76, h: 12 },
   { value: "60x10", label: "6 × 1 ซม.", w: 60, h: 10 },
   { value: "90x15", label: "9 × 1.5 ซม.", w: 90, h: 15 },
+  { value: "90x30", label: "9 × 3 ซม. (ป้ายแผง)", w: 90, h: 30 },   // ★ 2026-11-19 ป้ายแผงแบบของเราเอง: QR + ชื่อแผง · ADDR · โปรเจค
   { value: "custom", label: "กำหนดเอง (มม.)", w: null, h: null },
 ];
 
@@ -50,9 +51,25 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   const fQty = fMed;
   const rowMm = (Math.max(Number(fMed), Number(fProj)) * 1.2).toFixed(2);     // ★ ระยะบรรทัดของ 2 แถวบน (ซ้าย/ขวาเท่ากัน → ตรงระดับกัน)                                   // 1 OF 6 — ★ ขนาดเท่า MDF NO. (เดิมเล็กไป มองไม่เห็น)
 
+  // ★ 2026-11-19 ผู้ใช้: "ออกแบบ QR code ของเราเอง มี ชื่อแผง address ชื่อและรหัสโปรเจค" — ป้ายแผงแบบบล็อก (QR ซ้าย · ข้อความเรียง 4 บรรทัดทางขวา)
+  //   ใช้เมื่อเป็นป้ายแผงรายใบ (รู้ที่อยู่ของแผงใบนั้น) และป้ายสูงพอ (≥ 20 มม.) และกว้างพอให้ข้อความ (เหลือ ≥ 25 มม. ข้าง QR) · ป้ายเตี้ย (7.6 × 1.2) ยังใช้แบบแถวเดียวเดิม
+  //     บรรทัด 1 ชื่อแผง (ตัวใหญ่หนา)   2 ADDR: ที่อยู่   3 รหัสโปรเจค   4 ชื่อโปรเจค (ยาว = ย่อตัวอักษรให้พอดี)   5 เลขล็อต · ลำดับ · MDF
+  const blockOk = heightMm >= 20 && innerW - heightMm >= 25;
+  const pbQr = (heightMm * 0.84).toFixed(2);
+  const panelBlock = (u, L, svg) => `<div class="lbl pb">
+      <div class="qr pbq">${svg}</div>
+      <div class="pinfo">
+        <div class="p1">${escapeHtml(L.partNo || "")}</div>
+        <div class="p2">ADDR: ${escapeHtml(L.addr)}</div>
+        <div class="p3">${escapeHtml(L.projCode || "")}</div>
+        <div class="p3 p3n">${escapeHtml(L.projName || "")}</div>
+        <div class="p4">${escapeHtml([L.relNo, L.qtyText, L.mdf != null && L.mdf !== "" && L.mdf !== "-" ? `MDF ${L.mdf}` : ""].filter(Boolean).join(" · "))}${showCode ? ` · ${escapeHtml(u.qr_code || "")}` : ""}</div>
+      </div>
+    </div>`;
   const labelCells = units.map((u) => {
     const svg = getSvg(u);
     const L = u._label || {};
+    if (L.addr && !L.panelNo && blockOk) return panelBlock(u, L, svg);
     return `<div class="lbl${showCode ? " wc" : ""}${qrOnly ? " qo" : ""}">${showCode ? '<div class="lrow">' : ""}
       <div class="qr">${svg}</div>
       <div class="body">
@@ -96,6 +113,16 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
     .lcode { height: ${codeH.toFixed(2)}mm; line-height: ${codeH.toFixed(2)}mm; font-size: ${(codeH * 0.78).toFixed(2)}mm; font-family: 'Courier New', ui-monospace, monospace; font-weight: 700;
              letter-spacing: .02em; white-space: nowrap; overflow: hidden; color: #000; }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; flex-shrink: 0; }
+    /* ป้ายแผงแบบบล็อก */
+    .lbl.pb { gap: ${(heightMm * 0.08).toFixed(2)}mm; padding: 0 ${(heightMm * 0.07).toFixed(2)}mm; }
+    .lbl.pb .qr.pbq { width: ${pbQr}mm; height: ${pbQr}mm; }
+    .pinfo { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: ${(heightMm * 0.025).toFixed(2)}mm; color: #000; }
+    .pinfo > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.08; }
+    .pinfo .p1 { font-size: ${(heightMm * 0.225).toFixed(2)}mm; font-weight: 800; letter-spacing: .01em; text-overflow: clip; }
+    .pinfo .p2 { font-size: ${(heightMm * 0.155).toFixed(2)}mm; font-weight: 700; }
+    .pinfo .p3 { font-size: ${(heightMm * 0.12).toFixed(2)}mm; font-weight: 700; }
+    .pinfo .p3n { font-size: ${(heightMm * 0.11).toFixed(2)}mm; font-weight: 600; text-overflow: clip; }
+    .pinfo .p4 { font-size: ${(heightMm * 0.095).toFixed(2)}mm; }
     .lbl.qo, .lbl.qo .lrow { justify-content: center; gap: 0; }
     .lbl.qo .body { display: none; }
     .qr svg { width: 100%; height: 100%; display: block; shape-rendering: crispEdges; }
@@ -172,7 +199,7 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
   window.onafterprint = closeSelf;               // ยิงเมื่อปิดกล่องพิมพ์ (เซฟหรือยกเลิก)
   // ★ 2026-10-12: Part No. ยาวจนล้นช่อง → ย่อทีละ 3% จนพอดี (ไม่ต่ำกว่า 45% ของขนาดเริ่ม)
   function fitParts(){
-    var els = document.querySelectorAll('.c.part');
+    var els = document.querySelectorAll('.c.part, .pinfo .p1, .pinfo .p2, .pinfo .p3n, .pinfo .p4');
     for (var i = 0; i < els.length; i++) {
       var el = els[i], base = parseFloat(getComputedStyle(el).fontSize), f = base, n = 0;
       while (el.scrollWidth > el.clientWidth + 0.5 && f > base * 0.45 && n < 40) { f *= 0.97; el.style.fontSize = f + 'px'; n++; }
