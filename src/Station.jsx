@@ -2078,6 +2078,20 @@ Add anyway?`),
     if (!asmParent || savingRef.current) return;
     const pq = Math.max(1, Math.floor(Number(asmParentQty) || 1));
     const pno = asmParent.unit.part_master?.part_no || asmParent.unit.qr_code;
+    // ★ 2026-11-19 sim-test SIM4 รอบ 2: ติดกระจกเกินจำนวนที่ประกอบไว้ (ประกอบ 1 ติดกระจก 3) เดิมบันทึกได้เงียบ → เตือนก่อน แล้วเลือกบันทึกต่อได้ (แบบเดียวกับลูกเกินแบบที่หน้าประกอบ)
+    {
+      const made = Math.max(1, Math.floor(Number(asmParent.madeQty) || 1)); const done = Math.max(0, Math.floor(Number(asmParent.glazedSum) || 0)); const total = done + pq;
+      if (total > made) {
+        errorBeep();
+        const v = await askChoice({
+          title: t("ติดกระจกเกินจำนวนที่ประกอบไว้", "More glazed than assembled"), tone: "warn", cancelText: false,
+          message: t(`${pno}: ประกอบไว้ ${nc(made)} ชิ้น${done ? ` · ติดกระจกไปแล้ว ${nc(done)}` : ""} · รอบนี้ ${nc(pq)} → รวมเป็น ${nc(total)} (เกิน ${nc(total - made)})`,
+                     `${pno}: ${nc(made)} assembled${done ? ` · ${nc(done)} already glazed` : ""} · this round ${nc(pq)} → ${nc(total)} in total (${nc(total - made)} over)`),
+          choices: [{ value: "back", label: t("กลับไปแก้จำนวน", "Go back"), primary: true }, { value: "save", label: t("บันทึกเท่านี้", "Save as is"), tone: "warn" }],
+        });
+        if (v !== "save") return;
+      }
+    }
     savingRef.current = true; setBusy(true);
     if (!asmClientRef.current) asmClientRef.current = newClientId();
     if (!asmGlzClientRef.current) asmGlzClientRef.current = newClientId();

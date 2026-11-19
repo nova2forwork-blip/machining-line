@@ -1498,9 +1498,11 @@ export async function reportDeadLetter(items) {
     return {
       qid: it.qid,
       kind: mw ? "machine_work" : "qr",
-      qr: mw ? null : (it.qr || asm?.p_parent_qr || null),
+      // ★ 2026-11-19 sim-test SIM4 รอบ 2: งานหน้าเครื่อง (machine_work) เดิมส่ง qr = null → ออฟฟิศเห็นแค่ "ซิงค์ไม่สำเร็จ 1" ไม่รู้ว่าชิ้นไหน
+      //   QR ขึ้นต้นด้วยเบอร์ชิ้น (เบอร์-รหัสล็อต-ลำดับ) จึงตามงานได้แม้ QR ถูกยกเลิก / ลบไปแล้ว
+      qr: mw ? (mw.p_qr || it.qr || null) : (it.qr || asm?.p_parent_qr || null),
       detail: mw
-        ? { release_id: mw.p_release_id, operation_id: mw.p_operation_id, quantity: mw.p_quantity }
+        ? { release_id: mw.p_release_id || it.release_id || null, operation_id: mw.p_operation_id, quantity: mw.p_quantity, qr: mw.p_qr || null, status: mw.p_status || null, material_length: mw.p_material_length ?? null, recorded_at: mw.p_recorded_at || null }
         : asm
           ? { type: "assembly", parent_qr: asm.p_parent_qr, child_qrs: asm.p_child_qrs, child_count: (asm.p_child_qrs || []).length, operation_id: asm.p_operation_id }
           : null,

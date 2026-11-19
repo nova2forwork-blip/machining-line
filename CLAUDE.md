@@ -10,7 +10,7 @@
 - `local-test` ต่อ Supabase ในเครื่อง (`supabase start`, ดู `vite.config.js`) ทดสอบกับข้อมูลในเครื่องได้เต็มที่
   ห้ามต่อ Supabase ตัวจริงบนเว็บ
 - รายงานผู้ใช้: ข้อสรุปก่อน สั้นๆ และบอกชัดว่าอะไรทดสอบแล้ว / ยังไม่ได้ทดสอบ
-- ไฟล์ migration ที่ต้องรันตอนขึ้นจริง: `migration-label-scope.sql`, `migration-delete-project-fix.sql`, `migration-critical-fixes-2026-11-12.sql`, `migration-office-rights-2026-11-12.sql`, `migration-floor-fixes-2026-11-17.sql`, `migration-sim-fixes-2026-11-18.sql`, `migration-ro-key-2026-11-18.sql`, `migration-operator-rights-2026-11-18.sql`, `migration-wrong-station-2026-11-18.sql`
+- ไฟล์ migration ที่ต้องรันตอนขึ้นจริง: `migration-label-scope.sql`, `migration-delete-project-fix.sql`, `migration-critical-fixes-2026-11-12.sql`, `migration-office-rights-2026-11-12.sql`, `migration-floor-fixes-2026-11-17.sql`, `migration-sim-fixes-2026-11-18.sql`, `migration-ro-key-2026-11-18.sql`, `migration-operator-rights-2026-11-18.sql`, `migration-wrong-station-2026-11-18.sql`, `migration-login-probe-2026-11-19.sql`
 
 ## ทดสอบจำลอง
 พิมพ์ `/sim-test` เพื่อเรียกทีมผู้ทดสอบ 6 คน (`.claude/agents/sim*.md`, กติกาใน `.claude/sim/SETUP.md`)

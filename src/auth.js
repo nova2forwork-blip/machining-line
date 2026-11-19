@@ -90,6 +90,28 @@ async function matchCachedCredential(e, password) {
 // ★ รอบ 12: ลองรหัสผิดหลายครั้ง (server ล็อก 5 นาที)
 function tooManyAttempts(error) { return /too_many_attempts/i.test(error?.message || ""); }
 
+// ★ 2026-11-19 sim-test SIM4 รอบ 2: ถามว่า "มีเครื่องอื่นใช้บัญชีนี้อยู่ไหม" พร้อมรหัสผ่าน (session_probe_auth)
+//   เดิมถามด้วยรหัสพนักงานอย่างเดียวก่อนตรวจรหัสผ่าน → คนที่ไม่รู้รหัสผ่านก็รู้ว่าบัญชีมีจริง / ออนไลน์เมื่อไร และการลองรหัสช่วงนั้นไม่ถูกนับเข้าตัวล็อก
+//   คืน { bad } = รหัสพนักงาน / รหัสผ่านไม่ถูก · { locked } · { held, lastSeen } · {} = ไปล็อกอินต่อ (รวมกรณี probe พลาด / ช้า = fail-open เหมือนเดิม)
+//   ฐานข้อมูลยังไม่ได้รัน migration-login-probe-2026-11-19.sql (ไม่มีฟังก์ชันใหม่) = ใช้ตัวเดิม
+async function probeHeld(code, password, timeoutMs = 0) {
+  const race = (pr) => (timeoutMs ? Promise.race([pr, new Promise((resolve) => setTimeout(() => resolve({ data: null, error: null }), timeoutMs))]) : pr);
+  try {
+    const { data, error } = await race(supabase.rpc("session_probe_auth", { p_code: code.trim(), p_password: password }));
+    if (error) {
+      if (tooManyAttempts(error)) return { locked: true };
+      if (/session_probe_auth|PGRST202|could not find the function|does not exist/i.test(`${error.code || ""} ${error.message || ""}`)) {
+        const { data: old } = await race(supabase.rpc("session_probe", { p_code: code.trim() }));
+        return old && old.held ? { held: true, lastSeen: old.last_seen } : {};
+      }
+      return {};
+    }
+    if (data && data.auth === false) return { bad: true };
+    if (data && data.held) return { held: true, lastSeen: data.last_seen };
+  } catch { /* fail-open: ไปตรวจรหัสต่อ ไม่ให้ล็อกตายเพราะ probe พลาด */ }
+  return {};
+}
+
 // ล็อกอินหน้าเครื่อง: ออนไลน์ = ตรวจ DB + จำ credential ไว้ · ออฟไลน์/เน็ตหลุด = เทียบกับที่จำไว้
 // คืน { user, offline } เมื่อสำเร็จ · { error:'bad' | 'offline_first' } เมื่อไม่สำเร็จ
 // ★ 2026-11-17 (SIM4 F9): takeover = ผู้ใช้กด "ใช้เครื่องนี้แทน" — ข้ามการบล็อก แล้วตัด session เครื่องเดิมหลังล็อกอินสำเร็จ
@@ -99,10 +121,12 @@ export async function stationLogin(code, password, { takeover = false } = {}) {
   const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (!isOffline) {
     // บล็อกถ้ามีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) — fail-open ถ้า probe พลาด
-    if (!takeover) try {
-      const { data: probe } = await supabase.rpc("session_probe", { p_code: code.trim() });
-      if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
-    } catch { /* fail-open: ปล่อยเข้า ไม่ให้ล็อกตายเพราะ RPC พลาด */ }
+    if (!takeover) {
+      const pr = await probeHeld(code, password);
+      if (pr.locked) return { error: "locked" };
+      if (pr.bad) { forgetCredential(code); return { error: "bad" }; }
+      if (pr.held) return { error: "in_use", lastSeen: pr.lastSeen };
+    }
 
     const { data, error } = await supabase.rpc("verify_login", { p_code: code.trim(), p_password: password });
     if (!error) {
@@ -135,12 +159,12 @@ export async function appLogin(code, password, { takeover = false } = {}) {
   if (!isOffline) {
     // ★ กันล็อกอินซ้อน: มีเครื่องอื่นถือบัญชีนี้อยู่ (heartbeat < 3 นาที) → บล็อก ไม่ให้เข้า
     //   เครื่องที่เข้าก่อนไม่หลุด · fail-open ถ้า probe พลาด/ช้า (timeout 6 วิ) กันล็อกตาย
-    if (!takeover) try {
-      const probeRpc = supabase.rpc("session_probe", { p_code: code.trim() });
-      const probeTo = new Promise((resolve) => setTimeout(() => resolve({ data: null }), 6000));
-      const { data: probe } = await Promise.race([probeRpc, probeTo]);
-      if (probe && probe.held) return { error: "in_use", lastSeen: probe.last_seen };
-    } catch { /* fail-open: ไปตรวจรหัสต่อ ไม่ให้ล็อกตายเพราะ probe พลาด */ }
+    if (!takeover) {
+      const pr = await probeHeld(code, password, 6000);
+      if (pr.locked) return { error: "locked" };
+      if (pr.bad) { forgetCredential(code); return { error: "bad" }; }
+      if (pr.held) return { error: "in_use", lastSeen: pr.lastSeen };
+    }
 
     // ★ timeout กัน "หมุนค้าง" บน iPad/หน้างานที่ wifi กระตุก (online แต่ request ค้างไม่คืนค่า)
     //   Supabase client ไม่มี timeout ในตัว → ถ้าเน็ตค้าง await จะไม่จบ ปุ่มหมุนตลอด · เกิน 9 วิ = ถือว่าเน็ตมีปัญหา แล้วไปลอง cache

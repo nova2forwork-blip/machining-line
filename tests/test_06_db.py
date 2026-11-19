@@ -565,3 +565,82 @@ def test_panel_not_rejected_as_wrong_station_at_panel_station(db, actors, projec
     release(db, actors, project, "P-900.1", [{"code": "PYT-PNL", "qty": 1}], [])
     r = one(db, WORK, (station["panel"]["token"], _qr(db, project, "PYT-PNL", "panel")))
     assert r.get("reason") != "wrong_station"
+
+
+# ── ล็อกอิน: ไม่เผยสถานะบัญชีก่อนตรวจรหัสผ่าน (sim-test SIM4 รอบ 2 · 2026-11-19) ──
+PROBE = "select public.session_probe_auth(%s,%s)"
+
+
+@pytest.fixture()
+def login_account(db):
+    """บัญชีจำลองแบบ "1 บัญชี = 1 เครื่อง" พร้อมรหัสผ่านที่รู้ค่า (สุ่มใหม่ทุกครั้ง) — ลบเมื่อจบ"""
+    if not has_fn(db, "session_probe_auth"):
+        pytest.skip("ฐานข้อมูลในเครื่องยังไม่ได้รัน migration-login-probe-2026-11-19.sql")
+    code = f"PYT-LOGIN-{uuid.uuid4().hex[:6].upper()}"
+    pw = uuid.uuid4().hex
+    eid = one(db, "insert into employees(code,name,role,active,password_hash,multi_session) values(%s,'pytest login','office',true,extensions.crypt(%s,extensions.gen_salt('bf',6)),false) returning id", (code, pw))
+    yield {"code": code, "pw": pw, "id": eid}
+    for sql, arg in (("delete from sessions where employee_id=%s", eid), ("delete from audit_log where actor_id=%s", eid), ("delete from login_attempts where code=%s", code.lower()), ("delete from employees where id=%s", eid)):
+        try:
+            db.execute(sql, (arg,))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@R
+@N
+def test_old_probe_reveals_nothing(db, login_account):
+    """TC-DB-100 ถามด้วยรหัสพนักงานอย่างเดียว (ไม่มีรหัสผ่าน) → ไม่บอกว่ามีคนใช้อยู่ แม้บัญชีมี session จริง"""
+    db.execute("insert into sessions(employee_id, role) values(%s,'office')", (login_account["id"],))
+    r = one(db, "select public.session_probe(%s)", (login_account["code"],))
+    assert r.get("held") is False and "last_seen" not in r
+
+
+@R
+@N
+def test_probe_with_wrong_password_reveals_nothing_and_counts(db, login_account):
+    """TC-DB-101 รหัสผ่านผิด → ไม่บอกสถานะบัญชี และถูกนับเข้าตัวล็อก"""
+    db.execute("insert into sessions(employee_id, role) values(%s,'office')", (login_account["id"],))
+    r = one(db, PROBE, (login_account["code"], "wrong-password"))
+    assert r == {"ok": True, "auth": False}
+    assert one(db, "select fails from login_attempts where code=%s", (login_account["code"].lower(),)) == 1
+
+
+@N
+def test_probe_unknown_account_same_answer_as_wrong_password(db, login_account):
+    """TC-DB-102 รหัสพนักงานที่ไม่มีจริง ตอบเหมือนรหัสผ่านผิดทุกประการ (แยกไม่ออกว่าบัญชีมีจริงไหม)"""
+    ghost = "PYT-LOGIN-NOBODY"
+    try:
+        assert one(db, PROBE, (ghost, "x")) == one(db, PROBE, (login_account["code"], "wrong-password"))
+    finally:
+        db.execute("delete from login_attempts where code=%s", (ghost.lower(),))
+
+
+@P
+def test_probe_with_right_password_reports_held(db, login_account):
+    """TC-DB-103 รหัสผ่านถูก: ไม่มีเครื่องอื่น → held false · มี session ที่ยังใช้งาน → held true + เวลาใช้งานล่าสุด · ไม่สร้าง session ใหม่"""
+    assert one(db, PROBE, (login_account["code"], login_account["pw"])) == {"ok": True, "auth": True, "held": False}
+    db.execute("insert into sessions(employee_id, role) values(%s,'office')", (login_account["id"],))
+    r = one(db, PROBE, (login_account["code"], login_account["pw"]))
+    assert r["auth"] is True and r["held"] is True and r.get("last_seen")
+    assert one(db, "select count(*) from sessions where employee_id=%s", (login_account["id"],)) == 1
+
+
+@B
+def test_probe_locks_after_eight_wrong_passwords(db, login_account):
+    """TC-DB-104 ผิดครบ 8 ครั้ง → ครั้งถัดไปถูกล็อก (too_many_attempts) แม้ใส่รหัสผ่านถูก · ครั้งที่ 7 ยังไม่ล็อก"""
+    for i in range(7):
+        one(db, PROBE, (login_account["code"], f"bad{i}"))
+    assert one(db, PROBE, (login_account["code"], login_account["pw"]))["auth"] is True      # 7 ครั้ง ยังไม่ล็อก
+    one(db, PROBE, (login_account["code"], "bad7"))                                            # ครั้งที่ 8
+    with pytest.raises(Exception) as e:
+        one(db, PROBE, (login_account["code"], login_account["pw"]))
+    assert "too_many_attempts" in str(e.value)
+
+
+@N
+def test_probe_disabled_account_same_as_wrong_password(db, login_account):
+    """TC-DB-105 บัญชีที่ถูกปิดใช้ ตอบเหมือนรหัสผ่านผิด (ไม่บอกว่า "กำลังใช้งาน")"""
+    db.execute("insert into sessions(employee_id, role) values(%s,'office')", (login_account["id"],))
+    db.execute("update employees set active=false where id=%s", (login_account["id"],))
+    assert one(db, PROBE, (login_account["code"], login_account["pw"])) == {"ok": True, "auth": False}
