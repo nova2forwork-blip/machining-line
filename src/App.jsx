@@ -8846,7 +8846,12 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
                 .map((r) => ({ value: r.id, label: `${partOf(r)?.part_no || "-"}${r.release_order ? ` · ${r.release_order}` : ""} × ${nc(r.qty)} ชิ้น` }))} />
           </Field>
           <div className="qf-act">
-            <Btn variant="accent" onClick={doSearch} disabled={!activeIdsKey}>
+            {/* ★ 2026-11-19 ผู้ใช้: "ทำไมกดค้นหาไม่ได้" — เดิมปุ่มถูกปิดเงียบ ๆ จนกว่าจะเลือกตัวกรอง → กดได้เสมอ ยังไม่เลือกอะไร = บอกว่าต้องทำอะไรก่อน */}
+            <Btn variant="accent" data-testid="qr-search" style={!activeIdsKey ? { opacity: 0.6 } : undefined}
+              onClick={() => {
+                if (activeIdsKey) { doSearch(); return; }
+                mlsToast(hasFilter ? "ไม่พบล็อตในแท็บนี้ตามตัวกรองที่เลือก — ลองเปลี่ยนแท็บ / ตัวกรอง หรือกด “ล้าง”" : "เลือก Projects หรือ Release ก่อน (หรือพิมพ์เบอร์ / เลขล็อตในช่องค้นหา) แล้วกด “ค้นหา QR”", "warn");
+              }}>
               <Icon name="qr" size={15} /> ค้นหา QR
             </Btn>
             <Btn variant="ghost" onClick={clearSearch} disabled={!hasFilter && !committedKey} title="ล้างตัวกรองทั้งหมด">
@@ -8856,6 +8861,11 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
         </div>
         {searchDirty && committedKey && (
           <div style={{ fontSize: 12, color: "var(--warn, #b45309)", fontWeight: 600, marginTop: 10 }}>ตัวกรองเปลี่ยนแล้ว — กด “ค้นหา QR” เพื่ออัปเดต</div>
+        )}
+        {!hasFilter && !committedKey && (
+          <div data-testid="qr-hint" style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>{releaseOrders.length === 0
+            ? (deptFilter === "glass" ? <>แท็บนี้ยังไม่มีป้ายกระจก — QR กระจกออกให้เองเมื่อ <b>ปล่อยแผง</b> ในล็อต (แผงที่ปล่อยไว้ก่อนหน้านี้ไม่มี)</> : <>แท็บนี้ยังไม่มีล็อตที่ปล่อย — ลองดูแท็บอื่น</>)
+            : <>เริ่มจากเลือก <b>Projects</b> หรือ <b>Release</b> (หรือพิมพ์เบอร์ / เลขล็อตในช่องค้นหา) แล้วกด <b>ค้นหา QR</b> — แท็บนี้มี {nc(releaseOrders.length)} ล็อต</>}</div>
         )}
         {hasFilter && filteredReleases.length === 0 && (
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>ไม่พบล็อตที่ตรงกับการค้นหา — กด “ล้าง” เพื่อดูทั้งหมด</div>

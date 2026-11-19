@@ -2874,3 +2874,11 @@ registerI18n({
 
 // ★ 2026-11-19 แท็บ Glass ของหน้าพิมพ์ QR
 registerI18n({ dict: { "กระจก · QR ต่อแผ่น": "Glass · one QR per pane" } });
+
+// ★ 2026-11-19 หน้าพิมพ์ QR: ปุ่มค้นหากดได้เสมอ + คำแนะนำ
+registerI18n({
+  dict: {
+    "ไม่พบล็อตในแท็บนี้ตามตัวกรองที่เลือก — ลองเปลี่ยนแท็บ / ตัวกรอง หรือกด “ล้าง”": "No lots in this tab for the chosen filters — try another tab / filter, or press “Clear”",
+    "เลือก Projects หรือ Release ก่อน (หรือพิมพ์เบอร์ / เลขล็อตในช่องค้นหา) แล้วกด “ค้นหา QR”": "Pick a Project or Release first (or type a code / lot no. in the search box), then press “Find QR”",
+  },
+});
