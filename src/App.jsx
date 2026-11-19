@@ -31,7 +31,7 @@ import { useLang, getLang } from "./i18n-dom.js";
 import "./i18n-app.js";   // ★ คำแปลอังกฤษเพิ่มของแอปสำนักงาน
 import { realReleaseApi } from "./release/releaseApi.js";
 import { modUndoStep } from "./release/modUndo.js";
-import { NC as relNC, baseOf as relBaseOf, revLetter as relRev } from "./release/releaseCore.js";
+import { NC as relNC, baseOf as relBaseOf, revLetter as relRev, glassOfNote } from "./release/releaseCore.js";
 import { useUndoState, useUndoHistory, pushUndoGate, planChangeLabel } from "./undo.js";
 // ★ 2026-10-13: ปล่อยงานแบบใหม่ 4 ขั้น (สร้าง Release → Address & Unit → อัพ PDF → บันทึก) — โหลดเฉพาะตอนเปิด
 const LotSheetPreviewLazy = lazy(() => import("./release/LotSheetPreview.jsx"));
@@ -8745,10 +8745,12 @@ function QrLabelsPage({ initialReleaseId, onConsumeInitial }) {
       const total = rel.qty;
       const part = parts.find((p) => p.id === u.part_master_id) || {};
       const proj = projects.find((p) => p.id === part.project_id) || {};
+      const glassOf = glassOfNote(rel.note);   // ★ 2026-11-19 ป้ายกระจก: เบอร์กระจก · แบบแผง + ที่อยู่ · รหัส + ชื่อโปรเจค
       return {
         ...u,
         _label: {
-          projectNumber: proj.code || "",
+          ...(glassOf ? { panelNo: glassOf.unit, panelAddr: glassOf.addr } : {}),
+          projectNumber: glassOf ? [proj.code, rel.release_order].filter(Boolean).join(" · ") : proj.code || "",
           projectName: proj.name || "",
           partNo: part.part_no || "",
           mdfNo: releaseMdf(rel, part) ?? "-",   // ★ รอบ 11 (A6): MDF ของใบนี้ (ไม่ใช่ของเบอร์ที่อาจมาจากใบอื่น)

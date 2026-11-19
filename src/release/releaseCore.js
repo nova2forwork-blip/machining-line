@@ -1161,6 +1161,16 @@ export function releasedOf(releases, plan) {
   for (const r of releases || []) {
     if (plan.projectCode && r.part_master?.projects?.code && r.part_master.projects.code !== plan.projectCode) continue;
     const no = String(r.release_order || "").trim();
+    const gq = glassOfNote(r.note);   // ★ 2026-11-19 แถว QR กระจกของแผง — ไม่ใช่พาร์ทที่ต้องผลิต (ไม่นับยอด / ไม่เป็น "ปล่อยไว้ในใบอื่น")
+    if (gq) {
+      if (inPlan(no, plan.ro)) {
+        const L = lots.get(no) || { no, date: r.release_date, rows: [], panels: 0, subs: 0, parts: 0, qty: 0 };
+        (L.glassQr || (L.glassQr = [])).push({ id: r.id, code: String(r.part_master?.part_no || "").trim(), qty: Number(r.qty) || 0, unit: gq.unit, addr: gq.addr, mod_cancelled_at: r.mod_cancelled_at || null });
+        if (String(r.release_date) < String(L.date)) L.date = r.release_date;
+        lots.set(no, L);
+      }
+      continue;
+    }
     if (!inPlan(no, plan.ro)) {
       // ปล่อยไว้แล้วใน Release อื่นของโปรเจคเดียวกัน → ใช้เป็นเบอร์ลูกได้เลย ไม่ต้องปล่อยใหม่
       const k = r.part_master?.kind || "part";
@@ -1592,6 +1602,39 @@ export function refreshBomFromLib(plan, lib) {
   }
   const n = ch.full.length + ch.filled.length + ch.addedSubs.length + ch.parts.length;
   return { plan: n ? { ...plan, bom: { ...bom, subs, parts }, bomRefreshedAt: new Date().toISOString() } : plan, changes: ch, n };
+}
+// ★ 2026-11-19 ผู้ใช้: "QR code กระจก ต้องมี เบอร์กระจก เบอร์แผง และชื่อและรหัสโปรเจค" · เลือก 1 QR ต่อแผ่น · เบอร์แผง = แบบแผง + ที่อยู่
+//   ปล่อยแผง (ที่อยู่) ในล็อตไหน → ล็อตนั้นออก QR ให้กระจกทุกแผ่นของแผงนั้นด้วย: 1 แถวปล่อยต่อ (เบอร์กระจก · ที่อยู่แผง) จำนวน = กระจกเบอร์นั้นต่อ 1 แผง
+//   หมายเหตุของแถว "ใบ: GLASS · กระจกของแผง: UA1001 @ 25-E-301" = ป้ายรู้ว่าเป็นกระจกของแผงไหน (ฐานข้อมูลไม่ต้องมีช่องใหม่)
+//   แถวกระจกไม่นับเป็นพาร์ทของล็อต (releasedOf แยกไว้ที่ lot.glassQr) · ใบเบิก GLASS คิดจากแผงที่ปล่อยเหมือนเดิม
+export const GLASS_TAG = "กระจกของแผง:";
+export function glassOfNote(note) {
+  const s = String(note || ""); const i = s.indexOf(GLASS_TAG); if (i < 0) return null;
+  const t = s.slice(i + GLASS_TAG.length).split("·")[0].trim(); const j = t.lastIndexOf("@");
+  return j < 0 ? { unit: t, addr: "" } : { unit: t.slice(0, j).trim(), addr: t.slice(j + 1).trim() };
+}
+//   rows = แถวของล็อต (lotRows) · คืนแถวกระจกของแผงที่อยู่ใน rows (ไม่มีแผง / แผงไม่มีกระจก = [])
+export function glassQrRows(plan, need, rows) {
+  const bom = plan.bom || {}; const out = [];
+  const gmap = new Map(); for (const g of need.glass || []) for (const k of [g.code, g.from, ...(g.froms || [])].filter(Boolean)) gmap.set(NC(k), g.code);
+  if (!gmap.size) return out;
+  const perPanel = (unit) => {
+    const acc = new Map(); const pk = findKey(bom.panels, unit); if (!pk) return acc;
+    const walk = (items, mult, seen) => { for (const it of items || []) {
+      if ((it[4] || "") === "ยกเลิก") continue; const n = mult * (Number(it[2]) || 0); if (!(n > 0)) continue;
+      if (it[0] === "sub") { const sk = findKey(bom.subs, it[1]); if (sk && !seen.has(sk)) walk(explodeLines(bom.subs[sk]), n, new Set([...seen, sk])); continue; }
+      const g = gmap.get(NC(it[1])); if (g) acc.set(g, (acc.get(g) || 0) + n);
+    } };
+    walk(bom.panels[pk].items, 1, new Set()); return acc;
+  };
+  for (const r of rows || []) {
+    if (r.kind !== "panel") continue;
+    const addrs = r.addrs && r.addrs.length ? r.addrs : addrsFromNote(r.remark); if (!addrs.length) continue;
+    const g = perPanel(r.code); if (!g.size) continue;
+    for (const a of addrs) for (const [code, q] of [...g.entries()].sort((x, y) => ncmp(x[0], y[0])))
+      out.push({ kind: "glass", code, qty: Math.max(1, Math.round(q)), length_mm: null, material: null, remark: `ใบ: GLASS · ${GLASS_TAG} ${r.code} @ ${a}`, sheet: ["GLASS"], glassOf: { unit: r.code, addr: a } });
+  }
+  return out;
 }
 // แถวที่จะส่งให้ create_release_batch ของ 1 ล็อต
 //   sel = { addrs:Set, subs:Map(code→qty), parts:Map(code→qty) } · หมายเหตุ "ใบ: …" = ใบงานที่ส่งไป (ดูย้อนหลังได้)

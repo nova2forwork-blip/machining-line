@@ -14,7 +14,7 @@ import {
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey } from "./releaseCore.js";
+import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey, glassQrRows } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -491,6 +491,9 @@ export async function releaseLot({ plan, lotNo, date, userId, rows, append = fal
   // ยอดต้องใช้ทั้งใบของเบอร์ที่กำลังจะปล่อย → ให้ฐานข้อมูลตรวจซ้ำแบบล็อก (กันกดพร้อมกันเป๊ะ)
   const need2 = needOf(plan);
   const limits = rows.filter((r) => r.kind !== "panel").map((r) => { const sub = r.kind === "subassembly" || r.kind === "sub"; const n = (sub ? need2.subs : need2.parts).find((x) => NC(x.code) === NC(r.code)); return n ? { code: r.code, max: Number(n.qty) || 0 } : null; }).filter(Boolean);
+  // ★ 2026-11-19 QR กระจก: ปล่อยแผงในล็อตนี้ → ออก QR ให้กระจกทุกแผ่นของแผงนั้นด้วย (1 QR ต่อแผ่น · ป้ายบอกแบบแผง + ที่อยู่)
+  const glassRows = glassQrRows(plan, need2, rows);
+  if (glassRows.length) { onProgress(`สร้างล็อต ${lotNo} + QR (${rows.length} เบอร์ + กระจก ${glassRows.reduce((a, r) => a + r.qty, 0)} แผ่น)…`); rows = [...rows, ...glassRows]; }
   const res = await createReleaseBatch({
     planRo: plan.ro, limits,
     projectId: plan.projectId, releaseOrder: lotNo, releaseDate: date, releasedBy: userId, makeQr: true,

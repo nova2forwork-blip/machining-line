@@ -7,7 +7,7 @@ import copy
 
 import pytest
 
-from conftest import jset
+from conftest import jmap, jset
 
 P, N, B, R = pytest.mark.positive, pytest.mark.negative, pytest.mark.boundary, pytest.mark.regression
 
@@ -442,3 +442,77 @@ def test_bom_edit_add_hardware_child_has_no_qr(js):
     n = js("needOf", {**p, "bom": bom})
     assert qty(n["hw"])["HP-777"] == 12 and "HP-777" not in qty(n["parts"])
     assert qty(n["parts"])["HZ88-001"] == 3 and qty(n["subs"])["MSA101-5001"] == 6
+
+
+# ── QR กระจกของแผง (ผู้ใช้ 2026-11-19: 1 QR ต่อแผ่น · ป้ายบอกแบบแผง + ที่อยู่) ──
+def glass_plan():
+    p = plan_of()
+    # กระจกอีกเบอร์อยู่ในซับ (หน้าต่าง) ×2 ต่อซับ → ต่อแผง = 2 ซับ × 2 = 4
+    p["bom"]["subs"]["SA01-001"]["items"].append(["part", "GL-02", 2])
+    p["bom"]["parts"]["GL-02"] = {"d": "GLASS IN SUB", "k": "part"}
+    return p
+
+
+def lot_rows(js, p, addrs):
+    return js.steps([{"fn": "needOf", "args": [p]},
+                     {"fn": "lotRows", "args": [p, {"$ref": 0}, {"addrs": jset(addrs), "subs": jmap([]), "parts": jmap([])}, ""]},
+                     {"fn": "glassQrRows", "args": [p, {"$ref": 0}, {"$ref": 1}]}])
+
+
+@P
+def test_glass_qr_rows_one_per_panel_address(js):
+    """TC-PLAN-100 ปล่อยแผง 2 ที่อยู่ → แถว QR กระจกต่อ (เบอร์กระจก · ที่อยู่): GL-01 ×1 และ GL-02 ×4 (อยู่ในซับ) ต่อแผง"""
+    _, rows, glass = lot_rows(js, glass_plan(), ["25-E-301", "25-E-303"])
+    assert [(r["kind"], r["code"], r["qty"]) for r in rows] == [("panel", "UA1001", 2)]
+    assert [(g["code"], g["qty"], g["glassOf"]["unit"], g["glassOf"]["addr"]) for g in glass] == [
+        ("GL-01", 1, "UA1001", "25-E-301"), ("GL-02", 4, "UA1001", "25-E-301"),
+        ("GL-01", 1, "UA1001", "25-E-303"), ("GL-02", 4, "UA1001", "25-E-303")]
+    assert all(g["kind"] == "glass" and g["remark"].startswith("ใบ: GLASS · กระจกของแผง: UA1001 @ ") for g in glass)
+
+
+@N
+def test_glass_qr_rows_none_without_panels_or_glass(js):
+    """TC-PLAN-101 ล็อตที่ไม่มีแผง / แผงที่ไม่มีกระจก → ไม่มีแถว QR กระจก"""
+    p = glass_plan()
+    need = js("needOf", p)
+    only_parts = [{"kind": "part", "code": "HZ02-025", "qty": 3, "remark": "ใบ: CUTTING"}]
+    assert js.steps([{"fn": "needOf", "args": [p]}, {"fn": "glassQrRows", "args": [p, {"$ref": 0}, only_parts]}])[1] == []
+    q = plan_of()
+    q["bom"]["panels"]["UA1001"]["items"] = [x for x in q["bom"]["panels"]["UA1001"]["items"] if x[1] != "GL-01"]
+    assert lot_rows(js, q, ["25-E-301"])[2] == []
+    assert need["glass"]
+
+
+@B
+def test_glass_qr_rows_cancelled_line_and_swap(js):
+    """TC-PLAN-102 บรรทัดกระจกที่ยกเลิกไม่ออก QR · กระจกที่เปลี่ยนเบอร์ (ใช้เบอร์อื่นแทน) ออก QR เป็นเบอร์ใหม่"""
+    p = glass_plan()
+    p["bom"]["subs"]["SA01-001"]["items"][-1] = ["part", "GL-02", 2, None, "ยกเลิก"]
+    p["matSwap"] = {"GL-01": {"to": "gl-99", "d": "NEW GLASS"}}
+    glass = lot_rows(js, p, ["25-E-302"])[2]
+    assert [(g["code"], g["qty"]) for g in glass] == [("GL-99", 1)]
+
+
+@P
+@pytest.mark.parametrize("tid,note,exp", [
+    ("TC-PLAN-103", "ใบ: GLASS · กระจกของแผง: UA1001 @ 25-E-301", {"unit": "UA1001", "addr": "25-E-301"}),
+    ("TC-PLAN-104", "ใบ: GLASS · กระจกของแผง: MTG01-5001 @ MOCK-EMU-1 · หมายเหตุอื่น", {"unit": "MTG01-5001", "addr": "MOCK-EMU-1"}),
+    ("TC-PLAN-105", "ใบ: CUTTING", None),
+    ("TC-PLAN-106", None, None),
+])
+def test_glass_of_note(js, tid, note, exp):
+    assert js("glassOfNote", note) == exp, tid
+
+
+@R
+def test_released_of_keeps_glass_qr_out_of_part_totals(js):
+    """TC-PLAN-107 แถว QR กระจกไม่นับเป็นพาร์ทของล็อต / ไม่นับยอดปล่อย / ไม่เป็น "ปล่อยไว้ในใบอื่น" — เก็บแยกที่ lot.glassQr"""
+    rows = [rel("P-900.1", "UA1001", 1, "panel", "ที่อยู่: 25-E-301"), rel("P-900.1", "HZ02-025", 5),
+            rel("P-900.1", "GL-01", 1, note="ใบ: GLASS · กระจกของแผง: UA1001 @ 25-E-301"),
+            rel("P-901.1", "GL-01", 1, note="ใบ: GLASS · กระจกของแผง: UA1001 @ 99-X-1")]
+    r = js("releasedOf", rows, {"ro": "P-900", "projectCode": "PYT-X"})
+    lot = r["lots"][0]
+    assert (lot["panels"], lot["parts"], lot["qty"]) == (1, 1, 6)
+    assert [(g["code"], g["qty"], g["unit"], g["addr"]) for g in lot["glassQr"]] == [("GL-01", 1, "UA1001", "25-E-301")]
+    assert "GL-01" not in dict(r["byCode"]["$map"]) and "GL-01" not in dict(r["other"]["$map"])
+    assert [x["code"] for x in lot["rows"]] == ["UA1001", "HZ02-025"]

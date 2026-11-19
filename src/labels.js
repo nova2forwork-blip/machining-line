@@ -63,9 +63,14 @@ export function buildLabelsHtml(units, opts = {}, getSvg = (u) => collectQrSvg(u
         </div>
         <div class="vline"></div>
         <div class="col right">
-          <div class="kv">
+          <div class="kv">${L.panelNo
+            /* ★ 2026-11-19 ป้ายกระจก: แบบแผง + ที่อยู่แผง แทน MDF / REL (เลขล็อตย้ายไปต่อท้ายรหัสโปรเจค) */
+            ? `
+            <span class="k">PANEL</span><span class="v">${escapeHtml(L.panelNo)}</span>
+            <span class="k">ADDR.</span><span class="v">${escapeHtml(L.panelAddr || "-")}</span>`
+            : `
             <span class="k">MDF NO.</span><span class="v">${escapeHtml(L.mdfNo || "-")}</span>
-            <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>
+            <span class="k">REL NO.</span><span class="v">${escapeHtml(L.relNo || "-")}</span>`}
           </div>
           <div class="c qty">${escapeHtml(L.qtyText || "")}</div>
         </div>
