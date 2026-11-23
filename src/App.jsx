@@ -4938,6 +4938,11 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   const [reason, setReason] = useState(""); const [showDiff, setShowDiff] = useState(false); const [showMods, setShowMods] = useState(false);
   const [lib, setLib] = useState(null);         // { pf: packingForms, cp: containerPlan }
   const fileRef = useRef(null); const drop = useRef(null); const [over, setOver] = useState(false);
+  // ★ 2026-11-23 ผู้ใช้: "ให้เอาไฟล์มาวางเลยได้ไหม แบบที่สร้าง release" → วางไฟล์ได้ทันทีโดยยังไม่เลือกโปรเจค
+  //   ระบบเดาโปรเจคจากชื่อในใบแพ็ก (เจอโปรเจคเดียวที่เข้าได้ = เลือกให้) · ไม่เจอ = ตารางขึ้นก่อน แล้วเลือกโปรเจคตอนจะบันทึก
+  //   กล่องที่วางไว้ก่อน (pending) ถูกรวมเข้ากับข้อมูลของโปรเจคเมื่อเลือกโปรเจค
+  const libRef = useRef(null); const pendingRef = useRef(null);
+  useEffect(() => { libRef.current = lib; }, [lib]);
   useEffect(() => { Promise.all([import("./packingForms.js"), import("./containerPlan.js")]).then(([pf, cp]) => setLib({ pf, cp })).catch((e) => setErr("โหลดตัวอ่านไม่สำเร็จ: " + (e?.message || e))); }, []);
   const withKeys = (list) => list.map((b) => ({ ...b, _k: b._k || b.id || cpKey(), items: (b.items || []).map((i) => ({ ...i, _k: i._k || cpKey() })) }));
   const plain = (list) => list.filter((b) => !b._del).map((b) => ({ box_no: b.box_no, ship: b.ship || "", cntr: b.cntr || "", title: b.title || "", location: b.location || "", level: b.level || "", items: (b.items || []).map(({ _k, ...i }) => i) }));
@@ -4948,8 +4953,13 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
     try {
       const r = await packingList(pid);
       if (!r.ok) { setBoxes([]); setState("missing"); return; }
-      const list = withKeys(r.boxes);
-      setBoxes(list); setBase(plain(list)); setDeleted([]); setDates(r.dates || {}); setNewDates({}); setMods(r.mods || []); setState("ready");
+      let list = withKeys(r.boxes); const pend = pendingRef.current; pendingRef.current = null;
+      setBase(plain(list)); setDeleted([]); setDates(r.dates || {}); setMods(r.mods || []);
+      if (pend && pend.length && libRef.current) {   // กล่องที่วางไว้ก่อนเลือกโปรเจค → รวมเข้า (ของที่ตรงกับที่มีอยู่แล้วไม่นับว่าแก้)
+        const m = libRef.current.pf.mergeBoxes(list, pend.map(({ _k, _dirty, _new, id, ...b }) => ({ ...b, items: (b.items || []).map(({ _k: k2, ...i }) => i) })));
+        list = withKeys(m.boxes);
+      } else setNewDates({});
+      setBoxes(list); setState("ready");
       setOpen(new Set(list.length <= 6 ? list.map((b) => b._k) : []));
     } catch (e) { setState("error"); setErr(isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : "โหลดตารางแพ็กกิ้งไม่สำเร็จ: " + (e?.message || e)); }
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -4959,6 +4969,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   const dirty = boxes.some((b) => b._dirty) || deleted.length > 0 || Object.keys(newDates).length > 0;
   async function changeProject(pid) {
     if (pid === projectId) return;
+    if (!projectId) { pendingRef.current = boxes.length ? boxes : null; setProjectId(pid); return; }   // วางไฟล์ไว้ก่อน → ยกไปใส่โปรเจคที่เลือก
     if (dirty && !(await askConfirm({ message: "มีรายการที่แก้ไว้ยังไม่ได้บันทึก — เปลี่ยนโปรเจคแล้วที่แก้ไว้จะหาย", tone: "warn", confirmText: "เปลี่ยนโปรเจค", cancelText: "อยู่ต่อ" }))) return;
     setNotes([]); setReason(""); setProjectId(pid);
   }
@@ -4971,9 +4982,8 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   // ── นำเข้าไฟล์: ใบแพ็ก (BOX NO. / BUNK NO.) → กล่อง + รายการ · แผนส่งของ / ตาราง CNTR # / แบบลงตู้ → ชิป · ตู้ · วันที่ ──
   async function readFiles(files) {
     if (!files.length || !lib) return;
-    if (!projectId) { setErr("เลือกโปรเจคก่อนนำเข้า"); return; }
     setBusy(true); setErr("");
-    let cur = boxes; const out = []; const nd = {}; const opened = new Set();
+    let cur = boxes; const out = []; const nd = {}; const opened = new Set(); const projNames = [];
     const place = (rows) => {   // ชิป / ตู้ จากแผนลงตู้ → ใส่ให้กล่อง (ไม่มีกล่อง = สร้างกล่องเปล่า)
       let n = 0, made = 0; const idx = new Map(cur.map((b, i) => [lib.pf.boxKey(b.box_no), i])); const next = cur.slice();
       for (const r of rows) {
@@ -5004,6 +5014,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         if (!bx.boxes.length && !pl.rows.length) { out.push({ file: f.name, bad: true, text: "ไม่พบใบแพ็ก (หัว BOX NO. / BUNK NO.) หรือแผนลงตู้ในไฟล์นี้" }); continue; }
         const parts = [];
         if (bx.boxes.length) {
+          bx.boxes.forEach((b) => { if (b.project) projNames.push(b.project); });
           const m = lib.pf.mergeBoxes(cur, bx.boxes); cur = withKeys(m.boxes);
           bx.boxes.slice(0, 3).forEach((b) => { const o = cur.find((x) => lib.pf.boxKey(x.box_no) === lib.pf.boxKey(b.box_no)); if (o) opened.add(o._k); });
           parts.push(`ใบแพ็ก ${nc(bx.boxes.length)} กล่อง · ${nc(bx.boxes.reduce((s, b) => s + b.items.length, 0))} รายการ → เพิ่มใหม่ ${nc(m.added)} · เปลี่ยน ${nc(m.replaced)} · เหมือนเดิม ${nc(m.same)}`);
@@ -5018,6 +5029,11 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
       } catch (e2) { out.push({ file: f.name, bad: true, text: "อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2) }); }
     }
     setBoxes(cur); if (Object.keys(nd).length) setNewDates((o) => ({ ...o, ...nd }));
+    if (!projectId && cur.length) {   // ยังไม่ได้เลือกโปรเจค → เดาจากชื่อในใบแพ็ก · เจอโปรเจคเดียว = เลือกให้ (แล้วรวมกับข้อมูลที่มีอยู่ของโปรเจคนั้น)
+      const g = lib.pf.guessProject(projects, projNames); const pj = g && projects.find((x) => x.id === g);
+      if (pj) { pendingRef.current = cur; setProjectId(pj.id); out.unshift({ file: "โปรเจค", text: `เลือกให้แล้ว: ${pj.code} — ${pj.name} (จากชื่อ “${projNames[0]}” ในใบแพ็ก) · ไม่ใช่ = เปลี่ยนที่ช่องโปรเจคได้` }); }
+      else out.unshift({ file: "โปรเจค", bad: true, text: `ยังไม่รู้ว่าเป็นโปรเจคไหน${projNames.length ? ` (ในใบแพ็กเขียนว่า “${projNames[0]}”)` : ""} — เลือกโปรเจคที่ช่องด้านบนก่อนบันทึก` });
+    }
     setNotes((o) => [...out, ...o].slice(0, 30)); if (opened.size) setOpen((o) => new Set([...o, ...opened]));
     setBusy(false);
   }
@@ -5052,7 +5068,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   const [qrRo, setQrRo] = useState("");
   const qrList = useMemo(() => boxes.filter((b) => b.kind === "panel" && !b.has_bunk && b.id && b.items.length), [boxes]);
   async function makeStationBunks() {
-    if (busy || !lib) return;
+    if (busy || !lib || !projectId) return;
     if (dirty) { setErr("บันทึกตารางก่อน แล้วค่อยสร้าง QR หน้าเครื่อง"); return; }
     const ro = normalizeReleaseOrder(qrRo);
     if (!ro || !RELEASE_ORDER_RE.test(ro)) { setErr('ใส่เลขที่ Release Order ของบั้งก่อน (รูปแบบ "P-ตัวเลข" เช่น P-100)'); return; }
@@ -5090,6 +5106,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
 
   async function save(mode) {
     if (busy || !lib) return;
+    if (!projectId) { setErr("เลือกโปรเจคที่ช่องด้านบนก่อนบันทึก"); return; }
     const errs = lib.pf.validateBoxes(boxes);
     if (errs.length) { setErr("บันทึกไม่ได้ — " + errs.slice(0, 6).join(" · ") + (errs.length > 6 ? ` … (+${errs.length - 6})` : "")); return; }
     if (mode === "modify" && !reason.trim()) { setErr("บันทึกเป็น Modify ต้องใส่เหตุผลก่อน"); return; }
@@ -5124,7 +5141,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   const th = { textAlign: "left", fontSize: 11.5, fontWeight: 700, color: "var(--muted)", padding: "3px 5px", whiteSpace: "nowrap" };
   const td = { padding: "2px 5px", verticalAlign: "middle" };
   const numCell = (b, i, f, w) => <CpCell value={i[f]} width={w} num onCommit={(v) => editItem(b._k, i._k, { [f]: v === "" ? null : Number(v) })} />;
-  const ready = state === "ready";
+  const ready = state === "ready" || state === "idle";   // idle = ยังไม่เลือกโปรเจค — วางไฟล์ / ดูตารางได้ แต่ยังบันทึกไม่ได้
 
   return (
     <Modal title="แพ็กกิ้ง (Packing)" wide
@@ -5149,9 +5166,15 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         </div>
 
         <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.xlsm" multiple style={{ display: "none" }} onChange={onPick} data-testid="pt-file" />
-        <div ref={drop} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => ready && !busy && fileRef.current?.click()} data-testid="pt-drop"
-          style={{ border: `2px dashed ${over ? "var(--accent, #10b981)" : "#2b8cff"}`, background: over ? "rgba(16,185,129,.10)" : "var(--surface-2, #f4f8f6)", borderRadius: 10, padding: "12px 14px", marginBottom: 10, cursor: ready ? "pointer" : "default", fontSize: 13, color: "var(--muted)", textAlign: "center", opacity: ready ? 1 : 0.6 }}>
-          {busy ? "กำลังอ่านไฟล์…" : <>ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก — <b>ใบแพ็ก</b> (Pack Unit · Ship loose · Anchor · Louvre · Gasket … ทั้ง Excel และ PDF) · <b>แผนส่งของ</b> (Shipment Loading) · <b>แบบลงตู้</b> (CNTR-…pdf) · หลายไฟล์พร้อมกันได้</>}
+        <div ref={drop} role="button" tabIndex={0} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} data-testid="pt-drop"
+          onClick={() => ready && !busy && fileRef.current?.click()} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && ready && !busy) { e.preventDefault(); fileRef.current?.click(); } }}
+          style={{ display: "flex", alignItems: "center", gap: 14, padding: boxes.length ? "10px 16px" : "18px 20px", marginBottom: 10, borderRadius: 16, cursor: ready ? "pointer" : "default", opacity: ready ? 1 : 0.6, transition: "background .15s, border-color .15s",
+            border: `1.5px dashed ${over ? "var(--accent, #10b981)" : "color-mix(in srgb, var(--accent, #10b981) 55%, var(--border, #d9e2dd))"}`, background: over ? "#d6f5e8" : "var(--accent-tint, #e6f6ef)" }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: "var(--surface, #fff)", color: "var(--accent-dk, #0e9d63)", boxShadow: "var(--shadow-card, 0 1px 3px rgba(0,0,0,.12))", flexShrink: 0 }}><Icon name="plus" size={18} /></div>
+          <div style={{ minWidth: 0 }}>
+            <b style={{ display: "block", fontSize: 14.5, fontWeight: 600 }}>{busy ? "กำลังอ่านไฟล์…" : "วางใบแพ็ก / แผนส่งของ / แบบลงตู้ — PDF หรือ Excel"} <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12.5 }}>หลายไฟล์พร้อมกันได้{projectId ? "" : " · ยังไม่ต้องเลือกโปรเจค"}</span></b>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>ระบบอ่านเลขกล่อง / บั้ง · รายการข้างใน + จำนวน · ชิป · ตู้ · วันที่ → ได้ตารางแพ็กกิ้งให้ตรวจและแก้ แล้วค่อยกดบันทึก{projectId ? "" : " · โปรเจคระบบจะหาจากชื่อในใบแพ็กให้"}</span>
+          </div>
         </div>
 
         {state === "missing" ? <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 10 }}>ยังใช้ไม่ได้ — ฐานข้อมูลยังไม่ได้รัน migration-packing-table-2026-11-23.sql</div> : null}
@@ -5163,8 +5186,8 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
             <button type="button" className="rw-link" onClick={() => setNotes([])}>ปิด</button>
           </div>) : null}
         {state === "loading" ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 18 }}>กำลังโหลด…</div> : null}
-        {state === "idle" ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "14px 12px", textAlign: "center" }}>เลือกโปรเจคก่อน</div> : null}
-        {ready ? (
+        {state === "idle" && boxes.length ? <div style={{ fontSize: 12.5, color: "#b45309", marginBottom: 8 }} data-testid="pt-noproj">ยังไม่ได้เลือกโปรเจค — ตรวจ / แก้ตารางได้เลย แล้วเลือกโปรเจคที่ช่องด้านบนก่อนบันทึก (ข้อมูลที่มีอยู่ของโปรเจคนั้นจะถูกรวมเข้ามา)</div> : null}
+        {ready && (projectId || boxes.length) ? (
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }} data-testid="pt-summary">
             <span>แสดง <b>{nc(shown.length)}</b> จาก {nc(boxes.length)} กล่อง · {nc(shown.reduce((s, b) => s + b.items.length, 0))} รายการ</span>
             {boxes.length ? <button type="button" className="rw-link" onClick={() => setOpen(open.size ? new Set() : new Set(shown.slice(0, 60).map((b) => b._k)))}>{open.size ? "ย่อทั้งหมด" : "กางทั้งหมด"}</button> : null}
@@ -5186,7 +5209,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         <datalist id="pt-cntr-list">{cntrs.map((c) => <option key={c} value={c} />)}</datalist>
         <datalist id="pt-ship-list">{ships.filter(Boolean).map((c) => <option key={c} value={c} />)}</datalist>
         <div style={{ maxHeight: "44vh", overflow: "auto", paddingRight: 4 }}>
-          {ready && !boxes.length ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "16px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>ยังไม่มีข้อมูลแพ็กกิ้งของโปรเจคนี้ — วางไฟล์ใบแพ็กด้านบน หรือกด “เพิ่มกล่อง”</div> : null}
+          {ready && !boxes.length && projectId ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "16px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>ยังไม่มีข้อมูลแพ็กกิ้งของโปรเจคนี้ — วางไฟล์ใบแพ็กด้านบน หรือกด “เพิ่มกล่อง”</div> : null}
           {ready && shown.slice(0, 150).map((b, bi, arr) => { const isOpen = open.has(b._k); const panel = b.kind === "panel"; const qty = b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
             // หัวกลุ่ม: ชิป (วันที่) → ตู้ (ย้ายทั้งตู้) — กล่องใหม่ที่ยังไม่มีเลขอยู่บนสุด ไม่มีหัวกลุ่ม
             const blank = b._new && !b.box_no; const prev = bi > 0 && !(arr[bi - 1]._new && !arr[bi - 1].box_no) ? arr[bi - 1] : null;

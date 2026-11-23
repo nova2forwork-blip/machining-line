@@ -52,7 +52,7 @@ export function parseBoxRows(rows, src = "") {
       const r = seg[i] || []; const k = up(r[0]).replace(/[.:\s]+$/, "");
       if (/^(LOCATION|ELEVATION)$/.test(k)) box.location = firstVal(r);
       else if (/^LEVEL$/.test(k)) box.level = firstVal(r);
-      else if (/^PROJECT( NO)?$/.test(k)) { const vals = r.slice(1).map(txt).filter(Boolean); if (vals.length > 1) box.title = vals[0]; }
+      else if (/^PROJECT( NO)?$/.test(k)) { const vals = r.slice(1).map(txt).filter(Boolean); if (vals.length > 1) box.title = vals[0]; if (vals.length) box.project = vals[vals.length - 1]; }
       else if (/^NO$/.test(k)) hi = i;
     }
     if (!box.box_no) continue;
@@ -119,7 +119,7 @@ export function parseBoxPdfPage(items, src = "") {
     if (!cols) {
       if (/^(LOCATION|ELEVATION)$/.test(k)) { box.location = l.c.slice(1).map((c) => c.s).join(" "); continue; }
       if (/^LEVEL$/.test(k)) { box.level = (l.c[1] || {}).s || ""; continue; }
-      if (/^PROJECT( NO)?$/.test(k)) { if (l.c.length > 2) box.title = l.c[1].s; continue; }
+      if (/^PROJECT( NO)?$/.test(k)) { if (l.c.length > 2) box.title = l.c[1].s; if (l.c.length > 1) box.project = l.c[l.c.length - 1].s; continue; }
       if (k === "NO" && l.c.some((c) => /^DESCRIPTION$/i.test(c.s))) {
         // หัวตาราง: บรรทัดนี้ + หัวที่อยู่บรรทัดบน / ล่างภายใน 14 pt (เช่น "Length" บน "(mm)")
         const hs = lines.filter((x) => Math.abs(x.y - l.y) <= 14 && !isBoxHead(x.c[0].s) && !/^\d+$/.test(x.c[0].s)).flatMap((x) => x.c.map((c) => ({ ...c, y: x.y })));
@@ -169,11 +169,26 @@ export function mergeBoxes(cur, incoming) {
     const k = boxKey(n.box_no); if (!k) continue;
     if (!idx.has(k)) { idx.set(k, boxes.length); boxes.push({ ...n, items: (n.items || []).map((i) => ({ ...i })), _dirty: true, _new: true }); added++; continue; }
     const o = boxes[idx.get(k)]; let diff = false;
-    for (const f of ["title", "location", "level", "ship", "kind"]) if (n[f] && n[f] !== o[f]) { o[f] = n[f]; diff = true; }
+    for (const f of ["title", "location", "level", "ship", "cntr", "kind"]) if (n[f] && n[f] !== o[f]) { o[f] = n[f]; diff = true; }
     if ((n.items || []).length && !itemsEqual(o.items, n.items)) { o.items = n.items.map((i) => ({ ...i })); diff = true; }
     if (diff) { o._dirty = true; replaced++; } else same++;
   }
   return { boxes, added, replaced, same };
+}
+
+// ── เดาโปรเจคจากชื่อในใบแพ็ก (ค่าท้ายแถว PROJECT NO.) ──
+//   projects = [{ id, code, name }] · names = ข้อความชื่อโปรเจคจากไฟล์ · คืน id เมื่อมี "โปรเจคเดียว" ที่เข้าได้ ไม่งั้น null (ไม่เดาเมื่อกำกวม)
+//   เข้าได้ = ข้อความมีรหัสโปรเจค · หรือชื่อโปรเจคกับข้อความมีคำเดียวกันที่ยาว ≥ 4 ตัวอักษร (ไม่นับคำทั่วไป เช่น TOWER / BUILDING / PROJECT)
+const COMMON = new Set(["TOWER", "BUILDING", "BLDG", "PROJECT", "PLAZA", "CENTER", "CENTRE", "HOTEL", "OFFICE", "RESIDENCE", "RESIDENTIAL", "PHASE", "BLOCK"]);
+export function guessProject(projects, names) {
+  const words = (s) => new Set(up(s).split(/[^A-Z0-9]+/).filter((w) => w.length >= 4 && !COMMON.has(w) && !/^\d+$/.test(w)));
+  const texts = [...new Set((names || []).map((n) => up(n)).filter(Boolean))]; if (!texts.length) return null;
+  const hit = new Set();
+  for (const p of projects || []) {
+    const code = up(p.code), pw = words(p.name);
+    if (texts.some((t) => (code.length >= 4 && t.includes(code)) || [...words(t)].some((w) => pw.has(w)))) hit.add(p.id);
+  }
+  return hit.size === 1 ? [...hit][0] : null;
 }
 
 // ── สิ่งที่เปลี่ยน (ใช้ทำบันทึก Modify) ── before / after = [{ box_no, ship, cntr, items }] → [{ type, box, text }]

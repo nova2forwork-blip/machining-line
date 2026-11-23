@@ -541,3 +541,53 @@ def test_db_other_project_untouched_and_cascade(db, actors, project, need_pk):
     finally:
         db.execute("delete from projects where id=%s", (other,))
     assert one(db, "select (select count(*) from packing_box where project_id=%s) + (select count(*) from packing_mod where project_id=%s)", (other, other)) == 0
+
+
+# ───────────────────────── วางไฟล์ก่อนเลือกโปรเจค: เดาโปรเจคจากชื่อในใบแพ็ก ─────────────────────────
+PROJ = [{"id": "p1", "code": "Z90001-US", "name": "Zephyrwood Plaza"}, {"id": "p2", "code": "Z90002-US", "name": "Quillhaven Tower (QHT)"}, {"id": "p3", "code": "Z90003-AU", "name": "Harbour Tower"}]
+
+
+@P
+def test_box_form_keeps_project_name(js):
+    """TC-PACK-100 ใบแพ็ก: เก็บชื่อโปรเจคจากแถว PROJECT NO. (ค่าท้ายสุดของแถว) ทั้ง Excel และ PDF"""
+    assert pf(js, "parseBoxRows", ANCHOR, "s")[0]["project"] == "Sample Building B"
+    assert pf(js, "parseBoxPdfPage", PDF_PAGE, "x")[0]["project"] == "Sample Tower B"
+
+
+@P
+@pytest.mark.parametrize("tid,names,exp", [
+    ("TC-PACK-101", ["Zephyrwood Building B"], "p1"),            # คำเฉพาะตรงกับชื่อโปรเจคเดียว
+    ("TC-PACK-102", ["ZEPHYRWOOD"], "p1"),
+    ("TC-PACK-103", ["งานของ Z90002-US ชั้น 3"], "p2"),          # มีรหัสโปรเจคในข้อความ
+    ("TC-PACK-104", ["Zephyrwood", "Zephyrwood Building B"], "p1"),
+])
+def test_guess_project_single_match(js, tid, names, exp):
+    assert pf(js, "guessProject", PROJ, names) == exp, tid
+
+
+@N
+@pytest.mark.parametrize("tid,names", [
+    ("TC-PACK-105", ["Tower B"]),                                 # คำทั่วไป (TOWER) ไม่ใช้จับคู่ — ไม่งั้นได้หลายโปรเจค
+    ("TC-PACK-106", ["Qwertyplex Building"]),                     # ไม่ตรงโปรเจคไหน
+    ("TC-PACK-107", ["Zephyrwood", "Harbour"]),                   # ไฟล์พูดถึง 2 โปรเจค = กำกวม ไม่เดา
+    ("TC-PACK-108", []),
+    ("TC-PACK-109", ["", "   "]),
+    ("TC-PACK-110", ["QHT"]),                                     # คำสั้นกว่า 4 ตัวอักษร ไม่ใช้จับคู่
+])
+def test_guess_project_refuses_when_unsure(js, tid, names):
+    assert pf(js, "guessProject", PROJ, names) is None, tid
+
+
+@B
+def test_guess_project_no_projects(js):
+    """TC-PACK-111 ไม่มีโปรเจคในระบบ → ไม่เดา"""
+    assert pf(js, "guessProject", [], ["Zephyrwood"]) is None
+
+
+@R
+def test_merge_pending_boxes_carry_container(js):
+    """TC-PACK-112 กล่องที่วางไว้ก่อนเลือกโปรเจค (มีชิป / ตู้จากแผนส่งของแล้ว) รวมเข้าโปรเจคแล้วตู้ตามไปด้วย · รายการที่เหมือนเดิมไม่นับว่าแก้"""
+    r = pf(js, "mergeBoxes", CUR, [{"box_no": "BB-1", "kind": "loose", "title": "", "location": "", "level": "", "ship": "#BB01", "cntr": "CNTR-009", "items": [it("A-1", 5)]}])
+    assert r["replaced"] == 1 and r["boxes"][0]["cntr"] == "CNTR-009" and r["boxes"][0]["id"] == "x1"
+    r2 = pf(js, "mergeBoxes", CUR, [{"box_no": "BB-1", "kind": "loose", "title": "", "location": "", "level": "", "ship": "#BB01", "cntr": "CNTR-001", "items": [it("A-1", 5)]}])
+    assert (r2["replaced"], r2["same"]) == (0, 1)
