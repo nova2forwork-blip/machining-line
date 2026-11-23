@@ -11,7 +11,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mls-pytest-"));
 fs.copyFileSync(path.join(src, "releaseCore.js"), path.join(tmp, "releaseCore.mjs"));
 fs.writeFileSync(path.join(tmp, "orderSheet.mjs"), fs.readFileSync(path.join(src, "orderSheet.js"), "utf8").replace(/"\.\/releaseCore\.js"/g, '"./releaseCore.mjs"'));
 
-const mods = { core: await import(pathToFileURL(path.join(tmp, "releaseCore.mjs")).href), order: await import(pathToFileURL(path.join(tmp, "orderSheet.mjs")).href) };
+fs.copyFileSync(path.join(src, "..", "containerPlan.js"), path.join(tmp, "containerPlan.mjs"));   // แผนลงตู้ (m: "cp")
+
+const mods = { core: await import(pathToFileURL(path.join(tmp, "releaseCore.mjs")).href), order: await import(pathToFileURL(path.join(tmp, "orderSheet.mjs")).href),
+  cp: await import(pathToFileURL(path.join(tmp, "containerPlan.mjs")).href) };
 const steps = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).steps || [];
 const out = [];
 const dec = (v) => {

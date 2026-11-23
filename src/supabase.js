@@ -1910,6 +1910,20 @@ export async function setPkgManifest(pmId, manifest, meta) {
   return data || { ok: false, reason: "error" };
 }
 
+// ── แผนลงตู้ (container loading plan) — ต้องรัน migration-container-plan-2026-11-23.sql ──
+//   อ่าน: [{ id, shipment, container_no, bunk_no, row_no, col_no, len_mm, w_mm, note, bunk: { units, packed, qr, status } | null }]
+const cpMissing = (e) => !!e && (e.code === "PGRST202" || e.code === "42883" || /could not find the function|does not exist/i.test(String(e.message || "")));
+export async function listContainerPlan(projectId) {
+  const { data, error } = await supabase.rpc("container_plan_list", { p_token: authToken(), p_project_id: projectId });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed", rows: [] }; flagAuth(error); throw error; }
+  return { ok: true, rows: Array.isArray(data) ? data : [] };
+}
+export async function saveContainerPlan(projectId, rows, deleteIds = []) {
+  const { data, error } = await supabase.rpc("container_plan_save", { p_token: authToken(), p_project_id: projectId, p_rows: rows || [], p_delete: deleteIds || [] });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed" }; flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 // ★ รอบ 12 (C4): ขอ "ตั๋ว" ก่อนอัป (ต้องล็อกอิน) → อัปไปที่ <ตั๋ว>/ชื่อไฟล์ · ไฟล์ lockdown บังคับให้ต้องมีตั๋ว

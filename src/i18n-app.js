@@ -4,6 +4,17 @@
 import { registerI18n } from "./i18n-dom.js";
 
 const DICT = {
+ "แผนลงตู้ (Container)": "Container plan",
+ "บั้งไหนลงตู้ไหน shipment ไหน — นำเข้าจากแบบลงตู้ PDF หรือไฟล์ Pack Unit (Excel) แล้วแก้ได้ทุกช่อง · ยังไม่บันทึกจนกว่าจะกด “บันทึก”": "Which bunk goes in which container and shipment — import from the container loading PDF or the Pack Unit Excel file, then edit any cell · nothing is saved until you press “Save”",
+ "นำเข้า PDF / Excel": "Import PDF / Excel",
+ "เพิ่มบั้งเอง": "Add bunk manually",
+ "ค้นหา เลขบั้ง / ตู้ / shipment": "Search bunk / container / shipment",
+ "ยาว (มม.)": "Length (mm)",
+ "กว้าง (มม.)": "Width (mm)",
+ "ย้ายไปตู้": "Move to container",
+ "สถานะบั้ง": "Bunk status",
+ "+ เพิ่มบั้งในตู้นี้": "+ Add bunk to this container",
+ "ยังไม่มีบั้งในระบบ": "Bunk not in system yet",
  "กดเพื่อเรียง · ลากที่จับ ⠿ เพื่อย้ายคอลัมน์": "Click to sort · drag the ⠿ handle to move the column",
  "ลากที่จับ ⠿ เพื่อย้ายคอลัมน์": "Drag the ⠿ handle to move the column",
  "· คลิกขวา = เลือกคอลัมน์": "· Right-click = choose columns",

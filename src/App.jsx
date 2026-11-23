@@ -15,7 +15,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   saveReleaseLabelScopes,
-  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, createOperation, setOperationType,
+  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, listContainerPlan, saveContainerPlan, createOperation, setOperationType,
   getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches, assemblyChildParents, assemblyParentsOf,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
@@ -4405,6 +4405,269 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// แผนลงตู้ (Container loading plan) — บั้งไหนลงตู้ไหน shipment ไหน
+//   ★ 2026-11-23 ผู้ใช้: "packing ลงแบบนี้ได้ไหม" (แบบลงตู้ PDF) → "ให้ลงได้ทั้ง pdf และ excel แล้วให้แก้ได้ด้วย"
+//   นำเข้า PDF (แบบลงตู้จาก CAD) / Excel (ไฟล์ Pack Unit) → รวมเข้ากับแผนที่มีด้วยเลขบั้ง → แก้ทุกช่องได้ → กดบันทึก
+//   ตัวอ่านไฟล์ + กติการวม / ตรวจ อยู่ที่ containerPlan.js (ทดสอบใน tests/) · ตาราง container_plan (migration-container-plan-2026-11-23.sql)
+// ══════════════════════════════════════════════════════════════════════════
+let _cpKey = 0;
+const cpKey = () => `n${++_cpKey}`;
+// ช่องแก้ไขในตาราง: พิมพ์ได้อิสระ แล้วส่งค่าตอนออกจากช่อง / กด Enter (ไม่งั้นแถวกระโดดย้ายกลุ่มทุกตัวอักษร)
+function CpCell({ value, onCommit, width = 90, mono = true, list, placeholder, title, testid, num = false }) {
+  const [v, setV] = useState(value == null ? "" : String(value));
+  useEffect(() => { setV(value == null ? "" : String(value)); }, [value]);
+  const commit = () => { const t = v.trim(); if (t !== (value == null ? "" : String(value))) onCommit(t); };
+  return <input className="input" value={v} list={list} placeholder={placeholder} title={title} data-testid={testid} inputMode={num ? "numeric" : undefined}
+    onChange={(e) => setV(num ? e.target.value.replace(/[^\d.]/g, "") : e.target.value)} onBlur={commit}
+    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } else if (e.key === "Escape") { e.stopPropagation(); setV(value == null ? "" : String(value)); } }}
+    style={{ width, padding: "4px 6px", fontSize: 12.5, height: 28, fontFamily: mono ? "var(--font-mono)" : "inherit" }} />;
+}
+function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
+  const [projectId, setProjectId] = useState(initialProjectId || (projects.length === 1 ? projects[0].id : ""));
+  const [rows, setRows] = useState([]);          // แถวที่กำลังแก้ ({ _k, id?, …, _dirty, _new })
+  const [deleted, setDeleted] = useState([]);    // id ที่ลบ (ยังไม่บันทึก)
+  const [state, setState] = useState("idle");    // idle | loading | ready | missing | error
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notes, setNotes] = useState([]);        // ผลการนำเข้าแต่ละไฟล์
+  const [openShip, setOpenShip] = useState(() => new Set());
+  const [q, setQ] = useState("");
+  const [cp, setCp] = useState(null);            // โมดูล containerPlan.js
+  const fileRef = useRef(null);
+  useEffect(() => { import("./containerPlan.js").then(setCp).catch((e) => setErr("โหลดตัวอ่านแผนลงตู้ไม่สำเร็จ: " + (e?.message || e))); }, []);
+  const dirty = deleted.length > 0 || rows.some((r) => r._dirty);
+
+  const load = useCallback(async (pid) => {
+    if (!pid) { setRows([]); setDeleted([]); setState("idle"); return; }
+    setState("loading"); setErr("");
+    try {
+      const r = await listContainerPlan(pid);
+      if (!r.ok) { setRows([]); setState("missing"); return; }
+      const list = r.rows.map((x) => ({ ...x, _k: x.id }));
+      setRows(list); setDeleted([]); setState("ready");
+      const ships = [...new Set(list.map((x) => x.shipment || ""))];
+      setOpenShip(new Set(list.length <= 80 ? ships : ships.slice(0, 1)));
+    } catch (e) { setState("error"); setErr(isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : "โหลดแผนลงตู้ไม่สำเร็จ: " + (e?.message || e)); }
+  }, []);
+  useEffect(() => { load(projectId); }, [projectId, load]);
+
+  async function changeProject(pid) {
+    if (pid === projectId) return;
+    if (dirty && !(await askConfirm({ message: "มีรายการที่แก้ไว้ยังไม่ได้บันทึก — เปลี่ยนโปรเจคแล้วที่แก้ไว้จะหาย", tone: "warn", confirmText: "เปลี่ยนโปรเจค", cancelText: "อยู่ต่อ" }))) return;
+    setNotes([]); setProjectId(pid);
+  }
+  async function tryClose() {
+    if (busy) return;
+    if (dirty && !(await askConfirm({ message: "มีรายการที่แก้ไว้ยังไม่ได้บันทึก — ปิดแล้วที่แก้ไว้จะหาย", tone: "warn", confirmText: "ปิดโดยไม่บันทึก", cancelText: "อยู่ต่อ" }))) return;
+    onClose();
+  }
+
+  // ── นำเข้าไฟล์ (PDF / Excel หลายไฟล์ได้) → รวมเข้ากับแถวที่มีด้วยเลขบั้ง ──
+  async function onPick(e) {
+    const files = [...(e.target.files || [])]; e.target.value = "";
+    if (!files.length || !cp) return;
+    if (!projectId) { setErr("เลือกโปรเจคก่อนนำเข้า"); return; }
+    setBusy(true); setErr("");
+    let cur = rows; const out = []; const newShips = new Set();
+    for (const f of files) {
+      try {
+        let r;
+        if (/\.pdf$/i.test(f.name)) {
+          const core = await import("./release/releaseCore.js"); const lib = await core.loadPdfJs();
+          r = await cp.readContainerPdfWith(lib, new Uint8Array(await f.arrayBuffer()));
+        } else if (/\.(xlsx?|xlsm)$/i.test(f.name)) {
+          const mod = await import("./excelImport.js"); r = await mod.readContainerExcel(f);
+        } else { out.push({ file: f.name, bad: true, text: "ไม่รองรับไฟล์ชนิดนี้ (ใช้ .pdf / .xlsx)" }); continue; }
+        if (!r.rows.length) { out.push({ file: f.name, bad: true, text: "ไม่พบข้อมูลตู้ / บั้งในไฟล์ — PDF ต้องมีป้าย CNTR-… · Excel ต้องมีคอลัมน์ Bunk # + CNTR # หรือชีตชื่อ Ship#…", warn: r.warn }); continue; }
+        const m = cp.mergePlanRows(cur, r.rows);
+        cur = m.rows.map((x) => (x._k ? x : { ...x, _k: cpKey() }));
+        r.rows.forEach((x) => newShips.add(x.shipment || ""));
+        const nC = new Set(r.rows.map((x) => x.container_no).filter(Boolean)).size;
+        const noC = r.rows.filter((x) => !x.container_no).length;
+        out.push({ file: f.name, text: `อ่านได้ ${nc(r.rows.length)} บั้ง · ${nc(nC)} ตู้${noC ? ` · ${nc(noC)} บั้งไม่มีเลขตู้` : ""} → เพิ่มใหม่ ${nc(m.added)} · เปลี่ยน ${nc(m.changed)} · เหมือนเดิม ${nc(m.same)}`, warn: r.warn });
+      } catch (e2) { out.push({ file: f.name, bad: true, text: "อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2) }); }
+    }
+    setRows(cur); setNotes((o) => [...out, ...o].slice(0, 12));
+    if (newShips.size && cur.length > 80) setOpenShip((o) => (o.size ? o : new Set([[...newShips].sort()[0]])));
+    else if (newShips.size) setOpenShip((o) => new Set([...o, ...newShips]));
+    setBusy(false);
+  }
+
+  const edit = (k, patch) => setRows((rs) => rs.map((r) => (r._k === k ? { ...r, ...patch, _dirty: true } : r)));
+  const removeRow = (r) => { setRows((rs) => rs.filter((x) => x._k !== r._k)); if (r.id) setDeleted((d) => [...d, r.id]); };
+  function addRow(shipment, container_no) {
+    const k = cpKey();
+    setRows((rs) => [...rs, { _k: k, shipment: shipment || "", container_no: container_no || "", bunk_no: "", row_no: null, col_no: null, len_mm: null, w_mm: null, _dirty: true, _new: true }]);
+    setOpenShip((o) => new Set([...o, shipment || ""]));
+  }
+  // ย้ายบั้งไปตู้อื่น: ตู้ปลายทางมีอยู่แล้ว = ใช้ shipment ของตู้นั้น · ตำแหน่งแถว / ช่องเดิมใช้ไม่ได้แล้ว = ล้าง
+  function moveRow(r, to) {
+    const c = cp ? cp.normContainer(to) : to;
+    const dest = c ? rows.find((x) => x._k !== r._k && (x.container_no || "") === c) : null;
+    edit(r._k, { container_no: c, row_no: null, col_no: null, ...(dest ? { shipment: dest.shipment || "" } : {}) });
+  }
+  // เปลี่ยนเลขตู้ / shipment ทั้งกลุ่มในครั้งเดียว
+  const renameContainer = (ship, from, to) => setRows((rs) => rs.map((r) => ((r.shipment || "") === ship && (r.container_no || "") === from ? { ...r, container_no: cp ? cp.normContainer(to) : to, _dirty: true } : r)));
+  const renameShipment = (from, to) => { const t = cp ? cp.normShipment(to) : to; setRows((rs) => rs.map((r) => ((r.shipment || "") === from ? { ...r, shipment: t, _dirty: true } : r))); setOpenShip((o) => { const n = new Set(o); if (n.has(from)) { n.delete(from); n.add(t); } return n; }); };
+
+  async function save() {
+    if (busy || !cp) return;
+    const errs = cp.validatePlanRows(rows);
+    if (errs.length) { setErr("บันทึกไม่ได้ — " + errs.slice(0, 6).join(" · ") + (errs.length > 6 ? ` … (+${errs.length - 6})` : "")); return; }
+    const payload = rows.filter((r) => r._dirty).map((r) => ({ ...(r.id ? { id: r.id } : {}), shipment: r.shipment || "", container_no: r.container_no || "", bunk_no: r.bunk_no,
+      row_no: r.row_no ?? "", col_no: r.col_no ?? "", len_mm: r.len_mm ?? "", w_mm: r.w_mm ?? "", note: r.note || "" }));
+    setBusy(true); setErr("");
+    try {
+      const r = await saveContainerPlan(projectId, payload, deleted);
+      if (!r || r.ok === false) {
+        const why = { duplicate: `เลขบั้งซ้ำกับแถวอื่นในโปรเจคนี้: ${r?.bunk || ""}`, bad_bunk: "มีแถวที่ไม่มีเลขบั้ง หรือเลขบั้งยาวเกิน", bad_number: `ตัวเลขไม่ถูกต้อง (${r?.bunk || ""})`,
+          not_found: `แถวของ ${r?.bunk || ""} ถูกคนอื่นลบไปแล้ว — ปิดแล้วเปิดใหม่`, not_installed: "ยังไม่ได้รัน migration-container-plan-2026-11-23.sql", too_many: "รายการเยอะเกิน 5,000 แถวต่อครั้ง" }[r?.reason] || (r?.reason || "error");
+        setErr("บันทึกไม่สำเร็จ — " + why + " (ไม่มีแถวไหนถูกบันทึก)"); setBusy(false); return;
+      }
+      mlsToast(`บันทึกแผนลงตู้แล้ว — ${nc(r.saved || 0)} บั้ง${r.deleted ? ` · ลบ ${nc(r.deleted)}` : ""}`, "success");
+      const keep = openShip; await load(projectId); setOpenShip(keep);
+    } catch (e) { setErr("บันทึกไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
+    setBusy(false);
+  }
+
+  // ── จัดกลุ่มแสดง: shipment → ตู้ ──
+  const qq = q.trim().toUpperCase();
+  const shown = useMemo(() => (qq ? rows.filter((r) => `${r.bunk_no} ${r.container_no} ${r.shipment}`.toUpperCase().includes(qq)) : rows), [rows, qq]);
+  const groups = useMemo(() => {
+    const sorted = cp ? cp.sortPlanRows(shown.filter((r) => !r._new || r.bunk_no)) : shown.filter((r) => !r._new || r.bunk_no);
+    const blank = shown.filter((r) => r._new && !r.bunk_no);   // แถวใหม่ที่ยังไม่กรอกเลขบั้ง = ต่อท้ายตู้ของตัวเอง (ไม่กระโดด)
+    const sm = new Map();
+    for (const r of [...sorted, ...blank]) {
+      const s = r.shipment || ""; if (!sm.has(s)) sm.set(s, new Map());
+      const c = r.container_no || ""; if (!sm.get(s).has(c)) sm.get(s).set(c, []);
+      sm.get(s).get(c).push(r);
+    }
+    return [...sm.entries()].map(([ship, cm]) => ({ ship, cntr: [...cm.entries()].map(([no, list]) => ({ no, list })) }));
+  }, [shown, cp]);
+  const allContainers = useMemo(() => [...new Set(rows.map((r) => r.container_no).filter(Boolean))].sort(), [rows]);
+  const allShips = useMemo(() => [...new Set(rows.map((r) => r.shipment).filter(Boolean))].sort(), [rows]);
+  const stat = (list) => { const n = list.length; const inSys = list.filter((r) => r.bunk?.kind === "package").length; const full = list.filter((r) => r.bunk && r.bunk.units > 0 && r.bunk.packed >= r.bunk.units).length; return { n, inSys, full }; };
+  const total = stat(rows);
+  const bunkBadge = (r) => {
+    const b = r.bunk;
+    if (r._new || (r._dirty && !r.id)) return { t: "ยังไม่บันทึก", c: "#b45309", bg: "rgba(217,164,65,.14)" };
+    if (!b) return { t: "ยังไม่มีบั้งในระบบ", c: "var(--muted)", bg: "var(--surface-2, #f1f4f2)" };
+    if (b.kind !== "package") return { t: "เบอร์นี้ไม่ใช่บั้ง", c: "#b45309", bg: "rgba(217,164,65,.14)" };
+    if (!b.units) return { t: "มีบั้ง · ยังไม่มีรายการ", c: "var(--muted)", bg: "var(--surface-2, #f1f4f2)" };
+    if (b.packed >= b.units) return { t: `แพ็กครบ ${nc(b.packed)}/${nc(b.units)}`, c: "#146c3a", bg: "rgba(16,185,129,.14)" };
+    if (b.packed > 0) return { t: `แพ็กแล้ว ${nc(b.packed)}/${nc(b.units)}`, c: "#b45309", bg: "rgba(217,164,65,.14)" };
+    return { t: `ยังไม่แพ็ก 0/${nc(b.units)}`, c: "var(--muted)", bg: "var(--surface-2, #f1f4f2)" };
+  };
+  const th = { textAlign: "left", fontSize: 11.5, fontWeight: 700, color: "var(--muted)", padding: "3px 6px", whiteSpace: "nowrap" };
+  const td = { padding: "2px 6px", verticalAlign: "middle" };
+
+  return (
+    <Modal title="แผนลงตู้ (Container)" wide
+      sub="บั้งไหนลงตู้ไหน shipment ไหน — นำเข้าจากแบบลงตู้ PDF หรือไฟล์ Pack Unit (Excel) แล้วแก้ได้ทุกช่อง · ยังไม่บันทึกจนกว่าจะกด “บันทึก”"
+      onClose={tryClose} closeOnBackdrop={false} locked={busy || dirty}>
+      <div data-testid="cp-modal">
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ minWidth: 260, flex: "0 1 340px" }}>
+            <Field label="โปรเจค *">
+              <Select value={projectId} onChange={(e) => changeProject(e.target.value)} data-testid="cp-project"
+                options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+            </Field>
+          </div>
+          <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.xlsm" multiple style={{ display: "none" }} onChange={onPick} data-testid="cp-file" />
+          <Btn type="button" variant="accent" size="sm" onClick={() => fileRef.current?.click()} disabled={busy || !projectId || state !== "ready"} title={!projectId ? "เลือกโปรเจคก่อน" : ""}>
+            <Icon name="folder" size={14} /> นำเข้า PDF / Excel
+          </Btn>
+          <Btn type="button" variant="ghost" size="sm" onClick={() => addRow(allShips[allShips.length - 1] || "", "")} disabled={busy || !projectId || state !== "ready"} data-testid="cp-add">
+            <Icon name="plus" size={14} /> เพิ่มบั้งเอง
+          </Btn>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา เลขบั้ง / ตู้ / shipment" style={{ width: 220, marginLeft: "auto" }} data-testid="cp-search" />
+        </div>
+
+        {state === "missing" ? <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 10 }}>ยังใช้ไม่ได้ — ฐานข้อมูลยังไม่ได้รัน migration-container-plan-2026-11-23.sql</div> : null}
+        {err ? <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }} data-testid="cp-err">{err}</div> : null}
+        {notes.length ? (
+          <div style={{ fontSize: 12, marginBottom: 10, padding: "8px 10px", borderRadius: 8, background: "var(--surface-2, #f3f6f4)", border: "1px solid var(--border)", lineHeight: 1.55 }} data-testid="cp-notes">
+            {notes.map((n, i) => (
+              <div key={i} style={{ color: n.bad ? "#8f1d1d" : "inherit" }}><b>{n.file}</b>: {n.text}
+                {(n.warn || []).slice(0, 6).map((w, j) => <div key={j} style={{ color: "#b45309", paddingLeft: 12 }}>⚠ {w}</div>)}
+                {(n.warn || []).length > 6 ? <div style={{ color: "#b45309", paddingLeft: 12 }}>⚠ … อีก {(n.warn || []).length - 6} ข้อ</div> : null}
+              </div>))}
+            <button type="button" className="rw-link" onClick={() => setNotes([])}>ปิด</button>
+          </div>) : null}
+
+        {state === "loading" ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 18 }}>กำลังโหลด…</div> : null}
+        {state === "idle" ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "18px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>เลือกโปรเจคก่อน</div> : null}
+        {state === "ready" && !rows.length ? (
+          <div style={{ fontSize: 13, color: "var(--muted)", padding: "18px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>
+            ยังไม่มีแผนลงตู้ของโปรเจคนี้ — กด “นำเข้า PDF / Excel” (แบบลงตู้ CNTR-…pdf หรือไฟล์ Pack Unit) หรือ “เพิ่มบั้งเอง”
+          </div>) : null}
+        {state === "ready" && rows.length ? (
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }} data-testid="cp-summary">
+            รวม <b>{nc(allShips.length)}</b> shipment · <b>{nc(allContainers.length)}</b> ตู้ · <b>{nc(total.n)}</b> บั้ง — มีในระบบแล้ว {nc(total.inSys)} · แพ็กครบ {nc(total.full)}
+            {dirty ? <b style={{ color: "#b45309" }}> · มีรายการยังไม่บันทึก {nc(rows.filter((r) => r._dirty).length + deleted.length)} รายการ</b> : null}
+            {qq ? <> · ตรงคำค้น {nc(shown.length)}</> : null}
+          </div>) : null}
+
+        <datalist id="cp-cntr-list">{allContainers.map((c) => <option key={c} value={c} />)}</datalist>
+        <datalist id="cp-ship-list">{allShips.map((c) => <option key={c} value={c} />)}</datalist>
+        <div style={{ maxHeight: "56vh", overflow: "auto", paddingRight: 4 }}>
+          {state === "ready" && groups.map((g) => {
+            const list = g.cntr.flatMap((c) => c.list); const st = stat(list); const open = openShip.has(g.ship) || !!qq;
+            return (
+              <div key={g.ship || "-"} style={{ border: "1px solid var(--border)", borderRadius: 10, marginBottom: 10, overflow: "hidden" }} data-testid="cp-ship" data-ship={g.ship}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 12px", background: "var(--surface-2, #f6f8f7)", cursor: "pointer", flexWrap: "wrap" }}
+                  onClick={() => setOpenShip((o) => { const n = new Set(o); if (n.has(g.ship)) n.delete(g.ship); else n.add(g.ship); return n; })}>
+                  <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▼" : "▶"}</span>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Shipment</span>
+                  <span onClick={(e) => e.stopPropagation()}><CpCell value={g.ship} width={110} placeholder="(ไม่ระบุ)" title="แก้เลข shipment ของทั้งกลุ่มนี้" onCommit={(v) => renameShipment(g.ship, v)} /></span>
+                  <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{nc(g.cntr.filter((c) => c.no).length)} ตู้ · {nc(st.n)} บั้ง · แพ็กครบ {nc(st.full)}/{nc(st.n)}</span>
+                </div>
+                {open ? (
+                  <div style={{ padding: "8px 10px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(560px, 1fr))", gap: 10 }}>
+                    {g.cntr.map((c) => (
+                      <div key={c.no || "-"} style={{ border: `1px solid ${c.no ? "var(--border)" : "#f0c36d"}`, borderRadius: 8, padding: "6px 8px", overflowX: "auto" }} data-testid="cp-cntr" data-cntr={c.no}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>ตู้</span>
+                          <CpCell value={c.no} width={120} placeholder="(ยังไม่มีเลขตู้)" title="แก้เลขตู้ของทั้งกลุ่มนี้" onCommit={(v) => renameContainer(g.ship, c.no, v)} />
+                          <span style={{ fontSize: 12, color: c.no ? "var(--muted)" : "#b45309" }}>{nc(c.list.length)} บั้ง{c.no ? "" : " — ยังไม่ได้ระบุตู้"}</span>
+                          <button type="button" className="rw-link" style={{ marginLeft: "auto" }} onClick={() => addRow(g.ship, c.no)}>+ เพิ่มบั้งในตู้นี้</button>
+                        </div>
+                        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                          <thead><tr>
+                            <th style={th}>เลขบั้ง</th><th style={th}>แถว</th><th style={th}>ช่อง</th><th style={th}>ยาว (มม.)</th><th style={th}>กว้าง (มม.)</th><th style={th}>ย้ายไปตู้</th><th style={th}>สถานะบั้ง</th><th style={th}></th>
+                          </tr></thead>
+                          <tbody>
+                            {c.list.map((r) => { const bd = bunkBadge(r); return (
+                              <tr key={r._k} data-testid="cp-row" data-bunk={r.bunk_no} style={r._dirty ? { background: "rgba(217,164,65,.08)" } : undefined}>
+                                <td style={td}><CpCell value={r.bunk_no} width={150} placeholder="เลขบั้ง" testid="cp-bunk" onCommit={(v) => edit(r._k, { bunk_no: v.toUpperCase() })} /></td>
+                                <td style={td}><CpCell value={r.row_no} width={42} num onCommit={(v) => edit(r._k, { row_no: v === "" ? null : Number(v) })} /></td>
+                                <td style={td}><CpCell value={r.col_no} width={42} num onCommit={(v) => edit(r._k, { col_no: v === "" ? null : Number(v) })} /></td>
+                                <td style={td}><CpCell value={r.len_mm} width={66} num onCommit={(v) => edit(r._k, { len_mm: v === "" ? null : Number(v) })} /></td>
+                                <td style={td}><CpCell value={r.w_mm} width={66} num onCommit={(v) => edit(r._k, { w_mm: v === "" ? null : Number(v) })} /></td>
+                                <td style={td}><CpCell value={r.container_no} width={104} list="cp-cntr-list" testid="cp-move" title="พิมพ์เลขตู้ใหม่เพื่อย้ายบั้งนี้" onCommit={(v) => moveRow(r, v)} /></td>
+                                <td style={td}><span style={{ fontSize: 11.5, padding: "2px 7px", borderRadius: 10, color: bd.c, background: bd.bg, whiteSpace: "nowrap" }}>{bd.t}</span></td>
+                                <td style={td}><button type="button" title="เอาบั้งนี้ออกจากแผนลงตู้" data-testid="cp-del" onClick={() => removeRow(r)} style={{ border: 0, background: "none", cursor: "pointer", color: "var(--danger-hi)", fontSize: 14, padding: "2px 6px" }}>✕</button></td>
+                              </tr>); })}
+                          </tbody>
+                        </table>
+                      </div>))}
+                  </div>) : null}
+              </div>);
+          })}
+        </div>
+
+        <div className="modal-actions" style={{ marginTop: 14 }}>
+          <Btn type="button" variant="ghost" onClick={tryClose} disabled={busy}>ปิด</Btn>
+          <Btn type="button" variant="accent" onClick={save} disabled={busy || !dirty || state !== "ready"} data-testid="cp-save">
+            {busy ? "กำลังทำงาน..." : dirty ? `บันทึก (${nc(rows.filter((r) => r._dirty).length + deleted.length)} รายการ)` : "บันทึกแล้ว"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // ตรวจงานประกอบ/แพ็ก (หลังบ้าน) — เทียบ "ที่สั่งจาก release (แผน/BOM)" กับ
 //   "ที่หน้างานสแกนมาจริง (แต่ละชิ้น + QR)" → ดูว่าทำถูก + ครบไหม
 //   หน้างาน (สเตชัน) ไม่โชว์รายการแล้ว = สแกนอย่างเดียว · การตรวจย้ายมาทำที่นี่
@@ -7591,6 +7854,7 @@ function releaseCreateItems(pick, disabled = false) {
   return [
     { key: "wizard", variant: "accent", primary: true, icon: <Icon name="plus" size={15} />, label: "ปล่อยงานใหม่", onClick: () => pick("wizard"), disabled },
     { key: "bunk", variant: "ghost", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
+    { key: "cntr", variant: "ghost", icon: <Icon name="box" size={15} />, label: "แผนลงตู้ (Container)", onClick: () => pick("cntr"), disabled },   // ★ 2026-11-23
   ];
 }
 // ── แผน Release (บันทึกจากหน้าปล่อยงานใหม่) → office เลือกปล่อยเป็นล็อต ──
@@ -7949,6 +8213,7 @@ function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProj
       />
     );
   }
+  if (open === "cntr") return <ContainerPlanModal projects={projects} initialProjectId={initialProjectId} onClose={onClose} />;
   if (open === "bunk") {
     return (
       <BunkImportModal

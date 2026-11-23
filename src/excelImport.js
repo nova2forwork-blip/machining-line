@@ -510,3 +510,17 @@ function parseOneBunk(rows) {
   meta.total_weight = tot(cols.wt, units.reduce((s, u) => s + (u.weight || 0), 0));
   return { meta, units };
 }
+
+// ── แผนลงตู้จาก Excel (ไฟล์ Pack Unit) → แถวบั้ง / ตู้ / shipment (ดู containerPlan.js) ──
+//   ชีตที่ซ่อนอยู่ข้าม · ตัวอ่านจริงอยู่ที่ parseContainerSheets (ไม่แตะ XLSX → ทดสอบแยกได้)
+export async function readContainerExcel(file) {
+  const { parseContainerSheets } = await import("./containerPlan.js");
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const meta = wb.Workbook && Array.isArray(wb.Workbook.Sheets) ? wb.Workbook.Sheets : null;
+  const sheets = [];
+  wb.SheetNames.forEach((name, i) => {
+    if (meta && meta[i] && meta[i].Hidden) return;
+    sheets.push({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "", raw: true }) });
+  });
+  return parseContainerSheets(sheets);
+}
