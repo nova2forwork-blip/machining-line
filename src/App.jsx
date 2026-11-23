@@ -5148,36 +5148,25 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   const ready = state === "ready" || state === "idle";   // idle = ยังไม่เลือกโปรเจค — วางไฟล์ / ดูตารางได้ แต่ยังบันทึกไม่ได้
 
   return (
-    <Modal title="แพ็กกิ้ง (Packing)" wide
-      sub="วางไฟล์ใบแพ็ก (PDF / Excel) → ได้ตาราง จัดตามชิป → ตู้ → กล่อง → แก้ / ย้ายได้ทุกระดับ → บันทึกปกติ หรือบันทึกเป็น Modify (เก็บเหตุผล + สิ่งที่เปลี่ยนเป็นประวัติ)"
+    <Modal title="แพ็กกิ้ง (Packing)" wide="xl"
+      sub="วางไฟล์ใบแพ็ก → ตรวจและแก้ตาราง (ชิป → ตู้ → กล่อง) → บันทึกปกติ หรือบันทึกเป็น Modify"
       onClose={tryClose} closeOnBackdrop={false} locked={busy || dirty}>
-      <div data-testid="pt-modal">
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
-          <div style={{ minWidth: 240, flex: "0 1 300px" }}>
-            <Field label="โปรเจค *"><Select value={projectId} onChange={(e) => changeProject(e.target.value)} data-testid="pt-project" disabled={busy} options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} /></Field>
-          </div>
-          <div style={{ minWidth: 150 }}><Field label="ชิป"><select className="select" value={ship} onChange={(e) => setShip(e.target.value)} data-testid="pt-ship">
-            <option value="*">ทุกชิป ({nc(boxes.length)})</option>{ships.map((s) => <option key={s || "-"} value={s}>{s || "ยังไม่ระบุชิป"}{allDates[s] ? ` · ${thD(allDates[s])}` : ""} ({nc(boxes.filter((b) => (b.ship || "") === s).length)})</option>)}</select></Field></div>
-          <div style={{ minWidth: 130 }}><Field label="ชนิด"><select className="select" value={kind} onChange={(e) => setKind(e.target.value)} data-testid="pt-kind">
-            <option value="*">ทั้งหมด</option><option value="panel">บั้งแผง</option><option value="loose">กล่อง Ship loose</option></select></Field></div>
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา กล่อง / เบอร์ / ที่อยู่ / ตู้" style={{ width: 220 }} data-testid="pt-search" />
-          <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <Btn type="button" variant="ghost" size="sm" onClick={addBox} disabled={busy || !ready} data-testid="pt-addbox"><Icon name="plus" size={14} /> เพิ่มกล่อง</Btn>
-            <PackExportBtns testid="pt" disabled={busy || !ready || !boxes.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} ตารางแพ็กกิ้ง${ship !== "*" ? ` ${ship || ""}` : ""}`}
-              getItems={() => shown.filter((b) => b.box_no).map((b) => ({ bunk_no: b.box_no, shipment: b.ship || "", load_date: allDates[b.ship || ""] || "", container_no: b.cntr || "", packed: b.has_bunk ? b.packed : null,
-                manifest: b.items.map((i) => ({ position: i.pos, unit_no: i.item, address_seq: i.addr || i.desc, width: i.w ?? i.len, height: i.h, weight: i.wt, qty: i.qty })) }))} />
-          </span>
-        </div>
-
+      {/* ★ 2026-11-23 ผู้ใช้: "ออกแบบ และจัดให้สวย" — หน้าต่างกว้างขึ้น · กล่องวางไฟล์ + โปรเจคอยู่แถวบน · แถบเครื่องมือแถวเดียว · หัวกล่องเรียงเป็นคอลัมน์ · แถบบันทึกติดล่าง (สไตล์ .pk-* ใน styles.css) */}
+      <div data-testid="pt-modal" className="pk">
         <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.xlsm" multiple style={{ display: "none" }} onChange={onPick} data-testid="pt-file" />
+        <div className="pk-top">
         <div ref={drop} role="button" tabIndex={0} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} data-testid="pt-drop"
           onClick={() => ready && !busy && fileRef.current?.click()} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && ready && !busy) { e.preventDefault(); fileRef.current?.click(); } }}
-          style={{ display: "flex", alignItems: "center", gap: 14, padding: boxes.length ? "10px 16px" : "18px 20px", marginBottom: 10, borderRadius: 16, cursor: ready ? "pointer" : "default", opacity: ready ? 1 : 0.6, transition: "background .15s, border-color .15s",
-            border: `1.5px dashed ${over ? "var(--accent, #10b981)" : "color-mix(in srgb, var(--accent, #10b981) 55%, var(--border, #d9e2dd))"}`, background: over ? "#d6f5e8" : "var(--accent-tint, #e6f6ef)" }}>
-          <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: "var(--surface, #fff)", color: "var(--accent-dk, #0e9d63)", boxShadow: "var(--shadow-card, 0 1px 3px rgba(0,0,0,.12))", flexShrink: 0 }}><Icon name="plus" size={18} /></div>
+          className={`pk-drop${over ? " over" : ""}${boxes.length ? " compact" : ""}${ready ? "" : " off"}`}>
+          <div className="pk-drop-ic"><Icon name="plus" size={20} /></div>
           <div style={{ minWidth: 0 }}>
             <b style={{ display: "block", fontSize: 14.5, fontWeight: 600 }}>{busy ? "กำลังอ่านไฟล์…" : "วางใบแพ็ก / แผนส่งของ / แบบลงตู้ — PDF หรือ Excel"} <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12.5 }}>หลายไฟล์พร้อมกันได้{projectId ? "" : " · ยังไม่ต้องเลือกโปรเจค"}</span></b>
             <span style={{ fontSize: 12.5, color: "var(--muted)" }}>ระบบอ่านเลขกล่อง / บั้ง · รายการข้างใน + จำนวน · ชิป · ตู้ · วันที่ → ได้ตารางแพ็กกิ้งให้ตรวจและแก้ แล้วค่อยกดบันทึก{projectId ? "" : " · โปรเจคระบบจะหาจากชื่อในใบแพ็กให้"}</span>
+          </div>
+        </div>
+          <div className="pk-proj">
+              <Field label="โปรเจค *"><Select value={projectId} onChange={(e) => changeProject(e.target.value)} data-testid="pt-project" disabled={busy} options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} /></Field>
+            <div className="pk-proj-hint">{projectId ? "ข้อมูลจะบันทึกลงโปรเจคนี้" : "ยังไม่เลือกก็วางไฟล์ได้ — ระบบหาโปรเจคจากชื่อในใบแพ็กให้"}</div>
           </div>
         </div>
 
@@ -5192,7 +5181,27 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         {state === "loading" ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 18 }}>กำลังโหลด…</div> : null}
         {state === "idle" && boxes.length ? <div style={{ fontSize: 12.5, color: "#b45309", marginBottom: 8 }} data-testid="pt-noproj">ยังไม่ได้เลือกโปรเจค — ตรวจ / แก้ตารางได้เลย แล้วเลือกโปรเจคที่ช่องด้านบนก่อนบันทึก (ข้อมูลที่มีอยู่ของโปรเจคนั้นจะถูกรวมเข้ามา)</div> : null}
         {ready && (projectId || boxes.length) ? (
-          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }} data-testid="pt-summary">
+          <div className="pk-bar">
+            <div className="pk-stats">
+              <span className="pk-stat"><b>{nc(boxes.length)}</b>กล่อง</span>
+              <span className="pk-stat"><b>{nc(boxes.reduce((s, b) => s + b.items.length, 0))}</b>รายการ</span>
+              <span className="pk-stat"><b>{nc(ships.filter(Boolean).length)}</b>ชิป</span>
+              <span className="pk-stat"><b>{nc(cntrs.length)}</b>ตู้</span>
+            </div>
+          <div style={{ minWidth: 150 }}><Field label="ชิป"><select className="select" value={ship} onChange={(e) => setShip(e.target.value)} data-testid="pt-ship">
+            <option value="*">ทุกชิป ({nc(boxes.length)})</option>{ships.map((s) => <option key={s || "-"} value={s}>{s || "ยังไม่ระบุชิป"}{allDates[s] ? ` · ${thD(allDates[s])}` : ""} ({nc(boxes.filter((b) => (b.ship || "") === s).length)})</option>)}</select></Field></div>
+          <div style={{ minWidth: 130 }}><Field label="ชนิด"><select className="select" value={kind} onChange={(e) => setKind(e.target.value)} data-testid="pt-kind">
+            <option value="*">ทั้งหมด</option><option value="panel">บั้งแผง</option><option value="loose">กล่อง Ship loose</option></select></Field></div>
+            <div className="pk-search"><Icon name="search" size={15} /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา กล่อง / เบอร์ / ที่อยู่ / ตู้"  data-testid="pt-search" /></div>
+            <span className="pk-actions">
+            <Btn type="button" variant="ghost" size="sm" onClick={addBox} disabled={busy || !ready} data-testid="pt-addbox"><Icon name="plus" size={14} /> เพิ่มกล่อง</Btn>
+            <PackExportBtns testid="pt" disabled={busy || !ready || !boxes.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} ตารางแพ็กกิ้ง${ship !== "*" ? ` ${ship || ""}` : ""}`}
+              getItems={() => shown.filter((b) => b.box_no).map((b) => ({ bunk_no: b.box_no, shipment: b.ship || "", load_date: allDates[b.ship || ""] || "", container_no: b.cntr || "", packed: b.has_bunk ? b.packed : null,
+                manifest: b.items.map((i) => ({ position: i.pos, unit_no: i.item, address_seq: i.addr || i.desc, width: i.w ?? i.len, height: i.h, weight: i.wt, qty: i.qty })) }))} />
+            </span>
+          </div>) : null}
+        {ready && (projectId || boxes.length) ? (
+          <div className="pk-sub" data-testid="pt-summary">
             <span>แสดง <b>{nc(shown.length)}</b> จาก {nc(boxes.length)} กล่อง · {nc(shown.reduce((s, b) => s + b.items.length, 0))} รายการ</span>
             {boxes.length ? <button type="button" className="rw-link" onClick={() => setOpen(open.size ? new Set() : new Set(shown.slice(0, 60).map((b) => b._k)))}>{open.size ? "ย่อทั้งหมด" : "กางทั้งหมด"}</button> : null}
             <button type="button" className="rw-link" onClick={() => setShowMods((v) => !v)} data-testid="pt-mods-btn">ประวัติ Modify ({nc(mods.length)})</button>
@@ -5203,7 +5212,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
             </span> : null}
           </div>) : null}
         {showMods ? (
-          <div style={{ fontSize: 12.5, marginBottom: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", maxHeight: 180, overflow: "auto" }} data-testid="pt-mods">
+          <div className="pk-mods" data-testid="pt-mods">
             {!mods.length ? <span style={{ color: "var(--muted)" }}>ยังไม่มีการบันทึกแบบ Modify</span> : mods.map((m) => (
               <div key={m.mod_no} style={{ marginBottom: 6 }}><b>M-{String(m.mod_no).padStart(3, "0")}</b> · {new Date(m.at).toLocaleString("th-TH")} · {m.by || "-"} — <b>{m.reason}</b>
                 {(m.changes || []).slice(0, 40).map((c, j) => <div key={j} style={{ paddingLeft: 14, color: "var(--muted)" }}>• {c.text}</div>)}{(m.changes || []).length > 40 ? <div style={{ paddingLeft: 14, color: "var(--muted)" }}>… อีก {(m.changes || []).length - 40} จุด</div> : null}</div>))}
@@ -5212,8 +5221,16 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         <datalist id="pt-box-list">{boxes.filter((b) => b.box_no).map((b) => <option key={b._k} value={b.box_no}>{`${b.ship || "ไม่ระบุชิป"} · ${b.cntr || "ไม่ระบุตู้"} · ${b.items.length} รายการ`}</option>)}</datalist>
         <datalist id="pt-cntr-list">{cntrs.map((c) => <option key={c} value={c} />)}</datalist>
         <datalist id="pt-ship-list">{ships.filter(Boolean).map((c) => <option key={c} value={c} />)}</datalist>
-        <div style={{ maxHeight: "44vh", overflow: "auto", paddingRight: 4 }}>
-          {ready && !boxes.length && projectId ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "16px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>ยังไม่มีข้อมูลแพ็กกิ้งของโปรเจคนี้ — วางไฟล์ใบแพ็กด้านบน หรือกด “เพิ่มกล่อง”</div> : null}
+        <div className="pk-list">
+          {ready && !boxes.length ? (
+            <div className="pk-empty" data-testid="pt-empty">
+              <div className="pk-steps">
+                <div className="pk-step"><span>1</span><b>วางไฟล์</b><small>ใบแพ็ก Excel / PDF · แผนส่งของ · แบบลงตู้ — ลากมาวางที่กล่องสีเขียวด้านบน</small></div>
+                <div className="pk-step"><span>2</span><b>ตรวจและแก้ตาราง</b><small>จัดตาม ชิป → ตู้ → กล่อง · แก้ได้ทุกช่อง · ย้ายรายการ / กล่อง / ทั้งตู้</small></div>
+                <div className="pk-step"><span>3</span><b>บันทึก</b><small>บันทึกปกติ หรือบันทึกเป็น Modify (เก็บเหตุผล + สิ่งที่เปลี่ยน)</small></div>
+              </div>
+              <div className="pk-empty-or">{projectId ? "โปรเจคนี้ยังไม่มีข้อมูลแพ็กกิ้ง — " : ""}ไม่มีไฟล์ก็สร้างเองได้ <button type="button" className="rw-link" onClick={addBox} disabled={busy}>+ เพิ่มกล่อง</button></div>
+            </div>) : null}
           {ready && shown.slice(0, 150).map((b, bi, arr) => { const isOpen = open.has(b._k); const panel = b.kind === "panel"; const qty = b.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
             // หัวกลุ่ม: ชิป (วันที่) → ตู้ (ย้ายทั้งตู้) — กล่องใหม่ที่ยังไม่มีเลขอยู่บนสุด ไม่มีหัวกลุ่ม
             const blank = b._new && !b.box_no; const prev = bi > 0 && !(arr[bi - 1]._new && !arr[bi - 1].box_no) ? arr[bi - 1] : null;
@@ -5221,20 +5238,20 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
             const inShip = newShip ? boxes.filter((x) => (x.ship || "") === sn) : null; const inCn = newCn ? boxes.filter((x) => (x.ship || "") === sn && (x.cntr || "") === cn) : null;
             return (<Fragment key={b._k}>
             {newShip ? (
-              <div data-testid="pt-shiphead" data-ship={sn} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", margin: bi ? "12px 0 4px" : "0 0 4px", padding: "5px 10px", borderRadius: 8, background: "#10201a", color: "#fff", fontSize: 13 }}>
+              <div data-testid="pt-shiphead" data-ship={sn} className="pk-ship">
                 <b>Shipment {sn || "(ยังไม่ระบุชิป)"}</b>
                 {sn ? <label style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 12 }}>วันที่ <input type="date" value={allDates[sn] || ""} onChange={(e) => setShipDate(sn, e.target.value)} data-testid="pt-shipdate" disabled={busy}
                   style={{ height: 26, padding: "2px 6px", fontSize: 12.5, borderRadius: 6, border: "1px solid #456", background: sn in newDates ? "#fff3d6" : "#fff", color: "#10201a" }} /></label> : null}
                 <span style={{ fontSize: 12, opacity: 0.8 }}>{nc(new Set(inShip.map((x) => x.cntr).filter(Boolean)).size)} ตู้ · {nc(inShip.length)} กล่อง</span>
               </div>) : null}
             {newCn ? (
-              <div data-testid="pt-cnhead" data-cntr={cn} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "6px 0 4px 4px", fontSize: 12.5 }}>
+              <div data-testid="pt-cnhead" data-cntr={cn} className="pk-cn">
                 <b style={{ color: cn ? "inherit" : "#b45309" }}>{cn ? `ตู้ ${cn}` : "ยังไม่ระบุตู้"}</b><span style={{ color: "var(--muted)" }}>{nc(inCn.length)} กล่อง</span>
                 {cn ? <><span style={{ fontWeight: 700, color: "var(--accent-dk, #0e9d63)" }}>ย้ายทั้งตู้ไปชิป →</span>
                   <CpCell value={sn} width={90} list="pt-ship-list" placeholder="—" testid="pt-cnship" title="พิมพ์ / เลือกชิปใหม่แล้วกด Enter = ย้ายทั้งตู้ (ทุกกล่องในตู้) ไปชิปนั้น" onCommit={(v) => moveContainer(sn, cn, v)} /></> : null}
               </div>) : null}
-            <div data-testid="pt-box" data-box={b.box_no} style={{ border: `1px solid ${b._dirty ? "#e0b458" : "var(--border)"}`, borderRadius: 10, marginBottom: 8, overflow: "hidden" }}>
-              <div style={{ display: "flex", gap: 7, alignItems: "center", padding: "6px 9px", background: b._dirty ? "rgba(217,164,65,.10)" : "var(--surface-2, #f6f8f7)", flexWrap: "wrap" }}>
+            <div data-testid="pt-box" data-box={b.box_no} className={`pk-box${b._dirty ? " dirty" : ""}${isOpen ? " open" : ""}`}>
+              <div className="pk-box-head">
                 <button type="button" onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(b._k)) n.delete(b._k); else n.add(b._k); return n; })} data-testid="pt-toggle" style={{ border: 0, background: "none", cursor: "pointer", color: "var(--muted)", fontSize: 12, padding: "2px 4px" }}>{isOpen ? "▼" : "▶"}</button>
                 <CpCell value={b.box_no} width={150} placeholder="เลขกล่อง *" testid="pt-boxno" onCommit={(v) => editBox(b._k, { box_no: v.toUpperCase() })} />
                 <select className="select" value={b.kind} onChange={(e) => editBox(b._k, { kind: e.target.value })} style={{ height: 28, padding: "2px 6px", fontSize: 12.5, width: 118 }} title="ชนิดกล่อง"><option value="panel">บั้งแผง</option><option value="loose">Ship loose</option></select>
@@ -5258,8 +5275,8 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
                         <tr key={i._k} data-testid="pt-row" data-item={i.item}>
                           <td style={{ ...td, color: "var(--muted)", fontSize: 12 }}>{n + 1}</td>
                           {panel ? <td style={td}><CpCell value={i.pos} width={40} onCommit={(v) => editItem(b._k, i._k, { pos: v.toUpperCase() })} /></td> : null}
-                          <td style={td}><CpCell value={i.item} width={140} testid="pt-item" onCommit={(v) => editItem(b._k, i._k, { item: v.toUpperCase() })} /></td>
-                          <td style={td}><CpCell value={i.desc} width={panel ? 150 : 250} mono={false} onCommit={(v) => editItem(b._k, i._k, { desc: v })} /></td>
+                          <td style={td}><CpCell value={i.item} width={170} testid="pt-item" onCommit={(v) => editItem(b._k, i._k, { item: v.toUpperCase() })} /></td>
+                          <td style={td}><CpCell value={i.desc} width={panel ? 240 : 420} mono={false} onCommit={(v) => editItem(b._k, i._k, { desc: v })} /></td>
                           {panel ? <td style={td}><CpCell value={i.addr} width={92} onCommit={(v) => editItem(b._k, i._k, { addr: v })} /></td> : null}
                           <td style={td}>{numCell(b, i, panel ? "w" : "len", 70)}</td>
                           <td style={td}>{numCell(b, i, "h", 66)}</td>
@@ -5278,11 +5295,11 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         </div>
 
         {dirty ? (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "rgba(217,164,65,.10)", border: "1px solid #e0b458", fontSize: 12.5 }} data-testid="pt-changes">
+          <div className="pk-changes" data-testid="pt-changes">
             <b>ยังไม่บันทึก:</b> {nc(changes.length)} จุดที่เปลี่ยน <button type="button" className="rw-link" onClick={() => setShowDiff((v) => !v)}>{showDiff ? "ซ่อน" : "ดูสิ่งที่เปลี่ยน"}</button>
             {showDiff ? <div style={{ maxHeight: 120, overflow: "auto", marginTop: 4 }}>{changes.slice(0, 200).map((c, j) => <div key={j} style={{ color: "var(--muted)" }}>• {c.text}</div>)}{changes.length > 200 ? <div style={{ color: "var(--muted)" }}>… อีก {nc(changes.length - 200)} จุด</div> : null}</div> : null}
           </div>) : null}
-        <div className="modal-actions" style={{ marginTop: 12, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div className="modal-actions pk-foot">
           <Btn type="button" variant="ghost" onClick={tryClose} disabled={busy}>ปิด</Btn>
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="เหตุผลของการแก้ (ต้องใส่ถ้าบันทึกเป็น Modify)" style={{ flex: "1 1 280px", minWidth: 220 }} disabled={busy || !dirty} data-testid="pt-reason" />
           <Btn type="button" variant="ghost" onClick={() => save("normal")} disabled={busy || !dirty || !ready} data-testid="pt-save" title="บันทึกเฉย ๆ ไม่เก็บเป็นประวัติ Modify">{busy ? "กำลังบันทึก..." : "บันทึกปกติ"}</Btn>
