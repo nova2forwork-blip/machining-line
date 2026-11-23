@@ -463,3 +463,291 @@ def test_db_project_delete_removes_plan(db, actors, need_cp):
     save(db, actors.tok["office"], pid, [ROW])
     db.execute("delete from projects where id=%s", (pid,))
     assert one(db, "select count(*) from container_plan where project_id=%s", (pid,)) == 0
+
+
+# ───────────────────────── Excel แผนส่งของ (Shipment / Pallet No.) ─────────────────────────
+PLAN_SHEET = {"name": "Shipment Tower B", "rows": [
+    ["Plan Ship", "", "", "", "TOWER B"],
+    ["No.", "Shipment", "LOADING", "Description", "Pallet No.", "Q'ty  (Bunk)", "Q'ty  (Unit)", "Q'ty  (Box)", "Q'ty Container"],
+    [1, "#BB02", "16 Jul 2026", "Starter Sill", "BB-L01-SE, BB-L01-SW  (ไปกับ Shipment 25)", "", "", "", "1X40'"],
+    ["", "", "", "", "BB-L02-SW", "", "", 3],
+    ["", "", "", "", "TOTAL", "", "", 3],
+    [6, "#BB06", "14 Nov 26", "L3", "BB-L04-C01,BB-L03-C02", 2, 8, "", "1X40'", "Con No.13"],
+    ["", "", "", "", "BB-L03-C07, BB-L03-C08", 2, 8, "", "1X40'", "Con No.14"],
+    ["", "", "", "CASTOR CAGE", "CAGE-01 #01, CAGE-01 #02", "", "", 2],
+]}
+
+
+@P
+def test_excel_plan_sheet(js):
+    """TC-CNTR-100 ชีตแผนส่งของ: 1 ช่องหลายบั้ง · shipment ว่าง = ของแถวบน · "Con No.13" = CNTR-013 · ไม่มี Con No. = ยังไม่ระบุตู้"""
+    r = cp(js, "parseContainerSheets", [PLAN_SHEET])
+    got = [(x["bunk_no"], x["shipment"], x["container_no"]) for x in r["rows"]]
+    assert got == [
+        ("BB-L01-SE", "#BB02", ""), ("BB-L01-SW", "#BB02", ""), ("BB-L02-SW", "#BB02", ""),
+        ("BB-L04-C01", "#BB06", "CNTR-013"), ("BB-L03-C02", "#BB06", "CNTR-013"),
+        ("BB-L03-C07", "#BB06", "CNTR-014"), ("BB-L03-C08", "#BB06", "CNTR-014"),
+        ("CAGE-01 #01", "#BB06", ""), ("CAGE-01 #02", "#BB06", ""),
+    ]
+
+
+@N
+def test_excel_plan_sheet_skips_total_and_notes(js):
+    """TC-CNTR-101 แถว TOTAL และข้อความในวงเล็บ ไม่กลายเป็นบั้ง"""
+    names = [x["bunk_no"] for x in cp(js, "parseContainerSheets", [PLAN_SHEET])["rows"]]
+    assert "TOTAL" not in names and not any("SHIPMENT 25" in n or "(" in n for n in names)
+
+
+@R
+def test_excel_plan_sheets_are_tagged_for_choice(js):
+    """TC-CNTR-102 ไฟล์มี 2 ตึกคนละชีต → แถวติดชื่อชีต + ชีตถูกระบุว่าเป็นแผนส่งของ (ให้หน้าจอถามว่าจะเอาชีตไหน)"""
+    a = {"name": "Shipment Tower A", "rows": [["No.", "Shipment", "LOADING", "Description", "Pallet No."], [1, "#6", "", "ANCHOR", "BP-L2-A1, BP-L3-A1"]]}
+    r = cp(js, "parseContainerSheets", [a, PLAN_SHEET])
+    assert [(s["name"], s["n"], s.get("kind")) for s in r["sheets"]] == [("Shipment Tower A", 2, "plan"), ("Shipment Tower B", 9, "plan")]
+    assert {x["sheet"] for x in r["rows"]} == {"Shipment Tower A", "Shipment Tower B"}
+    assert [x["shipment"] for x in r["rows"][:2]] == ["#06", "#06"]
+
+
+# ───────────────────────── ฐานข้อมูล: ย้ายแผงข้ามบั้ง ─────────────────────────
+MOVE = "select public.bunk_move_units(%s,%s,%s,%s,%s::jsonb)"
+BOARD = "select public.bunk_board(%s,%s)"
+
+
+@pytest.fixture()
+def need_bm(db, need_cp):
+    if not has_fn(db, "bunk_move_units"):
+        pytest.skip("ยังไม่ได้รัน migration-bunk-edit-2026-11-23.sql")
+
+
+def _row(unit, pos, w=100.0):
+    return {"no": 0, "unit_no": unit, "position": pos, "address_seq": f"03-N-{unit[-3:]}", "qty": 1, "weight": w, "sqm": 2.5}
+
+
+def _bunk(db, pid, no, rows):
+    """สร้างบั้ง (package) + ใบบั้ง + QR 1 ดวง → (pm_id, unit_id)"""
+    pm = one(db, "insert into part_master(project_id, part_no, part_name, kind, pkg_manifest, pkg_meta) values(%s,%s,%s,'package',%s::jsonb,%s::jsonb) returning id",
+             (pid, no, no, json.dumps(rows), json.dumps({"bunk_no": no, "pack_type": "panel", "total_qty": len(rows)})))
+    rel = one(db, "insert into releases(part_master_id, qty, release_order) values(%s,1,'P-100') returning id", (pm,))
+    u = one(db, "insert into part_units(release_id, part_master_id, unit_no, qr_code) values(%s,%s,1,%s) returning id", (rel, pm, f"PYT-{no}-{str(pm)[:8]}"))
+    return pm, u
+
+
+def _panel(db, pid, no, qty=1):
+    pm = one(db, "insert into part_master(project_id, part_no, part_name, kind) values(%s,%s,'panel','panel') returning id", (pid, no))
+    rel = one(db, "insert into releases(part_master_id, qty, release_order) values(%s,%s,'P-005') returning id", (pm, qty))
+    us = [one(db, "insert into part_units(release_id, part_master_id, unit_no, qr_code) values(%s,%s,%s,%s) returning id", (rel, pm, i, f"PYT-{no}-{i}-{str(pm)[:8]}")) for i in range(1, qty + 1)]
+    return pm, us
+
+
+@pytest.fixture()
+def two_bunks(db, actors, project, need_bm):
+    """บั้ง A: UA1 (A) · UA2 (B) · UA2 (C) · UA3 (D)   ·   บั้ง B: UA1 (A)"""
+    panels = {"PYT-UA1": _panel(db, project, "PYT-UA1", 2), "PYT-UA2": _panel(db, project, "PYT-UA2", 2), "PYT-UA3": _panel(db, project, "PYT-UA3", 1)}
+    a = _bunk(db, project, "PYT-BK-A", [_row("PYT-UA1", "A"), _row("PYT-UA2", "B"), _row("PYT-UA2", "C"), _row("PYT-UA3", "D", 50.5)])
+    b = _bunk(db, project, "PYT-BK-B", [_row("PYT-UA1", "A")])
+    yield {"a": a, "b": b, "panels": panels}
+    db.execute("delete from assembly_links where parent_unit_id in (%s,%s)", (a[1], b[1]))
+
+
+def move(db, tok, pid, frm, to, moves):
+    return one(db, MOVE, (tok, pid, frm, to, json.dumps(moves)))
+
+
+def manifest(db, pm):
+    return [(x.get("no"), x["unit_no"], x.get("position")) for x in one(db, "select pkg_manifest from part_master where id=%s", (pm,))]
+
+
+def bom(db, pm):
+    return q(db, "select c.part_no, b.qty from bom_components b join part_master c on c.id=b.child_pm_id where b.parent_pm_id=%s order by 1", (pm,))
+
+
+@dbm
+@P
+def test_db_move_one_panel(db, actors, project, two_bunks):
+    """TC-CNTR-110 ย้ายแผง 1 แผง (UA3) จากบั้ง A → B: ใบบั้ง · BOM · ยอดรวม ของทั้งสองบั้งเปลี่ยนตาม"""
+    a, b = two_bunks["a"][0], two_bunks["b"][0]
+    r = move(db, actors.tok["office"], project, a, b, [{"idx": 3, "unit_no": "PYT-UA3"}])
+    assert (r["ok"], r["moved"], r["from_left"], r["to_total"]) == (True, 1, 3, 2)
+    assert manifest(db, a) == [(1, "PYT-UA1", "A"), (2, "PYT-UA2", "B"), (3, "PYT-UA2", "C")]
+    assert manifest(db, b) == [(1, "PYT-UA1", "A"), (2, "PYT-UA3", "D")]
+    assert bom(db, a) == [("PYT-UA1", 1), ("PYT-UA2", 2)] and bom(db, b) == [("PYT-UA1", 1), ("PYT-UA3", 1)]
+    ma, mb = (one(db, "select pkg_meta from part_master where id=%s", (x,)) for x in (a, b))
+    assert (float(ma["total_qty"]), float(ma["total_weight"]), ma["bunk_no"], ma["pack_type"]) == (3.0, 300.0, "PYT-BK-A", "panel")
+    assert (float(mb["total_qty"]), float(mb["total_weight"])) == (2.0, 150.5)
+
+
+@dbm
+@B
+def test_db_move_position_clash_is_cleared(db, actors, project, two_bunks):
+    """TC-CNTR-111 แผงที่ย้ายมีตำแหน่ง A ชนกับบั้งปลายทาง (มี A แล้ว) → ล้างตำแหน่ง ให้กำหนดใหม่"""
+    a, b = two_bunks["a"][0], two_bunks["b"][0]
+    assert move(db, actors.tok["office"], project, a, b, [{"idx": 0, "unit_no": "PYT-UA1"}])["ok"] is True
+    assert manifest(db, b) == [(1, "PYT-UA1", "A"), (2, "PYT-UA1", "")]
+    assert bom(db, b) == [("PYT-UA1", 2)]
+
+
+@dbm
+@B
+def test_db_move_everything_leaves_empty_bunk(db, actors, project, two_bunks):
+    """TC-CNTR-112 ย้ายทุกแผงออก → บั้งต้นทางว่าง (ใบบั้งว่าง · ไม่มี BOM · ยอด 0)"""
+    a, b = two_bunks["a"][0], two_bunks["b"][0]
+    r = move(db, actors.tok["office"], project, a, b, [{"idx": i, "unit_no": u} for i, u in enumerate(["PYT-UA1", "PYT-UA2", "PYT-UA2", "PYT-UA3"])])
+    assert (r["ok"], r["from_left"], r["to_total"]) == (True, 0, 5)
+    assert manifest(db, a) == [] and bom(db, a) == []
+    assert float(one(db, "select pkg_meta->>'total_qty' from part_master where id=%s", (a,))) == 0
+
+
+@dbm
+@N
+def test_db_move_packed_panel_rejected(db, actors, project, two_bunks):
+    """TC-CNTR-113 แผงที่สแกนแพ็กเข้าบั้งแล้ว ย้ายไม่ได้ และไม่มีอะไรเปลี่ยน"""
+    a, b = two_bunks["a"], two_bunks["b"]
+    pm3, us3 = two_bunks["panels"]["PYT-UA3"]
+    db.execute("insert into assembly_links(parent_unit_id, child_unit_id, child_pm_id, qty) values(%s,%s,%s,1)", (a[1], us3[0], pm3))
+    r = move(db, actors.tok["office"], project, a[0], b[0], [{"idx": 3, "unit_no": "PYT-UA3"}])
+    assert (r["ok"], r["reason"], r["unit"], r["packed"]) == (False, "packed", "PYT-UA3", 1)
+    assert len(manifest(db, a[0])) == 4 and len(manifest(db, b[0])) == 1
+
+
+@dbm
+@B
+def test_db_move_unpacked_copy_of_partly_packed_panel(db, actors, project, two_bunks):
+    """TC-CNTR-114 เบอร์เดียวกัน 2 แถว สแกนแล้ว 1 → ย้ายได้ 1 แถว · แถวสุดท้ายย้ายไม่ได้"""
+    a, b = two_bunks["a"], two_bunks["b"]
+    pm2, us2 = two_bunks["panels"]["PYT-UA2"]
+    db.execute("insert into assembly_links(parent_unit_id, child_unit_id, child_pm_id, qty) values(%s,%s,%s,1)", (a[1], us2[0], pm2))
+    assert move(db, actors.tok["office"], project, a[0], b[0], [{"idx": 2, "unit_no": "PYT-UA2"}])["ok"] is True
+    r = move(db, actors.tok["office"], project, a[0], b[0], [{"idx": 1, "unit_no": "PYT-UA2"}])
+    assert (r["ok"], r["reason"]) == (False, "packed")
+    assert [m[1] for m in manifest(db, a[0])] == ["PYT-UA1", "PYT-UA2", "PYT-UA3"]
+
+
+@dbm
+@R
+def test_db_move_stale_screen_rejected(db, actors, project, two_bunks):
+    """TC-CNTR-115 หน้าจอค้างข้อมูลเก่า (ลำดับไม่ตรงกับเบอร์) → stale ไม่ย้ายผิดแผง"""
+    a, b = two_bunks["a"][0], two_bunks["b"][0]
+    for mv in ([{"idx": 0, "unit_no": "PYT-UA3"}], [{"idx": 9, "unit_no": "PYT-UA1"}]):
+        r = move(db, actors.tok["office"], project, a, b, mv)
+        assert (r["ok"], r["reason"]) == (False, "stale")
+    assert len(manifest(db, a)) == 4
+
+
+@dbm
+@N
+@pytest.mark.parametrize("tid,moves", [
+    ("TC-CNTR-116", []),
+    ("TC-CNTR-117", [{"idx": 0, "unit_no": "PYT-UA1"}, {"idx": 0, "unit_no": "PYT-UA1"}]),
+    ("TC-CNTR-118", [{"idx": "x", "unit_no": "PYT-UA1"}]),
+])
+def test_db_move_bad_input(db, actors, project, two_bunks, tid, moves):
+    r = move(db, actors.tok["office"], project, two_bunks["a"][0], two_bunks["b"][0], moves)
+    assert (r["ok"], r["reason"]) == (False, "bad_input"), tid
+    assert len(manifest(db, two_bunks["a"][0])) == 4, tid
+
+
+@dbm
+@N
+def test_db_move_same_bunk_or_not_a_bunk(db, actors, project, two_bunks):
+    """TC-CNTR-119 ปลายทางเป็นบั้งเดียวกัน → bad_input · ปลายทางเป็นแผง (ไม่ใช่บั้ง) → not_bunk"""
+    a = two_bunks["a"][0]
+    assert move(db, actors.tok["office"], project, a, a, [{"idx": 0, "unit_no": "PYT-UA1"}])["reason"] == "bad_input"
+    assert move(db, actors.tok["office"], project, a, two_bunks["panels"]["PYT-UA1"][0], [{"idx": 0, "unit_no": "PYT-UA1"}])["reason"] == "not_bunk"
+    assert len(manifest(db, a)) == 4
+
+
+@dbm
+@R
+def test_db_move_other_project_bunk_rejected(db, actors, project, two_bunks):
+    """TC-CNTR-120 ย้ายไปบั้งของโปรเจคอื่นไม่ได้"""
+    other = one(db, "insert into projects(code,name) values(%s,%s) returning id", ("PYT-BM2-" + actors.tag, "pytest (ข้อมูลจำลอง)"))
+    try:
+        ob = _bunk(db, other, "PYT-BK-X", [])
+        r = move(db, actors.tok["office"], project, two_bunks["a"][0], ob[0], [{"idx": 0, "unit_no": "PYT-UA1"}])
+        assert (r["ok"], r["reason"]) == (False, "not_found")
+        assert manifest(db, ob[0]) == []
+    finally:
+        db.execute("delete from part_units where part_master_id in (select id from part_master where project_id=%s)", (other,))
+        db.execute("delete from releases where part_master_id in (select id from part_master where project_id=%s)", (other,))
+        db.execute("delete from part_master where project_id=%s", (other,))
+        db.execute("delete from projects where id=%s", (other,))
+
+
+@dbm
+@N
+def test_db_move_and_board_need_office(db, actors, project, two_bunks):
+    """TC-CNTR-121 พนักงานหน้าเครื่อง ย้ายแผง / เปิดหน้าจัดบั้งไม่ได้"""
+    for fn in (lambda: move(db, actors.tok["operator"], project, two_bunks["a"][0], two_bunks["b"][0], [{"idx": 3, "unit_no": "PYT-UA3"}]),
+               lambda: one(db, BOARD, (actors.tok["operator"], project))):
+        with pytest.raises(Exception) as e:
+            fn()
+        assert "forbidden" in str(e.value)
+    assert len(manifest(db, two_bunks["a"][0])) == 4
+
+
+@dbm
+@P
+def test_db_board_lists_bunks_with_plan_and_packed(db, actors, project, two_bunks):
+    """TC-CNTR-122 หน้าจัดบั้ง: ได้บั้งทั้งหมด + ใบบั้ง + ที่สแกนแล้ว + ชิป / ตู้ / ขนาดจากแผนลงตู้"""
+    a = two_bunks["a"]
+    pm3, us3 = two_bunks["panels"]["PYT-UA3"]
+    db.execute("insert into assembly_links(parent_unit_id, child_unit_id, child_pm_id, qty) values(%s,%s,%s,1)", (a[1], us3[0], pm3))
+    save(db, actors.tok["office"], project, [{**ROW, "bunk_no": "pyt-bk-a"}])
+    got = {x["bunk_no"]: x for x in one(db, BOARD, (actors.tok["office"], project))}
+    assert sorted(got) == ["PYT-BK-A", "PYT-BK-B"]
+    assert len(got["PYT-BK-A"]["manifest"]) == 4 and got["PYT-BK-A"]["packed"] == [{"part_no": "PYT-UA3", "qty": 1}]
+    pl = got["PYT-BK-A"]["plan"]
+    assert (pl["shipment"], pl["container_no"], pl["row_no"], float(pl["len_mm"])) == ("#BB06", "CNTR-013", 1, 3440.0)
+    assert got["PYT-BK-B"]["plan"] is None and got["PYT-BK-B"]["packed"] == []
+
+
+# ───────────────────────── ส่งออก Excel / หน้าพิมพ์ ─────────────────────────
+def px(js, fn, *args):
+    return js(fn, *args, m="px")
+
+
+ITEMS = [
+    {"bunk_no": "BB-L03-C03", "shipment": "#BB06", "container_no": "CNTR-014", "row_no": None, "col_no": None, "len_mm": 3820, "w_mm": 1140, "packed": 0,
+     "manifest": [{"position": "A", "unit_no": "UA0315", "address_seq": "03-N-258", "width": 1600.2, "height": 3276.6, "weight": 597.44, "qty": 1}]},
+    {"bunk_no": "BB-L03-C02", "shipment": "#BB06", "container_no": "CNTR-013", "row_no": 1, "col_no": 1, "len_mm": 3440, "w_mm": 1140, "packed": 2,
+     "manifest": [{"position": "A", "unit_no": "UA0315", "address_seq": "03-N-258", "width": 1600.2, "height": 3276.6, "weight": 100.5},
+                  {"position": "C", "unit_no": "UA0336", "address_seq": "03-N-260", "width": 1066.8, "height": 3276.6, "weight": 200.25, "qty": 2}]},
+    {"bunk_no": "BB-L01-C01", "shipment": "#BB04", "container_no": "", "manifest": []},
+]
+
+
+@P
+def test_export_sheets(js):
+    """TC-CNTR-130 ตาราง Excel: เรียง ชิป → ตู้ · 1 แถวต่อบั้ง (จำนวนแผง · น้ำหนักรวม) · 1 แถวต่อแผง"""
+    r = px(js, "packSheets", ITEMS)
+    assert r["bunks"][0] == ["Shipment", "Container", "Bunk No.", "Row", "Slot", "Length (mm)", "Width (mm)", "Units", "Packed", "Weight"]
+    assert r["bunks"][1:] == [
+        ["#BB04", "", "BB-L01-C01", "", "", "", "", "", "", ""],
+        ["#BB06", "CNTR-013", "BB-L03-C02", 1, 1, 3440, 1140, 3, 2, 300.75],
+        ["#BB06", "CNTR-014", "BB-L03-C03", "", "", 3820, 1140, 1, 0, 597.44],
+    ]
+    assert [u[2:6] for u in r["units"][1:]] == [["BB-L03-C02", "A", "UA0315", "03-N-258"], ["BB-L03-C02", "C", "UA0336", "03-N-260"], ["BB-L03-C03", "A", "UA0315", "03-N-258"]]
+    assert r["units"][2][8] == 2 and r["units"][1][8] == 1   # ไม่มี qty = 1
+
+
+@B
+def test_export_sheets_empty(js):
+    """TC-CNTR-131 ไม่มีรายการ → มีแต่หัวตาราง"""
+    r = px(js, "packSheets", [])
+    assert len(r["bunks"]) == 1 and len(r["units"]) == 1
+
+
+@P
+def test_export_print_html(js):
+    """TC-CNTR-132 หน้าพิมพ์: มีหัวเรื่อง · ชิป · ตู้ · บั้ง · แผง · บั้งไม่มีเลขตู้อยู่ใต้ "ยังไม่ระบุตู้\""""
+    h = px(js, "packPrintHtml", ITEMS, {"title": "A100 แผนแพ็ก", "sub": "ทดสอบ"})
+    for word in ("A100 แผนแพ็ก", "Shipment #BB06", "Shipment #BB04", "ตู้ CNTR-013", "ตู้ CNTR-014", "ยังไม่ระบุตู้", "BB-L03-C02", "UA0336", "03-N-260", "แพ็กแล้ว 2"):
+        assert word in h, word
+    assert h.index("Shipment #BB04") < h.index("Shipment #BB06") and h.index("CNTR-013") < h.index("CNTR-014")
+
+
+@N
+def test_export_print_html_escapes(js):
+    """TC-CNTR-133 ข้อความที่มี < > & ในเลขบั้ง / หัวเรื่อง ไม่กลายเป็นโค้ดในหน้าพิมพ์"""
+    h = px(js, "packPrintHtml", [{"bunk_no": "<img src=x onerror=alert(1)>", "shipment": "#1&2", "container_no": "", "manifest": []}], {"title": "<b>x</b>"})
+    assert "<img src=x" not in h and "&lt;img src=x" in h and "#1&amp;2" in h and "<b>x</b>" not in h

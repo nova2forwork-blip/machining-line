@@ -4,6 +4,14 @@
 import { registerI18n } from "./i18n-dom.js";
 
 const DICT = {
+ "จัดบั้ง (ย้ายแผง / ชิป)": "Arrange bunks (move panels / shipment)",
+ "จัดบั้ง — ย้ายแผง / ย้ายชิป": "Arrange bunks — move panels / shipment",
+ "ติ๊กแผงแล้วเลือกบั้งปลายทางเพื่อย้าย · แก้ชิป / ตู้ของบั้งที่หัวการ์ด · ทุกการแก้บันทึกทันที": "Tick panels and pick a destination bunk to move them · change a bunk's shipment / container in its card header · every change saves immediately",
+ "ชิป (Shipment)": "Shipment",
+ "ค้นหา เลขบั้ง / เบอร์แผง / ที่อยู่ / ตู้": "Search bunk / panel / address / container",
+ "พิมพ์ / PDF": "Print / PDF",
+ "ยกเลิกที่เลือก": "Clear selection",
+ "พิมพ์ / เลือกเลขบั้งปลายทาง": "Type / pick the destination bunk",
  "แผนลงตู้ (Container)": "Container plan",
  "บั้งไหนลงตู้ไหน shipment ไหน — นำเข้าจากแบบลงตู้ PDF หรือไฟล์ Pack Unit (Excel) แล้วแก้ได้ทุกช่อง · ยังไม่บันทึกจนกว่าจะกด “บันทึก”": "Which bunk goes in which container and shipment — import from the container loading PDF or the Pack Unit Excel file, then edit any cell · nothing is saved until you press “Save”",
  "นำเข้า PDF / Excel": "Import PDF / Excel",

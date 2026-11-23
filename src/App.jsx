@@ -15,7 +15,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   saveReleaseLabelScopes,
-  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, listContainerPlan, saveContainerPlan, createOperation, setOperationType,
+  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, listContainerPlan, saveContainerPlan, bunkBoard, bunkMoveUnits, createOperation, setOperationType,
   getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches, assemblyChildParents, assemblyParentsOf,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
@@ -4410,6 +4410,25 @@ function BunkImportModal({ user, projects, onClose, onSaved, onNeedProject, init
 //   นำเข้า PDF (แบบลงตู้จาก CAD) / Excel (ไฟล์ Pack Unit) → รวมเข้ากับแผนที่มีด้วยเลขบั้ง → แก้ทุกช่องได้ → กดบันทึก
 //   ตัวอ่านไฟล์ + กติการวม / ตรวจ อยู่ที่ containerPlan.js (ทดสอบใน tests/) · ตาราง container_plan (migration-container-plan-2026-11-23.sql)
 // ══════════════════════════════════════════════════════════════════════════
+// ★ 2026-11-23 ผู้ใช้: "ให้ export pdf หรือ excel ได้ด้วย" — ปุ่มคู่ใช้ทั้งหน้าแผนลงตู้และหน้าจัดบั้ง (ส่งออกเฉพาะที่กำลังแสดง)
+function PackExportBtns({ getItems, title, disabled, testid }) {
+  const [busy, setBusy] = useState(false);
+  const stamp = () => { const d = new Date(); const z = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}`; };
+  const run = async (kind) => {
+    const items = getItems(); if (!items.length) { mlsToast("ไม่มีรายการให้ส่งออก", "warn"); return; }
+    setBusy(true);
+    try {
+      const mod = await import("./packExport.js");
+      if (kind === "xlsx") { const r = await mod.exportPackExcel(items, { title, fileName: `packing-plan-${String(title || "").replace(/[^A-Za-z0-9#-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "export"}-${stamp()}.xlsx` }); mlsToast(`ส่งออก Excel แล้ว — ${nc(r.bunks)} บั้ง${r.units ? ` · ${nc(r.units)} แผง` : ""}`, "success"); }
+      else if (!mod.printPack(items, { title, sub: `พิมพ์เมื่อ ${new Date().toLocaleString("th-TH")} · ${nc(items.length)} บั้ง` })) mlsToast("เบราว์เซอร์บล็อกหน้าต่างพิมพ์ — อนุญาต popup แล้วลองใหม่", "warn");
+    } catch (e) { mlsToast("ส่งออกไม่สำเร็จ: " + (e?.message || e), "error"); }
+    setBusy(false);
+  };
+  return (<>
+    <Btn type="button" variant="ghost" size="sm" onClick={() => run("xlsx")} disabled={disabled || busy} data-testid={`${testid}-xlsx`} title="ส่งออกรายการที่กำลังแสดงเป็นไฟล์ Excel">⬇ Excel</Btn>
+    <Btn type="button" variant="ghost" size="sm" onClick={() => run("print")} disabled={disabled || busy} data-testid={`${testid}-print`} title="เปิดหน้าพิมพ์ — เลือก “บันทึกเป็น PDF” ได้"><Icon name="printer" size={14} /> พิมพ์ / PDF</Btn>
+  </>);
+}
 let _cpKey = 0;
 const cpKey = () => `n${++_cpKey}`;
 // ช่องแก้ไขในตาราง: พิมพ์ได้อิสระ แล้วส่งค่าตอนออกจากช่อง / กด Enter (ไม่งั้นแถวกระโดดย้ายกลุ่มทุกตัวอักษร)
@@ -4477,6 +4496,13 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
           r = await cp.readContainerPdfWith(lib, new Uint8Array(await f.arrayBuffer()));
         } else if (/\.(xlsx?|xlsm)$/i.test(f.name)) {
           const mod = await import("./excelImport.js"); r = await mod.readContainerExcel(f);
+          const ps = (r.sheets || []).filter((x) => x.kind === "plan" && x.n > 0);
+          if (ps.length > 1) {   // ไฟล์แผนส่งของ 1 ไฟล์มีหลายตึก (คนละชีต) → เลือกชีตของโปรเจคนี้ กันบั้งของตึกอื่นปนเข้ามา
+            const v = await askChoice({ title: "ไฟล์นี้มีหลายชีต", message: `${f.name}\nเลือกชีตของโปรเจคนี้ (แต่ละชีตมักเป็นคนละตึก)`, cancelText: "ข้ามไฟล์นี้",
+              choices: ps.map((x, i) => ({ value: x.name, label: `${x.name.trim()} (${nc(x.n)} บั้ง)`, primary: i === 0 })) });
+            if (!v) { out.push({ file: f.name, bad: true, text: "ข้าม (ไม่ได้เลือกชีต)" }); continue; }
+            r = { ...r, rows: r.rows.filter((x) => !x.sheet || x.sheet === v) };
+          }
         } else { out.push({ file: f.name, bad: true, text: "ไม่รองรับไฟล์ชนิดนี้ (ใช้ .pdf / .xlsx)" }); continue; }
         if (!r.rows.length) { out.push({ file: f.name, bad: true, text: "ไม่พบข้อมูลตู้ / บั้งในไฟล์ — PDF ต้องมีป้าย CNTR-… · Excel ต้องมีคอลัมน์ Bunk # + CNTR # หรือชีตชื่อ Ship#…", warn: r.warn }); continue; }
         const m = cp.mergePlanRows(cur, r.rows);
@@ -4580,6 +4606,8 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
           <Btn type="button" variant="ghost" size="sm" onClick={() => addRow(allShips[allShips.length - 1] || "", "")} disabled={busy || !projectId || state !== "ready"} data-testid="cp-add">
             <Icon name="plus" size={14} /> เพิ่มบั้งเอง
           </Btn>
+          <PackExportBtns testid="cp" disabled={busy || state !== "ready" || !rows.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} แผนลงตู้`}
+            getItems={() => shown.filter((r) => r.bunk_no).map((r) => ({ bunk_no: r.bunk_no, shipment: r.shipment, container_no: r.container_no, row_no: r.row_no, col_no: r.col_no, len_mm: r.len_mm, w_mm: r.w_mm, packed: r.bunk?.packed ?? null, manifest: [] }))} />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา เลขบั้ง / ตู้ / shipment" style={{ width: 220, marginLeft: "auto" }} data-testid="cp-search" />
         </div>
 
@@ -4661,6 +4689,182 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
           <Btn type="button" variant="accent" onClick={save} disabled={busy || !dirty || state !== "ready"} data-testid="cp-save">
             {busy ? "กำลังทำงาน..." : dirty ? `บันทึก (${nc(rows.filter((r) => r._dirty).length + deleted.length)} รายการ)` : "บันทึกแล้ว"}
           </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// จัดบั้ง (ออฟฟิศ) — ย้ายแผงข้ามบั้ง · ย้ายบั้งไปชิป / ตู้อื่น
+//   ★ 2026-11-23 ผู้ใช้: "บั้งมีการแก้บ่อยมาก อยากให้ออฟฟิศแก้ง่าย ๆ ย้ายแผงไปแพ็กนี้ ย้ายแผง / บั้ง ไปชิปอื่น"
+//   1 การ์ด = 1 บั้ง (ใบบั้งที่นำเข้าไว้) · ติ๊กแผง → เลือกบั้งปลายทาง → ย้าย (บันทึกทันที ทั้งใบบั้ง + BOM ของสองบั้ง)
+//   ชิป / ตู้ของบั้ง แก้ที่หัวการ์ด (บันทึกทันทีลงแผนลงตู้) · ตำแหน่งในบั้ง (A/B/C…) แก้ในแถว
+//   แผงที่สแกนแพ็กแล้วย้ายไม่ได้ (ต้องเอาออกที่หน้าเครื่องก่อน) — ฐานข้อมูลเป็นคนตรวจ (bunk_move_units)
+// ══════════════════════════════════════════════════════════════════════════
+function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
+  const [projectId, setProjectId] = useState(initialProjectId || (projects.length === 1 ? projects[0].id : ""));
+  const [bunks, setBunks] = useState([]);
+  const [state, setState] = useState("idle");   // idle | loading | ready | missing | error
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [ship, setShip] = useState("*");         // "*" = ทุกชิป · "" = ยังไม่ระบุชิป
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState({ pm: null, idx: new Set() });   // แผงที่ติ๊ก (ทีละบั้งต้นทาง)
+  const [dest, setDest] = useState("");
+  const keyOf = (s) => String(s == null ? "" : s).trim().toUpperCase().replace(/\s+/g, "");
+
+  const load = useCallback(async (pid, keepFilter = false) => {
+    if (!pid) { setBunks([]); setState("idle"); return; }
+    if (!keepFilter) setState("loading");
+    setErr("");
+    try {
+      const r = await bunkBoard(pid);
+      if (!r.ok) { setBunks([]); setState("missing"); return; }
+      setBunks(r.bunks); setState("ready"); setSel({ pm: null, idx: new Set() }); setDest("");
+      if (!keepFilter) { const ships = [...new Set(r.bunks.map((b) => b.plan?.shipment || ""))].sort(); setShip(r.bunks.length > 60 ? (ships.find(Boolean) ?? ships[0] ?? "*") : "*"); }
+    } catch (e) { setState("error"); setErr(isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : "โหลดบั้งไม่สำเร็จ: " + (e?.message || e)); }
+  }, []);
+  useEffect(() => { load(projectId); }, [projectId, load]);
+
+  const ships = useMemo(() => [...new Set(bunks.map((b) => b.plan?.shipment || ""))].sort((a, b) => a.localeCompare(b, "en", { numeric: true })), [bunks]);
+  const cntrs = useMemo(() => [...new Set(bunks.map((b) => b.plan?.container_no || "").filter(Boolean))].sort((a, b) => a.localeCompare(b, "en", { numeric: true })), [bunks]);
+  const qq = q.trim().toUpperCase();
+  const shown = useMemo(() => bunks.filter((b) => (ship === "*" || (b.plan?.shipment || "") === ship)
+    && (!qq || `${b.bunk_no} ${b.plan?.container_no || ""} ${(b.manifest || []).map((m) => `${m.unit_no} ${m.address_seq || ""}`).join(" ")}`.toUpperCase().includes(qq))), [bunks, ship, qq]);
+  const packedOf = (b, unitNo) => (b.packed || []).filter((x) => keyOf(x.part_no) === keyOf(unitNo)).reduce((s, x) => s + (Number(x.qty) || 0), 0);
+  const packedTotal = (b) => (b.packed || []).reduce((s, x) => s + (Number(x.qty) || 0), 0);
+
+  const toggle = (b, i) => setSel((o) => { const idx = new Set(o.pm === b.pm_id ? o.idx : []); if (idx.has(i)) idx.delete(i); else idx.add(i); if (o.pm !== b.pm_id) setDest(""); return { pm: idx.size ? b.pm_id : null, idx }; });
+
+  async function move(b) {
+    if (busy) return;
+    const t = bunks.find((x) => x.pm_id !== b.pm_id && keyOf(x.bunk_no) === keyOf(dest));
+    if (!t) { setErr(dest.trim() ? `ไม่พบบั้ง "${dest.trim()}" ในโปรเจคนี้ — เลือกจากรายการ (บั้งใหม่ต้องนำเข้าฟอร์มบั้งก่อน)` : "เลือกบั้งปลายทางก่อน"); return; }
+    const moves = [...sel.idx].sort((x, y) => x - y).map((i) => ({ idx: i, unit_no: String(b.manifest[i]?.unit_no || "") }));
+    const names = moves.map((m) => m.unit_no).join(", ");
+    const diffShip = (b.plan?.shipment || "") !== (t.plan?.shipment || "");
+    if (!(await askConfirm({ message: `ย้าย ${nc(moves.length)} แผง (${names})\nจากบั้ง ${b.bunk_no} → บั้ง ${t.bunk_no}${diffShip ? `\n\nคนละชิป: ${b.plan?.shipment || "(ไม่ระบุ)"} → ${t.plan?.shipment || "(ไม่ระบุ)"}` : ""}`, confirmText: "ย้าย", cancelText: "ยกเลิก" }))) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await bunkMoveUnits(projectId, b.pm_id, t.pm_id, moves);
+      if (!r || r.ok === false) {
+        const why = { packed: `แผง ${r?.unit || ""} สแกนแพ็กเข้าบั้ง ${b.bunk_no} ไปแล้ว ${nc(r?.packed || 0)} ชิ้น — เอาออกที่หน้าเครื่องก่อน แล้วค่อยย้าย`, stale: "ใบบั้งถูกแก้ไปก่อนหน้านี้ — โหลดใหม่ให้แล้ว ลองเลือกอีกครั้ง",
+          unit_not_found: `ไม่มีเบอร์ ${r?.unit || ""} ในโปรเจคนี้`, not_bunk: "ปลายทางไม่ใช่บั้ง", not_found: "ไม่พบบั้ง (อาจถูกลบไปแล้ว)", not_installed: "ยังไม่ได้รัน migration-bunk-edit-2026-11-23.sql" }[r?.reason] || (r?.reason || "error");
+        setErr("ย้ายไม่สำเร็จ — " + why + " (ไม่มีอะไรเปลี่ยน)"); if (r?.reason === "stale") await load(projectId, true); setBusy(false); return;
+      }
+      mlsToast(`ย้าย ${nc(r.moved)} แผง ไปบั้ง ${t.bunk_no} แล้ว — ${b.bunk_no} เหลือ ${nc(r.from_left)} · ${t.bunk_no} มี ${nc(r.to_total)}`, "success");
+      await load(projectId, true);
+    } catch (e) { setErr("ย้ายไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
+    setBusy(false);
+  }
+  // ชิป / ตู้ ของบั้ง → บันทึกลงแผนลงตู้ทันที
+  async function setPlan(b, patch) {
+    if (busy) return;
+    const cur = b.plan || {}; const next = { shipment: cur.shipment || "", container_no: cur.container_no || "", ...patch };
+    // ย้ายไปตู้ที่มีอยู่แล้ว = ใช้ชิปของตู้นั้น
+    if (patch.container_no) { const o = bunks.find((x) => x.pm_id !== b.pm_id && (x.plan?.container_no || "") === patch.container_no); if (o && !("shipment" in patch)) next.shipment = o.plan?.shipment || ""; }
+    setBusy(true); setErr("");
+    try {
+      const sameC = (cur.container_no || "") === next.container_no;   // ย้ายตู้ = ตำแหน่งแถว / ช่องเดิมใช้ไม่ได้แล้ว · ขนาดบั้งยังเดิม
+      const r = await saveContainerPlan(projectId, [{ ...(cur.id ? { id: cur.id } : {}), bunk_no: b.bunk_no, shipment: next.shipment, container_no: next.container_no,
+        row_no: sameC ? (cur.row_no ?? "") : "", col_no: sameC ? (cur.col_no ?? "") : "", len_mm: cur.len_mm ?? "", w_mm: cur.w_mm ?? "", note: cur.note || "" }], []);
+      if (!r || r.ok === false) setErr("บันทึกชิป / ตู้ไม่สำเร็จ — " + (r?.reason === "not_installed" ? "ยังไม่ได้รัน migration-container-plan-2026-11-23.sql" : (r?.reason || "error")));
+      else { mlsToast(`บั้ง ${b.bunk_no} → ${next.shipment || "(ไม่ระบุชิป)"} · ${next.container_no || "(ไม่ระบุตู้)"}`, "success"); await load(projectId, true); }
+    } catch (e) { setErr("บันทึกชิป / ตู้ไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
+    setBusy(false);
+  }
+  async function setPos(b, i, v) {
+    if (busy) return;
+    const man = (b.manifest || []).map((m, j) => (j === i ? { ...m, position: v.toUpperCase() } : m));
+    setBusy(true); setErr("");
+    try { const r = await setPkgManifest(b.pm_id, man, null); if (r && r.ok === false) setErr("บันทึกตำแหน่งไม่สำเร็จ — " + (r.reason || "error")); else await load(projectId, true); }
+    catch (e) { setErr("บันทึกตำแหน่งไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
+    setBusy(false);
+  }
+  const normC = (v) => { const t = String(v || "").trim().toUpperCase(); const m = /^CNTR\s*[-#]?\s*0*(\d+)$/.exec(t); return m ? `CNTR-${m[1].padStart(3, "0")}` : t.replace(/\s+/g, " "); };
+  const normS = (v) => { let t = String(v || "").trim().toUpperCase().replace(/^SHIP(MENT)?\s*/, "").replace(/^#\s*/, "").replace(/\s+/g, ""); return t ? `#${t}` : ""; };
+  const th = { textAlign: "left", fontSize: 11.5, fontWeight: 700, color: "var(--muted)", padding: "3px 6px", whiteSpace: "nowrap" };
+  const td = { padding: "3px 6px", verticalAlign: "middle", fontSize: 12.5 };
+
+  return (
+    <Modal title="จัดบั้ง — ย้ายแผง / ย้ายชิป" wide
+      sub="ติ๊กแผงแล้วเลือกบั้งปลายทางเพื่อย้าย · แก้ชิป / ตู้ของบั้งที่หัวการ์ด · ทุกการแก้บันทึกทันที"
+      onClose={() => { if (!busy) onClose(); }} closeOnBackdrop={false} locked={busy}>
+      <div data-testid="bb-modal">
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ minWidth: 260, flex: "0 1 320px" }}>
+            <Field label="โปรเจค *">
+              <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} data-testid="bb-project" disabled={busy}
+                options={projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))} />
+            </Field>
+          </div>
+          <div style={{ minWidth: 170 }}>
+            <Field label="ชิป (Shipment)">
+              <select className="select" value={ship} onChange={(e) => setShip(e.target.value)} data-testid="bb-ship">
+                <option value="*">ทุกชิป ({nc(bunks.length)} บั้ง)</option>
+                {ships.map((s) => <option key={s || "-"} value={s}>{s || "ยังไม่ระบุชิป"} ({nc(bunks.filter((b) => (b.plan?.shipment || "") === s).length)})</option>)}
+              </select>
+            </Field>
+          </div>
+          <PackExportBtns testid="bb" disabled={busy || state !== "ready" || !bunks.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} แผนแพ็ก${ship !== "*" ? ` ${ship || "(ไม่ระบุชิป)"}` : ""}`}
+            getItems={() => shown.map((b) => ({ bunk_no: b.bunk_no, shipment: b.plan?.shipment || "", container_no: b.plan?.container_no || "", row_no: b.plan?.row_no, col_no: b.plan?.col_no, len_mm: b.plan?.len_mm, w_mm: b.plan?.w_mm, packed: packedTotal(b), manifest: b.manifest || [] }))} />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา เลขบั้ง / เบอร์แผง / ที่อยู่ / ตู้" style={{ width: 240, marginLeft: "auto" }} data-testid="bb-search" />
+        </div>
+        {state === "missing" ? <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 10 }}>ยังใช้ไม่ได้ — ฐานข้อมูลยังไม่ได้รัน migration-bunk-edit-2026-11-23.sql</div> : null}
+        {err ? <div style={{ color: "var(--danger-hi)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }} data-testid="bb-err">{err}</div> : null}
+        {state === "loading" ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 18 }}>กำลังโหลด…</div> : null}
+        {state === "idle" ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "18px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>เลือกโปรเจคก่อน</div> : null}
+        {state === "ready" && !bunks.length ? <div style={{ fontSize: 13, color: "var(--muted)", padding: "18px 12px", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>โปรเจคนี้ยังไม่มีบั้ง — นำเข้าฟอร์มบั้ง (แพ็ก) ก่อน</div> : null}
+        {state === "ready" && bunks.length ? <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }} data-testid="bb-summary">แสดง <b>{nc(shown.length)}</b> จาก {nc(bunks.length)} บั้ง · รวม {nc(shown.reduce((s, b) => s + (b.manifest || []).length, 0))} แผง</div> : null}
+
+        <datalist id="bb-bunk-list">{bunks.map((b) => <option key={b.pm_id} value={b.bunk_no}>{`${b.plan?.shipment || "ไม่ระบุชิป"} · ${b.plan?.container_no || "ไม่ระบุตู้"} · ${(b.manifest || []).length} แผง`}</option>)}</datalist>
+        <datalist id="bb-cntr-list">{cntrs.map((c) => <option key={c} value={c} />)}</datalist>
+        <datalist id="bb-ship-list">{ships.filter(Boolean).map((c) => <option key={c} value={c} />)}</datalist>
+        <div style={{ maxHeight: "58vh", overflow: "auto", paddingRight: 4, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(480px, 1fr))", gap: 10, alignItems: "start" }}>
+          {state === "ready" && shown.slice(0, 120).map((b) => {
+            const mine = sel.pm === b.pm_id; const pk = packedTotal(b); const n = (b.manifest || []).length;
+            return (
+              <div key={b.pm_id} data-testid="bb-card" data-bunk={b.bunk_no} style={{ border: `1px solid ${mine ? "var(--accent, #10b981)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden", background: "var(--surface, #fff)" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 10px", background: "var(--surface-2, #f6f8f7)", flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 14.5 }}>{b.bunk_no}</span>
+                  <span style={{ fontSize: 11.5, padding: "2px 7px", borderRadius: 10, whiteSpace: "nowrap", color: n && pk >= n ? "#146c3a" : pk ? "#b45309" : "var(--muted)", background: n && pk >= n ? "rgba(16,185,129,.14)" : pk ? "rgba(217,164,65,.14)" : "var(--surface, #fff)" }}>แพ็กแล้ว {nc(pk)}/{nc(n)}</span>
+                  <span style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
+                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ชิป</span>
+                    <CpCell value={b.plan?.shipment || ""} width={84} list="bb-ship-list" placeholder="—" testid="bb-set-ship" title="ย้ายบั้งนี้ไปชิปอื่น" onCommit={(v) => setPlan(b, { shipment: normS(v) })} />
+                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ตู้</span>
+                    <CpCell value={b.plan?.container_no || ""} width={96} list="bb-cntr-list" placeholder="—" testid="bb-set-cntr" title="ย้ายบั้งนี้ไปตู้อื่น" onCommit={(v) => setPlan(b, { container_no: normC(v) })} />
+                  </span>
+                </div>
+                {n ? (
+                  <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                    <thead><tr><th style={{ ...th, width: 28 }}></th><th style={th}>ตำแหน่ง</th><th style={th}>แผง</th><th style={th}>ที่อยู่</th><th style={th}>ขนาด (มม.)</th><th style={th}></th></tr></thead>
+                    <tbody>
+                      {b.manifest.map((m, i) => { const on = mine && sel.idx.has(i); const p = packedOf(b, m.unit_no); return (
+                        <tr key={i} data-testid="bb-row" data-unit={m.unit_no} style={{ background: on ? "rgba(16,185,129,.10)" : undefined, cursor: "pointer" }} onClick={() => toggle(b, i)}>
+                          <td style={td}><input type="checkbox" checked={on} readOnly data-testid="bb-check" /></td>
+                          <td style={td} onClick={(e) => e.stopPropagation()}><CpCell value={m.position || ""} width={40} placeholder="—" title="ตำแหน่งในบั้ง" onCommit={(v) => setPos(b, i, v)} /></td>
+                          <td style={{ ...td, fontFamily: "var(--font-mono)", fontWeight: 700 }}>{m.unit_no}</td>
+                          <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{m.address_seq || "—"}</td>
+                          <td style={{ ...td, fontFamily: "var(--font-mono)", color: "var(--muted)" }}>{m.width != null && m.height != null ? `${Math.round(Number(m.width))} × ${Math.round(Number(m.height))}` : "—"}</td>
+                          <td style={td}>{p ? <span title="เบอร์นี้สแกนแพ็กเข้าบั้งแล้ว — ย้ายได้เฉพาะส่วนที่ยังไม่สแกน" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 9, color: "#146c3a", background: "rgba(16,185,129,.14)", whiteSpace: "nowrap" }}>สแกนแล้ว {nc(p)}</span> : null}</td>
+                        </tr>); })}
+                    </tbody>
+                  </table>) : <div style={{ fontSize: 12.5, color: "var(--muted)", padding: "10px 12px" }}>บั้งว่าง — ย้ายแผงจากบั้งอื่นมาใส่ได้</div>}
+                {mine ? (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 10px", borderTop: "1px solid var(--border)", background: "rgba(16,185,129,.08)", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700 }}>ย้าย {nc(sel.idx.size)} แผง ไปบั้ง</span>
+                    <input className="input" list="bb-bunk-list" value={dest} onChange={(e) => setDest(e.target.value)} placeholder="พิมพ์ / เลือกเลขบั้งปลายทาง" data-testid="bb-dest"
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); move(b); } }} style={{ width: 220, height: 30, padding: "4px 8px", fontFamily: "var(--font-mono)", fontSize: 13 }} />
+                    <Btn type="button" variant="accent" size="sm" onClick={() => move(b)} disabled={busy} data-testid="bb-move">{busy ? "กำลังย้าย..." : "ย้าย"}</Btn>
+                    <button type="button" className="rw-link" onClick={() => { setSel({ pm: null, idx: new Set() }); setDest(""); }}>ยกเลิกที่เลือก</button>
+                  </div>) : null}
+              </div>);
+          })}
+        </div>
+        {state === "ready" && shown.length > 120 ? <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>แสดง 120 บั้งแรก — เลือกชิป หรือพิมพ์ค้นหาเพื่อดูบั้งอื่น</div> : null}
+        <div className="modal-actions" style={{ marginTop: 14 }}>
+          <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>ปิด</Btn>
         </div>
       </div>
     </Modal>
@@ -7855,6 +8059,7 @@ function releaseCreateItems(pick, disabled = false) {
     { key: "wizard", variant: "accent", primary: true, icon: <Icon name="plus" size={15} />, label: "ปล่อยงานใหม่", onClick: () => pick("wizard"), disabled },
     { key: "bunk", variant: "ghost", icon: <Icon name="weight" size={15} />, label: "นำเข้าฟอร์มบั้ง (แพ็ก)", onClick: () => pick("bunk"), disabled },
     { key: "cntr", variant: "ghost", icon: <Icon name="box" size={15} />, label: "แผนลงตู้ (Container)", onClick: () => pick("cntr"), disabled },   // ★ 2026-11-23
+    { key: "board", variant: "ghost", icon: <Icon name="grid" size={15} />, label: "จัดบั้ง (ย้ายแผง / ชิป)", onClick: () => pick("board"), disabled },   // ★ 2026-11-23
   ];
 }
 // ── แผน Release (บันทึกจากหน้าปล่อยงานใหม่) → office เลือกปล่อยเป็นล็อต ──
@@ -8213,6 +8418,7 @@ function ReleaseCreateModals({ open, onClose, user, projects, parts, initialProj
       />
     );
   }
+  if (open === "board") return <BunkBoardModal projects={projects} initialProjectId={initialProjectId} onClose={onClose} />;
   if (open === "cntr") return <ContainerPlanModal projects={projects} initialProjectId={initialProjectId} onClose={onClose} />;
   if (open === "bunk") {
     return (

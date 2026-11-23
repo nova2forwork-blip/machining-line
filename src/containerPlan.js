@@ -94,6 +94,9 @@ export async function readContainerPdfWith(pdfjsLib, data) {
 // ── Excel ── sheets = [{ name, rows: [[เซลล์…]…] }] → { rows, warn, sheets: [{ name, n, how }] }
 //   (ก) ชีตที่มีหัวตาราง "Bunk #" + "CNTR #" (+ "Shipment #")  → บั้ง → ตู้ + shipment
 //   (ข) ชีตชื่อ "… Ship#BBxx" ที่มีหัว "BUNK NO."               → บั้ง → shipment (ไม่มีเลขตู้ — กรอกเองหรือนำเข้า PDF ทับ)
+//   (ค) ชีตแผนส่งของ "Shipment Loading" (หัวตาราง "Shipment" + "Pallet No.")  → 1 ช่องมีหลายบั้งคั่นด้วย , · ตู้จากช่อง "Con No.13"
+//        shipment ว่าง = ใช้ของแถวบน · แถว TOTAL ข้าม · ข้อความในวงเล็บตัดทิ้ง · แถวที่ไม่มี Con No. = ยังไม่ระบุตู้ (ไม่เดา)
+//        ไฟล์นี้มีหลายตึกคนละชีต → แถวติดชื่อชีต (sheet) + sheets[].kind = "plan" ให้หน้าจอถามว่าจะเอาชีตไหน
 //   ชีตชื่อมี OLD ข้าม · บั้งเดียวกันเจอทั้ง (ก) และ (ข) = ใช้ (ก)
 export function parseContainerSheets(sheets) {
   const rows = []; const warn = []; const info = []; const at = new Map();
@@ -112,6 +115,28 @@ export function parseContainerSheets(sheets) {
     const name = String(sh.name || ""); const data = sh.rows || [];
     if (/\bOLD\b/i.test(name)) { info.push({ name, n: 0, how: "ข้าม (ชีต OLD)" }); continue; }
     const cell = (r, j) => String((r || [])[j] == null ? "" : r[j]).trim();
+    // (ค) แผนส่งของ: หัวตารางมี "Shipment" และ "Pallet No."
+    {
+      let ph = -1, cS2 = -1, cP = -1;
+      for (let i = 0; i < Math.min(data.length, 15) && ph < 0; i++) {
+        const r = data[i] || []; let a = -1, b = -1;
+        for (let j = 0; j < r.length; j++) { const v = up(r[j]); if (a < 0 && /^SHIPMENT$/.test(v)) a = j; if (b < 0 && /^PALLET\s*NO\.?$/.test(v)) b = j; }
+        if (a >= 0 && b >= 0) { ph = i; cS2 = a; cP = b; }
+      }
+      if (ph >= 0) {
+        let n = 0, ship = "";
+        for (let i = ph + 1; i < data.length; i++) {
+          const r = data[i] || []; const sv = cell(r, cS2); if (sv) ship = normShipment(sv);
+          const pv = cell(r, cP).replace(/\([^)]*\)/g, " "); if (!pv.trim() || /^TOTAL$/i.test(pv.trim())) continue;
+          let c = ""; for (let j = 0; j < r.length && !c; j++) { const m2 = /^CON(?:TAINER)?\.?\s*NO\.?\s*0*(\d+)$/i.exec(cell(r, j)); if (m2) c = normContainer("CNTR-" + m2[1]); }
+          for (const tok of pv.split(/[,;\n]+/)) {
+            const b = up(tok).replace(/\s+/g, " "); if (!b || b.length > 60 || !/[A-Z]/.test(b) || !/\d/.test(b)) continue;
+            if (put({ shipment: ship, container_no: c, bunk_no: b, row_no: null, col_no: null, len_mm: null, w_mm: null, sheet: name }, !!c)) n++;
+          }
+        }
+        info.push({ name, n, how: "แผนส่งของ (Shipment / Pallet No.)", kind: "plan" }); continue;
+      }
+    }
     // (ก) หาแถวหัวตาราง
     let hi = -1, cB = -1, cC = -1, cS = -1;
     for (let i = 0; i < Math.min(data.length, 40) && hi < 0; i++) {

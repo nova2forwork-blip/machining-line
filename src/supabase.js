@@ -1924,6 +1924,18 @@ export async function saveContainerPlan(projectId, rows, deleteIds = []) {
   return data || { ok: false, reason: "error" };
 }
 
+// ── จัดบั้ง (ออฟฟิศ): บั้งทั้งหมดของโปรเจค + ย้ายแผงข้ามบั้ง — ต้องรัน migration-bunk-edit-2026-11-23.sql ──
+export async function bunkBoard(projectId) {
+  const { data, error } = await supabase.rpc("bunk_board", { p_token: authToken(), p_project_id: projectId });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed", bunks: [] }; flagAuth(error); throw error; }
+  return { ok: true, bunks: Array.isArray(data) ? data : [] };
+}
+export async function bunkMoveUnits(projectId, fromPmId, toPmId, moves) {
+  const { data, error } = await supabase.rpc("bunk_move_units", { p_token: authToken(), p_project_id: projectId, p_from: fromPmId, p_to: toPmId, p_moves: moves || [] });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed" }; flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── รูปตอนแพ็ก (packing photos) — อัปขึ้น Storage แล้วผูก path กับเบอร์แพ็ก ──────
 // อัปโหลด 1 รูป (blob) → คืน path ในบัคเก็ต 'packing-photos'
 // ★ รอบ 12 (C4): ขอ "ตั๋ว" ก่อนอัป (ต้องล็อกอิน) → อัปไปที่ <ตั๋ว>/ชื่อไฟล์ · ไฟล์ lockdown บังคับให้ต้องมีตั๋ว
