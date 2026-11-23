@@ -857,3 +857,12 @@ def test_db_shipment_dates_need_office_and_are_per_project(db, actors, project, 
         db.execute("delete from projects where id=%s", (other,))
     assert one(db, "select count(*) from container_shipment where project_id=%s", (other,)) == 0   # ลบโปรเจค = วันที่หายตาม
     assert one(db, "select has_table_privilege('anon', 'public.container_shipment', 'select')") is False
+
+
+@R
+def test_excel_plan_sheet_abbreviated_bunks(js):
+    """TC-CNTR-170 แผนส่งของเขียนย่อในช่องเดียว "BP-L10-C01, C02, W-05, BP-L11-W01, W02" → ตัวย่อใช้คำนำหน้าของเลขเต็มตัวล่าสุด · ของที่ไม่ใช่รูปแบบบั้งคงเดิม"""
+    sh = {"name": "Shipment Tower A", "rows": [["No.", "Shipment", "LOADING", "Description", "Pallet No."],
+          [1, "#20", "", "CW L10", "BP-L10-C01, C02, C03, W-05, C09A"], ["", "", "", "WW", "BP-L10-W13, BP-L11-W01, W02"], ["", "", "", "CAGE", "C05, CAGE-01 #01"]]}
+    got = [x["bunk_no"] for x in cp(js, "parseContainerSheets", [sh])["rows"]]
+    assert got == ["BP-L10-C01", "BP-L10-C02", "BP-L10-C03", "BP-L10-W05", "BP-L10-C09A", "BP-L10-W13", "BP-L11-W01", "BP-L11-W02", "C05", "CAGE-01 #01"]

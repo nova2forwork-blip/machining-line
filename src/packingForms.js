@@ -44,6 +44,7 @@ export function parseBoxRows(rows, src = "") {
   for (let b = 0; b < starts.length; b++) {
     const seg = rows.slice(starts[b], b + 1 < starts.length ? starts[b + 1] : rows.length);
     const firstVal = (r) => { for (let j = 1; j < (r || []).length; j++) { const v = txt(r[j]); if (v && !/:$/.test(v) && !isBoxHead(v)) return v; } return ""; };
+    const noCol = (() => { for (let j = 1; j < (seg[0] || []).length; j++) { const v = txt(seg[0][j]); if (v && !/:$/.test(v) && !isBoxHead(v)) return j; } return -1; })();   // คอลัมน์ของเลขกล่อง
     const box = { box_no: up(firstVal(seg[0])), kind: /^BUNK/.test(up(seg[0][0])) ? "panel" : "loose", title: "", location: "", level: "", ship: "", items: [], src };
     // ฟอร์ม Mock-up: เลขอยู่แถวถัดไป (แถวนั้นช่องแรกว่าง) — แถวถัดไปที่เป็นหัวข้ออื่น / หัวตาราง ไม่ใช่เลขกล่อง
     if (!box.box_no && seg[1] && !txt(seg[1][0])) box.box_no = up(firstVal(seg[1]));
@@ -52,7 +53,8 @@ export function parseBoxRows(rows, src = "") {
       const r = seg[i] || []; const k = up(r[0]).replace(/[.:\s]+$/, "");
       if (/^(LOCATION|ELEVATION)$/.test(k)) box.location = firstVal(r);
       else if (/^LEVEL$/.test(k)) box.level = firstVal(r);
-      else if (/^PROJECT( NO)?$/.test(k)) { const vals = r.slice(1).map(txt).filter(Boolean); if (vals.length > 1) box.title = vals[0]; if (vals.length) box.project = vals[vals.length - 1]; }
+      else if (/^PROJECT( NO)?$/.test(k)) { const vals = r.slice(1).map(txt).filter(Boolean); if (vals.length > 1) box.title = vals[0];
+        const same = noCol > 0 ? txt(r[noCol]) : ""; box.project = same || (vals.length > 1 ? vals[1] : vals[0] || ""); }
       else if (/^NO$/.test(k)) hi = i;
     }
     if (!box.box_no) continue;
@@ -106,12 +108,13 @@ export function parseBoxPdfPage(items, src = "") {
   const its = (items || []).map((i) => ({ s: txt(i.s), x: Number(i.x) || 0, y: Number(i.y) || 0 })).filter((i) => i.s).sort((a, b) => a.y - b.y || a.x - b.x);
   const lines = []; for (const it of its) { const l = lines[lines.length - 1]; if (l && Math.abs(it.y - l.y) <= 4.5) { l.c.push(it); } else lines.push({ y: it.y, c: [it] }); }
   lines.forEach((l) => l.c.sort((a, b) => a.x - b.x));
-  const out = []; let box = null, cols = null, done = false, headY = 0;
+  const out = []; let box = null, cols = null, done = false, headY = 0, noX = 0;
   for (let li = 0; li < lines.length; li++) {
     const l = lines[li]; const first = l.c[0];
     if (isBoxHead(first.s)) {
       const rest = first.s.replace(/^(?:BOX|BUNK)\s*(?:NO|ID)[.:\s]*/i, "");
       box = { box_no: up(rest || (l.c[1] || {}).s), kind: /^BUNK/i.test(first.s) ? "panel" : "loose", title: "", location: "", level: "", ship: "", items: [], src };
+      noX = rest ? first.x : (l.c[1] || first).x;
       cols = null; done = false; if (box.box_no) out.push(box); else box = null; continue;
     }
     if (!box || done) continue;
@@ -119,7 +122,7 @@ export function parseBoxPdfPage(items, src = "") {
     if (!cols) {
       if (/^(LOCATION|ELEVATION)$/.test(k)) { box.location = l.c.slice(1).map((c) => c.s).join(" "); continue; }
       if (/^LEVEL$/.test(k)) { box.level = (l.c[1] || {}).s || ""; continue; }
-      if (/^PROJECT( NO)?$/.test(k)) { if (l.c.length > 2) box.title = l.c[1].s; if (l.c.length > 1) box.project = l.c[l.c.length - 1].s; continue; }
+      if (/^PROJECT( NO)?$/.test(k)) { if (l.c.length > 2) box.title = l.c[1].s; if (l.c.length > 1) box.project = l.c.slice(1).sort((a, b) => Math.abs(a.x - noX) - Math.abs(b.x - noX))[0].s; continue; }
       if (k === "NO" && l.c.some((c) => /^DESCRIPTION$/i.test(c.s))) {
         // หัวตาราง: บรรทัดนี้ + หัวที่อยู่บรรทัดบน / ล่างภายใน 14 pt (เช่น "Length" บน "(mm)")
         const hs = lines.filter((x) => Math.abs(x.y - l.y) <= 14 && !isBoxHead(x.c[0].s) && !/^\d+$/.test(x.c[0].s)).flatMap((x) => x.c.map((c) => ({ ...c, y: x.y })));

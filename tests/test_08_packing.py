@@ -551,6 +551,10 @@ PROJ = [{"id": "p1", "code": "Z90001-US", "name": "Zephyrwood Plaza"}, {"id": "p
 def test_box_form_keeps_project_name(js):
     """TC-PACK-100 ใบแพ็ก: เก็บชื่อโปรเจคจากแถว PROJECT NO. (ค่าท้ายสุดของแถว) ทั้ง Excel และ PDF"""
     assert pf(js, "parseBoxRows", ANCHOR, "s")[0]["project"] == "Sample Building B"
+    # ใบจริงมีหัวตารางข้าง ๆ ("Estimate Weight") อยู่ท้ายแถว PROJECT NO. — ต้องไม่ถูกอ่านเป็นชื่อโปรเจค (เจอจากการลองไฟล์จริง 23/11/2026)
+    rows = [list(r) for r in ANCHOR]; rows[3] = rows[3] + ["", "", "", "", "", "Estimate Weight"]
+    assert pf(js, "parseBoxRows", rows, "s")[0]["project"] == "Sample Building B"
+    assert pf(js, "parseBoxRows", [["BOX NO.", "", "", "", "BX-1"], ["PROJECT NO.", "", "", "", "Sample"]], "s")[0]["project"] == "Sample"
     assert pf(js, "parseBoxPdfPage", PDF_PAGE, "x")[0]["project"] == "Sample Tower B"
 
 

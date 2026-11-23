@@ -154,8 +154,13 @@ export function parseContainerSheets(sheets) {
           if (sv && ship && cL >= 0) { const d = parseLoadDate(r[cL]); if (d && !dates[ship]) { dates[ship] = d; dateSheet[ship] = name; } }   // วันที่อยู่แถวเดียวกับเลขชิป
           const pv = cell(r, cP).replace(/\([^)]*\)/g, " "); if (!pv.trim() || /^TOTAL$/i.test(pv.trim())) continue;
           let c = ""; for (let j = 0; j < r.length && !c; j++) { const m2 = /^CON(?:TAINER)?\.?\s*NO\.?\s*0*(\d+)$/i.exec(cell(r, j)); if (m2) c = normContainer("CNTR-" + m2[1]); }
+          // ช่องเดียวเขียนย่อได้: "BP-L10-C01, C02, C03, W-05" → ตัวย่อ (C02 / W-05) ใช้คำนำหน้าของเลขเต็มตัวล่าสุดในช่องเดียวกัน (BP-L10-)
+          let pre = "";
           for (const tok of pv.split(/[,;\n]+/)) {
-            const b = up(tok).replace(/\s+/g, " "); if (!b || b.length > 60 || !/[A-Z]/.test(b) || !/\d/.test(b)) continue;
+            let b = up(tok).replace(/\s+/g, " ").replace(/\s*-\s*/g, "-"); if (!b || b.length > 60 || !/[A-Z]/.test(b) || !/\d/.test(b)) continue;   // "BP-L23- W06" = "BP-L23-W06"
+            const full = /^([A-Z][A-Z0-9]*-[A-Z0-9]+-)[A-Z0-9#]+/.exec(b);
+            if (full) pre = full[1];
+            else if (pre && /^[A-Z]{1,3}-?\d+[A-Z]?$/.test(b)) b = pre + b.replace("-", "");
             if (put({ shipment: ship, container_no: c, bunk_no: b, row_no: null, col_no: null, len_mm: null, w_mm: null, sheet: name }, !!c)) n++;
           }
         }
