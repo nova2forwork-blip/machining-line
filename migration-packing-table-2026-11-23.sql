@@ -122,7 +122,7 @@ begin
                          and upper(regexp_replace(b.box_no, '\s+', '', 'g')) = upper(regexp_replace(pk.no, '\s+', '', 'g')))
   )
   select coalesce(jsonb_agg(jsonb_build_object(
-           'id', bx.id, 'box_no', bx.box_no, 'kind', bx.kind, 'title', bx.title, 'location', bx.location, 'level', bx.level, 'items', bx.items,
+           'id', bx.id, 'at', bx.updated_at, 'box_no', bx.box_no, 'kind', bx.kind, 'title', bx.title, 'location', bx.location, 'level', bx.level, 'items', bx.items,
            'has_bunk', bx.pm_id is not null, 'packed', coalesce(bx.packed, 0),
            'ship', coalesce(c.shipment, ''), 'cntr', coalesce(c.container_no, '')) order by bx.box_no), '[]'::jsonb)
     into v_boxes
@@ -138,13 +138,14 @@ end $function$;
 -- บันทึกตารางแพ็กกิ้ง
 --   p_boxes  = [{ id?, box_no, kind, title, location, level, ship, cntr, items: [{ item, desc, pos, addr, len, w, h, unit, qty, wt }] }]  (เฉพาะกล่องที่เปลี่ยน)
 --   p_delete = [id…]   ·   p_mode = 'normal' | 'modify'   ·   modify ต้องมีเหตุผล และเก็บ p_changes ([{ type, box, text }]) เป็นบันทึก M ถัดไป
+--   กล่องที่มี id ส่ง "at" (updated_at ตอนโหลด) มาด้วยได้ — ถ้ามีคนแก้กล่องนั้นไปก่อน = conflict
 --   ผิดจุดเดียว = ไม่บันทึกอะไรเลย → { ok:false, reason, box, unit }
 create or replace function public.packing_save(p_token uuid, p_project_id uuid, p_boxes jsonb, p_delete jsonb, p_mode text, p_reason text, p_changes jsonb)
 returns jsonb
 language plpgsql security definer set search_path to 'public' as $function$
 declare
   v_emp uuid; b jsonb; i jsonb; v_no text; v_id uuid; v_kind text; v_pm uuid; v_err text; v_n int := 0; v_del int := 0; v_mod int; v_f text;
-  v_ship text; v_cntr text;
+  v_ship text; v_cntr text; v_at timestamptz;
 begin
   perform public._require(p_token, 'office');
   select s.employee_id into v_emp from public.sessions s where s.token = p_token limit 1;
@@ -177,6 +178,10 @@ begin
     v_id := nullif(b->>'id', '')::uuid;
     begin
       if v_id is not null then
+        -- ★ สองคนเปิดตารางพร้อมกัน: กล่องนี้ถูกแก้หลังจากที่ผู้ส่งโหลดมา ("at" ไม่ตรง) → ไม่บันทึกทับ (ล็อกแถวก่อนเทียบ)
+        select x.updated_at into v_at from public.packing_box x where x.id = v_id and x.project_id = p_project_id for update;
+        if not found then raise exception 'pk_not_found:%', v_no; end if;
+        if coalesce(b->>'at', '') <> '' and v_at is distinct from (b->>'at')::timestamptz then raise exception 'pk_conflict:%', v_no; end if;
         update public.packing_box x set box_no = v_no, kind = v_kind, title = btrim(coalesce(b->>'title', '')), location = btrim(coalesce(b->>'location', '')),
                level = btrim(coalesce(b->>'level', '')), items = coalesce(b->'items', '[]'::jsonb), updated_by = v_emp, updated_at = now()
          where x.id = v_id and x.project_id = p_project_id;

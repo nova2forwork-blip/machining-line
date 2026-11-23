@@ -2920,3 +2920,37 @@ registerI18n({
     "เลือก Projects หรือ Release ก่อน (หรือพิมพ์เบอร์ / เลขล็อตในช่องค้นหา) แล้วกด “ค้นหา QR”": "Pick a Project or Release first (or type a code / lot no. in the search box), then press “Find QR”",
   },
 });
+
+// ★ หน้าแพ็กกิ้ง (ตารางแพ็กกิ้ง) 23/11/2026 — ข้อความที่ยังเป็นไทยตอนสลับเป็นอังกฤษ (เจอจากการทดสอบละเอียด)
+registerI18n({
+  dict: {
+    "ชิป": "Shipment", "ตู้": "Container", "กล่อง": "boxes", "ชนิด": "Type", "วันที่": "Date", "ตำแหน่ง": "Position", "ที่อยู่": "Address",
+    "ยังไม่ระบุชิป": "No shipment yet", "(ยังไม่ระบุชิป)": "(no shipment yet)", "ยังไม่ระบุตู้": "No container yet", "ทั้งหมด": "All",
+    "กล่อง Ship loose": "Ship-loose box", "ย่อทั้งหมด": "Collapse all", "กางทั้งหมด": "Expand all", "ใหม่": "New", "แก้แล้ว": "Edited",
+    "วางใบแพ็ก / แผนส่งของ / แบบลงตู้ — PDF หรือ Excel": "Drop packing lists / shipment plan / container drawing — PDF or Excel",
+    "กำลังอ่านไฟล์…": "Reading files…", "หลายไฟล์พร้อมกันได้": "several files at once", "· ยังไม่ต้องเลือกโปรเจค": "· no project needed yet",
+    "ระบบอ่านเลขกล่อง / บั้ง · รายการข้างใน + จำนวน · ชิป · ตู้ · วันที่ → ได้ตารางแพ็กกิ้งให้ตรวจและแก้ แล้วค่อยกดบันทึก": "Reads box / bunk numbers · contents + quantities · shipment · container · date → gives you the packing table to check and edit, then save",
+    "· โปรเจคระบบจะหาจากชื่อในใบแพ็กให้": "· the project is found from the name in the packing list",
+    "ยังไม่ได้เลือกโปรเจค — ตรวจ / แก้ตารางได้เลย แล้วเลือกโปรเจคที่ช่องด้านบนก่อนบันทึก (ข้อมูลที่มีอยู่ของโปรเจคนั้นจะถูกรวมเข้ามา)": "No project chosen yet — check / edit the table now, then choose the project above before saving (that project's existing data will be merged in)",
+    "ยังไม่มีข้อมูลแพ็กกิ้งของโปรเจคนี้ — วางไฟล์ใบแพ็กด้านบน หรือกด “เพิ่มกล่อง”": "No packing data for this project yet — drop packing-list files above or press “Add box”",
+    "ย้ายทั้งตู้ไปชิป →": "Move whole container to shipment →", "ยังไม่บันทึก:": "Not saved:", "ดูสิ่งที่เปลี่ยน": "Show changes", "ซ่อน": "Hide",
+    "ยังไม่มีการบันทึกแบบ Modify": "No Modify saves yet", "กำลังบันทึก...": "Saving...", "บั้งแผงยังไม่มี QR หน้าเครื่อง": "Panel bunks without a station QR",
+    "เบอร์ *": "Code *", "รายละเอียด": "Details", "จำนวน *": "Qty *", "หน่วย": "Unit", "น้ำหนัก": "Weight", "สูง (มม.)": "Height (mm)",
+    "เลขกล่อง *": "Box no. *", "เลขกล่อง": "Box no.", "ชื่องาน (เช่น ANCHOR)": "Job name (e.g. ANCHOR)", "ตำแหน่ง / ด้าน": "Location / side", "ชั้น": "Level",
+    "Release Order เช่น P-100": "Release Order e.g. P-100", "ลบกล่องนี้ออกจากตาราง": "Remove this box from the table", "ลบแถวนี้": "Delete this row",
+    "ปิดโดยไม่บันทึก": "Close without saving", "อยู่ต่อ": "Stay", "เลือกโปรเจคที่ช่องด้านบนก่อนบันทึก": "Choose the project above before saving",
+    "บันทึกเป็น Modify ต้องใส่เหตุผลก่อน": "Enter a reason before saving as Modify", "ไม่มีสิ่งที่เปลี่ยนให้บันทึกเป็น Modify": "Nothing changed to save as a Modify",
+    "มีรายการที่แก้ไว้ยังไม่ได้บันทึก — ปิดแล้วที่แก้ไว้จะหาย": "You have unsaved changes — closing will discard them",
+  },
+  tpls: [
+    ["ทุกชิป ({1})", "All shipments ({1})"],
+    ["ประวัติ Modify ({1})", "Modify history ({1})"],
+    ["แพ็กแล้ว {1}", "packed {1}"],
+    ["บั้งหน้าเครื่อง · แพ็กแล้ว {1}", "Station bunk · packed {1}"],
+    ["ตู้ {1}", "Container {1}"],
+    ["บันทึกตารางแพ็กกิ้งแล้ว — {1} กล่อง", "Packing table saved — {1} boxes"],
+    ["บันทึกเป็น Modify M-{1} แล้ว — {2} จุดที่เปลี่ยน", "Saved as Modify M-{1} — {2} changes"],
+    ["บันทึกไม่ได้ — {1}", "Cannot save — {1}"],
+    ["บันทึกไม่สำเร็จ — {1}", "Save failed — {1}"],
+  ],
+});

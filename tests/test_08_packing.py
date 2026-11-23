@@ -595,3 +595,31 @@ def test_merge_pending_boxes_carry_container(js):
     assert r["replaced"] == 1 and r["boxes"][0]["cntr"] == "CNTR-009" and r["boxes"][0]["id"] == "x1"
     r2 = pf(js, "mergeBoxes", CUR, [{"box_no": "BB-1", "kind": "loose", "title": "", "location": "", "level": "", "ship": "#BB01", "cntr": "CNTR-001", "items": [it("A-1", 5)]}])
     assert (r2["replaced"], r2["same"]) == (0, 1)
+
+
+# ───────────────────────── สองคนแก้กล่องเดียวกัน ─────────────────────────
+@dbm
+@R
+def test_db_conflict_when_someone_else_saved_first(db, actors, project, need_pk):
+    """TC-PACK-120 สองคนโหลดกล่องเดียวกัน คนแรกบันทึกแล้ว → คนที่สอง (ส่งเวลาโหลดเดิม) ได้ conflict งานคนแรกไม่ถูกทับ · โหลดใหม่แล้วบันทึกได้"""
+    tok = actors.tok["office"]
+    save(db, tok, project, [dbox()])
+    first = lst(db, tok, project)["boxes"][0]
+    assert first["at"]
+    assert save(db, tok, project, [dbox(id=first["id"], at=first["at"], items=[it("PYT-A1", 44)])])["ok"] is True          # คนแรก
+    r = save(db, tok, project, [dbox("PYT-OTHER"), dbox(id=first["id"], at=first["at"], items=[it("PYT-A1", 5), it("PYT-NEW", 1)])])   # คนที่สอง (ข้อมูลเก่า)
+    assert (r["ok"], r["reason"], r["box"]) == (False, "conflict", "PYT-BX-01")
+    assert q(db, "select box_no, items->0->>'qty', jsonb_array_length(items) from packing_box where project_id=%s", (project,)) == [("PYT-BX-01", "44", 1)]
+    fresh = lst(db, tok, project)["boxes"][0]
+    assert save(db, tok, project, [dbox(id=fresh["id"], at=fresh["at"], items=[it("PYT-A1", 44), it("PYT-NEW", 1)])])["ok"] is True
+
+
+@dbm
+@B
+def test_db_save_without_load_time_still_works(db, actors, project, need_pk):
+    """TC-PACK-121 ไม่ส่งเวลาโหลด (at ว่าง / ไม่มี) = ไม่ตรวจ บันทึกได้ตามเดิม"""
+    tok = actors.tok["office"]
+    save(db, tok, project, [dbox()])
+    bid = one(db, "select id from packing_box where project_id=%s", (project,))
+    assert save(db, tok, project, [dbox(id=str(bid), items=[it("PYT-A1", 6)])])["ok"] is True
+    assert save(db, tok, project, [dbox(id=str(bid), at="", items=[it("PYT-A1", 7)])])["ok"] is True

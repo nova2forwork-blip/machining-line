@@ -4965,8 +4965,11 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(projectId); }, [projectId, load]);
 
-  const changes = useMemo(() => (lib ? lib.pf.diffPacking(base, plain(boxes)) : []), [lib, base, boxes]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = boxes.some((b) => b._dirty) || deleted.length > 0 || Object.keys(newDates).length > 0;
+  // สิ่งที่เปลี่ยน = กล่อง / รายการ (diffPacking) + วันที่ชิป (เจอจากการทดสอบ: แก้วันที่อย่างเดียวแล้วบันทึกเป็น Modify ไม่ได้ / ไม่มีในประวัติ)
+  const dmy = (d) => (d ? d.split("-").reverse().join("/") : "(ไม่ระบุ)");
+  const dateChanges = useMemo(() => Object.keys(newDates).filter((sn) => (newDates[sn] || "") !== (dates[sn] || "")).sort().map((sn) => ({ type: "ship_date", box: sn, text: `วันที่ชิป ${sn}: ${dmy(dates[sn])} → ${dmy(newDates[sn])}` })), [newDates, dates]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const changes = useMemo(() => [...(lib ? lib.pf.diffPacking(base, plain(boxes)) : []), ...dateChanges], [lib, base, boxes, dateChanges]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = boxes.some((b) => b._dirty) || deleted.length > 0 || dateChanges.length > 0;
   async function changeProject(pid) {
     if (pid === projectId) return;
     if (!projectId) { pendingRef.current = boxes.length ? boxes : null; setProjectId(pid); return; }   // วางไฟล์ไว้ก่อน → ยกไปใส่โปรเจคที่เลือก
@@ -5093,7 +5096,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
         const rm = await setPkgManifest(pm.id, null, { bunk_no: b.box_no, elevation: b.location || "", level: b.level || "", pack_type: "panel", weight_unit: "lbs" });
         if (rm && rm.ok === false) throw new Error(`ตั้งหัวบั้ง ${b.box_no} ไม่สำเร็จ (${rm.reason || "error"})`);
         // บันทึกกล่องซ้ำอีกครั้ง → ฐานข้อมูลเขียนใบบั้ง + BOM ของบั้งหน้าเครื่องให้ตรงกับตาราง
-        const r = await packingSave(projectId, [{ id: b.id, box_no: b.box_no, kind: "panel", title: b.title || "", location: b.location || "", level: b.level || "", ship: b.ship || "", cntr: b.cntr || "",
+        const r = await packingSave(projectId, [{ id: b.id, at: b.at || "", box_no: b.box_no, kind: "panel", title: b.title || "", location: b.location || "", level: b.level || "", ship: b.ship || "", cntr: b.cntr || "",
           items: b.items.map(({ _k, ...i }) => ({ ...i, qty: Number(i.qty) || 1 })) }], [], "normal", "", []);
         if (!r || r.ok === false) throw new Error(`ตั้งรายการของบั้ง ${b.box_no} ไม่สำเร็จ (${r?.reason || "error"}${r?.unit ? " " + r.unit : ""})`);
         done++;
@@ -5111,13 +5114,14 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
     if (errs.length) { setErr("บันทึกไม่ได้ — " + errs.slice(0, 6).join(" · ") + (errs.length > 6 ? ` … (+${errs.length - 6})` : "")); return; }
     if (mode === "modify" && !reason.trim()) { setErr("บันทึกเป็น Modify ต้องใส่เหตุผลก่อน"); return; }
     if (mode === "modify" && !changes.length) { setErr("ไม่มีสิ่งที่เปลี่ยนให้บันทึกเป็น Modify"); return; }
-    const payload = boxes.filter((b) => b._dirty).map((b) => ({ ...(b.id ? { id: b.id } : {}), box_no: b.box_no, kind: b.kind, title: b.title || "", location: b.location || "", level: b.level || "", ship: b.ship || "", cntr: b.cntr || "",
+    const payload = boxes.filter((b) => b._dirty).map((b) => ({ ...(b.id ? { id: b.id, at: b.at || "" } : {}), box_no: b.box_no, kind: b.kind, title: b.title || "", location: b.location || "", level: b.level || "", ship: b.ship || "", cntr: b.cntr || "",
       items: b.items.map((i) => ({ item: String(i.item || "").trim().toUpperCase(), desc: i.desc || "", pos: i.pos || "", addr: i.addr || "", len: i.len ?? null, w: i.w ?? null, h: i.h ?? null, unit: i.unit || "", qty: Number(i.qty) || 1, wt: i.wt ?? null })) }));
     setBusy(true); setErr("");
     try {
       const r = await packingSave(projectId, payload, deleted, mode, reason.trim(), changes);
       if (!r || r.ok === false) {
         const why = { packed: `${r?.unit || ""} สแกนแพ็กเข้าบั้ง ${r?.box || ""} ไปแล้ว — เอาออกจากใบไม่ได้จนกว่าจะเอาออกที่หน้าเครื่อง`, unit_not_found: `บั้ง ${r?.box || ""} เป็นบั้งของหน้าเครื่อง แต่ไม่มีเบอร์ ${r?.unit || ""} ในโปรเจคนี้`,
+          conflict: `กล่อง ${r?.box || ""} มีคนอื่นแก้และบันทึกไปก่อนแล้ว — ปิดหน้านี้แล้วเปิดใหม่เพื่อดูของล่าสุด แล้วแก้อีกครั้ง`,
           duplicate: `เลขกล่องซ้ำ: ${r?.box || ""}`, bad_box: "มีกล่องที่ไม่มีเลขกล่อง หรือเลขยาวเกิน", bad_item: `กล่อง ${r?.box || ""} มีแถวที่ไม่มีเบอร์`, bad_qty: `${r?.box || ""}: จำนวนของ ${r?.unit || ""} ไม่ถูกต้อง`, bad_number: `${r?.box || ""}: ตัวเลขของ ${r?.unit || ""} ไม่ถูกต้อง`,
           need_reason: "บันทึกเป็น Modify ต้องใส่เหตุผล", not_found: `กล่อง ${r?.box || ""} ถูกคนอื่นลบไปแล้ว — ปิดแล้วเปิดใหม่`, not_installed: "ยังไม่ได้รัน migration-packing-table-2026-11-23.sql" }[r?.reason] || (r?.reason || "error");
         setErr("บันทึกไม่สำเร็จ — " + why + " (ไม่มีอะไรถูกบันทึก)"); setBusy(false); return;
@@ -5275,7 +5279,7 @@ function PackingTableModal({ user, projects, initialProjectId = "", onClose }) {
 
         {dirty ? (
           <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "rgba(217,164,65,.10)", border: "1px solid #e0b458", fontSize: 12.5 }} data-testid="pt-changes">
-            <b>ยังไม่บันทึก:</b> {nc(changes.length)} จุดที่เปลี่ยน{Object.keys(newDates).length ? ` · วันที่ชิป ${nc(Object.keys(newDates).length)}` : ""} <button type="button" className="rw-link" onClick={() => setShowDiff((v) => !v)}>{showDiff ? "ซ่อน" : "ดูสิ่งที่เปลี่ยน"}</button>
+            <b>ยังไม่บันทึก:</b> {nc(changes.length)} จุดที่เปลี่ยน <button type="button" className="rw-link" onClick={() => setShowDiff((v) => !v)}>{showDiff ? "ซ่อน" : "ดูสิ่งที่เปลี่ยน"}</button>
             {showDiff ? <div style={{ maxHeight: 120, overflow: "auto", marginTop: 4 }}>{changes.slice(0, 200).map((c, j) => <div key={j} style={{ color: "var(--muted)" }}>• {c.text}</div>)}{changes.length > 200 ? <div style={{ color: "var(--muted)" }}>… อีก {nc(changes.length - 200)} จุด</div> : null}</div> : null}
           </div>) : null}
         <div className="modal-actions" style={{ marginTop: 12, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
