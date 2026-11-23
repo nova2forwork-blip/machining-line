@@ -1924,6 +1924,18 @@ export async function saveContainerPlan(projectId, rows, deleteIds = []) {
   return data || { ok: false, reason: "error" };
 }
 
+// วันที่ของแต่ละชิป → { "#BB06": "2026-11-14" } · ยังไม่ติดตั้ง = {}
+export async function getShipmentDates(projectId) {
+  const { data, error } = await supabase.rpc("shipment_dates_get", { p_token: authToken(), p_project_id: projectId });
+  if (error) { if (cpMissing(error)) return {}; flagAuth(error); throw error; }
+  return data && typeof data === "object" ? data : {};
+}
+export async function setShipmentDates(projectId, dates) {
+  const { data, error } = await supabase.rpc("shipment_dates_set", { p_token: authToken(), p_project_id: projectId, p_dates: dates || {} });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed" }; flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // ── จัดบั้ง (ออฟฟิศ): บั้งทั้งหมดของโปรเจค + ย้ายแผงข้ามบั้ง — ต้องรัน migration-bunk-edit-2026-11-23.sql ──
 export async function bunkBoard(projectId) {
   const { data, error } = await supabase.rpc("bunk_board", { p_token: authToken(), p_project_id: projectId });

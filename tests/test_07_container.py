@@ -214,7 +214,8 @@ def test_excel_same_bunk_two_containers_warns(js):
 @B
 def test_excel_no_sheets(js):
     """TC-CNTR-045 ไม่มีชีต → ว่าง"""
-    assert cp(js, "parseContainerSheets", []) == {"rows": [], "warn": [], "sheets": []}
+    # 23/11/2026 ผลลัพธ์มีช่องวันที่ของชิปเพิ่ม (dates / dateSheet) — ไม่มีชีตก็ต้องว่างเช่นกัน
+    assert cp(js, "parseContainerSheets", []) == {"rows": [], "warn": [], "sheets": [], "dates": {}, "dateSheet": {}}
 
 
 # ───────────────────────── รวมกับแผนเดิม ─────────────────────────
@@ -709,7 +710,7 @@ def px(js, fn, *args):
 ITEMS = [
     {"bunk_no": "BB-L03-C03", "shipment": "#BB06", "container_no": "CNTR-014", "row_no": None, "col_no": None, "len_mm": 3820, "w_mm": 1140, "packed": 0,
      "manifest": [{"position": "A", "unit_no": "UA0315", "address_seq": "03-N-258", "width": 1600.2, "height": 3276.6, "weight": 597.44, "qty": 1}]},
-    {"bunk_no": "BB-L03-C02", "shipment": "#BB06", "container_no": "CNTR-013", "row_no": 1, "col_no": 1, "len_mm": 3440, "w_mm": 1140, "packed": 2,
+    {"bunk_no": "BB-L03-C02", "shipment": "#BB06", "load_date": "2026-11-14", "container_no": "CNTR-013", "row_no": 1, "col_no": 1, "len_mm": 3440, "w_mm": 1140, "packed": 2,
      "manifest": [{"position": "A", "unit_no": "UA0315", "address_seq": "03-N-258", "width": 1600.2, "height": 3276.6, "weight": 100.5},
                   {"position": "C", "unit_no": "UA0336", "address_seq": "03-N-260", "width": 1066.8, "height": 3276.6, "weight": 200.25, "qty": 2}]},
     {"bunk_no": "BB-L01-C01", "shipment": "#BB04", "container_no": "", "manifest": []},
@@ -718,16 +719,17 @@ ITEMS = [
 
 @P
 def test_export_sheets(js):
-    """TC-CNTR-130 ตาราง Excel: เรียง ชิป → ตู้ · 1 แถวต่อบั้ง (จำนวนแผง · น้ำหนักรวม) · 1 แถวต่อแผง"""
+    """TC-CNTR-130 ตาราง Excel: เรียง ชิป → ตู้ · 1 แถวต่อบั้ง (วันที่ชิป · จำนวนแผง · น้ำหนักรวม) · 1 แถวต่อแผง"""
     r = px(js, "packSheets", ITEMS)
-    assert r["bunks"][0] == ["Shipment", "Container", "Bunk No.", "Row", "Slot", "Length (mm)", "Width (mm)", "Units", "Packed", "Weight"]
+    assert r["bunks"][0] == ["Shipment", "Loading date", "Container", "Bunk No.", "Row", "Slot", "Length (mm)", "Width (mm)", "Units", "Packed", "Weight"]
     assert r["bunks"][1:] == [
-        ["#BB04", "", "BB-L01-C01", "", "", "", "", "", "", ""],
-        ["#BB06", "CNTR-013", "BB-L03-C02", 1, 1, 3440, 1140, 3, 2, 300.75],
-        ["#BB06", "CNTR-014", "BB-L03-C03", "", "", 3820, 1140, 1, 0, 597.44],
+        ["#BB04", "", "", "BB-L01-C01", "", "", "", "", "", "", ""],
+        ["#BB06", "2026-11-14", "CNTR-013", "BB-L03-C02", 1, 1, 3440, 1140, 3, 2, 300.75],
+        ["#BB06", "", "CNTR-014", "BB-L03-C03", "", "", 3820, 1140, 1, 0, 597.44],
     ]
-    assert [u[2:6] for u in r["units"][1:]] == [["BB-L03-C02", "A", "UA0315", "03-N-258"], ["BB-L03-C02", "C", "UA0336", "03-N-260"], ["BB-L03-C03", "A", "UA0315", "03-N-258"]]
-    assert r["units"][2][8] == 2 and r["units"][1][8] == 1   # ไม่มี qty = 1
+    assert r["units"][0][:2] == ["Shipment", "Loading date"]
+    assert [u[3:7] for u in r["units"][1:]] == [["BB-L03-C02", "A", "UA0315", "03-N-258"], ["BB-L03-C02", "C", "UA0336", "03-N-260"], ["BB-L03-C03", "A", "UA0315", "03-N-258"]]
+    assert r["units"][1][1] == "2026-11-14" and r["units"][2][9] == 2 and r["units"][1][9] == 1   # ไม่มี qty = 1
 
 
 @B
@@ -741,7 +743,7 @@ def test_export_sheets_empty(js):
 def test_export_print_html(js):
     """TC-CNTR-132 หน้าพิมพ์: มีหัวเรื่อง · ชิป · ตู้ · บั้ง · แผง · บั้งไม่มีเลขตู้อยู่ใต้ "ยังไม่ระบุตู้\""""
     h = px(js, "packPrintHtml", ITEMS, {"title": "A100 แผนแพ็ก", "sub": "ทดสอบ"})
-    for word in ("A100 แผนแพ็ก", "Shipment #BB06", "Shipment #BB04", "ตู้ CNTR-013", "ตู้ CNTR-014", "ยังไม่ระบุตู้", "BB-L03-C02", "UA0336", "03-N-260", "แพ็กแล้ว 2"):
+    for word in ("A100 แผนแพ็ก", "Shipment #BB06 — 14/11/2026", "Shipment #BB04", "ตู้ CNTR-013", "ตู้ CNTR-014", "ยังไม่ระบุตู้", "BB-L03-C02", "UA0336", "03-N-260", "แพ็กแล้ว 2"):
         assert word in h, word
     assert h.index("Shipment #BB04") < h.index("Shipment #BB06") and h.index("CNTR-013") < h.index("CNTR-014")
 
@@ -751,3 +753,107 @@ def test_export_print_html_escapes(js):
     """TC-CNTR-133 ข้อความที่มี < > & ในเลขบั้ง / หัวเรื่อง ไม่กลายเป็นโค้ดในหน้าพิมพ์"""
     h = px(js, "packPrintHtml", [{"bunk_no": "<img src=x onerror=alert(1)>", "shipment": "#1&2", "container_no": "", "manifest": []}], {"title": "<b>x</b>"})
     assert "<img src=x" not in h and "&lt;img src=x" in h and "#1&amp;2" in h and "<b>x</b>" not in h
+
+
+# ───────────────────────── วันที่ของชิป ─────────────────────────
+@pytest.mark.parametrize("tid,raw,exp", [
+    pytest.param("TC-CNTR-140", "16 Jul 2026", "2026-07-16", marks=P),
+    pytest.param("TC-CNTR-141", "5 Aug 26", "2026-08-05", marks=P),
+    pytest.param("TC-CNTR-142", "14-Nov-26", "2026-11-14", marks=P),
+    pytest.param("TC-CNTR-143", "2026-11-14", "2026-11-14", marks=P),
+    pytest.param("TC-CNTR-144", "14/11/2026", "2026-11-14", marks=P),      # วัน/เดือน/ปี
+    pytest.param("TC-CNTR-145", "14/11/2569", "2026-11-14", marks=P),      # ปี พ.ศ.
+    pytest.param("TC-CNTR-146", 46340, "2026-11-14", marks=P),             # เลขวันที่ของ Excel
+    pytest.param("TC-CNTR-147", 36526, "2000-01-01", marks=B),             # ขอบล่าง
+    pytest.param("TC-CNTR-148", 73415, "2100-12-31", marks=B),             # ขอบบน
+    pytest.param("TC-CNTR-149", 36525, "", marks=B),                       # ต่ำกว่าช่วง 1 วัน
+    pytest.param("TC-CNTR-150", 73416, "", marks=B),                       # เกินช่วง 1 วัน
+    pytest.param("TC-CNTR-151", "29 Feb 2028", "2028-02-29", marks=B),     # ปีอธิกสุรทิน
+    pytest.param("TC-CNTR-152", "29 Feb 2027", "", marks=N),
+    pytest.param("TC-CNTR-153", "31 Apr 26", "", marks=N),
+    pytest.param("TC-CNTR-154", "TBA", "", marks=N),
+    pytest.param("TC-CNTR-155", "", "", marks=B),
+    pytest.param("TC-CNTR-156", None, "", marks=B),
+    pytest.param("TC-CNTR-157", "13/13/2026", "", marks=N),
+])
+def test_parse_load_date(js, tid, raw, exp):
+    assert cp(js, "parseLoadDate", raw) == exp, tid
+
+
+@P
+def test_excel_plan_sheet_dates(js):
+    """TC-CNTR-158 แผนส่งของ: วันที่อยู่คอลัมน์ LOADING แถวเดียวกับเลขชิป → ได้วันที่ต่อชิป · ชิปที่อ่านวันที่ไม่ออกไม่มีค่า"""
+    sh = {"name": "Shipment Tower B", "rows": [
+        ["No.", "Shipment", "LOADING", "Description", "Pallet No."],
+        [1, "#BB02", "16 Jul 2026", "Starter Sill", "BB-L01-SE"],
+        ["", "", "", "", "BB-L02-SW"],
+        [6, "#BB06", 46340, "L3", "BB-L03-C02", "", "", "", "", "Con No.13"],
+        [7, "#BB07", "TBA", "L4", "BB-L04-C02"],
+    ]}
+    r = cp(js, "parseContainerSheets", [sh])
+    assert r["dates"] == {"#BB02": "2026-07-16", "#BB06": "2026-11-14"}
+    assert r["dateSheet"]["#BB06"] == "Shipment Tower B"
+
+
+DSET = "select public.shipment_dates_set(%s,%s,%s::jsonb)"
+DGET = "select public.shipment_dates_get(%s,%s)"
+
+
+@pytest.fixture()
+def need_sd(db, need_cp):
+    if not has_fn(db, "shipment_dates_set"):
+        pytest.skip("ยังไม่ได้รัน migration-container-plan-2026-11-23.sql (ส่วนวันที่ชิป)")
+
+
+@dbm
+@P
+def test_db_shipment_dates_set_get_clear(db, actors, project, need_sd):
+    """TC-CNTR-160 ตั้งวันที่ 2 ชิป → อ่านกลับ · แก้ 1 ชิป · ค่าว่าง = ลบวันที่ของชิปนั้น"""
+    tok = actors.tok["office"]
+    assert one(db, DSET, (tok, project, json.dumps({"#BB06": "2026-11-14", "#BB07": "2026-11-23"})))["ok"] is True
+    assert one(db, DGET, (tok, project)) == {"#BB06": "2026-11-14", "#BB07": "2026-11-23"}
+    assert one(db, DSET, (tok, project, json.dumps({"#BB06": "2026-11-15", "#BB07": ""})))["ok"] is True
+    assert one(db, DGET, (tok, project)) == {"#BB06": "2026-11-15"}
+
+
+@dbm
+@N
+@pytest.mark.parametrize("tid,dates,reason", [
+    ("TC-CNTR-161", {"#BB06": "14/11/2026"}, "bad_date"),
+    ("TC-CNTR-162", {"#BB06": "2026-02-30"}, "bad_date"),
+    ("TC-CNTR-163", {"#BB06": "1999-12-31"}, "bad_date"),
+    ("TC-CNTR-164", {"#BB06": "2101-01-01"}, "bad_date"),
+    ("TC-CNTR-165", {"": "2026-11-14"}, "bad_shipment"),
+    ("TC-CNTR-166", {"S" * 41: "2026-11-14"}, "bad_shipment"),
+])
+def test_db_shipment_dates_bad_all_or_nothing(db, actors, project, need_sd, tid, dates, reason):
+    r = one(db, DSET, (actors.tok["office"], project, json.dumps({"#OK01": "2026-11-14", **dates})))
+    assert (r["ok"], r["reason"]) == (False, reason), tid
+    assert one(db, DGET, (actors.tok["office"], project)) == {}, tid   # ชิปที่ถูกต้องในชุดเดียวกันก็ไม่ถูกบันทึก
+
+
+@dbm
+@B
+def test_db_shipment_dates_edges(db, actors, project, need_sd):
+    """TC-CNTR-167 ค่าขอบ: 2000-01-01 · 2100-12-31 · ชื่อชิป 40 ตัวอักษร"""
+    d = {"#A": "2000-01-01", "#B": "2100-12-31", "S" * 40: "2026-01-01"}
+    assert one(db, DSET, (actors.tok["office"], project, json.dumps(d)))["ok"] is True
+    assert one(db, DGET, (actors.tok["office"], project)) == d
+
+
+@dbm
+@N
+def test_db_shipment_dates_need_office_and_are_per_project(db, actors, project, need_sd):
+    """TC-CNTR-168 พนักงานหน้าเครื่องอ่าน / เขียนไม่ได้ · วันที่ของโปรเจคหนึ่งไม่โผล่ในอีกโปรเจค · anon อ่านตารางตรงไม่ได้"""
+    for fn in (lambda: one(db, DSET, (actors.tok["operator"], project, json.dumps({"#BB06": "2026-11-14"}))), lambda: one(db, DGET, (actors.tok["operator"], project))):
+        with pytest.raises(Exception) as e:
+            fn()
+        assert "forbidden" in str(e.value)
+    other = one(db, "insert into projects(code,name) values(%s,%s) returning id", ("PYT-SD2-" + actors.tag, "pytest (ข้อมูลจำลอง)"))
+    try:
+        one(db, DSET, (actors.tok["office"], other, json.dumps({"#BB06": "2026-11-14"})))
+        assert one(db, DGET, (actors.tok["office"], project)) == {}
+    finally:
+        db.execute("delete from projects where id=%s", (other,))
+    assert one(db, "select count(*) from container_shipment where project_id=%s", (other,)) == 0   # ลบโปรเจค = วันที่หายตาม
+    assert one(db, "select has_table_privilege('anon', 'public.container_shipment', 'select')") is False

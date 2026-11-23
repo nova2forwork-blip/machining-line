@@ -23,6 +23,29 @@ export function normShipment(s, prefix = "") {
   if (!m) return `#${t}`;
   return `#${m[1] || up(prefix)}${m[2].padStart(2, "0")}${m[3]}`;
 }
+// วันที่ของชิป (คอลัมน์ LOADING ในแผนส่งของ) → "YYYY-MM-DD" · อ่านไม่ออก = ""
+//   รับ: เลขวันที่ของ Excel (46178) · Date · "16 Jul 2026" · "5 Aug 26" · "14-Nov-26" · "2026-11-14" · "14/11/2026" (วัน/เดือน/ปี · ปี พ.ศ. แปลงเป็น ค.ศ.)
+const MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+export function parseLoadDate(v) {
+  const iso = (y, m, d) => {
+    y = Number(y); m = Number(m); d = Number(d);
+    if (y < 100) y += 2000; if (y > 2400) y -= 543;
+    if (!(y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return "";
+    const t = new Date(Date.UTC(y, m - 1, d)); if (t.getUTCMonth() !== m - 1) return "";   // 31 ก.พ. ฯลฯ
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  };
+  if (v == null || v === "") return "";
+  if (v instanceof Date) return isNaN(v) ? "" : iso(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  if (typeof v === "number" || /^\d{5}(\.\d+)?$/.test(String(v).trim())) {
+    const n = Math.floor(Number(v)); if (!(n >= 36526 && n <= 73415)) return "";   // 2000-01-01 … 2100-12-31
+    const t = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return iso(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
+  }
+  const s = up(v).replace(/\s+/g, " ");
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s); if (m) return iso(m[1], m[2], m[3]);
+  m = /^(\d{1,2})[ \-./]?([A-Z]{3})[A-Z]*\.?[ \-./,]*(\d{2,4})$/.exec(s); if (m && MONTHS[m[2]]) return iso(m[3], MONTHS[m[2]], m[1]);
+  m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/.exec(s); if (m) return iso(m[3], m[2], m[1]);
+  return "";
+}
 // คำที่ดูเป็น "เลขบั้ง / ของที่ลงตู้": ตัวอักษรนำ มีขีดคั่น ไม่มีช่องว่าง (BB-L03-C02 · BB-CPG-001 · BB-L01-L08-SB1)
 //   ไม่นับ: ป้ายตู้ (CNTR-…) · หมายเหตุท้ายแบบที่ขึ้นต้นด้วย "-" (-L03 CW, -BB-L04-C01) · ตัวเลขล้วน / ขนาด
 const BUNK_RE = /^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$/;
@@ -99,7 +122,7 @@ export async function readContainerPdfWith(pdfjsLib, data) {
 //        ไฟล์นี้มีหลายตึกคนละชีต → แถวติดชื่อชีต (sheet) + sheets[].kind = "plan" ให้หน้าจอถามว่าจะเอาชีตไหน
 //   ชีตชื่อมี OLD ข้าม · บั้งเดียวกันเจอทั้ง (ก) และ (ข) = ใช้ (ก)
 export function parseContainerSheets(sheets) {
-  const rows = []; const warn = []; const info = []; const at = new Map();
+  const rows = []; const warn = []; const info = []; const at = new Map(); const dates = {}; const dateSheet = {};
   const put = (r, strong) => {
     const k = bunkKey(r.bunk_no); if (!k) return false;
     if (at.has(k)) {
@@ -117,16 +140,18 @@ export function parseContainerSheets(sheets) {
     const cell = (r, j) => String((r || [])[j] == null ? "" : r[j]).trim();
     // (ค) แผนส่งของ: หัวตารางมี "Shipment" และ "Pallet No."
     {
-      let ph = -1, cS2 = -1, cP = -1;
+      let ph = -1, cS2 = -1, cP = -1, cL = -1;
       for (let i = 0; i < Math.min(data.length, 15) && ph < 0; i++) {
         const r = data[i] || []; let a = -1, b = -1;
-        for (let j = 0; j < r.length; j++) { const v = up(r[j]); if (a < 0 && /^SHIPMENT$/.test(v)) a = j; if (b < 0 && /^PALLET\s*NO\.?$/.test(v)) b = j; }
-        if (a >= 0 && b >= 0) { ph = i; cS2 = a; cP = b; }
+        let l = -1;
+        for (let j = 0; j < r.length; j++) { const v = up(r[j]); if (a < 0 && /^SHIPMENT$/.test(v)) a = j; if (b < 0 && /^PALLET\s*NO\.?$/.test(v)) b = j; if (l < 0 && /^LOADING(\s*DATE)?$/.test(v)) l = j; }
+        if (a >= 0 && b >= 0) { ph = i; cS2 = a; cP = b; cL = l; }
       }
       if (ph >= 0) {
         let n = 0, ship = "";
         for (let i = ph + 1; i < data.length; i++) {
           const r = data[i] || []; const sv = cell(r, cS2); if (sv) ship = normShipment(sv);
+          if (sv && ship && cL >= 0) { const d = parseLoadDate(r[cL]); if (d && !dates[ship]) { dates[ship] = d; dateSheet[ship] = name; } }   // วันที่อยู่แถวเดียวกับเลขชิป
           const pv = cell(r, cP).replace(/\([^)]*\)/g, " "); if (!pv.trim() || /^TOTAL$/i.test(pv.trim())) continue;
           let c = ""; for (let j = 0; j < r.length && !c; j++) { const m2 = /^CON(?:TAINER)?\.?\s*NO\.?\s*0*(\d+)$/i.exec(cell(r, j)); if (m2) c = normContainer("CNTR-" + m2[1]); }
           for (const tok of pv.split(/[,;\n]+/)) {
@@ -170,7 +195,7 @@ export function parseContainerSheets(sheets) {
     info.push({ name, n: 0, how: "ข้าม (ไม่มีคอลัมน์ Bunk # / CNTR #)" });
   }
   rows.forEach((r) => { delete r._strong; delete r._warned; });
-  return { rows, warn, sheets: info };
+  return { rows, warn, sheets: info, dates, dateSheet };
 }
 
 // ── รวมของที่นำเข้าเข้ากับแผนที่มีอยู่ (เทียบด้วยเลขบั้ง) ──

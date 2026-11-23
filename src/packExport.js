@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 // ส่งออกแผนแพ็ก / แผนลงตู้ เป็น Excel หรือพิมพ์ (บันทึกเป็น PDF จากหน้าพิมพ์ของเบราว์เซอร์)
 //   ★ 2026-11-23 ผู้ใช้: "ให้ export pdf หรือ excel ได้ด้วย"
-//   items = [{ bunk_no, shipment, container_no, row_no, col_no, len_mm, w_mm, packed, manifest: [{ position, unit_no, address_seq, width, height, weight, qty }] }]
+//   items = [{ bunk_no, shipment, load_date ("YYYY-MM-DD" ของชิป), container_no, row_no, col_no, len_mm, w_mm, packed, manifest: [{ position, unit_no, address_seq, width, height, weight, qty }] }]
 //   packSheets / packPrintHtml ไม่แตะ DOM → ทดสอบใน tests/ ได้
 // ══════════════════════════════════════════════════════════════════════════
 const nat = (a, b) => String(a || "").localeCompare(String(b || ""), "en", { numeric: true });
@@ -17,14 +17,14 @@ export function sortPackItems(items) {
 // ตารางสำหรับ Excel 2 ชีต: "ตู้-บั้ง" (1 แถว = 1 บั้ง) · "แผงในบั้ง" (1 แถว = 1 แผง)
 export function packSheets(items) {
   const list = sortPackItems(items);
-  const bunks = [["Shipment", "Container", "Bunk No.", "Row", "Slot", "Length (mm)", "Width (mm)", "Units", "Packed", "Weight"]];
-  const units = [["Shipment", "Container", "Bunk No.", "Position", "Unit No.", "Address", "Width (mm)", "Height (mm)", "Qty", "Weight"]];
+  const bunks = [["Shipment", "Loading date", "Container", "Bunk No.", "Row", "Slot", "Length (mm)", "Width (mm)", "Units", "Packed", "Weight"]];
+  const units = [["Shipment", "Loading date", "Container", "Bunk No.", "Position", "Unit No.", "Address", "Width (mm)", "Height (mm)", "Qty", "Weight"]];
   for (const b of list) {
     const man = Array.isArray(b.manifest) ? b.manifest : [];
     const n = man.reduce((s, m) => s + qtyOf(m), 0);
     const w = man.reduce((s, m) => s + (Number(m.weight) || 0), 0);
-    bunks.push([b.shipment || "", b.container_no || "", b.bunk_no || "", num(b.row_no), num(b.col_no), num(b.len_mm), num(b.w_mm), man.length ? n : "", b.packed == null ? "" : Number(b.packed) || 0, man.length ? Math.round(w * 100) / 100 : ""]);
-    for (const m of man) units.push([b.shipment || "", b.container_no || "", b.bunk_no || "", m.position || "", m.unit_no || "", m.address_seq || "", num(m.width), num(m.height), qtyOf(m), num(m.weight)]);
+    bunks.push([b.shipment || "", b.load_date || "", b.container_no || "", b.bunk_no || "", num(b.row_no), num(b.col_no), num(b.len_mm), num(b.w_mm), man.length ? n : "", b.packed == null ? "" : Number(b.packed) || 0, man.length ? Math.round(w * 100) / 100 : ""]);
+    for (const m of man) units.push([b.shipment || "", b.load_date || "", b.container_no || "", b.bunk_no || "", m.position || "", m.unit_no || "", m.address_seq || "", num(m.width), num(m.height), qtyOf(m), num(m.weight)]);
   }
   return { bunks, units };
 }
@@ -32,9 +32,9 @@ export async function exportPackExcel(items, { title = "", fileName = "packing-p
   const XLSX = await import("xlsx");
   const { bunks, units } = packSheets(items);
   const wb = XLSX.utils.book_new();
-  const s1 = XLSX.utils.aoa_to_sheet(title ? [[title], [], ...bunks] : bunks); s1["!cols"] = [12, 12, 18, 6, 6, 12, 12, 8, 8, 10].map((wch) => ({ wch }));
+  const s1 = XLSX.utils.aoa_to_sheet(title ? [[title], [], ...bunks] : bunks); s1["!cols"] = [12, 13, 12, 18, 6, 6, 12, 12, 8, 8, 10].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(wb, s1, "Container-Bunk");
-  if (units.length > 1) { const s2 = XLSX.utils.aoa_to_sheet(units); s2["!cols"] = [12, 12, 18, 9, 14, 14, 12, 12, 6, 10].map((wch) => ({ wch })); XLSX.utils.book_append_sheet(wb, s2, "Units"); }
+  if (units.length > 1) { const s2 = XLSX.utils.aoa_to_sheet(units); s2["!cols"] = [12, 13, 12, 18, 9, 14, 14, 12, 12, 6, 10].map((wch) => ({ wch })); XLSX.utils.book_append_sheet(wb, s2, "Units"); }
   XLSX.writeFile(wb, fileName);
   return { bunks: bunks.length - 1, units: units.length - 1 };
 }
@@ -46,7 +46,8 @@ export function packPrintHtml(items, { title = "", sub = "" } = {}) {
   let body = "";
   for (const [s, cm] of ships) {
     const all = [...cm.values()].flat();
-    body += `<section><h2>Shipment ${esc(s || "(ไม่ระบุ)")} <small>${[...cm.keys()].filter(Boolean).length} ตู้ · ${all.length} บั้ง</small></h2>`;
+    const ld = (all.find((x) => x.load_date) || {}).load_date; const ldTxt = ld ? ld.split("-").reverse().join("/") : "";
+    body += `<section><h2>Shipment ${esc(s || "(ไม่ระบุ)")}${ldTxt ? ` — ${esc(ldTxt)}` : ""} <small>${[...cm.keys()].filter(Boolean).length} ตู้ · ${all.length} บั้ง</small></h2>`;
     for (const [c, bs] of cm) {
       body += `<div class="cn"><h3>${c ? "ตู้ " + esc(c) : "ยังไม่ระบุตู้"} <small>${bs.length} บั้ง</small></h3>`;
       for (const b of bs) {

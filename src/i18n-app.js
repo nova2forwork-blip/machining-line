@@ -6,7 +6,10 @@ import { registerI18n } from "./i18n-dom.js";
 const DICT = {
  "จัดบั้ง (ย้ายแผง / ชิป)": "Arrange bunks (move panels / shipment)",
  "จัดบั้ง — ย้ายแผง / ย้ายชิป": "Arrange bunks — move panels / shipment",
- "ติ๊กแผงแล้วเลือกบั้งปลายทางเพื่อย้าย · แก้ชิป / ตู้ของบั้งที่หัวการ์ด · ทุกการแก้บันทึกทันที": "Tick panels and pick a destination bunk to move them · change a bunk's shipment / container in its card header · every change saves immediately",
+ "ย้ายแผง: ติ๊กแผงแล้วเลือกบั้งปลายทาง · ย้ายทั้งบั้ง: พิมพ์ชิป / ตู้ใหม่ที่หัวการ์ดแล้วกด Enter (ทุกแผงในบั้งไปด้วย) · ทุกการแก้บันทึกทันที": "Move panels: tick them and pick a destination bunk · Move a whole bunk: type a new shipment / container in the card header and press Enter (all its panels go with it) · every change saves immediately",
+ "ย้ายทั้งบั้ง →": "Move whole bunk →",
+ "ย้ายทั้งตู้ไปชิป →": "Move whole container to shipment →",
+ "วันที่": "Date",
  "ชิป (Shipment)": "Shipment",
  "ค้นหา เลขบั้ง / เบอร์แผง / ที่อยู่ / ตู้": "Search bunk / panel / address / container",
  "พิมพ์ / PDF": "Print / PDF",

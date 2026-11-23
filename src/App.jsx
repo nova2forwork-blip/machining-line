@@ -15,7 +15,7 @@ import {
   logoutSession, setEmployeeActive, deleteEmployee, deleteMachine, recalcPartStatus, sessionHeartbeat,
   listActiveSessions, forceLogoutSession, updateReleaseHeader, auditRecord, listAuditLog, changeMyPassword,
   saveReleaseLabelScopes,
-  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, listContainerPlan, saveContainerPlan, bunkBoard, bunkMoveUnits, createOperation, setOperationType,
+  listDeadLetter, resolveDeadLetter, setBom, getBom, setPkgManifest, listContainerPlan, saveContainerPlan, bunkBoard, bunkMoveUnits, getShipmentDates, setShipmentDates, createOperation, setOperationType,
   getAssemblyState, listAssemblyParents, getUnitsByIds, getAssemblyBatches, assemblyChildParents, assemblyParentsOf,
   exportAllData, clearScansRelease, clearScansUnit, clearScansReleaseGroup,
   ensureDailyBackup, listBackups, snapshotAllProjects, restoreBackup, importBackup,
@@ -4449,12 +4449,16 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [notes, setNotes] = useState([]);        // ผลการนำเข้าแต่ละไฟล์
+  // ★ 2026-11-23 ผู้ใช้: "ในแต่ละชิปมีวันที่ด้วย" — วันที่ต่อชิป (แก้ที่หัวชิป · นำเข้าจากคอลัมน์ LOADING ของแผนส่งของ) · บันทึกพร้อมปุ่ม "บันทึก"
+  const [dates, setDates] = useState({});        // { "#BB06": "2026-11-14" }
+  const [dateDirty, setDateDirty] = useState(() => new Set());
+  const setDate = (shipNo, v) => { if (!shipNo) return; setDates((o) => ({ ...o, [shipNo]: v || "" })); setDateDirty((o) => new Set([...o, shipNo])); };
   const [openShip, setOpenShip] = useState(() => new Set());
   const [q, setQ] = useState("");
   const [cp, setCp] = useState(null);            // โมดูล containerPlan.js
   const fileRef = useRef(null);
   useEffect(() => { import("./containerPlan.js").then(setCp).catch((e) => setErr("โหลดตัวอ่านแผนลงตู้ไม่สำเร็จ: " + (e?.message || e))); }, []);
-  const dirty = deleted.length > 0 || rows.some((r) => r._dirty);
+  const dirty = deleted.length > 0 || rows.some((r) => r._dirty) || dateDirty.size > 0;
 
   const load = useCallback(async (pid) => {
     if (!pid) { setRows([]); setDeleted([]); setState("idle"); return; }
@@ -4463,6 +4467,7 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
       const r = await listContainerPlan(pid);
       if (!r.ok) { setRows([]); setState("missing"); return; }
       const list = r.rows.map((x) => ({ ...x, _k: x.id }));
+      setDates(await getShipmentDates(pid)); setDateDirty(new Set());
       setRows(list); setDeleted([]); setState("ready");
       const ships = [...new Set(list.map((x) => x.shipment || ""))];
       setOpenShip(new Set(list.length <= 80 ? ships : ships.slice(0, 1)));
@@ -4487,7 +4492,7 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
     if (!files.length || !cp) return;
     if (!projectId) { setErr("เลือกโปรเจคก่อนนำเข้า"); return; }
     setBusy(true); setErr("");
-    let cur = rows; const out = []; const newShips = new Set();
+    let cur = rows; const out = []; const newShips = new Set(); const newDates = {};
     for (const f of files) {
       try {
         let r;
@@ -4505,14 +4510,18 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
           }
         } else { out.push({ file: f.name, bad: true, text: "ไม่รองรับไฟล์ชนิดนี้ (ใช้ .pdf / .xlsx)" }); continue; }
         if (!r.rows.length) { out.push({ file: f.name, bad: true, text: "ไม่พบข้อมูลตู้ / บั้งในไฟล์ — PDF ต้องมีป้าย CNTR-… · Excel ต้องมีคอลัมน์ Bunk # + CNTR # หรือชีตชื่อ Ship#…", warn: r.warn }); continue; }
+        // วันที่ของชิปจากไฟล์ (เฉพาะชิปที่มีบั้งถูกนำเข้ารอบนี้ · ต่างจากที่มีอยู่จึงนับว่าเปลี่ยน)
+        const shipsIn = new Set(r.rows.map((x) => x.shipment || "")); let nD = 0;
+        for (const [sn, d] of Object.entries(r.dates || {})) if (shipsIn.has(sn) && d && (newDates[sn] ?? dates[sn]) !== d) { newDates[sn] = d; nD++; }
         const m = cp.mergePlanRows(cur, r.rows);
         cur = m.rows.map((x) => (x._k ? x : { ...x, _k: cpKey() }));
         r.rows.forEach((x) => newShips.add(x.shipment || ""));
         const nC = new Set(r.rows.map((x) => x.container_no).filter(Boolean)).size;
         const noC = r.rows.filter((x) => !x.container_no).length;
-        out.push({ file: f.name, text: `อ่านได้ ${nc(r.rows.length)} บั้ง · ${nc(nC)} ตู้${noC ? ` · ${nc(noC)} บั้งไม่มีเลขตู้` : ""} → เพิ่มใหม่ ${nc(m.added)} · เปลี่ยน ${nc(m.changed)} · เหมือนเดิม ${nc(m.same)}`, warn: r.warn });
+        out.push({ file: f.name, text: `อ่านได้ ${nc(r.rows.length)} บั้ง · ${nc(nC)} ตู้${noC ? ` · ${nc(noC)} บั้งไม่มีเลขตู้` : ""} → เพิ่มใหม่ ${nc(m.added)} · เปลี่ยน ${nc(m.changed)} · เหมือนเดิม ${nc(m.same)}${nD ? ` · วันที่ชิป ${nc(nD)}` : ""}`, warn: r.warn });
       } catch (e2) { out.push({ file: f.name, bad: true, text: "อ่านไฟล์ไม่สำเร็จ: " + (e2?.message || e2) }); }
     }
+    if (Object.keys(newDates).length) { setDates((o) => ({ ...o, ...newDates })); setDateDirty((o) => new Set([...o, ...Object.keys(newDates)])); }
     setRows(cur); setNotes((o) => [...out, ...o].slice(0, 12));
     if (newShips.size && cur.length > 80) setOpenShip((o) => (o.size ? o : new Set([[...newShips].sort()[0]])));
     else if (newShips.size) setOpenShip((o) => new Set([...o, ...newShips]));
@@ -4532,9 +4541,14 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
     const dest = c ? rows.find((x) => x._k !== r._k && (x.container_no || "") === c) : null;
     edit(r._k, { container_no: c, row_no: null, col_no: null, ...(dest ? { shipment: dest.shipment || "" } : {}) });
   }
+  // ย้ายทั้งตู้ (ทุกบั้งในตู้) ไปชิปอื่น — ตำแหน่ง / ขนาดของบั้งในตู้คงเดิม
+  const moveContainer = (ship, no, to) => { const t = cp ? cp.normShipment(to) : to; if (t === ship) return;
+    setRows((rs) => rs.map((r) => ((r.shipment || "") === ship && (r.container_no || "") === no ? { ...r, shipment: t, _dirty: true } : r))); setOpenShip((o) => new Set([...o, t])); };
   // เปลี่ยนเลขตู้ / shipment ทั้งกลุ่มในครั้งเดียว
   const renameContainer = (ship, from, to) => setRows((rs) => rs.map((r) => ((r.shipment || "") === ship && (r.container_no || "") === from ? { ...r, container_no: cp ? cp.normContainer(to) : to, _dirty: true } : r)));
-  const renameShipment = (from, to) => { const t = cp ? cp.normShipment(to) : to; setRows((rs) => rs.map((r) => ((r.shipment || "") === from ? { ...r, shipment: t, _dirty: true } : r))); setOpenShip((o) => { const n = new Set(o); if (n.has(from)) { n.delete(from); n.add(t); } return n; }); };
+  const renameShipment = (from, to) => { const t = cp ? cp.normShipment(to) : to;
+    if (from && t && t !== from && dates[from] && !dates[t]) { setDates((o) => ({ ...o, [t]: o[from], [from]: "" })); setDateDirty((o) => new Set([...o, from, t])); }   // เปลี่ยนเลขชิป = วันที่ตามไปด้วย
+    setRows((rs) => rs.map((r) => ((r.shipment || "") === from ? { ...r, shipment: t, _dirty: true } : r))); setOpenShip((o) => { const n = new Set(o); if (n.has(from)) { n.delete(from); n.add(t); } return n; }); };
 
   async function save() {
     if (busy || !cp) return;
@@ -4550,7 +4564,13 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
           not_found: `แถวของ ${r?.bunk || ""} ถูกคนอื่นลบไปแล้ว — ปิดแล้วเปิดใหม่`, not_installed: "ยังไม่ได้รัน migration-container-plan-2026-11-23.sql", too_many: "รายการเยอะเกิน 5,000 แถวต่อครั้ง" }[r?.reason] || (r?.reason || "error");
         setErr("บันทึกไม่สำเร็จ — " + why + " (ไม่มีแถวไหนถูกบันทึก)"); setBusy(false); return;
       }
-      mlsToast(`บันทึกแผนลงตู้แล้ว — ${nc(r.saved || 0)} บั้ง${r.deleted ? ` · ลบ ${nc(r.deleted)}` : ""}`, "success");
+      let nDate = 0;
+      if (dateDirty.size) {
+        const rd = await setShipmentDates(projectId, Object.fromEntries([...dateDirty].map((k) => [k, dates[k] || ""])));
+        if (!rd || rd.ok === false) { setErr("บันทึกบั้งแล้ว แต่บันทึกวันที่ชิปไม่สำเร็จ — " + (rd?.reason === "bad_date" ? `วันที่ของ ${rd.shipment} ไม่ถูกต้อง` : rd?.reason === "not_installed" ? "ยังไม่ได้รัน migration-container-plan-2026-11-23.sql (ส่วนวันที่ชิป)" : (rd?.reason || "error"))); setBusy(false); setRows((rs) => rs.map((x) => ({ ...x, _dirty: false }))); setDeleted([]); return; }
+        nDate = rd.saved || 0;
+      }
+      mlsToast(`บันทึกแผนลงตู้แล้ว — ${nc(r.saved || 0)} บั้ง${r.deleted ? ` · ลบ ${nc(r.deleted)}` : ""}${nDate ? ` · วันที่ชิป ${nc(nDate)}` : ""}`, "success");
       const keep = openShip; await load(projectId); setOpenShip(keep);
     } catch (e) { setErr("บันทึกไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
     setBusy(false);
@@ -4607,7 +4627,7 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
             <Icon name="plus" size={14} /> เพิ่มบั้งเอง
           </Btn>
           <PackExportBtns testid="cp" disabled={busy || state !== "ready" || !rows.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} แผนลงตู้`}
-            getItems={() => shown.filter((r) => r.bunk_no).map((r) => ({ bunk_no: r.bunk_no, shipment: r.shipment, container_no: r.container_no, row_no: r.row_no, col_no: r.col_no, len_mm: r.len_mm, w_mm: r.w_mm, packed: r.bunk?.packed ?? null, manifest: [] }))} />
+            getItems={() => shown.filter((r) => r.bunk_no).map((r) => ({ bunk_no: r.bunk_no, shipment: r.shipment, load_date: dates[r.shipment] || "", container_no: r.container_no, row_no: r.row_no, col_no: r.col_no, len_mm: r.len_mm, w_mm: r.w_mm, packed: r.bunk?.packed ?? null, manifest: [] }))} />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา เลขบั้ง / ตู้ / shipment" style={{ width: 220, marginLeft: "auto" }} data-testid="cp-search" />
         </div>
 
@@ -4648,6 +4668,10 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
                   <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▼" : "▶"}</span>
                   <span style={{ fontSize: 12, color: "var(--muted)" }}>Shipment</span>
                   <span onClick={(e) => e.stopPropagation()}><CpCell value={g.ship} width={110} placeholder="(ไม่ระบุ)" title="แก้เลข shipment ของทั้งกลุ่มนี้" onCommit={(v) => renameShipment(g.ship, v)} /></span>
+                  {g.ship ? <span onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>วันที่</span>
+                    <input type="date" className="input" value={dates[g.ship] || ""} onChange={(e) => setDate(g.ship, e.target.value)} data-testid="cp-date" title="วันที่ของชิปนี้"
+                      style={{ height: 28, padding: "3px 6px", fontSize: 12.5, width: 142, background: dateDirty.has(g.ship) ? "rgba(217,164,65,.14)" : undefined }} /></span> : null}
                   <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{nc(g.cntr.filter((c) => c.no).length)} ตู้ · {nc(st.n)} บั้ง · แพ็กครบ {nc(st.full)}/{nc(st.n)}</span>
                 </div>
                 {open ? (
@@ -4658,6 +4682,8 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>ตู้</span>
                           <CpCell value={c.no} width={120} placeholder="(ยังไม่มีเลขตู้)" title="แก้เลขตู้ของทั้งกลุ่มนี้" onCommit={(v) => renameContainer(g.ship, c.no, v)} />
                           <span style={{ fontSize: 12, color: c.no ? "var(--muted)" : "#b45309" }}>{nc(c.list.length)} บั้ง{c.no ? "" : " — ยังไม่ได้ระบุตู้"}</span>
+                          {c.no ? <><span style={{ fontSize: 12, fontWeight: 700, color: "var(--accent-dk, #0e9d63)", whiteSpace: "nowrap" }}>ย้ายทั้งตู้ไปชิป →</span>
+                            <CpCell value={g.ship} width={92} list="cp-ship-list" placeholder="—" testid="cp-cntr-ship" title="พิมพ์ / เลือกชิปใหม่แล้วกด Enter = ย้ายทั้งตู้นี้ (ทุกบั้งในตู้) ไปชิปนั้น" onCommit={(v) => moveContainer(g.ship, c.no, v)} /></> : null}
                           <button type="button" className="rw-link" style={{ marginLeft: "auto" }} onClick={() => addRow(g.ship, c.no)}>+ เพิ่มบั้งในตู้นี้</button>
                         </div>
                         <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -4687,7 +4713,7 @@ function ContainerPlanModal({ projects, initialProjectId = "", onClose }) {
         <div className="modal-actions" style={{ marginTop: 14 }}>
           <Btn type="button" variant="ghost" onClick={tryClose} disabled={busy}>ปิด</Btn>
           <Btn type="button" variant="accent" onClick={save} disabled={busy || !dirty || state !== "ready"} data-testid="cp-save">
-            {busy ? "กำลังทำงาน..." : dirty ? `บันทึก (${nc(rows.filter((r) => r._dirty).length + deleted.length)} รายการ)` : "บันทึกแล้ว"}
+            {busy ? "กำลังทำงาน..." : dirty ? `บันทึก (${nc(rows.filter((r) => r._dirty).length + deleted.length + dateDirty.size)} รายการ)` : "บันทึกแล้ว"}
           </Btn>
         </div>
       </div>
@@ -4711,6 +4737,15 @@ function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
   const [ship, setShip] = useState("*");         // "*" = ทุกชิป · "" = ยังไม่ระบุชิป
   const [q, setQ] = useState("");
   const [sel, setSel] = useState({ pm: null, idx: new Set() });   // แผงที่ติ๊ก (ทีละบั้งต้นทาง)
+  const [dates, setDates] = useState({});       // วันที่ของแต่ละชิป { "#BB06": "2026-11-14" }
+  const thDate = (d) => (d ? d.split("-").reverse().join("/") : "");
+  async function saveDate(shipNo, v) {
+    if (busy || !shipNo) return;
+    setBusy(true); setErr("");
+    try { const r = await setShipmentDates(projectId, { [shipNo]: v || "" }); if (!r || r.ok === false) setErr("บันทึกวันที่ชิปไม่สำเร็จ — " + (r?.reason || "error")); else { setDates((o) => ({ ...o, [shipNo]: v || "" })); mlsToast(`ชิป ${shipNo} → วันที่ ${thDate(v) || "(ไม่ระบุ)"}`, "success"); } }
+    catch (e) { setErr("บันทึกวันที่ชิปไม่สำเร็จ: " + (isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : (e?.message || e))); }
+    setBusy(false);
+  }
   const [dest, setDest] = useState("");
   const keyOf = (s) => String(s == null ? "" : s).trim().toUpperCase().replace(/\s+/g, "");
 
@@ -4721,6 +4756,7 @@ function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
     try {
       const r = await bunkBoard(pid);
       if (!r.ok) { setBunks([]); setState("missing"); return; }
+      setDates(await getShipmentDates(pid));
       setBunks(r.bunks); setState("ready"); setSel({ pm: null, idx: new Set() }); setDest("");
       if (!keepFilter) { const ships = [...new Set(r.bunks.map((b) => b.plan?.shipment || ""))].sort(); setShip(r.bunks.length > 60 ? (ships.find(Boolean) ?? ships[0] ?? "*") : "*"); }
     } catch (e) { setState("error"); setErr(isForbiddenMsg(e?.message) ? NO_OFFICE_RIGHT_TH : "โหลดบั้งไม่สำเร็จ: " + (e?.message || e)); }
@@ -4789,7 +4825,7 @@ function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
 
   return (
     <Modal title="จัดบั้ง — ย้ายแผง / ย้ายชิป" wide
-      sub="ติ๊กแผงแล้วเลือกบั้งปลายทางเพื่อย้าย · แก้ชิป / ตู้ของบั้งที่หัวการ์ด · ทุกการแก้บันทึกทันที"
+      sub="ย้ายแผง: ติ๊กแผงแล้วเลือกบั้งปลายทาง · ย้ายทั้งบั้ง: พิมพ์ชิป / ตู้ใหม่ที่หัวการ์ดแล้วกด Enter (ทุกแผงในบั้งไปด้วย) · ทุกการแก้บันทึกทันที"
       onClose={() => { if (!busy) onClose(); }} closeOnBackdrop={false} locked={busy}>
       <div data-testid="bb-modal">
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
@@ -4803,12 +4839,18 @@ function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
             <Field label="ชิป (Shipment)">
               <select className="select" value={ship} onChange={(e) => setShip(e.target.value)} data-testid="bb-ship">
                 <option value="*">ทุกชิป ({nc(bunks.length)} บั้ง)</option>
-                {ships.map((s) => <option key={s || "-"} value={s}>{s || "ยังไม่ระบุชิป"} ({nc(bunks.filter((b) => (b.plan?.shipment || "") === s).length)})</option>)}
+                {ships.map((s) => <option key={s || "-"} value={s}>{s || "ยังไม่ระบุชิป"}{dates[s] ? ` · ${thDate(dates[s])}` : ""} ({nc(bunks.filter((b) => (b.plan?.shipment || "") === s).length)})</option>)}
               </select>
             </Field>
           </div>
+          {ship !== "*" && ship ? (
+            <div style={{ minWidth: 150 }}>
+              <Field label={`วันที่ของชิป ${ship}`}>
+                <input type="date" className="input" value={dates[ship] || ""} onChange={(e) => saveDate(ship, e.target.value)} disabled={busy} data-testid="bb-date" />
+              </Field>
+            </div>) : null}
           <PackExportBtns testid="bb" disabled={busy || state !== "ready" || !bunks.length} title={`${projects.find((x) => x.id === projectId)?.code || ""} แผนแพ็ก${ship !== "*" ? ` ${ship || "(ไม่ระบุชิป)"}` : ""}`}
-            getItems={() => shown.map((b) => ({ bunk_no: b.bunk_no, shipment: b.plan?.shipment || "", container_no: b.plan?.container_no || "", row_no: b.plan?.row_no, col_no: b.plan?.col_no, len_mm: b.plan?.len_mm, w_mm: b.plan?.w_mm, packed: packedTotal(b), manifest: b.manifest || [] }))} />
+            getItems={() => shown.map((b) => ({ bunk_no: b.bunk_no, shipment: b.plan?.shipment || "", load_date: dates[b.plan?.shipment || ""] || "", container_no: b.plan?.container_no || "", row_no: b.plan?.row_no, col_no: b.plan?.col_no, len_mm: b.plan?.len_mm, w_mm: b.plan?.w_mm, packed: packedTotal(b), manifest: b.manifest || [] }))} />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา เลขบั้ง / เบอร์แผง / ที่อยู่ / ตู้" style={{ width: 240, marginLeft: "auto" }} data-testid="bb-search" />
         </div>
         {state === "missing" ? <div style={{ color: "var(--danger-hi)", fontSize: 13, marginBottom: 10 }}>ยังใช้ไม่ได้ — ฐานข้อมูลยังไม่ได้รัน migration-bunk-edit-2026-11-23.sql</div> : null}
@@ -4830,6 +4872,8 @@ function BunkBoardModal({ projects, initialProjectId = "", onClose }) {
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 14.5 }}>{b.bunk_no}</span>
                   <span style={{ fontSize: 11.5, padding: "2px 7px", borderRadius: 10, whiteSpace: "nowrap", color: n && pk >= n ? "#146c3a" : pk ? "#b45309" : "var(--muted)", background: n && pk >= n ? "rgba(16,185,129,.14)" : pk ? "rgba(217,164,65,.14)" : "var(--surface, #fff)" }}>แพ็กแล้ว {nc(pk)}/{nc(n)}</span>
                   <span style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
+                    {dates[b.plan?.shipment || ""] ? <span style={{ fontSize: 11.5, color: "var(--muted)", whiteSpace: "nowrap" }} title="วันที่ของชิป">{thDate(dates[b.plan.shipment])}</span> : null}
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent-dk, #0e9d63)", whiteSpace: "nowrap" }} title="พิมพ์ / เลือกชิปหรือตู้ใหม่ แล้วกด Enter = ย้ายทั้งบั้งนี้ (ทุกแผงในบั้งไปด้วย)">ย้ายทั้งบั้ง →</span>
                     <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ชิป</span>
                     <CpCell value={b.plan?.shipment || ""} width={84} list="bb-ship-list" placeholder="—" testid="bb-set-ship" title="ย้ายบั้งนี้ไปชิปอื่น" onCommit={(v) => setPlan(b, { shipment: normS(v) })} />
                     <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ตู้</span>

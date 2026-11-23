@@ -148,3 +148,68 @@ revoke all on function public.container_plan_list(uuid, uuid) from public;
 revoke all on function public.container_plan_save(uuid, uuid, jsonb, jsonb) from public;
 grant execute on function public.container_plan_list(uuid, uuid) to anon, authenticated, service_role;
 grant execute on function public.container_plan_save(uuid, uuid, jsonb, jsonb) to anon, authenticated, service_role;
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- วันที่ของแต่ละชิป (ผู้ใช้ 23/11/2026: "ในแต่ละชิปมีวันที่ด้วย") — 1 แถว = 1 ชิปของโปรเจค
+-- ══════════════════════════════════════════════════════════════════════════
+create table if not exists public.container_shipment (
+  project_id uuid not null references public.projects(id) on delete cascade,
+  shipment   text not null check (btrim(shipment) <> '' and length(shipment) <= 40),
+  load_date  date not null,
+  updated_by uuid references public.employees(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  primary key (project_id, shipment)
+);
+alter table public.container_shipment enable row level security;
+revoke all on public.container_shipment from anon;
+revoke all on public.container_shipment from authenticated;
+
+-- อ่าน: { "#BB06": "2026-11-14", … }
+create or replace function public.shipment_dates_get(p_token uuid, p_project_id uuid)
+returns jsonb
+language plpgsql security definer set search_path to 'public' as $function$
+begin
+  perform public._require(p_token, 'office');
+  return coalesce((select jsonb_object_agg(c.shipment, to_char(c.load_date, 'YYYY-MM-DD')) from public.container_shipment c where c.project_id = p_project_id), '{}'::jsonb);
+end $function$;
+
+-- เขียน: p_dates = { "#BB06": "2026-11-14", "#BB07": "" }  (ค่าว่าง / null = ลบวันที่ของชิปนั้น) · วันที่ผิดรูปแบบ = ไม่บันทึกทั้งชุด
+create or replace function public.shipment_dates_set(p_token uuid, p_project_id uuid, p_dates jsonb)
+returns jsonb
+language plpgsql security definer set search_path to 'public' as $function$
+declare
+  v_emp uuid; k text; v text; v_n integer := 0; v_d date;
+begin
+  perform public._require(p_token, 'office');
+  select s.employee_id into v_emp from public.sessions s where s.token = p_token limit 1;
+  if p_project_id is null or not exists (select 1 from public.projects where id = p_project_id) then
+    return jsonb_build_object('ok', false, 'reason', 'bad_project');
+  end if;
+  if jsonb_typeof(coalesce(p_dates, 'null'::jsonb)) <> 'object' then
+    return jsonb_build_object('ok', false, 'reason', 'bad_input');
+  end if;
+  -- ตรวจทุกค่าก่อน (ผิดค่าเดียว = ไม่เขียนอะไรเลย)
+  for k, v in select key, value from jsonb_each_text(p_dates) loop
+    if btrim(k) = '' or length(k) > 40 then return jsonb_build_object('ok', false, 'reason', 'bad_shipment', 'shipment', k); end if;
+    if coalesce(btrim(v), '') <> '' then
+      if v !~ '^\d{4}-\d{2}-\d{2}$' then return jsonb_build_object('ok', false, 'reason', 'bad_date', 'shipment', k); end if;
+      begin v_d := v::date; exception when others then return jsonb_build_object('ok', false, 'reason', 'bad_date', 'shipment', k); end;
+      if v_d < date '2000-01-01' or v_d > date '2100-12-31' then return jsonb_build_object('ok', false, 'reason', 'bad_date', 'shipment', k); end if;
+    end if;
+  end loop;
+  for k, v in select key, value from jsonb_each_text(p_dates) loop
+    if coalesce(btrim(v), '') = '' then
+      delete from public.container_shipment where project_id = p_project_id and shipment = btrim(k);
+    else
+      insert into public.container_shipment (project_id, shipment, load_date, updated_by) values (p_project_id, btrim(k), v::date, v_emp)
+      on conflict (project_id, shipment) do update set load_date = excluded.load_date, updated_by = excluded.updated_by, updated_at = now();
+    end if;
+    v_n := v_n + 1;
+  end loop;
+  return jsonb_build_object('ok', true, 'saved', v_n);
+end $function$;
+
+revoke all on function public.shipment_dates_get(uuid, uuid) from public;
+revoke all on function public.shipment_dates_set(uuid, uuid, jsonb) from public;
+grant execute on function public.shipment_dates_get(uuid, uuid) to anon, authenticated, service_role;
+grant execute on function public.shipment_dates_set(uuid, uuid, jsonb) to anon, authenticated, service_role;
