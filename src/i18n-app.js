@@ -4,6 +4,22 @@
 import { registerI18n } from "./i18n-dom.js";
 
 const DICT = {
+ "แพ็กกิ้ง (Packing)": "Packing",
+ "ตารางแพ็กกิ้ง": "Packing table",
+ "มุมมองรายตู้": "By container",
+ "จัดบั้ง (การ์ด)": "Arrange bunks (cards)",
+ "สร้างบั้ง + QR หน้าเครื่อง": "Create bunks + station QR",
+ "ลงแพ็กกิ้ง — ตารางแพ็กกิ้ง": "Packing entry — packing table",
+ "วางไฟล์ใบแพ็ก (PDF / Excel) → ได้ตาราง จัดตามชิป → ตู้ → กล่อง → แก้ / ย้ายได้ทุกระดับ → บันทึกปกติ หรือบันทึกเป็น Modify (เก็บเหตุผล + สิ่งที่เปลี่ยนเป็นประวัติ)": "Drop packing-list files (PDF / Excel) → get the table grouped by shipment → container → box → edit / move at any level → save normally or save as a Modify (keeps the reason and what changed as history)",
+ "สร้างบั้ง + QR": "Create bunks + QR",
+ "เพิ่มกล่อง": "Add box",
+ "บันทึกปกติ": "Save",
+ "บันทึกเป็น Modify": "Save as Modify",
+ "เหตุผลของการแก้ (ต้องใส่ถ้าบันทึกเป็น Modify)": "Reason for the change (required when saving as Modify)",
+ "ค้นหา กล่อง / เบอร์ / ที่อยู่ / ตู้": "Search box / part / address / container",
+ "+ เพิ่มแถว": "+ Add row",
+ "ย้ายไปกล่อง": "Move to box",
+ "บั้งแผง": "Panel bunk",
  "จัดบั้ง (ย้ายแผง / ชิป)": "Arrange bunks (move panels / shipment)",
  "จัดบั้ง — ย้ายแผง / ย้ายชิป": "Arrange bunks — move panels / shipment",
  "ย้ายแผง: ติ๊กแผงแล้วเลือกบั้งปลายทาง · ย้ายทั้งบั้ง: พิมพ์ชิป / ตู้ใหม่ที่หัวการ์ดแล้วกด Enter (ทุกแผงในบั้งไปด้วย) · ทุกการแก้บันทึกทันที": "Move panels: tick them and pick a destination bunk · Move a whole bunk: type a new shipment / container in the card header and press Enter (all its panels go with it) · every change saves immediately",

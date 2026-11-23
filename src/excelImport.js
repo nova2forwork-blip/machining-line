@@ -524,3 +524,12 @@ export async function readContainerExcel(file) {
   });
   return parseContainerSheets(sheets);
 }
+
+// ทุกชีตที่มองเห็นของไฟล์ Excel เป็นแถวดิบ [{ name, rows }] — ให้ตัวอ่านใบแพ็ก (packingForms.js) และแผนลงตู้ (containerPlan.js) ใช้ร่วมกัน
+export async function readSheetsRaw(file) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const meta = wb.Workbook && Array.isArray(wb.Workbook.Sheets) ? wb.Workbook.Sheets : null;
+  const out = [];
+  wb.SheetNames.forEach((name, i) => { if (meta && meta[i] && meta[i].Hidden) return; out.push({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "", raw: true }) }); });
+  return out;
+}

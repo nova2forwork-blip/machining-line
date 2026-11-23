@@ -1924,6 +1924,18 @@ export async function saveContainerPlan(projectId, rows, deleteIds = []) {
   return data || { ok: false, reason: "error" };
 }
 
+// ── ตารางแพ็กกิ้ง (ลงแพ็กกิ้ง) — ต้องรัน migration-packing-table-2026-11-23.sql ──
+export async function packingList(projectId) {
+  const { data, error } = await supabase.rpc("packing_list", { p_token: authToken(), p_project_id: projectId });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed", boxes: [] }; flagAuth(error); throw error; }
+  return { ok: true, boxes: (data && data.boxes) || [], mods: (data && data.mods) || [], dates: (data && data.dates) || {} };
+}
+export async function packingSave(projectId, boxes, deleteIds, mode, reason, changes) {
+  const { data, error } = await supabase.rpc("packing_save", { p_token: authToken(), p_project_id: projectId, p_boxes: boxes || [], p_delete: deleteIds || [], p_mode: mode, p_reason: reason || "", p_changes: changes || [] });
+  if (error) { if (cpMissing(error)) return { ok: false, reason: "not_installed" }; flagAuth(error); throw error; }
+  return data || { ok: false, reason: "error" };
+}
+
 // วันที่ของแต่ละชิป → { "#BB06": "2026-11-14" } · ยังไม่ติดตั้ง = {}
 export async function getShipmentDates(projectId) {
   const { data, error } = await supabase.rpc("shipment_dates_get", { p_token: authToken(), p_project_id: projectId });
