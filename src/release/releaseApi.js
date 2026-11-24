@@ -14,7 +14,7 @@ import {
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey, glassQrRows, readPdfFiles } from "./releaseCore.js";
+import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey, glassQrRows, readPdfFiles, buildBom } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -97,12 +97,51 @@ async function loadBomLibraryOne(projectId, onlyCodes = null, onTick, skipPanels
     if (errs.length) throw new Error(`อ่าน BOM ไม่ได้ ${errs.length} เบอร์ (${errs.slice(0, 3).map((x) => x.item.part_no).join(", ")})`);
   }
   // หมวด / งานซับ / ใบงาน ที่ office ตั้งไว้ที่ "ซับ / พาร์ท ของโปรเจค" (แถว LIB ใน release_plans)
-  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; await healPartsFromLibPdfs(lib, pms); for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } for (const [c, un] of Object.entries(r.lib.units || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && un) { if (un.u) lib.parts[pk].u = un.u; if (un.mm) lib.parts[pk].mm = 1; } } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
+  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; lib._pid = projectId; await healPartsFromLibPdfs(lib, pms); delete lib._pid; await healSubsFromLibPdfs(lib, pms, projectId, r.lib); for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } for (const [c, un] of Object.entries(r.lib.units || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && un) { if (un.u) lib.parts[pk].u = un.u; if (un.mm) lib.parts[pk].mm = 1; } } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
   return lib;
 }
 
 // ★ 2026-11-24 "ทำอะไรก่อนหลังก็ได้ ลิ้งถูกต้องเสมอ": พาร์ทที่มีแบบ PDF อยู่ในคลังของโปรเจค → ติดธง lp (นับว่ามีแบบแล้ว)
 //   ถ้าเบอร์นั้นยังไม่มีวัตถุดิบ / ความยาว (เก็บแบบไว้ก่อนแก้บั๊ก หรือเบอร์ถูกสร้างจากแบบซับก่อน) → เปิดไฟล์ในคลังอ่าน INV.CODE / LENGTH มาเติม แล้วบันทึกกลับ (ทำครั้งเดียว · พลาดก็ข้าม)
+// ★ 2026-11-24 ผู้ใช้: "ทำแบบซับด้วย" — แบบซับที่วางเก็บเข้าคลังไว้เฉยๆ (มีแต่ไฟล์ · ระบบยังไม่รู้ลูกของซับ) ไม่ว่าจะเก็บก่อนหรือหลังแบบแผง
+//   → เปิดไฟล์ในคลังอ่านรายการลูก แล้วบันทึกเป็น BOM ของซับ (ทางเดียวกับ "ซับ / พาร์ท ของโปรเจค") · ทำครั้งเดียวต่อไฟล์ · พลาด = ข้าม ใช้ค่าที่อ่านได้ในรอบนี้
+//   ซับที่ระบบรู้ลูกอยู่แล้ว (มี BOM หรือมีรายการลูกในแถว LIB) ไม่แตะ
+async function healSubsFromLibPdfs(lib, pms, projectId, libRow) {
+  if (typeof File === "undefined" || typeof fetch === "undefined") return;
+  const known = new Set(Object.keys((libRow && libRow.subItems) || {}).filter((c) => ((libRow.subItems[c]) || []).length).map(NC));
+  const pmBy = new Map((pms || []).map((x) => [NC(x.part_no), x]));
+  const todo = [];
+  for (const d of lib.pdfs || []) {
+    if (!d || d.kind !== "sub" || !d.code || !d.path) continue;
+    const k = NC(d.code); if (known.has(k) || _healSeen.has("S|" + d.path + "|" + k)) continue;
+    const sk = findKey(lib.subs, d.code); if (sk && (lib.subs[sk].items || []).length) continue;
+    todo.push(d);
+  }
+  const healed = []; const byPath = new Map();
+  for (const d of todo.slice(0, 20)) {
+    _healSeen.add("S|" + d.path + "|" + NC(d.code));
+    try {
+      const pm = pmBy.get(NC(d.code));
+      if (pm && pm.kind !== "subassembly" && pm.kind !== "part") continue;                       // เป็นแผง / บั้ง = ไม่ใช่ซับ
+      if (pm && pm.kind === "subassembly" && ((await getBom(pm.id, { strict: true })) || []).length) continue;   // มี BOM แล้ว (แค่ไม่ได้ถูกโหลดรอบนี้)
+      if (!byPath.has(d.path)) { const blob = await (await fetch(await getLibPdfUrl(d.path))).blob(); byPath.set(d.path, await readPdfFiles([new File([blob], String(d.file || "drawing.pdf").split(" › ")[0], { type: "application/pdf" })])); }
+      const doc = (byPath.get(d.path) || []).find((y) => y.kind === "sub" && NC(y.code) === NC(d.code)); if (!doc || !(doc.bom || []).length) continue;
+      const m = buildBom({ lib, pdfs: [doc], ack: {}, useLib: true });
+      const sk = findKey(m.subs, d.code); if (!sk || !(m.subs[sk].items || []).length) continue;
+      const old = findKey(lib.subs, d.code); if (old && old !== sk) delete lib.subs[old];
+      lib.subs[sk] = { ...m.subs[sk], full: (m.subs[sk].items || []).map((it) => [it[0], it[1], it[2]]) };
+      for (const it of m.subs[sk].items) { if (it[0] === "sub") continue; const pk = findKey(m.parts, it[1]); if (pk && !findKey(lib.parts, pk)) lib.parts[pk] = m.parts[pk]; }
+      healed.push(sk);
+    } catch (_) { /* อ่านไฟล์ไม่ได้ = ข้าม */ }
+  }
+  if (!healed.length) return;
+  try {
+    const subs = {}, parts = {};
+    for (const sk of healed) { subs[sk] = lib.subs[sk]; for (const it of lib.subs[sk].items) { if (it[0] === "sub") { const k2 = findKey(lib.subs, it[1]); if (k2 && !subs[k2]) subs[k2] = lib.subs[k2]; } else { const pk = findKey(lib.parts, it[1]); if (pk) parts[pk] = lib.parts[pk]; } } }
+    const ov = libRow || {};
+    await saveLibrary({ projectId, projectCode: ov.projectCode, bom: { panels: {}, subs, parts }, newCodes: new Set(healed.map(NC)), catOv: ov.catOv || {}, procOv: ov.procOv || {}, destOv: ov.destOv || {}, partMode: ov.partMode || "auto", partGroups: ov.partGroups || [], pdfs: [], by: ov.by });
+  } catch (_) { /* ไม่มีสิทธิ์บันทึก = ใช้ค่าที่อ่านได้ในรอบนี้ */ }
+}
 const _healSeen = new Set();   // ไฟล์ที่อ่านแล้วในรอบเปิดแอปนี้ (แบบที่ไม่มี INV.CODE จริงๆ จะไม่ถูกเปิดอ่านซ้ำทุกครั้ง)
 async function healPartsFromLibPdfs(lib, pms) {
   const todo = [];
@@ -122,6 +161,7 @@ async function healPartsFromLibPdfs(lib, pms) {
       const inv = String(doc.title["INV.CODE"] || "").trim(); const Ln = parseFloat(String(doc.title.LENGTH || "").replace(/,/g, ""));
       const p = lib.parts[pk]; if (inv && inv !== "-") p.m = inv; if (p.l == null && Number.isFinite(Ln)) p.l = Ln; if (!p.d && doc.title.DESC) p.d = doc.title.DESC;
       const pm = pmBy.get(NC(pk));
+      if (!pm && lib._pid) { try { await insertRows("part_master", [{ project_id: lib._pid, part_no: pk, part_name: p.d || pk, material: p.m || null, unit_weight: 0, default_length_mm: p.l ?? null, routing: [], kind: "part" }]); } catch (_) { /* no rights / duplicate */ } }
       if (pm && p.m && !pm.material && !pm.inventory_code) { try { await updatePartMaster(pm.id, { part_name: pm.part_name || pm.part_no, material: p.m, unit_weight: pm.unit_weight ?? 0, default_length_mm: pm.default_length_mm ?? p.l ?? null }); } catch (_) { /* ไม่มีสิทธิ์แก้ = ใช้ค่าที่อ่านได้ในรอบนี้ */ } }
     } catch (_) { /* อ่านไฟล์ไม่ได้ = ข้าม */ }
   }
