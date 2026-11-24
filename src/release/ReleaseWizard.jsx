@@ -471,6 +471,12 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
   const go = (i) => {
     const n = Math.max(0, Math.min(3, i));
     if (n > 0 && step === 0 && hdrErr) { setRoTouched(true); return; }
+    // ★ 2026-11-24 ผู้ใช้: "ข้ามแล้วพวกนี้ก็ต้องอ่านได้สิ" — ข้ามขั้น ② ทั้งที่ตารางว่าง → ใส่แผงตามใบปะหน้าให้เอง (ซับ / พาร์ทจะถูกนับทันที)
+    //   Zone เป็น Mockup = ไม่ต้องมีที่อยู่ · ไม่ใช่ Mockup = ได้แถวแผงที่ยังไม่มีที่อยู่ กลับมากรอกทีหลังได้ (ก่อนบันทึก)
+    if (!itemsMode && n >= 2 && !unitsRaw.some((r) => String(r.unit || "").trim() || String(r.addr || "").trim())) {
+      const w = wantedPanels(order, pdfs, unitsRaw);
+      if (w.length) setUnits(normMockUnits(wantedRows(w, orderIsMock(order)), ctx.usedAddr));
+    }
     setStep(n); setRoTouched(true);
     try { topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); } catch { /* ignore */ }
   };
@@ -702,28 +708,33 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
 }
 
 // ══ ② Address & Unit ══
+// แผงที่ใบปะหน้าระบุ (รายการที่ตรงกับแบบแผงที่อัพ หรือเป็น MARKING DRAWING) แต่ยังไม่มีในตาราง Address & Unit
+function wantedPanels(order, pdfs, units) {
+  if (!order || !Array.isArray(order.items)) return [];
+  const panelPdf = new Set((pdfs || []).filter((d) => d && d.kind === "panel").map((d) => NC(d.code)));
+  const anyPdf = new Set((pdfs || []).filter((d) => d && d.code).map((d) => NC(d.code)));   // แบบ MARKING ยังไม่ถูกนับเป็นแบบแผงจนกว่าจะมี Unit นี้ในตาราง → ดูจากเบอร์ของไฟล์ที่อัพ
+  const have = new Map(); for (const u of units || []) { const k = NC(u.unit); if (k) have.set(k, (have.get(k) || 0) + (Number(u.qty) > 0 ? Number(u.qty) : 1)); }
+  const out = [];
+  for (const it of order.items) {
+    const k = NC(it.code); if (!k || out.some((x) => NC(x.code) === k)) continue;
+    if (!(panelPdf.has(k) || /MARKING\s*DRAW/i.test(String(it.d || "")))) continue;
+    const need = Math.max(1, Math.round(Number(it.qty) || 1)); const lack = need - (have.get(k) || 0);
+    if (lack > 0) out.push({ code: String(it.code).trim().toUpperCase(), need, lack, hasPdf: anyPdf.has(k) });
+  }
+  return out;
+}
+const orderIsMock = (order) => /^(PMU|VMU|EMU)\b/i.test(String((order && (order.zone || order.location)) || "").trim());
+const wantedRows = (want, mock) => want.flatMap((x) => Array.from({ length: x.lack }, () => (mock ? { unit: x.code, addr: "", mock: true } : { unit: x.code, addr: "" })));
+
 function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go, order = null }) {
   // ทุกการแก้ผ่านตัวนี้ → แถว Mockup (PMU/VMU/EMU) ได้ที่อยู่สมมติ MOCK-xxx-n ให้อัตโนมัติ
   const setUnits = useCallback((fn) => setUnitsRaw((u) => normMockUnits(typeof fn === "function" ? fn(u) : fn, usedAddr)), [setUnitsRaw, usedAddr]);
   // ★ 2026-11-24 ผู้ใช้: "อัพแบบไปแล้วทำไมถึงยังไม่มี" — อัพแบบแผง (MTG01-5001) + ใบปะหน้าแล้ว แต่ตารางนี้ว่าง = 0 แผง → ทั้งใบยังไม่มีอะไร (ของในใบ = แผงในตารางนี้ × BOM ของแบบ)
   //   → แผงที่ใบปะหน้าระบุ (รายการที่ตรงกับแบบแผงที่อัพ หรือเป็น MARKING DRAWING) แต่ยังไม่มีในตาราง: บอกให้เห็น + ปุ่มใส่ให้ตามจำนวนในใบปะหน้า
   //     Zone ของใบปะหน้าเป็น Mockup (PMU / VMU / EMU) = ไม่ต้องมีที่อยู่ (ระบบตั้ง MOCK-… ให้) · ไม่ใช่ Mockup = ใส่แถวให้ แล้วกรอกที่อยู่เอง
-  const want = useMemo(() => {
-    if (!order || !Array.isArray(order.items)) return [];
-    const panelPdf = new Set((pdfs || []).filter((d) => d && d.kind === "panel").map((d) => NC(d.code)));
-    const anyPdf = new Set((pdfs || []).filter((d) => d && d.code).map((d) => NC(d.code)));   // แบบ MARKING ยังไม่ถูกนับเป็นแบบแผงจนกว่าจะมี Unit นี้ในตาราง → ดูจากเบอร์ของไฟล์ที่อัพ
-    const have = new Map(); for (const u of units || []) { const k = NC(u.unit); if (k) have.set(k, (have.get(k) || 0) + (Number(u.qty) > 0 ? Number(u.qty) : 1)); }
-    const out = [];
-    for (const it of order.items) {
-      const k = NC(it.code); if (!k || out.some((x) => NC(x.code) === k)) continue;
-      if (!(panelPdf.has(k) || /MARKING\s*DRAW/i.test(String(it.d || "")))) continue;
-      const need = Math.max(1, Math.round(Number(it.qty) || 1)); const lack = need - (have.get(k) || 0);
-      if (lack > 0) out.push({ code: String(it.code).trim().toUpperCase(), need, lack, hasPdf: anyPdf.has(k) });
-    }
-    return out;
-  }, [order, pdfs, units]);
-  const orderMock = /^(PMU|VMU|EMU)\b/i.test(String((order && (order.zone || order.location)) || "").trim());
-  const addWanted = () => setUnits((u) => [...u.filter((r) => String(r.unit || "").trim() || String(r.addr || "").trim()), ...want.flatMap((x) => Array.from({ length: x.lack }, () => (orderMock ? { unit: x.code, addr: "", mock: true } : { unit: x.code, addr: "" })))]);
+  const want = useMemo(() => wantedPanels(order, pdfs, units), [order, pdfs, units]);
+  const orderMock = orderIsMock(order);
+  const addWanted = () => setUnits((u) => [...u.filter((r) => String(r.unit || "").trim() || String(r.addr || "").trim()), ...wantedRows(want, orderMock)]);
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState("");
   const [onlyBad, setOnlyBad] = useState(false);
