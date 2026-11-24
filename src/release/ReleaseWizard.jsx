@@ -431,7 +431,9 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
       { k: "hdr", label: "หัวใบ Release", v: hdrErr || `${roNorm}${hdr.note ? " · " + hdr.note : ""} · ${fmtYmd(hdr.date)} · ${project?.code || ""} · ผู้จัดทำ ${userName}`, s: hdrErr ? "block" : "ok", go: 0 },
       { k: "units", label: "Address & Unit", v: units.length ? `${nf(units.length)} แผง${units.some((r) => r.mock) ? ` (Mockup ${units.filter((r) => r.mock).length})` : ""} · ${cnt.length} แบบ${ui.block.length ? " · " + ui.block.join(" · ") : ""}${ui.warn.length ? " · " + ui.warn.join(" · ") : ""}` : "ยังไม่มีที่อยู่", s: !units.length || ui.block.length ? "block" : ui.warn.length ? "warn" : "ok", go: 1 },
       { k: "bom", label: "แบบแผงมี BOM", v: noBom.length ? `ยังไม่มี ${noBom.length} แบบ: ${noBom.slice(0, 6).map((r) => r.unit).join(", ")}${noBom.length > 6 ? " …" : ""} — ได้ QR แผงแต่ยังไม่แตกเป็นซับ/พาร์ท` : `ครบ ${cnt.length} แบบ`, s: noBom.length ? "warn" : "ok", go: 2 },
-      { k: "pdf", label: "PDF ซับ / พาร์ท", v: missSub || missPart ? `ยังขาด PDF ซับ ${missSub} · พาร์ท ${missPart} (ไม่รู้ลูกของซับ / INV วัตถุดิบ)` : "ครบ", s: missSub || missPart ? "warn" : "ok", go: 2 },
+      // ★ 2026-11-24 ผู้ใช้: "จะรู้ได้ไงว่าขาดตัวไหน" → บอกเบอร์ที่ยังไม่มี PDF ทีละเบอร์ + อยู่ในแผง / ซับไหน (เดิมบอกแค่จำนวน)
+      { k: "pdf", label: "PDF ซับ / พาร์ท", v: missSub || missPart ? `ยังขาด PDF ซับ ${missSub} · พาร์ท ${missPart} (ไม่รู้ลูกของซับ / INV วัตถุดิบ)` : "ครบ", s: missSub || missPart ? "warn" : "ok", go: 2,
+        items: [...cv.subs.filter((x) => x.src === "none").map((x) => ({ kind: "ซับ", code: x.code, from: x.from })), ...cv.parts.filter((x) => x.src === "none").map((x) => ({ kind: "พาร์ท", code: x.code, from: x.from }))].sort((a, b) => ncmp(a.code, b.code)) },
       { k: "ack", label: "ค่าที่ไม่ตรงใน PDF", v: openN ? `ยังไม่ได้ตัดสิน ${openN} จุด (บันทึกเลย = ใช้ตาม PDF)` : "ไม่มี / ตัดสินครบแล้ว", s: openN ? "warn" : "ok", go: 2 },
       ...(bomSave.frac.length ? [{ k: "frac", label: "จำนวนต่อชุดไม่ลงตัว", v: `${bomSave.frac.length} รายการ — BOM เก็บจำนวนเต็ม ระบบปัดให้: ${bomSave.frac.slice(0, 3).join(" · ")}${bomSave.frac.length > 3 ? " …" : ""}`, s: "warn", go: 3 }] : []),
       { k: "proc", label: "งานของซับ", v: noProc.length ? `${noProc.length} เบอร์ยังไม่ได้เลือกงาน (พับ / เชื่อม / ยิง / Site Item): ${noProc.slice(0, 5).map((s) => s.code).join(", ")} — เลือกได้ในแท็บ "ใบงาน + Category"` : `ครบ ${plan.subs.length} เบอร์ (1 ซับไปได้หลายใบ)`, s: noProc.length ? "warn" : "ok", go: 3, tab: "items" },
@@ -1265,7 +1267,11 @@ function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units,
         <div className="rw-checks">
           {saveChecks.map((c) => (
             <div key={c.k} className={`rw-chk ${c.s}`}>
-              <span className="ic">{icon[c.s]}</span><b>{c.label}</b><span className="v">{c.v}</span>
+              <span className="ic">{icon[c.s]}</span><b>{c.label}</b><span className="v">{c.v}
+                {c.items && c.items.length ? <span className="rw-chk-items" data-testid={`chk-items-${c.k}`}>
+                  {c.items.slice(0, 40).map((it) => <span key={it.kind + it.code} className="rw-chk-item" title={`${it.kind} ${it.code}${it.from ? ` — อยู่ใน ${it.from}` : ""} · ยังไม่มีแบบ PDF`}><small>{it.kind}</small> <b className="rw-mono">{it.code}</b>{it.from ? <small> ใน {it.from}</small> : null}</span>)}
+                  {c.items.length > 40 ? <span className="rw-chk-item"><small>… อีก {c.items.length - 40} เบอร์</small></span> : null}
+                </span> : null}</span>
               {c.s !== "ok" ? <button type="button" className="rw-link" onClick={() => (c.go === 3 ? setTab(c.tab || "make") : go(c.go))}>แก้</button> : <span />}
             </div>))}
         </div>
