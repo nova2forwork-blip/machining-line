@@ -179,3 +179,35 @@ def test_mat_sheet_actual_issue_uses_entered_figure(js):
     plan = {**PLAN, "lotIssue": {"P-005": {"AL01500A": {"n": 9, "r": "ใช้เส้นสั้น"}}}}
     sh = next(s for s in js("buildLotModel", {"plan": plan, "need": NEED, "lot": {"no": "P-005", "date": "2026-11-03", "rows": ROWS}, "userName": "ผู้ทดสอบ"}, m="lot")["sheets"] if s["key"] == "MAT")
     assert sh["rows"][0]["vals"][5] == base and sh["rows"][0]["vals"][6] == 9 and sh["total2"] == 9
+
+
+# ── 2026-11-24 ความยาวพาร์ท: ตาราง BOM ในแบบแผงไม่ทับความยาวจากแบบของพาร์ทเอง (ในคลัง) ──
+_PANEL_DOC = {"file": "MTG01-5001.pdf", "kind": "panel", "code": "MTG01-5001", "title": {}, "bom": [{"item": 1, "code": "MAL132-5001 A", "desc": "ANGLE", "qty": 8, "len": 74.6}]}
+
+
+def _bom_len(js, part, ack=None):
+    lib = {"panels": {}, "subs": {}, "parts": {"MAL132-5001 A": part}}
+    return js("buildBom", {"lib": lib, "pdfs": [_PANEL_DOC], "ack": ack or {}, "useLib": True})["parts"]["MAL132-5001 A"]["l"]
+
+
+def test_panel_bom_length_does_not_override_part_drawing(js):
+    """Regression (ผู้ใช้: ทำไมความยาวของ part ไม่เท่ากัน): พาร์ทมีแบบของตัวเองในคลัง 75 · แบบแผงเขียน 74.6 → ใช้ 75"""
+    assert _bom_len(js, {"d": "", "l": 75, "m": "AL03500D", "k": "part", "lp": 1}) == 75
+
+
+def test_panel_bom_length_used_when_user_picks_pdf(js):
+    """Positive: เลือก "ตาม PDF" ที่ข้อนี้ → ใช้ 74.6"""
+    assert _bom_len(js, {"d": "", "l": 75, "m": "AL03500D", "k": "part", "lp": 1}, {"MTG01-5001.pdf|l:MAL132-5001 A": "pdf"}) == 74.6
+
+
+def test_panel_bom_length_fills_part_without_own_drawing(js):
+    """Boundary: พาร์ทยังไม่มีแบบของตัวเอง (ไม่มี lp) → ใช้ค่าจากตารางในแบบแผงตามเดิม"""
+    assert _bom_len(js, {"d": "", "l": 75, "m": "AL03500D", "k": "part"}) == 74.6
+
+
+def test_new_panel_reports_length_mismatch_with_library_part(js):
+    """Negative: แผงใหม่ + ลูกที่มีในคลัง ความยาวไม่ตรง → ต้องมีข้อให้เห็น / เลือก (เดิมเงียบ)"""
+    lib = {"panels": {}, "subs": {}, "parts": {"MAL132-5001 A": {"d": "", "l": 75, "m": "AL03500D", "k": "part", "lp": 1}}}
+    r = js("runChecks", [_PANEL_DOC], {"lib": lib, "ack": {}})[0]
+    hit = [i for i in r["issues"] if i["key"].endswith("|l:MAL132-5001 A")]
+    assert len(hit) == 1 and hit[0]["choice"] is True and "74.6" in hit[0]["msg"] and "75" in hit[0]["msg"]

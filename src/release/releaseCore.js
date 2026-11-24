@@ -521,7 +521,7 @@ export function buildBom({ lib, pdfs, ack, useLib }) {
           const pk = findKey(PARTS, b.code);
           const p = pk ? PARTS[pk] : (PARTS[b.code] = { d: b.desc, l: null, h: null, f: "", m: "", k });
           if (!p.d) p.d = b.desc;
-          if (b.len != null && !kept(d, "l:" + c)) p.l = b.len;
+          if (b.len != null && !kept(d, "l:" + c) && !(pk && p.lp && p.l != null && ack[d.file + "|l:" + c] !== "pdf")) p.l = b.len;   // ★ 2026-11-24 พาร์ทมีแบบของตัวเองในคลัง = ไม่ให้ตารางในแบบแผง / ซับทับความยาว (เว้นแต่เลือกตาม PDF)
           if (b.ht != null && !kept(d, "h:" + c)) p.h = b.ht;
           if (b.fin && !kept(d, "f:" + c)) p.f = b.fin;
           if (k === "hw") { p.k = "hw"; p.u = b.qty_unit === "pcs" ? "pcs." : "m."; if (b.qty_unit === "mm") p.mm = 1; }
@@ -604,7 +604,11 @@ export function checkPdf(d, { lib, ack }) {
     const ref = /^SA/.test(c) ? libSub(c) : libPart(c);
     const r = { item: b.item, code: p ? b.code : s.code, desc: b.desc || (ref && ref.d) || "", qp: p ? p.q : null, qs: s ? s.q : null, unit: b.qty_unit || "", lp: b.len ?? null, ls: ref ? ref.l ?? null : null, hp: b.ht ?? null, hs: ref ? ref.h ?? null : null, fp: b.fin || "", fs: ref ? ref.f || "" : "", k: p ? guessKind(b) : s.t, bad: {} };
     rows.push(r);
-    if (!lh) continue;
+    if (!lh) {
+      // ★ 2026-11-24 แผง / ซับใหม่ แต่ลูกเป็นเบอร์ที่มีในคลังอยู่แล้ว → ความยาวไม่ตรงต้องบอก (เดิมข้ามทั้งหมดเพราะ "ยังไม่มี BOM เดิม")
+      if (ref && r.lp != null && r.ls && !near(r.lp, r.ls, 0.02)) { r.bad.l = 1; add(ref.lp ? "warn" : "bad", ref.lp ? `${r.code}: ความยาวในตารางของแบบนี้ ${r.lp} ≠ แบบของเบอร์นั้นเอง ${r.ls} → ใช้ ${r.ls} (ตามแบบพาร์ท) เว้นแต่เลือกตาม PDF นี้` : `${r.code}: ความยาว PDF ${r.lp} ≠ ในคลัง ${r.ls}`, "l:" + c, { choice: true, code: r.code }); }
+      continue;
+    }
     if (!s) { r.bad.miss = "lib"; add("bad", `${r.code}: มีใน PDF (จำนวน ${r.qp}) แต่ไม่มีใน BOM เดิม`, "miss:" + c, { choice: true, libLabel: "ไม่เอาบรรทัดนี้", code: r.code }); continue; }
     if (!p) { r.bad.miss = "pdf"; add("bad", `${r.code}: มีใน BOM เดิม (จำนวน ${r.qs}) แต่ไม่มีใน PDF`, "gone:" + c, { choice: true, pdfLabel: "ตัดออก (ตาม PDF)", libLabel: "เก็บไว้ (ตามเดิม)", code: r.code }); continue; }
     if (!near(r.qp, r.qs)) {
