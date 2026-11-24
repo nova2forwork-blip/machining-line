@@ -120,6 +120,19 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   useEffect(() => { if (!rowMsg) return undefined; const t = setTimeout(() => setRowMsg(""), 3500); return () => clearTimeout(t); }, [rowMsg]);
   const rowProgress = (code, kind) => {
     const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
+    // ★ 2026-11-24 ผู้ใช้: "ดูไม่ได้" — เบอร์ที่ "ใช้ของ P-002" (ปล่อยไว้ใน Release อื่นของโปรเจคเดียวกัน) กดแล้วขึ้นว่า "ยังไม่ได้ปล่อย"
+    //   → เปิดความคืบหน้าของเบอร์นั้นจากใบที่ปล่อยไว้ (หลายใบ = สลับดูได้ในหน้าต่างเดียวกัน)
+    if (!hit.length) {
+      const o = otherOf(rel, code);
+      if (o) {
+        const rows = (releases || []).filter((r) => !r.mod_cancelled_at && Number(r.qty) > 0 && NC(r.part_master?.part_no) === NC(code) && (r.part_master?.kind || "part") !== "panel"
+          && (kind === "subassembly" ? r.part_master?.kind === "subassembly" : r.part_master?.kind !== "subassembly")
+          && (!plan.projectCode || !r.part_master?.projects?.code || r.part_master.projects.code === plan.projectCode)
+          && o.ros.includes(String(r.release_order || "").trim().replace(/\.\d+$/, "")));
+        if (rows.length && onOpenPart && onOpenPart(rows[0].id, rows.map((r) => r.id))) return;
+        setRowMsg(`${code} ปล่อยไว้ที่ ${o.ros.join(", ")} (${nf(o.qty)}) — เปิดใบ ${o.ros[0]} เพื่อดูความคืบหน้า`); return;
+      }
+    }
     if (!hit.length) { const was = rel.lots.some((L) => !L.hwOnly && L.rows.some((r) => r.mod_cancelled_at && NC(r.code) === NC(code))); setRowMsg(was ? `${code} ถูกยกเลิกไปแล้ว (Modify) — ไม่มีความคืบหน้าให้ดู` : `${code} ยังไม่ได้ปล่อย — ยังไม่มีความคืบหน้าให้ดู`); return; }
     // ★ 2026-11-18 ทุกเบอร์เปิดหน้าต่างแบบเดียวกัน (การ์ดความคืบหน้าของเบอร์) — ปล่อยหลายล็อต = มีปุ่มสลับล็อตในหน้าต่างนั้น (เดิม: หลายล็อตเปิดป็อปอัพทั้งใบที่กรองไว้ → หน้าตาคนละแบบ)
     // ★ 2026-11-18 (รอบ 2) ผู้ใช้: "ให้หน้าตาแบบนี้สิ" → ทุกเบอร์เปิดหน้าต่างใหญ่แบบเดียวกัน (ดูเฉพาะเบอร์นั้น: การ์ดสรุป · ตามล็อต · ตาราง) ทั้งเบอร์ที่ปล่อยล็อตเดียวและหลายล็อต
