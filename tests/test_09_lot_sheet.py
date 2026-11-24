@@ -137,3 +137,25 @@ def test_header_date_falls_back_but_still_matches_cover(js, tid, date):
 def test_header_date_timestamp_form(js):
     """TC-LOT-014 วันที่ล็อตแบบมีเวลา (2026-11-03T08:15:00+07:00) → 03/11/2026"""
     assert model(js, date="2026-11-03T08:15:00+07:00")["meta"]["date"] == "03/11/2026"
+
+
+# ── 2026-11-24 ตรวจก่อนบันทึก "PDF ซับ / พาร์ท": พาร์ทที่มีแบบอยู่ในคลังของโปรเจค (ธง lp) ต้องไม่ขึ้นว่าขาด ──
+def _cov(js, part):
+    bom = {"panels": {"PN1": {"d": "", "items": [["sub", "SB1", 1]]}}, "subs": {"SB1": {"d": "", "items": [["part", "MAT550-5001 A", 1]]}}, "parts": {"MAT550-5001 A": part}}
+    r = js("coverageTest", [{"unit": "PN1", "addr": "A1"}], bom, [])
+    return r["parts"]
+
+
+def test_coverage_part_without_material_or_pdf_is_missing(js):
+    """Negative: พาร์ทไม่มีวัตถุดิบ ไม่มีแบบ → ยังขาด"""
+    assert _cov(js, {"d": "", "m": "", "k": "part"})[0]["src"] == "none"
+
+
+def test_coverage_part_with_library_pdf_counts(js):
+    """Regression (ผู้ใช้: เพิ่มไปแล้วทำไมยังไม่มี): มีแบบในคลัง (lp) แม้วัตถุดิบยังว่าง → ไม่ขาด"""
+    assert _cov(js, {"d": "", "m": "", "k": "part", "lp": 1})[0]["src"] == "lib"
+
+
+def test_coverage_part_with_material_counts(js):
+    """Positive: มีวัตถุดิบในระบบ → ไม่ขาด"""
+    assert _cov(js, {"d": "", "m": "AL01500A", "k": "part"})[0]["src"] == "lib"

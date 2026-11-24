@@ -719,12 +719,14 @@ export function coverage(units, bom, pdfs, catOf) {
   };
   for (const p of panels) { const pk = findKey(bom.panels, p.code); if (pk) walk(bom.panels[pk].items, p.code); }
   const subL = [...subs].map(([c, from]) => { const s = bom.subs[findKey(bom.subs, c)]; return { code: c, from, src: pdfOf("sub", c) ? "pdf" : s && (s.items || []).length ? "lib" : "none" }; });
-  const partL = [...parts].map(([c, from]) => { const p = bom.parts[findKey(bom.parts, c)]; return { code: c, from, src: pdfOf("part", c) ? "pdf" : p && (p.m || p.binv || p.bm) ? "lib" : "none" }; });
+  const partL = [...parts].map(([c, from]) => { const p = bom.parts[findKey(bom.parts, c)]; return { code: c, from, src: pdfOf("part", c) ? "pdf" : p && (p.m || p.binv || p.bm || p.lp) ? "lib" : "none" }; });   // ★ 2026-11-24 lp = มีแบบ PDF ของเบอร์นี้ในคลังของโปรเจคแล้ว (อัพไว้ก่อน / ทีหลังก็นับ)
   const need = new Set([...panels.map((x) => NC(x.code)), ...subL.map((x) => NC(x.code)), ...partL.map((x) => NC(x.code))]);
   const orphan = pdfs.filter((d) => d.kind !== "unknown" && !need.has(NC(d.code)));
   return { panels, subs: subL, parts: partL, orphan };
 }
 
+// สำหรับ pytest (ส่งฟังก์ชัน catOf ข้าม JSON ไม่ได้) — ใช้กฎหมวดมาตรฐาน
+export const coverageTest = (units, bom, pdfs) => coverage(units, bom, pdfs, (code, k) => ruleCat(code, k));
 // ══ ตรวจ Address & Unit ══
 export const UNIT_RE = /^UA\d{4}[A-Z]?$/i;
 // ★ Mockup (PMU / VMU / EMU): แผงไม่มีที่อยู่ติดตั้ง → ติดแท็ก mock ได้ ไม่ต้องกรอก Address

@@ -14,7 +14,7 @@ import {
   deleteReleaseCascade, countReleaseStationRecords,
 } from "../supabase.js";
 import { getSession } from "../auth.js";
-import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey, glassQrRows } from "./releaseCore.js";
+import { dwgRev, NC, findKey, QR_CATS, ruleCat, addrNote, projectContext, applyModToPlan, baseOf, findLatest, needOf, roKey, glassQrRows, readPdfFiles } from "./releaseCore.js";
 
 // ทำทีละ n งานพร้อมกัน (กันยิง RPC ถล่มทีเดียวหลายร้อยตัว)
 async function pool(items, n, fn, onTick) {
@@ -97,8 +97,34 @@ async function loadBomLibraryOne(projectId, onlyCodes = null, onTick, skipPanels
     if (errs.length) throw new Error(`อ่าน BOM ไม่ได้ ${errs.length} เบอร์ (${errs.slice(0, 3).map((x) => x.item.part_no).join(", ")})`);
   }
   // หมวด / งานซับ / ใบงาน ที่ office ตั้งไว้ที่ "ซับ / พาร์ท ของโปรเจค" (แถว LIB ใน release_plans)
-  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } for (const [c, un] of Object.entries(r.lib.units || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && un) { if (un.u) lib.parts[pk].u = un.u; if (un.mm) lib.parts[pk].mm = 1; } } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
+  try { const r = await listPlans(projectId); if (r.lib) { lib.ov = { catOv: r.lib.catOv || {}, procOv: r.lib.procOv || {}, destOv: r.lib.destOv || {}, partMode: r.lib.partMode || "auto", partGroups: r.lib.partGroups || [] }; lib.libId = r.lib.id; lib.pdfs = r.lib.pdfs || []; await healPartsFromLibPdfs(lib, pms); for (const [c, its] of Object.entries(r.lib.subItems || {})) { const sk = Object.keys(lib.subs).find((x) => NC(x) === NC(c)); if (sk) lib.subs[sk].full = its; } for (const [c, k] of Object.entries(r.lib.kinds || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && k === "hw") lib.parts[pk].k = "hw"; } for (const [c, un] of Object.entries(r.lib.units || {})) { const pk = Object.keys(lib.parts).find((x) => NC(x) === NC(c)); if (pk && un) { if (un.u) lib.parts[pk].u = un.u; if (un.mm) lib.parts[pk].mm = 1; } } } } catch (_) { /* ยังไม่รัน migration-release-plans.sql */ }
   return lib;
+}
+
+// ★ 2026-11-24 "ทำอะไรก่อนหลังก็ได้ ลิ้งถูกต้องเสมอ": พาร์ทที่มีแบบ PDF อยู่ในคลังของโปรเจค → ติดธง lp (นับว่ามีแบบแล้ว)
+//   ถ้าเบอร์นั้นยังไม่มีวัตถุดิบ / ความยาว (เก็บแบบไว้ก่อนแก้บั๊ก หรือเบอร์ถูกสร้างจากแบบซับก่อน) → เปิดไฟล์ในคลังอ่าน INV.CODE / LENGTH มาเติม แล้วบันทึกกลับ (ทำครั้งเดียว · พลาดก็ข้าม)
+const _healSeen = new Set();   // ไฟล์ที่อ่านแล้วในรอบเปิดแอปนี้ (แบบที่ไม่มี INV.CODE จริงๆ จะไม่ถูกเปิดอ่านซ้ำทุกครั้ง)
+async function healPartsFromLibPdfs(lib, pms) {
+  const todo = [];
+  for (const d of lib.pdfs || []) {
+    if (!d || d.kind !== "part" || !d.code) continue;
+    // แบบพาร์ทถูกวางเก็บเข้าคลังไว้เฉยๆ (ยังไม่เคยมีเบอร์นี้ในระบบ) → ให้มีเบอร์ในคลังรอบนี้ด้วย ข้อมูลอ่านจากไฟล์
+    const pk = findKey(lib.parts, d.code) || (d.path ? (lib.parts[String(d.code).trim()] = { d: "", l: null, m: "", k: "part", rev: d.rev || "" }, String(d.code).trim()) : null); if (!pk) continue;
+    const p = lib.parts[pk]; p.lp = 1;
+    if (d.path && !p.m && !_healSeen.has(d.path + "|" + NC(d.code))) { _healSeen.add(d.path + "|" + NC(d.code)); todo.push([d, pk]); }
+  }
+  if (!todo.length || typeof File === "undefined" || typeof fetch === "undefined") return;
+  const pmBy = new Map((pms || []).map((x) => [NC(x.part_no), x])); const byPath = new Map();
+  for (const [d, pk] of todo.slice(0, 40)) {
+    try {
+      if (!byPath.has(d.path)) { const blob = await (await fetch(await getLibPdfUrl(d.path))).blob(); byPath.set(d.path, await readPdfFiles([new File([blob], String(d.file || "drawing.pdf").split(" › ")[0], { type: "application/pdf" })])); }
+      const docs = byPath.get(d.path) || []; const doc = docs.find((y) => y.kind === "part" && NC(y.code) === NC(d.code)); if (!doc || !doc.title) continue;
+      const inv = String(doc.title["INV.CODE"] || "").trim(); const Ln = parseFloat(String(doc.title.LENGTH || "").replace(/,/g, ""));
+      const p = lib.parts[pk]; if (inv && inv !== "-") p.m = inv; if (p.l == null && Number.isFinite(Ln)) p.l = Ln; if (!p.d && doc.title.DESC) p.d = doc.title.DESC;
+      const pm = pmBy.get(NC(pk));
+      if (pm && p.m && !pm.material && !pm.inventory_code) { try { await updatePartMaster(pm.id, { part_name: pm.part_name || pm.part_no, material: p.m, unit_weight: pm.unit_weight ?? 0, default_length_mm: pm.default_length_mm ?? p.l ?? null }); } catch (_) { /* ไม่มีสิทธิ์แก้ = ใช้ค่าที่อ่านได้ในรอบนี้ */ } }
+    } catch (_) { /* อ่านไฟล์ไม่ได้ = ข้าม */ }
+  }
 }
 
 // ═ เก็บ / เปิด ตัวไฟล์ PDF ของซับ-พาร์ท (Storage bucket "release-pdfs" · ต้องรัน migration-release-pdfs.sql) ═
@@ -403,6 +429,16 @@ export async function saveLibrary({ projectId, projectCode, bom, newCodes, catOv
     await insertRows("part_master", miss.slice(i, i + 200).map((w) => ({ project_id: projectId, part_no: w.code, part_name: w.d || w.code, material: w.inv || null, unit_weight: 0, default_length_mm: w.l ?? null, routing: [], kind: w.kind })));
   }
   if (miss.length) { pms = await listRows("part_master", { filters: { project_id: projectId }, strict: true }); pmBy = new Map(pms.map((p) => [NC(p.part_no), p])); }
+  // ★ 2026-11-24 ผู้ใช้: "เพิ่มไปแล้วนะทำไมยังไม่มี" / "ให้ทำอะไรก่อนหลังก็ได้ ลิ้งถูกต้องเสมอ"
+  //   อัพแบบซับก่อน → พาร์ทลูกถูกสร้างเป็นเบอร์เปล่า (ยังไม่รู้วัตถุดิบ) · อัพแบบพาร์ททีหลัง → เดิมข้ามเพราะ "มีเบอร์แล้ว" วัตถุดิบจึงว่างตลอด
+  //   → เบอร์เดิมที่วัตถุดิบ / ความยาวยังว่าง เติมจากแบบที่อัพรอบนี้ (ไม่ทับค่าที่มีอยู่แล้ว)
+  const fills = want.filter((w) => w.kind === "part").map((w) => [w, pmBy.get(NC(w.code))]).filter(([w, pm]) => pm && !miss.includes(w) && ((w.inv && !pm.material && !pm.inventory_code) || (w.l != null && pm.default_length_mm == null)));
+  const e0 = await pool(fills, 6, async ([w, pm]) => {
+    const material = pm.material || (pm.inventory_code ? null : w.inv) || null; const len = pm.default_length_mm ?? w.l ?? null;
+    await updatePartMaster(pm.id, { part_name: pm.part_name || w.d || pm.part_no, material, unit_weight: pm.unit_weight ?? 0, default_length_mm: len });
+    pm.material = material; pm.default_length_mm = len;
+  }, (d, n) => onProgress(`เติมวัตถุดิบ / ความยาว ${d}/${n}`));
+  if (e0.length) st.errors.push(`เติมวัตถุดิบไม่สำเร็จ ${e0.length} เบอร์`);
   const kinds = want.filter((w) => w.kind !== "part").filter((w) => { const pm = pmBy.get(NC(w.code)); return pm && pm.kind !== w.kind; });
   const e1 = await pool(kinds, 6, async (w) => { await updateRow("part_master", pmBy.get(NC(w.code)).id, { kind: w.kind }); }, (d, n) => onProgress(`ตั้งชนิดเบอร์ ${d}/${n}`));
   if (e1.length) st.errors.push(`ตั้งชนิดไม่สำเร็จ ${e1.length} เบอร์`);
