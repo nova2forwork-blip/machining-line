@@ -1269,7 +1269,7 @@ function SaveStep({ itemsMode, releases, draftPlan, saveChecks, go, plan, units,
             <div key={c.k} className={`rw-chk ${c.s}`}>
               <span className="ic">{icon[c.s]}</span><b>{c.label}</b><span className="v">{c.v}
                 {c.items && c.items.length ? <span className="rw-chk-items" data-testid={`chk-items-${c.k}`}>
-                  {c.items.slice(0, 40).map((it) => <span key={it.kind + it.code} className="rw-chk-item" title={`${it.kind} ${it.code}${it.from ? ` — อยู่ใน ${it.from}` : ""} · ยังไม่มีแบบ PDF`}><small>{it.kind}</small> <b className="rw-mono">{it.code}</b>{it.from ? <small> ใน {it.from}</small> : null}</span>)}
+                  {c.items.slice(0, 40).map((it) => <span key={it.kind + it.code} className="rw-chk-item" title={`${it.kind} ${it.code}${it.from ? ` — อยู่ใน ${it.from}` : ""} · ยังไม่มีแบบ PDF`}><small>ขาดแบบ{it.kind}</small> <b className="rw-mono">{it.code}</b>{it.from ? <small> · ลูกของ {it.from}</small> : null}</span>)}
                   {c.items.length > 40 ? <span className="rw-chk-item"><small>… อีก {c.items.length - 40} เบอร์</small></span> : null}
                 </span> : null}</span>
               {c.s !== "ok" ? <button type="button" className="rw-link" onClick={() => (c.go === 3 ? setTab(c.tab || "make") : go(c.go))}>แก้</button> : <span />}
