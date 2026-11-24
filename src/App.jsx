@@ -970,8 +970,20 @@ const StatCard = ({ label, value, icon, sub, unit }) => (
 // closeOnBackdrop: false = คลิกพื้นที่ว่างรอบๆ จะไม่ปิด (ต้องกด X หรือปุ่มยกเลิกเท่านั้น)
 // locked: true = ล็อกเต็มรูปแบบชั่วคราว (ปิดไม่ได้เลยแม้กด X/Esc) — ใช้ตอนกำลังประมวลผล/นำเข้าอยู่
 // wide: true = 900px · "lg" = 1120px · "xl" = เกือบเต็มจอ (ตารางกรอกหลายคอลัมน์ เช่น เพิ่ม Release)
+// ★ 2026-11-24 ผู้ใช้: "หน้าต่าง popup ให้ย่อขยายได้ทุกอัน · ลากจากมุมก็ได้"
+//   ทุกหน้าต่างที่ใช้ Modal: ปุ่ม ⛶ ขยายเต็มจอ / กลับขนาดเดิม (ดับเบิลคลิกแถบหัวก็ได้) · ลากมุมล่างซ้าย / ขวาเพื่อย่อ-ขยาย
+//   ขนาดที่ปรับจำไว้ต่อหน้าต่าง (ตามชื่อหัว · เก็บในเบราว์เซอร์เครื่องนี้) · กด ⛶ ซ้ำตอนเต็มจอ = กลับขนาดที่ลากไว้ · ปุ่ม "ขนาดเดิม" ล้างค่าที่จำ
+//   หน้าต่างอยู่กลางจอ → ลากมุมแล้วขยายสองด้านเท่ากัน (มุมตามเมาส์) · ไม่เล็กกว่า 320×200 · ไม่เกินจอ
+const MODAL_MIN_W = 320, MODAL_MIN_H = 200;
+const modalSizeKey = (title) => (typeof title === "string" && title && title.length <= 60 ? "mls.modal." + title : null);
 function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked = false, wide = false }) {
   const [shake, setShake] = useState(false);
+  const boxRef = useRef(null);
+  const sKey = modalSizeKey(title);
+  const [win, setWin] = useState(() => { try { const v = sKey ? JSON.parse(localStorage.getItem(sKey) || "null") : null; return v && typeof v === "object" ? { w: Number(v.w) || 0, h: Number(v.h) || 0, max: !!v.max } : { w: 0, h: 0, max: false }; } catch { return { w: 0, h: 0, max: false }; } });
+  const [rect, setRect] = useState(null);   // ตำแหน่งหน้าต่างบนจอ — ใช้วางที่จับมุม
+  const sized = !win.max && win.w > 0 && win.h > 0;
+  const keep = (v) => { setWin(v); try { if (sKey) { if (v.max || (v.w > 0 && v.h > 0)) localStorage.setItem(sKey, JSON.stringify(v)); else localStorage.removeItem(sKey); } } catch { /* เก็บไม่ได้ = ไม่จำ */ } };
 
   useEffect(() => {
     function onKey(e) { if (e.key === "Escape" && !locked) onClose(); }
@@ -985,6 +997,16 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ตามตำแหน่ง / ขนาดจริงของหน้าต่าง (เนื้อหาเปลี่ยน · จอเปลี่ยนขนาด) เพื่อวางที่จับมุม
+  useEffect(() => {
+    const el = boxRef.current; if (!el) return undefined;
+    const upd = () => { const r = el.getBoundingClientRect(); setRect((o) => (o && o.l === r.left && o.t === r.top && o.r === r.right && o.b === r.bottom ? o : { l: r.left, t: r.top, r: r.right, b: r.bottom })); };
+    upd();
+    let ro = null; try { ro = new ResizeObserver(upd); ro.observe(el); } catch { /* เบราว์เซอร์เก่า */ }
+    window.addEventListener("resize", upd);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener("resize", upd); };
+  }, [win.max, win.w, win.h]);
+
   function pulse() {
     setShake(true);
     setTimeout(() => setShake(false), 320);
@@ -997,23 +1019,54 @@ function Modal({ title, sub, onClose, children, closeOnBackdrop = true, locked =
     else pulse(); // แจ้งเตือนเบาๆ ว่าหน้าต่างนี้ถูกล็อกไว้ ไม่ได้ค้าง
   }
 
+  // ลากมุม: side = +1 มุมขวา · -1 มุมซ้าย
+  function startResize(e, side) {
+    e.preventDefault(); e.stopPropagation();
+    const el = boxRef.current; if (!el) return;
+    const r = el.getBoundingClientRect(); const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    let last = { w: Math.round(sw), h: Math.round(sh), max: false };
+    const mv = (ev) => {
+      last = { w: Math.round(clamp(sw + 2 * side * (ev.clientX - sx), MODAL_MIN_W, window.innerWidth - 36)), h: Math.round(clamp(sh + 2 * (ev.clientY - sy), MODAL_MIN_H, window.innerHeight - 36)), max: false };   // เว้นขอบจอด้านละ 18 px (เท่าขอบของฉากหลัง)
+      setWin(last);
+    };
+    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); document.body.style.userSelect = ""; keep(last); };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+  }
+  const toggleMax = () => keep({ ...win, max: !win.max });
+  const resetSize = () => keep({ w: 0, h: 0, max: false });
+  const boxStyle = win.max ? { "--modal-h": "calc(100vh - 16px)" } : sized
+    ? { width: Math.min(win.w, window.innerWidth - 36), height: Math.min(win.h, window.innerHeight - 36), maxWidth: "none", maxHeight: "none", "--modal-h": Math.min(win.h, window.innerHeight - 36) + "px" } : undefined;
+
   return (
-    <div className="modal-backdrop" onMouseDown={handleBackdropClick}>
-      <div className={`modal${wide ? " modal-wide" : ""}${wide === "lg" ? " modal-lg" : ""}${wide === "xl" ? " modal-xl" : ""}${shake ? " modal-shake" : ""}`}>
-        <div className="modal-head">
+    <div className={`modal-backdrop${win.max ? " modal-backdrop-max" : ""}`} onMouseDown={handleBackdropClick}>
+      <div ref={boxRef} style={boxStyle} data-modal-size={win.max ? "max" : sized ? "custom" : "auto"}
+        className={`modal${wide ? " modal-wide" : ""}${wide === "lg" ? " modal-lg" : ""}${wide === "xl" ? " modal-xl" : ""}${win.max ? " modal-max" : ""}${sized ? " modal-sized" : ""}${shake ? " modal-shake" : ""}`}>
+        <div className="modal-head" onDoubleClick={(e) => { if (!e.target.closest("button, input, select, textarea, a, .modal-close, .modal-tool")) toggleMax(); }}>
           <div>
             <div className="modal-title">{title}</div>
             {sub && <div className="modal-sub">{sub}</div>}
           </div>
-          <span
-            className={`modal-close${locked ? " modal-close-disabled" : ""}`}
-            onClick={() => { if (locked) { pulse(); return; } onClose(); }}
-          >
-            <Icon name="close" size={16} />
-          </span>
+          <div className="modal-tools">
+            {sized || win.max ? <span className="modal-tool modal-tool-text" role="button" tabIndex={0} title="กลับไปขนาดเริ่มต้นของหน้าต่างนี้" data-testid="modal-reset" onClick={resetSize} onKeyDown={(e) => { if (e.key === "Enter") resetSize(); }}>ขนาดเดิม</span> : null}
+            <span className="modal-tool" role="button" tabIndex={0} title={win.max ? "ย่อกลับ" : "ขยายเต็มจอ (ดับเบิลคลิกแถบหัวก็ได้) · ลากมุมล่างเพื่อปรับขนาดเอง"} data-testid="modal-max" onClick={toggleMax} onKeyDown={(e) => { if (e.key === "Enter") toggleMax(); }}>
+              <Icon name={win.max ? "grid" : "expand"} size={15} />
+            </span>
+            <span
+              className={`modal-close${locked ? " modal-close-disabled" : ""}`}
+              onClick={() => { if (locked) { pulse(); return; } onClose(); }}
+            >
+              <Icon name="close" size={16} />
+            </span>
+          </div>
         </div>
         {children}
       </div>
+      {rect && !win.max ? <>
+        <span className="modal-grip modal-grip-r" title="ลากเพื่อย่อ / ขยายหน้าต่าง" data-testid="modal-grip-r" style={{ left: rect.r - 20, top: rect.b - 20 }} onPointerDown={(e) => startResize(e, 1)} />
+        <span className="modal-grip modal-grip-l" title="ลากเพื่อย่อ / ขยายหน้าต่าง" data-testid="modal-grip-l" style={{ left: rect.l - 2, top: rect.b - 20 }} onPointerDown={(e) => startResize(e, -1)} />
+      </> : null}
     </div>
   );
 }

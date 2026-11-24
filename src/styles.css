@@ -1851,7 +1851,7 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 }
 
 /* ══ หน้าแพ็กกิ้ง (PackingTableModal) — 2026-11-23 ผู้ใช้: "ออกแบบ และจัดให้สวย" ══ */
-.pk { display: flex; flex-direction: column; min-height: 0; max-height: calc(94vh - 132px); }
+.pk { display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--modal-h, 94vh) - 132px); }   /* --modal-h = ความสูงหน้าต่างเมื่อผู้ใช้ย่อ / ขยายเอง */
 .pk > * { flex-shrink: 0; }
 .pk-top { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: stretch; margin-bottom: 12px; }
 .pk-drop { display: flex; align-items: center; gap: 16px; padding: 22px 24px; border-radius: 16px; cursor: pointer; transition: background .15s, border-color .15s, padding .15s;
@@ -1904,3 +1904,18 @@ table.pgrid td.pg-odd input, table.pgrid td.mat-cell-odd input { color: #92400e;
 .pk-changes { margin-top: 10px; padding: 8px 12px; border-radius: 12px; background: rgba(217, 164, 65, .10); border: 1px solid #e0b458; font-size: 12.5px; }
 .pk-foot { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #d9e2dd); align-items: center; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 1100px) { .pk-top { grid-template-columns: 1fr; } .pk-stats { display: none; } .pk-steps { grid-template-columns: 1fr; } }
+
+/* ══ หน้าต่าง popup ย่อ / ขยายได้ (Modal) — 2026-11-24 ผู้ใช้: "ให้ย่อขยายได้ทุกอัน · ลากจากมุมก็ได้" ══ */
+.modal-tools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.modal-tool { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; border: 1px solid var(--border-soft, #e3e9e6); background: var(--surface-2, #f4f7f5); color: var(--muted); cursor: pointer; user-select: none; }
+.modal-tool:hover { color: var(--accent-dk, #0e9d63); border-color: var(--accent, #10b981); }
+.modal-tool-text { width: auto; padding: 0 9px; font-size: 12px; }
+.modal-max { width: calc(100vw - 16px) !important; max-width: none !important; height: calc(100vh - 16px) !important; max-height: none !important; }
+.modal-backdrop-max { padding: 8px; }
+.modal-sized { overflow: auto; }
+.modal-grip { position: fixed; width: 22px; height: 22px; z-index: 61; touch-action: none; border-radius: 0 0 var(--radius-lg, 14px) 0; opacity: .55; transition: opacity .12s;
+  background: linear-gradient(135deg, transparent 0 46%, var(--muted, #7a8a83) 46% 54%, transparent 54% 64%, var(--muted, #7a8a83) 64% 72%, transparent 72% 82%, var(--muted, #7a8a83) 82% 90%, transparent 90%); }
+.modal-grip:hover { opacity: 1; }
+.modal-grip-r { cursor: nwse-resize; }
+.modal-grip-l { cursor: nesw-resize; transform: scaleX(-1); }
+@media (max-width: 700px) { .modal-grip, .modal-tool { display: none; } }   /* จอมือถือ: หน้าต่างเต็มความกว้างอยู่แล้ว */

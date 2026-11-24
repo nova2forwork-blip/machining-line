@@ -661,7 +661,7 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
         </div>
       )}
 
-      {step === 1 && !itemsMode && <UnitsStep units={unitsRaw} total={units.length} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} />}
+      {step === 1 && !itemsMode && <UnitsStep units={unitsRaw} total={units.length} setUnits={setUnits} usedAddr={ctx.usedAddr} ui={ui} cnt={cnt} pdfs={pdfs} demoTools={demoTools} go={go} order={order} />}
       {step === 1 && itemsMode && <PicksStep project={project} picks={picks} setPicks={setPicks} bom={bom} lib={lib} libState={libState} catOf={catOf} onReloadLib={() => setLibTick((t) => t + 1)} api={api} userName={userName} order={order} orderCmp={orderCmp} orderHw={orderHw} setOrderHw={setOrderHw} pendingPdfs={pendingPdfs} onPendingDone={() => setPendingPdfs([])} />}
 
       {step === 2 && !itemsMode && (
@@ -700,9 +700,28 @@ export default function ReleaseWizard({ user, projects = [], releases = [], plan
 }
 
 // ══ ② Address & Unit ══
-function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go }) {
+function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdfs, demoTools, go, order = null }) {
   // ทุกการแก้ผ่านตัวนี้ → แถว Mockup (PMU/VMU/EMU) ได้ที่อยู่สมมติ MOCK-xxx-n ให้อัตโนมัติ
   const setUnits = useCallback((fn) => setUnitsRaw((u) => normMockUnits(typeof fn === "function" ? fn(u) : fn, usedAddr)), [setUnitsRaw, usedAddr]);
+  // ★ 2026-11-24 ผู้ใช้: "อัพแบบไปแล้วทำไมถึงยังไม่มี" — อัพแบบแผง (MTG01-5001) + ใบปะหน้าแล้ว แต่ตารางนี้ว่าง = 0 แผง → ทั้งใบยังไม่มีอะไร (ของในใบ = แผงในตารางนี้ × BOM ของแบบ)
+  //   → แผงที่ใบปะหน้าระบุ (รายการที่ตรงกับแบบแผงที่อัพ หรือเป็น MARKING DRAWING) แต่ยังไม่มีในตาราง: บอกให้เห็น + ปุ่มใส่ให้ตามจำนวนในใบปะหน้า
+  //     Zone ของใบปะหน้าเป็น Mockup (PMU / VMU / EMU) = ไม่ต้องมีที่อยู่ (ระบบตั้ง MOCK-… ให้) · ไม่ใช่ Mockup = ใส่แถวให้ แล้วกรอกที่อยู่เอง
+  const want = useMemo(() => {
+    if (!order || !Array.isArray(order.items)) return [];
+    const panelPdf = new Set((pdfs || []).filter((d) => d && d.kind === "panel").map((d) => NC(d.code)));
+    const anyPdf = new Set((pdfs || []).filter((d) => d && d.code).map((d) => NC(d.code)));   // แบบ MARKING ยังไม่ถูกนับเป็นแบบแผงจนกว่าจะมี Unit นี้ในตาราง → ดูจากเบอร์ของไฟล์ที่อัพ
+    const have = new Map(); for (const u of units || []) { const k = NC(u.unit); if (k) have.set(k, (have.get(k) || 0) + (Number(u.qty) > 0 ? Number(u.qty) : 1)); }
+    const out = [];
+    for (const it of order.items) {
+      const k = NC(it.code); if (!k || out.some((x) => NC(x.code) === k)) continue;
+      if (!(panelPdf.has(k) || /MARKING\s*DRAW/i.test(String(it.d || "")))) continue;
+      const need = Math.max(1, Math.round(Number(it.qty) || 1)); const lack = need - (have.get(k) || 0);
+      if (lack > 0) out.push({ code: String(it.code).trim().toUpperCase(), need, lack, hasPdf: anyPdf.has(k) });
+    }
+    return out;
+  }, [order, pdfs, units]);
+  const orderMock = /^(PMU|VMU|EMU)\b/i.test(String((order && (order.zone || order.location)) || "").trim());
+  const addWanted = () => setUnits((u) => [...u.filter((r) => String(r.unit || "").trim() || String(r.addr || "").trim()), ...want.flatMap((x) => Array.from({ length: x.lack }, () => (orderMock ? { unit: x.code, addr: "", mock: true } : { unit: x.code, addr: "" })))]);
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState("");
   const [onlyBad, setOnlyBad] = useState(false);
@@ -786,6 +805,11 @@ function UnitsStep({ units, total, setUnits: setUnitsRaw, usedAddr, ui, cnt, pdf
           {demoTools?.units ? demoTools.units(setUnits, setMsg) : null}
         </div>
         {msg ? <div className={`rw-msg ${msg.startsWith("✓") ? "ok" : "warn"}`}>{msg}</div> : null}
+        {want.length ? (
+          <div className="rw-msg warn" data-testid="units-want" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ flex: "1 1 320px" }}><b>ใบปะหน้ามีแผงที่ยังไม่อยู่ในตารางนี้:</b> {want.map((x) => `${x.code} × ${nf(x.lack)}${x.hasPdf ? "" : " (ยังไม่มีแบบ PDF)"}`).join(" · ")} — ตารางนี้ว่าง = ใบนี้ยังไม่มีแผง ซับ / พาร์ทจึงยังไม่ถูกนับ แม้อัพแบบแล้ว</span>
+            <button type="button" className="btn btn-accent btn-sm" data-testid="units-want-add" onClick={addWanted}>ใส่ให้ {nf(want.reduce((n, x) => n + x.lack, 0))} แผง{orderMock ? " (Mockup · ไม่ต้องมีที่อยู่)" : " (แล้วกรอกที่อยู่)"}</button>
+          </div>) : null}
         {units.length ? (
           <div className="table-wrap rw-tw">
             <table className="data-table rw-table">
@@ -1069,12 +1093,14 @@ function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint })
             <td>{x.status === "ok" ? <Pill tone="ok">ครบ{x.kind === "hw" ? " · ใบเบิก" : x.kind === "panel" ? " · แผง" : x.kind === "sub" ? " · ซับ" : ""}</Pill>
               : x.status === "missing" ? (isHw(x.code) ? <Pill tone="muted">อุปกรณ์ · ใบเบิก</Pill> : isMarking(x) ? <Pill tone="warn">แบบ MARKING = แผง</Pill> : <Pill tone="bad">ยังไม่อยู่ในใบ</Pill>)
               : <Pill tone="warn">{x.status === "more" ? "ในใบมากกว่า" : "ในใบน้อยกว่า"}</Pill>}</td>
-            <td>{isMarking(x) && !isHw(x.code) ? (x.status === "missing" ? <span className="rw-muted" style={{ fontSize: 12 }} data-testid="order-marking-hint">ลงที่ “ปล่อยแผง (มีที่อยู่)”</span> : null)
+            <td>{isMarking(x) && !isHw(x.code) ? (x.status === "missing" ? <span className="rw-muted" style={{ fontSize: 12 }} data-testid="order-marking-hint">{onApply ? "ลงที่ “ปล่อยแผง (มีที่อยู่)”" : "ใส่เป็น Unit ที่ขั้น ② Address & Unit"}</span> : null)
               : x.status === "missing" || isHw(x.code) ? <label className="rw-check"><input type="checkbox" checked={isHw(x.code)} onChange={(e) => tog(x.code, e.target.checked)} /> ไม่มี QR</label> : null}</td>
           </tr>))}</tbody>
       </table>
       {nMark ? <div className="rw-muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5 }} data-testid="order-marking-note">
-        <b>แบบ MARKING {nMark} รายการ</b> = แผง (มีที่อยู่ · QR ต่อแผง) ไม่ใช่อุปกรณ์ — ลงที่โหมด <b>“ปล่อยแผง (มีที่อยู่)”</b>: ขั้น ② ใส่ Address + Unit (เบอร์ MARKING เป็น Unit) → ขั้น ③ อัพ PDF แบบ MARKING · จำนวนใน BILL OF EXTRUSION จะคูณจำนวนแผงให้
+        <b>แบบ MARKING {nMark} รายการ</b> = แผง (QR ต่อแผง) ไม่ใช่อุปกรณ์ — {onApply
+          ? <>ลงที่โหมด <b>“ปล่อยแผง (มีที่อยู่)”</b>: ขั้น ② ใส่ Address + Unit (เบอร์ MARKING เป็น Unit) → ขั้น ③ อัพ PDF แบบ MARKING</>
+          : <>ยังไม่อยู่ในใบเพราะ <b>ขั้น ② Address & Unit ยังไม่มีแผงนี้</b> — กลับไปขั้น ② แล้วใส่เบอร์ MARKING เป็น Unit (มีปุ่ม “ใส่ให้” ตามใบปะหน้า) ซับ / พาร์ทของแผงจะตามมาเอง</>} · จำนวนใน BILL OF EXTRUSION จะคูณจำนวนแผงให้
       </div> : null}
     </div>);
 }
