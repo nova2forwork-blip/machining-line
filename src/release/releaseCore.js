@@ -143,13 +143,24 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
   const invAll = words.filter((w) => /^INV\.?CODE$/i.test(w.text)).sort((a, b) => (Math.abs(a.top - b.top) < 2 ? a.x0 - b.x0 : a.top - b.top));
   const inv = invAll[0] || null;
   // ★ 2026-11-10 หัวกระดาษแบบซับ US (ไม่มี INV. CODE): "PART NO. | REV. | LENGTH | HEIGHT | NOTE | A | M.D." มุมบนซ้าย — A = ความยาวเป็นมม. (LENGTH เป็นฟุต-นิ้ว)
-  const usHdr = !inv ? (() => { const a = words.find((w) => w.text === "A" && w.top < vp.height * 0.2 && words.some((x) => /^M\.D\.$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x1) && words.some((x) => x.text === "LENGTH" && Math.abs(x.top - w.top) < 2 && x.x1 < w.x0)); return a || null; })() : null;
+  const usHdr0 = !inv ? (() => { const a = words.find((w) => w.text === "A" && w.top < vp.height * 0.2 && words.some((x) => /^M\.D\.$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x1) && words.some((x) => x.text === "LENGTH" && Math.abs(x.top - w.top) < 2 && x.x1 < w.x0)); return a || null; })() : null;
+  // ★ 2026-11-24 ผู้ใช้: "มีหลายแบบที่อ่านไม่ได้" — หัวกระดาษแบบสั้น "PART NO. | REV. | LENGTH | HEIGHT (WIDTH) | A" ไม่มีทั้ง M.D. และ INV.CODE (SP05-001 · SAST02-5001)
+  //   → ยึดป้ายขวาสุดของแถวหัว (นับเฉพาะป้ายที่เรียงติดกัน ไม่ข้ามไปถึงหัวตาราง BOM ด้านขวา) แล้วอ่านค่าใต้ป้ายแบบเดียวกับหัว US
+  const shortHdr = !inv && !usHdr0 ? (() => {
+    const pn = words.find((w) => w.text === "PART" && w.top < vp.height * 0.2 && w.x0 < vp.width * 0.25 && words.some((x) => x.text === "NO." && Math.abs(x.top - w.top) < 2 && x.x0 > w.x0 && x.x0 - w.x1 < 8));
+    if (!pn) return null;
+    const line = words.filter((w) => Math.abs(w.top - pn.top) < 2 && w.x0 >= pn.x0).sort((a, b) => a.x0 - b.x0);
+    let lastW = pn, hasLen = false;
+    for (const w of line.slice(1)) { if (w.x0 - lastW.x1 > 45 || !/^(NO\.|REV\.?|LENGTH|HEIGHT|WIDTH|NOTE|[A-D])$/i.test(w.text)) break; if (/^LENGTH$/i.test(w.text)) hasLen = true; lastW = w; }
+    return hasLen ? lastW : null;
+  })() : null;
+  const usHdr = usHdr0 || shortHdr;
   const anchor = inv || usHdr;
   if (anchor) {
     const labs = words.filter((w) => Math.abs(w.top - anchor.top) < 2 && (w.x0 <= anchor.x1 + 1 || (usHdr && /^M\.D\.$/i.test(w.text))) && !/BILL/i.test(w.text) && !/BILL OF MATERIALS/i.test(w.text)).sort((a, b) => a.x0 - b.x0);
     const cols = [];
     for (const w of labs) { if (w.text === "NO." && cols.length && cols[cols.length - 1][0] === "PART") cols[cols.length - 1] = ["PART NO.", cols[cols.length - 1][1], w.x1]; else cols.push([w.text, w.x0, w.x1]); }
-    let vals = words.filter((w) => w.top - anchor.top > 8 && w.top - anchor.top < 26 && w.x0 <= (usHdr ? Math.max(...labs.map((l) => l.x1)) + 40 : anchor.x1 + 40));
+    let vals = words.filter((w) => w.top - anchor.top > 8 && w.top - anchor.top < (shortHdr ? 18 : 26) && w.x0 <= (usHdr ? Math.max(...labs.map((l) => l.x1)) + 40 : anchor.x1 + 40));
     if (usHdr) {   // คำที่ติดกัน (ช่องว่าง < 6) = ค่าเดียวกัน เช่น "SHIP LOOSE" → รวมก่อนจัดคอลัมน์
       const m = []; for (const w of [...vals].sort((a, b) => a.top - b.top || a.x0 - b.x0)) { const L = m[m.length - 1]; if (L && Math.abs(L.top - w.top) < 3 && w.x0 - L.x1 < 6) { L.text += " " + w.text; L.x1 = w.x1; } else m.push({ ...w }); }
       vals = m;
@@ -268,16 +279,21 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     const xmax = cut ? cut.x0 - 2 : Math.max(...hdr.map((w) => w.x1)) + 25;
     const hx = {}; for (const w of hdr) if (w.x0 < xmax && hx[w.text] == null) hx[w.text] = [w.x0, w.x1];
     const numx = {}; for (const k of ["QTY.", "LENGTH", "HEIGHT", "FINISH"]) if (hx[k]) numx[k] = hx[k];
+    if (!numx.LENGTH && hx["DIM.A"]) numx.LENGTH = hx["DIM.A"];   // ★ 2026-11-24 แบบซับ SAAN06 บางชุดใช้หัวคอลัมน์ "DIM.A" แทน LENGTH
     if (!numx["QTY."]) continue;
     const qx0 = numx["QTY."][0] - 22;
     // แบบ US: DESCRIPTION / NOTE อยู่ขวาของคอลัมน์ตัวเลข — หัวคอลัมน์จัดกลาง ค่าเริ่มซ้ายกว่าหัวมาก → ขอบ = หลังคอลัมน์ตัวเลขสุดท้าย
     const lastNumX1 = Math.max(...Object.values(numx).map((c) => c[1]));
     const descX = usBom && hx["DESCRIPTION"] ? Math.min(hx["DESCRIPTION"][0] - 14, lastNumX1 + 18) : null;
     const noteX = usBom && hx["NOTE"] ? (hx["NOTE"][0] + hx["DESCRIPTION"]?.[1] || hx["NOTE"][0] * 2) / 2 : null;
-    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 0.7);   // QTY บางแบบพิมพ์ใหญ่กว่าคอลัมน์อื่นนิดหน่อย (7.01 vs 6.68) — เดิม 0.3 ทำให้จำนวนหาย
+    const cells = words.filter((w) => w.x0 >= it.x0 - 4 && w.x0 < xmax && w.top > it.top + 3 && Math.abs(w.size - it.size) < 1.2);   // ★ 2026-11-24 แบบซับ SAAN06 / SAVE01: หัวตาราง + เลข ITEM 7.58 pt แต่เบอร์ / จำนวน 6.68 pt (ต่าง 0.9) → เดิม 0.7 ตัดเบอร์ทิ้ง = "อ่านเบอร์ไม่ได้"   // QTY บางแบบพิมพ์ใหญ่กว่าคอลัมน์อื่นนิดหน่อย (7.01 vs 6.68) — เดิม 0.3 ทำให้จำนวนหาย
     const colof = (w) => { const cx = (w.x0 + w.x1) / 2; let best = null; for (const k in numx) { const [a, b] = numx[k]; const d = a - 3 <= cx && cx <= b + 3 ? 0 : Math.min(Math.abs(cx - a), Math.abs(cx - b)); if (!best || d < best[0]) best = [d, k]; } return best[1]; };
     let last = null;
-    for (const { ws } of rowsByY(cells)) {
+    // ★ 2026-11-24 ตารางจบแล้ว = หยุดอ่าน: เลขบอลลูน / ข้อความมิติในรูปใต้ตาราง (เช่น "4 SPACE @590" · "9" "3" "2") ที่อยู่แนวเดียวกับคอลัมน์ ITEM
+    //   เคยถูกอ่านเป็นแถว → "แถว 4 SPACE: ไม่มีจำนวน" · แถวของตารางเรียงติดกัน (~12.7 pt) → เว้นเกิน 32 pt จากแถว ITEM ล่าสุด (หรือจากหัวตาราง) = ไม่ใช่ตารางแล้ว
+    let lastItemY = it.top;
+    for (const { ws, y } of rowsByY(cells)) {
+      if (y - lastItemY > 32) break;
       // ต้องเป็นเลข ITEM จริง = อยู่ใต้หัวคอลัมน์ ITEM (กันเลขวงกลม/มิติในรูปที่อยู่ขวาตาราง แล้วถูกอ่านเป็นแถว)
       const inItemCol = Math.abs((ws[0].x0 + ws[0].x1) / 2 - (it.x0 + it.x1) / 2) < 10;
       if (!/^\d+$/.test(ws[0].text) || !inItemCol) {
@@ -285,6 +301,7 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
         if (last && ex.length === 1 && /^(M|PCS|MM)\.?$/i.test(ex[0])) last.qty_unit = ex[0].replace(".", "").toLowerCase();
         continue;
       }
+      lastItemY = y;
       const r = {}; const txt = []; const descW = []; const noteW = [];
       for (const w of ws.slice(1)) {
         if (noteX != null && w.x0 >= noteX) noteW.push(w.text);
@@ -298,10 +315,13 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
       const q = r["QTY."] || [], L = r["LENGTH"] || [], H = r["HEIGHT"] || [], F = r["FINISH"] || [];
       // ความยาวแบบนิ้ว/ฟุต-นิ้ว (16'-2" · 2 5/8") → มม.
       const lenOf = (arr) => { if (!arr.length) return null; const j = arr.join(" "); const mm = inchToMm(j); if (mm != null) return mm; return num(arr[0]); };
-      const row = { item: +ws[0].text, code, desc: (usBom ? descW : rest).join(" "), qty: q.length ? num(q[0]) : null, len: lenOf(L), ht: lenOf(H), fin: F.join(" ") || null };
+      const row = { item: +ws[0].text, code, desc: (usBom ? descW : rest).join(" "), qty: (() => { const v = q.map(num).find((x) => x != null); return v == null ? null : v; })(), len: lenOf(L), ht: lenOf(H), fin: F.join(" ") || null };
       if (usBom && noteW.length) row.note = noteW.join(" ");
       if (usBom && rest.length && !descW.length) row.desc = rest.join(" ");
       if (L.length && /^(MM|M|PCS)\.?$/i.test(L[0])) { row.qty_unit = L[0].replace(".", "").toLowerCase(); row.len = L.length > 1 ? lenOf(L.slice(1)) : null; }
+      // ★ 2026-11-24 เครื่องหมายรอบแก้ไข (สามเหลี่ยม "A" / "B") ที่วางทับแถวว่างของตาราง ไม่ใช่เบอร์ — แถวที่มีแต่ตัวอักษร 1–2 ตัว ไม่มีจำนวน / ความยาว = ข้าม
+      if (/^[A-Z]{1,2}$/.test(code) && row.qty == null && row.len == null && !row.desc) continue;
+      if (!code && [...q, ...L, ...H, ...F].every((x) => /^[A-Z]{1,2}$/.test(x))) continue;
       if (!code) out.warn_read.push(`แถว ${row.item}: อ่านเบอร์ไม่ได้`);
       if (row.qty == null && code) out.warn_read.push(`แถว ${row.item} ${code}: ไม่มีจำนวน`);
       out.bom.push(row); last = row;
@@ -436,7 +456,40 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
     for (const r of out.site) if (r.qty == null) out.warn_read.push(`Site Item ${r.code}: ไม่มี COUNT`);
     return out;
   }
-  out.kind = /^UA\d/i.test(out.title.BOM_OF || "") || (!inv && !usHdr && out.bom.length) ? "panel" : out.bom.length ? "sub" : (inv || usHdr) ? "part" : "unknown";
+  // ★ 2026-11-24 ตารางลูกแบบไม่มีคอลัมน์ ITEM: "PARTNUMBER | QTY. | DESCRIPTION" (แบบซับเหล็ก SAST02-5001) — แถวเรียงติดกันใต้หัว
+  if (!out.bom.length) {
+    const ph = words.find((w) => /^PARTNUMBER$/i.test(w.text) && words.some((x) => x.text === "QTY." && Math.abs(x.top - w.top) < 3 && x.x0 > w.x1));
+    if (ph) {
+      const qh = words.filter((x) => x.text === "QTY." && Math.abs(x.top - ph.top) < 3 && x.x0 > ph.x1).sort((a, b) => a.x0 - b.x0)[0];
+      const dh = words.find((x) => /^DESCRIPTION$/i.test(x.text) && Math.abs(x.top - ph.top) < 3 && x.x0 > qh.x1);
+      let lastY = ph.top, n = 0;
+      for (const { ws, y } of rowsByY(words.filter((w) => w.top > ph.top + 3 && w.x0 >= ph.x0 - 20))) {
+        if (y - lastY > 20) break;
+        const cw = ws.filter((w) => w.x0 < qh.x0 - 8); const qw = ws.filter((w) => w.x0 >= qh.x0 - 8 && w.x0 < (dh ? dh.x0 - 8 : qh.x1 + 20)); const dw = dh ? ws.filter((w) => w.x0 >= dh.x0 - 8) : [];
+        if (!cw.length || !/[A-Za-z]/.test(cw[0].text) || !/\d/.test(cw[0].text)) continue;
+        lastY = y; const qv = qw.map((w) => num(w.text)).find((v) => v != null);
+        const row = { item: ++n, code: cw.map((w) => w.text).join(" "), desc: dw.map((w) => w.text).join(" "), qty: qv == null ? null : qv, len: null, ht: null, fin: null };
+        if (row.qty == null) out.warn_read.push(`แถว ${row.item} ${row.code}: ไม่มีจำนวน`);
+        out.bom.push(row);
+      }
+    }
+  }
+  // ★ 2026-11-24 หัวกระดาษแบบเก่า (Enclos · FA01-5001 / AL05-500x / EP0902-500x …): ไม่มีช่อง PART NO. / LENGTH / INV.CODE
+  //   เบอร์อยู่ใต้ป้าย "Sheet No." · ชื่ออยู่ใต้ "Drawing Title" · ช่องติ๊ก "Part" / "Sub Assembly" (X) บอกชนิด · ในไฟล์ไม่มีความยาว / INV → ต้องกรอกเอง
+  let oldKind = null;
+  if (!inv && !usHdr && !out.bom.length) {
+    const sh = words.find((w) => /^Sheet$/i.test(w.text) && words.some((x) => /^No\.?:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x0 && x.x0 - w.x1 < 8));
+    const v = sh ? words.filter((w) => w.top > sh.top + 3 && w.top < sh.top + 16 && w.x0 > sh.x0 - 12 && w.x0 < sh.x0 + 70 && /^[A-Z]{2,}[A-Z0-9]*-[\w-]*\d/i.test(w.text)).sort((a, b) => a.top - b.top)[0] : null;
+    if (v) {
+      out.title["PART NO."] = v.text.toUpperCase(); out.title.OLD_FORM = "1";
+      const dt = words.find((w) => /^Drawing$/i.test(w.text) && words.some((x) => /^Title:?$/i.test(x.text) && Math.abs(x.top - w.top) < 2 && x.x0 > w.x0 && x.x0 - w.x1 < 8));
+      if (dt) { const d = words.filter((w) => w.top > dt.top + 3 && w.top < dt.top + 30 && w.x0 >= dt.x0 - 4 && !/:$/.test(w.text) && !/^[-X]$/i.test(w.text) && w.top < sh.top - 3 && !words.some((l) => /:$/.test(l.text) && Math.abs(l.top - w.top) < 3 && l.x0 >= dt.x0 - 12)).sort((a, b) => a.top - b.top || a.x0 - b.x0).map((w) => w.text).join(" ").trim(); if (d) out.title.DESC = d; }
+      out.title.FINISH = rightOf("Finish:", ["Date"]) || out.title.FINISH || null;
+      const mk = (re) => { const l = words.find((w) => re.test(w.text)); if (!l) return false; return words.some((x) => /^X$/i.test(x.text) && Math.abs(x.top - l.top) < 4 && x.x0 > l.x1 && x.x0 - l.x1 < 70); };
+      oldKind = (mk(/^Sub$/i) || /^SA[A-Z]/i.test(v.text)) && !mk(/^Part$/i) ? "sub" : "part";
+    }
+  }
+  out.kind = /^UA\d/i.test(out.title.BOM_OF || "") || (!inv && !usHdr && out.bom.length) ? "panel" : out.bom.length ? "sub" : (inv || usHdr) ? "part" : oldKind || "unknown";
   out.code = (out.title["PART NO."] || out.title.BOM_OF || String(fileName).replace(/^.*?_?([A-Z]{2,}[\w-]*)\.pdf$/i, "$1")).trim();
   if (out.kind === "panel" && out.title.BOM_OF) out.code = out.title.BOM_OF;
   return out;
