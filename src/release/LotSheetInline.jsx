@@ -136,7 +136,7 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
                 })}
                 <td className="rst">{r.edited && (draft[sh.key] || {})[r.id] ? <button type="button" className="rw-link" title={L("คืนค่าเดิมของแถวนี้", "Reset this row")} onClick={() => resetRow(r.id)}>↺</button> : null}</td>
               </tr>))}
-            {sh.total != null ? <tr className="tot">{sh.cols.map((c, i) => <td key={i} className={i + 1 === sh.totalAt ? "n" : ""}>{i + 2 === sh.totalAt ? L("รวม", "Total") : i + 1 === sh.totalAt ? sh.total : ""}</td>)}<td /></tr> : null}
+            {sh.total != null ? <tr className="tot">{sh.cols.map((c, i) => <td key={i} className={i + 1 === sh.totalAt || (sh.total2 != null && i === sh.totalAt) ? "n" : ""}>{i + 2 === sh.totalAt ? L("รวม", "Total") : i + 1 === sh.totalAt ? (typeof sh.total === "number" && !Number.isInteger(sh.total) ? sh.total.toFixed(2) : sh.total) : sh.total2 != null && i === sh.totalAt ? sh.total2 : ""}</td>)}<td /></tr> : null}
           </tbody>
         </table>
       </div>

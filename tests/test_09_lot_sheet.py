@@ -159,3 +159,23 @@ def test_coverage_part_with_library_pdf_counts(js):
 def test_coverage_part_with_material_counts(js):
     """Positive: มีวัตถุดิบในระบบ → ไม่ขาด"""
     assert _cov(js, {"d": "", "m": "AL01500A", "k": "part"})[0]["src"] == "lib"
+
+
+# ── 2026-11-24 ใบเบิกวัสดุงานตัด: REQUIRED QTY = ทศนิยม · ACTUAL ISSUE = จำนวนเส้นที่เบิก (เหมือนตารางในแอป) ──
+def _mat(js, **kw):
+    return next(s for s in model(js, **kw)["sheets"] if s["key"] == "MAT")
+
+
+def test_mat_sheet_required_decimal_and_actual_issue_bars(js):
+    """Positive: REQUIRED QTY เป็นค่าที่ต้องใช้คิดเป็นเส้น (ไม่เกินจำนวนเส้นที่เบิก) · ACTUAL ISSUE = เส้นเต็ม · มีรวมทั้งสองช่อง"""
+    sh = _mat(js); v = sh["rows"][0]["vals"]
+    assert isinstance(v[6], int) and v[6] >= 1 and 0 < v[5] <= v[6]
+    assert sh["totalAt"] == 6 and sh["total"] == v[5] and sh["total2"] == v[6]
+
+
+def test_mat_sheet_actual_issue_uses_entered_figure(js):
+    """Boundary: กรอกยอดเบิกจริงของล็อตในแอป → ใบใช้ยอดที่กรอก (รวมด้วย) · REQUIRED QTY ไม่เปลี่ยน"""
+    base = _mat(js)["rows"][0]["vals"][5]
+    plan = {**PLAN, "lotIssue": {"P-005": {"AL01500A": {"n": 9, "r": "ใช้เส้นสั้น"}}}}
+    sh = next(s for s in js("buildLotModel", {"plan": plan, "need": NEED, "lot": {"no": "P-005", "date": "2026-11-03", "rows": ROWS}, "userName": "ผู้ทดสอบ"}, m="lot")["sheets"] if s["key"] == "MAT")
+    assert sh["rows"][0]["vals"][5] == base and sh["rows"][0]["vals"][6] == 9 and sh["total2"] == 9
