@@ -282,7 +282,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                     <span className="rl-lot-chips">{SHEETS.filter((s) => bySheet.has(s.k)).map((s) => <Pill key={s.k} tone={s.kind === "sub" ? "sub" : s.kind === "panel" ? "panel" : "part"}>{s.kind === "sub" ? "SUB " + SUB_SHORT[s.k] : s.kind === "panel" ? "แผง" : s.label} {s.kind === "panel" ? L.panels : bySheet.get(s.k).length}</Pill>)}{L.hw && L.hw.length ? <Pill tone="muted">ACCESSORIES {L.hw.length}</Pill> : null}</span>
                     {onOpenLot && !L.hwOnly ? <span className="rl-caret" aria-hidden="true">›</span> : <span className="rl-caret" aria-hidden="true">▾</span>}
                   </button>
-                  {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => r.kind !== "panel" && !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm rl-lot-fix" onClick={() => setFixLot(L.no)} title={`ปล่อยผิดใบ: เลือกเบอร์ใน ${L.no} → ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่`}>⇄ ย้ายใบ / ยกเลิก</button> : null}
+                  {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm rl-lot-fix" onClick={() => setFixLot(L.no)} title={`ปล่อยผิดใบ: เลือกเบอร์ใน ${L.no} → ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่`}>⇄ ย้ายใบ / ยกเลิก</button> : null}
                   </div>
                   {open === L.no && (!onOpenLot || L.hwOnly) ? (
                     <div className="rl-lot-body">
@@ -393,7 +393,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => (onOpenLot && !L.hwOnly ? onOpenLot(L.no) : setOpen(open === L.no ? null : L.no))}>เปิด</button>
                 {!L.hwOnly ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSheetPrev({ plan, need, lot: L, userName: user?.name || "" })}>พิมพ์ใบ</button> : null}
                 {onPrintQr && !L.hwOnly ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onPrintQr(L.rows.filter((r) => !r.mod_cancelled_at && r.id).map((r) => r.id))}>QR</button> : null}
-                {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => r.kind !== "panel" && !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFixLot(L.no)} title="ปล่อยผิดใบ: ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่">⇄ ย้ายใบ / ยกเลิก</button> : null}
+                {!L.hwOnly && api.moveReleasedSheet && L.rows.some((r) => !r.mod_cancelled_at) ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFixLot(L.no)} title="ปล่อยผิดใบ: ย้ายไปใบอื่น หรือยกเลิกการปล่อยเพื่อปล่อยใหม่">⇄ ย้ายใบ / ยกเลิก</button> : null}
               </div>
             </div>); }) : <div className="rw-muted small">ยังไม่ได้ปล่อย — กด "ปล่อยล็อตใหม่"</div>}
           {rel.lots.length > 5 ? <button type="button" className="rw-link small" onClick={() => setLotsAll((v) => !v)}>{lotsAll ? "ย่อ" : `ดูทั้งหมด ${rel.lots.length} ล็อต`}</button> : null}
@@ -1402,13 +1402,15 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
   const admin = user && user.role === "admin";
   // ★ 2026-11-12 office ยกเลิกการปล่อยได้ทีละบางเบอร์ · ทั้งล็อต (ไม่เหลือเบอร์ไหน) = แอดมิน
   const canUn = !!user && ["admin", "office", "supervisor"].includes(user.role);
-  const descOf = (r) => (r.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(r.code))?.d || "";
-  const rows = lot.rows.filter((r) => r.kind !== "panel" && !r.mod_cancelled_at);
+  const descOf = (r) => (r.kind === "panel" ? String(r.note || "") : (r.kind === "subassembly" ? need.subs : need.parts).find((x) => NC(x.code) === NC(r.code))?.d || "");
+  // ★ 2026-11-24 ผู้ใช้: "พอปล่อยแล้วยกเลิก ทำไมเป็นแบบนี้" — เดิมหน้าต่างนี้ไม่มีแถวแผง → ยกเลิกซับ / พาร์ทหมดแล้ว ล็อตค้างเหลือแต่แผง (และปุ่มยกเลิกหายไปด้วย)
+  //   → แผงอยู่ในรายการด้วย ยกเลิกการปล่อยได้เหมือนเบอร์อื่น (ย้ายใบใช้กับซับ / พาร์ทเท่านั้น)
+  const rows = lot.rows.filter((r) => !r.mod_cancelled_at);
   const ql = q.trim().toUpperCase();
   const vis = rows.filter((r) => !ql || [r.code, descOf(r), r.note].some((x) => String(x || "").toUpperCase().includes(ql)));
   const sel = rows.filter((r) => pick.has(r.id));
-  const kinds = new Set(sel.map((r) => (r.kind === "subassembly" ? "sub" : "part")));
-  const opts = kinds.size === 1 ? SHEETS.filter((x) => x.kind === [...kinds][0]) : [];
+  const kinds = new Set(sel.map((r) => (r.kind === "panel" ? "panel" : r.kind === "subassembly" ? "sub" : "part")));
+  const opts = kinds.size === 1 && !kinds.has("panel") ? SHEETS.filter((x) => x.kind === [...kinds][0]) : [];
   const sheetName = (r) => rowSheets(r).map((k) => sheetOf(k).label).join(", ");
   const tog = (ids, on) => setPick((o) => { const n = new Set(o); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
   async function move(label) {
@@ -1456,7 +1458,7 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
           <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเบอร์ / รายละเอียด / ใบ" aria-label="ค้นหาเบอร์ในล็อต" />
           <span className="rw-muted small">เลือก <b>{sel.length}</b> / {rows.length}</span>
           <label className="rl-fix-act">ย้ายไปใบ <select className="select" value="" disabled={!sel.length || !opts.length || !!busy} onChange={(e) => { if (e.target.value) move(e.target.value); }} aria-label="ย้ายเบอร์ที่เลือกไปใบ">
-            <option value="">{!sel.length ? "— ติ๊กเบอร์ก่อน —" : !opts.length ? "เลือกพาร์ท หรือ ซับ อย่างเดียว" : "— เลือกใบ —"}</option>{opts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
+            <option value="">{!sel.length ? "— ติ๊กเบอร์ก่อน —" : !opts.length ? kinds.has("panel") ? "แผงย้ายใบไม่ได้ (ยกเลิกได้)" : "เลือกพาร์ท หรือ ซับ อย่างเดียว" : "— เลือกใบ —"}</option>{opts.map((x) => <option key={x.k} value={x.label}>{x.label}</option>)}</select></label>
           <button type="button" className="btn btn-sm rl-fix-del" disabled={!sel.length || !canUn || !!busy} onClick={unrelease} title={canUn ? (admin ? "" : "ยกเลิกได้ทีละบางเบอร์ · ทั้งล็อต = แอดมิน") : "ยกเลิกการปล่อย = ออฟฟิศ / แอดมิน"}>ยกเลิกการปล่อย {sel.length || ""}</button>
         </div>
         {err ? <div className="rw-msg bad">{err}</div> : null}
@@ -1469,9 +1471,9 @@ function LotFixDrawer({ lot, plan, need, api, user, rowSheets, onPlanChange, onC
           <tbody>{vis.map((r) => (
             <tr key={r.id} className={pick.has(r.id) ? "on" : ""} onClick={() => tog([r.id], !pick.has(r.id))}>
               <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={pick.has(r.id)} onChange={(e) => tog([r.id], e.target.checked)} aria-label={`เลือก ${r.code}`} /></td>
-              <td className="rw-mono"><b>{r.code}</b>{r.kind === "subassembly" ? <> <Pill tone="sub">ซับ</Pill></> : null}</td>
+              <td className="rw-mono"><b>{r.code}</b>{r.kind === "subassembly" ? <> <Pill tone="sub">ซับ</Pill></> : r.kind === "panel" ? <> <Pill tone="ok">แผง</Pill></> : null}</td>
               <td className="rl-desc"><span>{descOf(r)}</span></td>
-              <td><Pill tone={r.kind === "subassembly" ? "sub" : "part"}>{sheetName(r) || "—"}</Pill></td>
+              <td>{r.kind === "panel" ? <Pill tone="ok">ASSEMBLY (แผง)</Pill> : <Pill tone={r.kind === "subassembly" ? "sub" : "part"}>{sheetName(r) || "—"}</Pill>}</td>
               <td className="r rw-num">{nf(r.qty)}</td>
             </tr>))}
             {!vis.length ? <tr><td colSpan={5} className="rw-muted">ไม่เจอ “{q}”</td></tr> : null}
