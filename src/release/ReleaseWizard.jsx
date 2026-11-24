@@ -1046,6 +1046,10 @@ function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint })
   const miss = orderCmp.filter((x) => x.status === "missing").length, bad = orderCmp.filter((x) => x.status === "more" || x.status === "less").length;
   const isHw = (c) => orderHw.some((x) => NC(x) === NC(c));
   const tog = (c, on) => setOrderHw((xs) => (on ? [...xs.filter((x) => NC(x) !== NC(c)), c] : xs.filter((x) => NC(x) !== NC(c))));
+  // ★ 2026-11-24 ผู้ใช้: "marking ทำไมไปอยู่ FASTENER & GASKET" — ใบ P-005 มีรายการ "MARKING DRAWING" ในใบปะหน้า แล้วถูกติ๊ก "ไม่มี QR" → กลายเป็นอุปกรณ์ในใบเบิก
+  //   แบบ MARKING = แผง (มีที่อยู่ · QR ต่อแผง) ต้องลงที่ "ปล่อยแผง (มีที่อยู่)" → รายการนี้ติ๊กเป็นอุปกรณ์ไม่ได้ และบอกว่าต้องลงตรงไหน (ที่ติ๊กไว้แล้วยังเอาติ๊กออกได้)
+  const isMarking = (x) => /MARKING\s*DRAW/i.test(String(x.d || ""));
+  const nMark = orderCmp.filter((x) => x.status === "missing" && isMarking(x)).length;
   return (
     <div className={`rw-order-check ${miss || bad ? "warn" : "ok"}`}>
       <div className="rw-order-h">
@@ -1063,11 +1067,15 @@ function OrderChecklist({ order, orderCmp, orderHw, setOrderHw, onApply, hint })
             <td className="r">{nlen(x.qty)}{x.unit ? <small className="rw-muted"> {x.unit}</small> : null}</td>
             <td className="r">{x.status === "missing" ? <span className="rw-muted">—</span> : nlen(x.have)}</td>
             <td>{x.status === "ok" ? <Pill tone="ok">ครบ{x.kind === "hw" ? " · ใบเบิก" : x.kind === "panel" ? " · แผง" : x.kind === "sub" ? " · ซับ" : ""}</Pill>
-              : x.status === "missing" ? (isHw(x.code) ? <Pill tone="muted">อุปกรณ์ · ใบเบิก</Pill> : <Pill tone="bad">ยังไม่อยู่ในใบ</Pill>)
+              : x.status === "missing" ? (isHw(x.code) ? <Pill tone="muted">อุปกรณ์ · ใบเบิก</Pill> : isMarking(x) ? <Pill tone="warn">แบบ MARKING = แผง</Pill> : <Pill tone="bad">ยังไม่อยู่ในใบ</Pill>)
               : <Pill tone="warn">{x.status === "more" ? "ในใบมากกว่า" : "ในใบน้อยกว่า"}</Pill>}</td>
-            <td>{x.status === "missing" || isHw(x.code) ? <label className="rw-check"><input type="checkbox" checked={isHw(x.code)} onChange={(e) => tog(x.code, e.target.checked)} /> ไม่มี QR</label> : null}</td>
+            <td>{isMarking(x) && !isHw(x.code) ? (x.status === "missing" ? <span className="rw-muted" style={{ fontSize: 12 }} data-testid="order-marking-hint">ลงที่ “ปล่อยแผง (มีที่อยู่)”</span> : null)
+              : x.status === "missing" || isHw(x.code) ? <label className="rw-check"><input type="checkbox" checked={isHw(x.code)} onChange={(e) => tog(x.code, e.target.checked)} /> ไม่มี QR</label> : null}</td>
           </tr>))}</tbody>
       </table>
+      {nMark ? <div className="rw-muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5 }} data-testid="order-marking-note">
+        <b>แบบ MARKING {nMark} รายการ</b> = แผง (มีที่อยู่ · QR ต่อแผง) ไม่ใช่อุปกรณ์ — ลงที่โหมด <b>“ปล่อยแผง (มีที่อยู่)”</b>: ขั้น ② ใส่ Address + Unit (เบอร์ MARKING เป็น Unit) → ขั้น ③ อัพ PDF แบบ MARKING · จำนวนใน BILL OF EXTRUSION จะคูณจำนวนแผงให้
+      </div> : null}
     </div>);
 }
 // ── ขั้น ② โหมด "เฉพาะซับ / พาร์ท": เลือกเบอร์จากคลังของโปรเจค + จำนวน (ไม่มีแผง · ไม่ต้องอัพ PDF) ──

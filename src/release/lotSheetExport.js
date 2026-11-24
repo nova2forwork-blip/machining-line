@@ -1,6 +1,6 @@
 // ใบปล่อย (PRODUCTION ORDER) ของ 1 ล็อต → Excel · 1 ชีต ต่อ 1 ใบงาน — หน้าตาตามใบ Excel เดิมของออฟฟิศ
-//   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Print date / Prepared by · ตาราง (ไม่มีช่องเซ็น)
-//   ชีต: MACHINING PART / BENDING / STEEL · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · วัตถุดิบงานตัด · GLASS · ACCESSORIES (ของล็อตนี้)
+//   หัวใบ: โลโก้ · PRODUCTION ORDER · RPT/REV · Release Order / Project / Date (วันที่ปล่อยล็อต) / Prepared by · ตาราง (ไม่มีช่องเซ็น)
+//   ชีต: MACHINING PART → วัตถุดิบงานตัด · BENDING → วัตถุดิบงานพับ · STEEL → วัตถุดิบงานเหล็ก (วัตถุดิบต่อท้ายใบงานของตัวเอง) · SUB-ASSEMBLY (พับ/เชื่อม/ยิง/Site Item) · ASSEMBLY (แผง) · GLASS · ACCESSORIES (ของล็อตนี้)
 //   ใช้ ExcelJS (โหลดตอนกดปุ่มเท่านั้น) · buildLotWorkbook รับ ExcelJS เข้ามา → ทดสอบใน node ได้
 import { NC, SHEETS, isStar, addrsFromNote, findKey, lotMaterials, subLines, lineUom, sheetKeyOf, lotOf, ncmp, roKey } from "./releaseCore.js";
 
@@ -14,6 +14,8 @@ const titleOf = (k) => {
   if (s) return LANG === "en" ? [s.en || s.label, s.thEn || ""] : [s.label, s.th];
   return {
     MAT: ["MATERIAL LIST FOR CUTTING", T("วัตถุดิบงานตัด", "Raw material for cutting")],
+    "MAT-BENDING": ["MATERIAL LIST FOR BENDING", T("วัตถุดิบงานพับ", "Raw material for bending")],
+    "MAT-STEEL": ["MATERIAL LIST FOR STEEL", T("วัตถุดิบงานเหล็ก", "Raw material for steel work")],
     GLASS: ["GLASS", T("รายการวัสดุกระจก", "Glass list")],
     FIXING: ["ACCESSORIES", "FASTENER, GASKET & SILICONE"],
   }[k];
@@ -67,6 +69,8 @@ function columnsFor(sheet) {
   if (sheet.k === "panel") return { cols: [{ en: "NO.", th: "ลำดับ", w: 7 }, { en: "UNIT", th: "แผง", w: 22 }, { en: "ADDRESS", th: "ที่อยู่", w: 26 }, { en: "QTY", th: "จำนวน", w: 9 }, { en: "REMARK", th: "หมายเหตุ", w: 46 }] };
   if (sheet.kind === "sub") return { cols: [{ en: "ITEM", th: "", w: 7 }, { en: "CODE", th: "", w: 18 }, { en: "DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "SUB QTY.", th: "", w: 9 }, { en: "QTY OF PART/SUB", th: "", w: 12, grey: true }, { en: "PART QTY.", th: "", w: 10 }, { en: "UOM", th: "", w: 8 }, { en: "Remark", th: "", w: 26 }] };
   if (sheet.k === "MAT") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 40 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "PARTS / PCS", th: "", w: 14 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "ACTUAL ISSUE", th: "", w: 12 }, { en: "OFFCUT ≥500", th: "", w: 11 }, { en: "REMARK", th: "", w: 30 }] };
+  // วัตถุดิบของใบงานพับ / เหล็ก: ไม่ได้จัดชิ้นลงแผ่น / เส้น → บอก "กี่เบอร์ / กี่ชิ้น" ต่อรหัสวัตถุดิบ · จำนวนที่เบิกให้สโตร์กรอก
+  if (sheet.k === "MAT-BENDING" || sheet.k === "MAT-STEEL") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 24 }, { en: "PARTS / PCS", th: "", w: 14 }, { en: "PART CODES", th: "", w: 52 }, { en: "ACTUAL ISSUE", th: "", w: 13 }, { en: "REMARK", th: "", w: 30 }] };
   if (sheet.k === "GLASS") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 46 }, { en: "LENGTH (mm.)", th: "", w: 12 }, { en: "HEIGHT (mm.)", th: "", w: 12 }, { en: "REQUIRED QTY", th: "", w: 12 }, { en: "REMARK", th: "", w: 22 }] };
   if (sheet.k === "FIXING") return { cols: [{ en: "NO.", th: "", w: 6 }, { en: "MATERIAL CODE", th: "", w: 22 }, { en: "MATERIAL DESCRIPTION", th: "", w: 52 }, { en: "REQUIRED QTY", th: "", w: 13 }, { en: "UNIT", th: "", w: 9 }, { en: "REMARK", th: "", w: 22 }] };
   // MACHINING / BENDING / STEEL
@@ -118,8 +122,23 @@ const offTxt = (lens) => { const m = new Map(); for (const x of lens || []) m.se
 // วัตถุดิบงานตัด / GLASS / ACCESSORIES = ใบเบิกวัสดุของล็อตนี้ (ไม่มี QR) — คิดจาก lotMaterials (2026-10-26: เดิมเป็นยอดทั้ง Release)
 //   ACTUAL ISSUE เว้นว่างให้กรอกตอนเบิกจริง
 //   iss = ยอดเบิกจริงที่กรอกในแอปของล็อตนี้ (plan.lotIssue[ล็อต][INV] = { n, r }) → ช่อง ACTUAL ISSUE + หมายเหตุ
+// พาร์ทของใบงาน (พับ / เหล็ก) รวมตามรหัสวัตถุดิบ (INV) → [{ inv, pcs, codes: [เบอร์], stock, orig }] — ใช้ทั้งใบปะหน้าและใบวัตถุดิบท้ายใบงาน
+export function jobMatGroups(rows, need) {
+  const by = new Map();
+  for (const r of rows || []) {
+    if (r.mod_cancelled_at || !(Number(r.qty) > 0)) continue;
+    const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
+    const k = p.inv || r.material || ""; const g = by.get(k) || by.set(k, { inv: k, pcs: 0, codes: [], d: p.d || "", stock: p.ml || "", orig: p.invOrig }).get(k);
+    g.pcs += Number(r.qty); if (!g.codes.includes(r.code)) g.codes.push(r.code);
+  }
+  return [...by.values()].map((g) => ({ ...g, codes: g.codes.sort(ncmp) })).sort((a, b) => ncmp(a.inv, b.inv));
+}
 function matRows(sheet, lm, iss = {}) {
   const out = []; let n = 0;
+  if (sheet.k === "MAT-BENDING" || sheet.k === "MAT-STEEL") {
+    for (const g of sheet.groups || []) out.push({ id: g.inv || "—", vals: [++n, g.inv || T("(ไม่มี INV)", "(no INV)"), `${g.codes.length} / ${g.pcs}`, g.codes.slice(0, 12).join(", ") + (g.codes.length > 12 ? T(` … (+${g.codes.length - 12})`, ` … (+${g.codes.length - 12})`) : ""), "", g.orig != null ? T(`เปลี่ยนจาก ${g.orig || "-"}`, `instead of ${g.orig || "-"}`) : ""] });
+    return { out, total: null };
+  }
   if (sheet.k === "MAT") { for (const m of lm.mat) { const mi = iss[m.inv || "—"] || {}; const act = mi.n === "" || mi.n == null ? "" : Number(mi.n); out.push({ id: m.inv || "—", vals: [++n, m.inv || T("(ไม่มี INV)", "(no INV)"), m.d || "", num(m.stock), `${m.parts.length} / ${m.pcs}`, num(m.bars), act, m.off || "", [mi.r || "", m.off ? T(`เศษ (มม.) ${offTxt(m.offLens)}`, `Offcuts (mm) ${offTxt(m.offLens)}`) : "", m.noLen ? T(`ไม่มีความยาว ${m.noLen} ชิ้น`, `No length: ${m.noLen} pcs`) : "", m.over ? T(`ยาวกว่าเส้น ${m.over} ชิ้น`, `Longer than bar: ${m.over} pcs`) : ""].filter(Boolean).join(" · ")] }); } return { out, total: lm.mat.reduce((a, m) => a + m.bars, 0), totalAt: 6 }; }
   const insteadOf = (p) => { const f = [...new Set([p.from, ...(p.froms || [])].filter((x) => x && x !== p.code))]; return f.length ? T(`ใช้แทน ${f.join(", ")}`, `Instead of ${f.join(", ")}`) : ""; };
   if (sheet.k === "GLASS") for (const p of lm.glass) out.push({ id: p.code, vals: [++n, p.code, p.d || "", num(p.l), num(p.h), num(p.qty), [p.f || "", insteadOf(p)].filter(Boolean).join(" · ")] });
@@ -167,14 +186,7 @@ function coverOf(key, { plan, need, lot, lm, rows, nRows, meta, projectName, cov
     for (const m of lm.mat) { const n = iss[m.inv || "—"]?.n; items.push({ inv: m.inv || T("(ไม่มี INV)", "(no INV)"), stock: m.stock || "", req: n === "" || n == null ? m.bars : Number(n), rm: [m.d, m.origs && m.origs.length ? T(`เปลี่ยนจาก ${m.origs.join(", ")}`, `instead of ${m.origs.join(", ")}`) : ""].filter(Boolean).join(" · ") }); }
   } else {
     // งานพับ / เหล็ก: รวมพาร์ทในใบตามรหัสวัตถุดิบ (INV) → จำนวนชิ้น
-    const by = new Map();
-    for (const r of rows || []) {
-      if (r.mod_cancelled_at || !(Number(r.qty) > 0)) continue;
-      const p = need.parts.find((x) => NC(x.code) === NC(r.code)) || {};
-      const k = p.inv || ""; const g = by.get(k) || by.set(k, { inv: k, pcs: 0, codes: 0, d: p.d || "", stock: p.ml || "", orig: p.invOrig }).get(k);
-      g.pcs += Number(r.qty); g.codes += 1;
-    }
-    for (const g of [...by.values()].sort((a, b) => ncmp(a.inv, b.inv))) items.push({ inv: g.inv || T("(ไม่มี INV)", "(no INV)"), stock: g.stock || "", req: g.pcs, rm: [T(`ชิ้น · ${g.codes} เบอร์`, `pcs · ${g.codes} codes`), g.orig != null ? T(`เปลี่ยนจาก ${g.orig || "-"}`, `instead of ${g.orig || "-"}`) : ""].filter(Boolean).join(" · ") });
+    for (const g of jobMatGroups(rows, need)) items.push({ inv: g.inv || T("(ไม่มี INV)", "(no INV)"), stock: g.stock || "", req: g.pcs, rm: [T(`ชิ้น · ${g.codes.length} เบอร์`, `pcs · ${g.codes.length} codes`), g.orig != null ? T(`เปลี่ยนจาก ${g.orig || "-"}`, `instead of ${g.orig || "-"}`) : ""].filter(Boolean).join(" · ") });
   }
   // แถวรายการ 15 แถว: เกิน = 14 แถว + "SEE ATTACHED FILE" · ไม่มี/ครบ = แถวถัดไปเขียน SEE ATTACHED FILE (เหมือนฟอร์มเดิม)
   let list = items.slice(0, COVER_ROWS);
@@ -208,12 +220,22 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     ...known.map((s) => ({ sheet: s, rows: by.get(s.k) })),
     ...(unknown.length ? [{ sheet: { k: "OTHER", kind: "part", label: "OTHER", tab: T("อื่นๆ", "OTHER"), th: T("ใบงานอื่น", "Other sheets") }, rows: unknown.flatMap((k) => by.get(k)) }] : []),
   ];
-  // ใบเบิกวัสดุ (ทั้ง Release) — ใส่ท้ายถ้ามีรายการ
+  // ใบเบิกวัสดุของล็อตนี้
+  // ★ 2026-11-24 ผู้ใช้: "mat ต้องมาต่อแต่ละงานเลย ไม่ว่าจะเป็น MACHINING PART หรือ Bending"
+  //   → ใบวัตถุดิบของแต่ละใบงานอยู่ "ถัดจากใบงานนั้นทันที": MACHINING PART → วัตถุดิบงานตัด · BENDING → วัตถุดิบงานพับ · STEEL → วัตถุดิบงานเหล็ก
+  //   (เดิม: วัตถุดิบงานตัดไปอยู่ท้ายสุดหลังทุกใบ · งานพับ / เหล็กไม่มีใบวัตถุดิบ มีแต่ในใบปะหน้า) · GLASS / ACCESSORIES เป็นของงานประกอบ จึงอยู่ท้ายเหมือนเดิม
   const lm = lotMaterials(plan, need, lot.rows, (r) => lotRowSheets(r, need), lot.no);
-  if (lm.mat.length) list.push({ sheet: { k: "MAT", kind: "mat", tab: T("วัตถุดิบงานตัด", "CUTTING MATERIAL") }, mat: true });
+  const after = (k, entry) => { const at = list.findIndex((x) => x.sheet.k === k); if (at >= 0) list.splice(at + 1, 0, entry); else list.push(entry); };
+  if (lm.mat.length) after("CUTTING", { sheet: { k: "MAT", kind: "mat", tab: T("วัตถุดิบงานตัด", "CUTTING MATERIAL") }, mat: true });
+  for (const [job, key, tab] of [["BENDING", "MAT-BENDING", T("วัตถุดิบงานพับ", "BENDING MATERIAL")], ["STEEL", "MAT-STEEL", T("วัตถุดิบงานเหล็ก", "STEEL MATERIAL")]]) {
+    const groups = by.has(job) ? jobMatGroups(by.get(job), need) : [];
+    if (groups.length) after(job, { sheet: { k: key, kind: "mat", tab, groups }, mat: true });
+  }
   if (lm.glass.length) list.push({ sheet: { k: "GLASS", kind: "mat", tab: "GLASS" }, mat: true });
   if (lm.hw.length) list.push({ sheet: { k: "FIXING", kind: "mat", tab: "ACCESSORIES" }, mat: true });
-  const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(printDate || new Date()), lang: LANG };
+  // ★ 2026-11-24 ผู้ใช้: "วันที่ต้องตรงกัน" — ใบปะหน้าใช้วันที่ปล่อยล็อต แต่หัวใบงานเคยใช้วันที่พิมพ์ (เปิดดูวันไหนก็เป็นวันนั้น) → สองใบคนละวัน
+  //   ตอนนี้หัวใบงานใช้ "วันที่ปล่อยล็อต" เหมือนใบปะหน้า (ไม่มีวันที่ของล็อต = วันที่พิมพ์) · ป้ายเปลี่ยนจาก Print date เป็น Date
+  const meta = { ro: lot.no, project: plan.projectCode || "", by: lot.by || plan.by || userName || "", date: fmtDate(ymdDate(lot.date) || printDate || new Date()), lang: LANG };
   const used = new Set();
   const sheets = list.map(({ sheet, rows, mat }) => {
     const sh0 = SHEETS.find((x) => x.k === sheet.k); const tabName = LANG === "en" && sh0 ? sh0.en || sheet.tab : sheet.tab;
@@ -227,7 +249,7 @@ export function buildLotModel({ plan, need, lot, userName, printDate, only = nul
     for (const r of out) { const e = r.id != null ? edits[r.id] : null; if (e) for (const [ci, v] of Object.entries(e)) if (cols0[ci] && cols0[ci].edit && !r.kid) { r.vals[ci] = v; r.edited = true; } }
     const cols = LANG === "en" ? cols0.map((c) => ({ ...c, en: c.th === "สั่งตัดเพิ่ม" ? "EXTRA CUT" : c.en, th: "" })) : cols0;   // EN = ไม่มีแถวหัวภาษาไทย
     const cover = !mat && COVER_FORMS[sheet.k] ? coverOf(sheet.k, { plan, need, lot, lm, rows, nRows: out.length, meta, projectName, coverSeq }) : null;
-    return { cover, key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : ""}`) : "" };
+    return { cover, key: sheet.k, kind: sheet.kind, name, tab: String(tabName || name), cols, groups, two: cols.some((c) => c.th), t1, t2, line2: sheet.kind === "mat" ? "(ISSUE MATERIAL)" : sheet.kind === "sub" ? "" : "(CONFIRMATION)", rows: out, total, totalAt, note: mat ? T(`ใบเบิกวัสดุของล็อต ${lot.no} — คิดเฉพาะของที่ปล่อยในล็อตนี้${sheet.k === "MAT" ? " · REQUIRED QTY = จำนวนเส้น (จัดชิ้นลงเส้น · เส้นใหม่ทุกล็อต) · OFFCUT = เศษที่เหลือ ≥ 500 มม. (เก็บใช้ต่อได้)" : sheet.groups ? " · PARTS / PCS = จำนวนเบอร์ / จำนวนชิ้นที่ใช้วัตถุดิบนี้ · ACTUAL ISSUE = จำนวนที่เบิกจริง (สโตร์กรอก)" : ""}`, `Material issue for lot ${lot.no} — this lot only${sheet.k === "MAT" ? " · REQUIRED QTY = bars (pieces packed onto bars · new bars per lot) · OFFCUT = leftover ≥ 500 mm (keep for reuse)" : sheet.groups ? " · PARTS / PCS = part codes / pieces using this material · ACTUAL ISSUE = quantity actually issued (filled in by the store)" : ""}`) : "" };
   });
   const pick = only && only.length ? sheets.filter((sh) => only.includes(sh.key)) : sheets;
   return { meta, sheets: pick, all: sheets.map((sh) => ({ key: sh.key, name: sh.tab || sh.name, kind: sh.kind, t1: sh.t1, rows: sh.rows.filter((r) => !r.kid).length })), file: `${T("ใบปล่อย", "Release sheet")} ${plan.projectCode ? plan.projectCode + " " : ""}${lot.no}`.replace(/[\\/:*?"<>|]/g, "-") };
@@ -307,7 +329,7 @@ export function buildLotWorkbook(ExcelJS, args) {
     ws.getRow(5).height = 20; ws.getRow(6).height = 20;
     put(5, 1, aEnd, roText, { bold: true, size: 12 }, { horizontal: "left" });
     put(5, aEnd + 1, bStart - 1, t1, { bold: true, size: 12 }, { horizontal: "center" });
-    put(5, bStart, W, `Print date : ${today}`, { bold: true, size: 12 }, { horizontal: "right" });
+    put(5, bStart, W, `Date : ${today}`, { bold: true, size: 12 }, { horizontal: "right" });
     put(6, 1, aEnd, `Project : ${plan.projectCode}`, { bold: true, size: 12 }, { horizontal: "left" });
     put(6, aEnd + 1, bStart - 1, t2, { bold: true, size: 12 }, { horizontal: "center" });
     put(6, bStart, W, `Prepared by : ${releaser}`, { bold: true, size: 12 }, { horizontal: "right" });
@@ -419,7 +441,7 @@ export function lotSheetsHtml(model, { logoUrl = "", covers = true } = {}) {
     const totRow = sh.total != null && sh.rows.length ? `<tr class="t">${sh.cols.map((c, i) => `<td class="${i + 1 === sh.totalAt ? "n" : i + 2 === sh.totalAt ? "lab" : ""}">${i + 1 === sh.totalAt ? fmtN(sh.total) : i + 2 === sh.totalAt ? T("รวม", "Total") : ""}</td>`).join("")}</tr>` : "";
     return `<section class="pg ${land ? "land" : "port"}">
 <div class="top"><div class="logo">${logoUrl ? `<img src="${esc(logoUrl)}" alt="">` : ""}</div><div class="ttl"><b>PRODUCTION ORDER</b><br><b class="s">${esc(sh.line2)}</b></div><div class="rr">RPT:<br>REV:</div></div>
-<div class="info"><div class="l"><b>Release Order : ${esc(meta.ro)}</b><b>Project : ${esc(meta.project)}</b></div><div class="m"><b>${esc(sh.t1)}</b><b>${esc(sh.t2)}</b></div><div class="r"><b>Print date : ${esc(meta.date)}</b><b>Prepared by : ${esc(meta.by)}</b></div></div>
+<div class="info"><div class="l"><b>Release Order : ${esc(meta.ro)}</b><b>Project : ${esc(meta.project)}</b></div><div class="m"><b>${esc(sh.t1)}</b><b>${esc(sh.t2)}</b></div><div class="r"><b>Date : ${esc(meta.date)}</b><b>Prepared by : ${esc(meta.by)}</b></div></div>
 ${mat ? `<div class="note">${esc(sh.note)}</div>` : ""}
 <table><colgroup>${colgroup}</colgroup><thead><tr>${head1}</tr>${head2}</thead><tbody>${body || `<tr><td colspan="${W}" class="grey">${T("(ไม่มีรายการ)", "(no items)")}</td></tr>`}${totRow}</tbody></table>
 </section>`;

@@ -116,7 +116,7 @@ export default function LotSheetInline({ api, projectId, ro, releases, userName,
         <div className="rl-inl-meta">
           <div>Release Order : <b>{ctx.model.meta.ro}</b><br />Project : <b>{ctx.model.meta.project}</b></div>
           <div className="c"><b>{sh.t1}</b>{sh.t2 ? <><br /><b>{sh.t2}</b></> : null}</div>
-          <div className="r">Print date : <b>{ctx.model.meta.date}</b><br />Prepared by : <b>{ctx.model.meta.by}</b></div>
+          <div className="r">Date : <b>{ctx.model.meta.date}</b><br />Prepared by : <b>{ctx.model.meta.by}</b></div>
         </div>
       </div>
       <div className="table-wrap rl-inl-tw">
