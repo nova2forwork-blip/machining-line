@@ -211,19 +211,27 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
         const below = words.filter((w) => w.top - a.top > 8 && w.top - a.top < 400 && w.x0 >= bx0 && w.x0 <= bx1 && Math.abs(w.size - a.size) < 1.5);
         const rows = []; for (const w of below.sort((p, q) => p.top - q.top || p.x0 - q.x0)) { const r = rows[rows.length - 1]; if (r && Math.abs(r.top - w.top) < 3) r.w.push(w); else rows.push({ top: w.top, w: [w] }); }
         let prevTop = a.top;
+        const dvb = words.filter((w) => w.text === "DEVELOP" && Math.abs(w.top - a.top) < 3 && w.x0 > a.x1 && w.x0 - a.x1 < 120).sort((p, q) => p.x0 - q.x0)[0] || null;
         for (const r of rows) {
           if (r.top - prevTop > 30) break;
           const t = {}; const mids = bc.map(([, p, q]) => (p + q) / 2);
           for (const v of r.w) { const cx = (v.x0 + v.x1) / 2; let bi2 = -1, bd = 1e9; mids.forEach((m, i) => { const [, p, q] = bc[i]; const d = cx >= p - 3 && cx <= q + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi2 = i; } }); if (bi2 >= 0 && bd < 30) t[bc[bi2][0]] = (t[bc[bi2][0]] ? t[bc[bi2][0]] + " " : "") + v.text; }
           if (!/[A-Z]{1,}\d+-?\d*/i.test(t["PART NO."] || "")) break;
           bc.forEach(([lab]) => { if (t[lab] == null) t[lab] = null; });
+          // ★ 2026-11-24 ผู้ใช้: "แบบที่มีหลาย part อ่านได้ครบไหม" — คอลัมน์ DEVELOP SIZE อยู่ขวาของ INV.CODE (นอกช่วงที่อ่าน) → ทุกเบอร์ได้ค่ารวมมั่วๆ ("77.1 77.1 x x x 866.78 917.58")
+          //   → อ่าน DEVELOP SIZE ของแถวตัวเอง (งานพับ: ขนาดแผ่นคลี่ของแต่ละเบอร์ไม่เท่ากัน)
+          if (dvb) { const dz = words.filter((w) => Math.abs(w.top - r.top) < 3 && w.x0 >= dvb.x0 - 20 && w.x0 < dvb.x0 + 90).sort((p, q) => p.x0 - q.x0).map((w) => w.text).join(" ").replace(/(^|\s)[xX](\s+[xX])+(?=\s|$)/g, "$1x"); if (dz) t.DEVELOP = dz; }   // "x x" = ตัว x พิมพ์ซ้ำ (ตัวหนา)
           fam.push(normTitle(t)); prevTop = r.top;
         }
       });
       if (fam.length > 1) out.family = fam;
     }
     const dv = words.find((w) => w.text === "DEVELOP");
-    if (dv) out.title.DEVELOP = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
+    if (dv) {   // ★ 2026-11-24 เฉพาะแถวแรกใต้หัว (แผ่นหลายเบอร์: เดิมกวาดสองแถวมารวมกัน) · ยึดบรรทัดของตัวเลขตัวแรก · ทิ้งเครื่องหมายรอบแก้ไข ("1") / ข้อความมิติที่ทับช่อง
+      const dw = words.filter((w) => w.top - dv.top > 8 && w.top - dv.top < 26 && w.x0 >= dv.x0 - 20 && w.x0 < dv.x0 + 90);
+      const isN = (w) => /^\d[\d.,]+$/.test(w.text); const n0 = dw.filter(isN).sort((a, b) => a.top - b.top)[0];
+      out.title.DEVELOP = n0 ? dw.filter((w) => Math.abs(w.top - n0.top) < 3.5 && (isN(w) || /^x$/i.test(w.text))).sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ").replace(/(^|\s)[xX](\s+[xX])+(?=\s|$)/g, "$1x") : dw.sort((a, b) => a.x0 - b.x0).map((w) => w.text).join(" ");
+    }
   }
   // ★ 2026-10-16: ชื่อชิ้นงาน (DESCRIPTION ในกรอบหัวกระดาษมุมล่างขวา — ใต้ป้าย "DESCRIPTION") → title.DESC ใช้เป็นชื่อพาร์ท/ซับ
   //   เอาเฉพาะป้ายที่อยู่ครึ่งล่างของหน้า (ป้าย DESCRIPTION ของตาราง BOM แผง/ซับอยู่ด้านบน — ไม่เอา)
