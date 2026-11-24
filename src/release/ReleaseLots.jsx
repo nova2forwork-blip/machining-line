@@ -117,6 +117,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
   const [progOpen, setProgOpen] = useState(false);   // ★ 2026-11-11 ป็อปอัพ "ทำไปแค่ไหนแล้ว" ทั้ง Release (แบบที่ 3)
   // ★ 2026-11-11 กดแถวในตาราง "ของในใบ" → ความคืบหน้าของเบอร์นั้น: ปล่อยในล็อตเดียว = ป็อปอัพแยกขั้นตอน (ตัวเดียวกับหน้าล็อต) · หลายล็อต = ป็อปอัพทั้งใบ กรองเฉพาะเบอร์นี้
   const [rowMsg, setRowMsg] = useState("");
+  const [progOther, setProgOther] = useState(null);   // ★ 2026-11-24 ความคืบหน้าของเบอร์ที่ "ใช้ของใบอื่น" (หน้าต่างใหญ่ตัวเดียวกัน)
   useEffect(() => { if (!rowMsg) return undefined; const t = setTimeout(() => setRowMsg(""), 3500); return () => clearTimeout(t); }, [rowMsg]);
   const rowProgress = (code, kind) => {
     const hit = []; for (const L of rel.lots) { if (L.hwOnly) continue; for (const r of L.rows) if (!r.mod_cancelled_at && NC(r.code) === NC(code) && (kind === "subassembly" ? r.kind === "subassembly" : r.kind !== "subassembly" && r.kind !== "panel")) hit.push(r); }
@@ -129,7 +130,15 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
           && (kind === "subassembly" ? r.part_master?.kind === "subassembly" : r.part_master?.kind !== "subassembly")
           && (!plan.projectCode || !r.part_master?.projects?.code || r.part_master.projects.code === plan.projectCode)
           && o.ros.includes(String(r.release_order || "").trim().replace(/\.\d+$/, "")));
-        if (rows.length && onOpenPart && onOpenPart(rows[0].id, rows.map((r) => r.id))) return;
+        // ★ 2026-11-24 (รอบ 2) ผู้ใช้: "ทำไมไม่เหมือนกัน ต้องเป็นแบบใหญ่สิ" → เปิดหน้าต่างใหญ่ตัวเดียวกับเบอร์ที่ปล่อยในใบนี้ (ข้อมูลจากล็อตของใบที่ปล่อยไว้)
+        if (rows.length) {
+          const by = new Map();
+          for (const r of rows) { const no = String(r.release_order || "").trim(); const L = by.get(no) || by.set(no, { no, date: r.release_date, rows: [], qty: 0 }).get(no); L.rows.push({ id: r.id, code: String(r.part_master?.part_no || "").trim(), kind: r.part_master?.kind || "part", qty: Number(r.qty) || 0, note: r.note || "", material: r.material || r.part_master?.material || null, unit_weight: r.unit_weight ?? null, length_mm: r.length_mm ?? null, mod_version: r.mod_version || null, mod_cancelled_at: null }); L.qty += Number(r.qty) || 0; }
+          const lots = [...by.values()]; const st = { code: String(code), ros: o.ros, rel: { lots }, prod: null };
+          setProgOther(st);
+          if (api?.lotLimits) api.lotLimits(plan, lots.map((l) => l.no)).then(({ limits }) => { const m = new Map(); for (const [rid, v] of limits || []) m.set(String(rid), Number(v?.produced) || 0); setProgOther((cur) => (cur === st ? { ...st, prod: m } : cur)); }).catch(() => { /* ไม่มียอดผลิต = แสดง 0 */ });
+          return;
+        }
         setRowMsg(`${code} ปล่อยไว้ที่ ${o.ros.join(", ")} (${nf(o.qty)}) — เปิดใบ ${o.ros[0]} เพื่อดูความคืบหน้า`); return;
       }
     }
@@ -436,6 +445,7 @@ export function ReleasePlanView({ plan, releases, plans = [], api, user, onBack,
       </div>
       {rowMsg ? <div className="rl-rowmsg" role="status">{rowMsg}</div> : null}
       {progOpen ? <ProgressPop plan={plan} need={need} rel={rel} prod={prod} rowSheets={rowSheets} initQ={typeof progOpen === "string" ? progOpen : ""} renderPart={renderPart} onClose={() => setProgOpen(false)} onOpenLot={onOpenLot} /> : null}
+      {progOther ? <ProgressPop plan={{ ...plan, ro: progOther.ros.join(", ") }} need={need} rel={progOther.rel} prod={progOther.prod} rowSheets={rowSheets} initQ={progOther.code} renderPart={renderPart} onClose={() => setProgOther(null)} onOpenLot={onOpenLot} /> : null}
       {modsOpen && plan.mods?.length ? (<>
         <div className="rl-back" onClick={() => setModsOpen(false)} />
         <aside className="rl-drawer rl-modsdr" role="dialog" aria-modal="true" aria-label="ประวัติ Modify">
