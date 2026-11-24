@@ -8572,16 +8572,18 @@ async function planUsingOrder(projectId, ro) {
 // ★ 2026-11-09 ยืนยัน + ลบใบหลัก (ใช้ทั้งหน้าใบหลัก และหน้าต่างแก้ไขโปรเจค)
 //   lots = [{ no, qty }] ล็อตของเลขนี้ที่ปล่อยแล้ว · มีล็อต = ลบเฉพาะใบหลัก (ล็อต/QR อยู่ครบ) · ไม่มี = เลขนี้ใช้ลงใหม่ได้
 //   คืน true เมื่อลบแล้ว
+// ★ 2026-11-24 ข้อความท้ายหลังลบใบ: ไฟล์ PDF ที่ลบไปด้วย / ลบไม่ได้
+const pdfDelNote = (dr) => (dr && dr.pdfs ? ` · ลบไฟล์ PDF ของใบนี้ ${dr.pdfs} เบอร์` : dr && dr.pdfErr ? " · ไฟล์ PDF ยังไม่ถูกลบ (ฐานข้อมูลยังไม่เปิดสิทธิ์ลบไฟล์)" : "");
 async function confirmDeletePlan(p, lots = []) {
   const nQty = lots.reduce((a, L) => a + (Number(L.qty) || 0), 0);
   const ok = await askConfirm(lots.length
     ? { title: `${p.ro} เป็นใบต้นทางของงานที่ปล่อยแล้ว — ลบจริงไหม?`, message: `ใบนี้คือที่มาของ ${lots.map((L) => L.no).join(", ")} (${nc(nQty)} ชิ้น) — ไม่ใช่ใบซ้ำ\n\nลบแล้ว: QR / ประวัติสแกน อยู่ครบ แต่หน้าล็อตจะดู BOM / "ใช้ใน / มาจากแผง" / ใบปล่อย PDF-Excel ไม่ได้ และหายไป: ที่อยู่แผง / ใบปล่อยที่แก้ไว้ / ประวัติ Modify\n\nลบเฉพาะเมื่อแน่ใจว่าไม่ต้องใช้ข้อมูลใบนี้แล้ว`, tone: "danger", confirmText: "ลบใบต้นทาง", cancelText: "ไม่ลบ" }
-    : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
+    : { title: `ลบใบ ${p.ro}?`, message: `ใบนี้ยังไม่มีล็อตที่ปล่อย — ลบแล้วใช้เลข ${p.ro} ลงใหม่ได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ · ไฟล์ PDF ของเบอร์ที่ใบนี้ใช้ใบเดียวจะถูกลบด้วย (เบอร์ที่ใบอื่นยังใช้ = เก็บไว้)`, tone: "danger", confirmText: "ลบใบนี้", cancelText: "ยกเลิก" });
   if (!ok) return false;
   try {
-    await realReleaseApi.deletePlan(p, { keepLots: lots.length > 0 });
-    auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode, kept_lots: lots.map((L) => L.no) });
-    mlsToast(lots.length ? `ลบใบหลัก ${p.ro} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ` : `ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+    const dr = await realReleaseApi.deletePlan(p, { keepLots: lots.length > 0 });
+    auditRecord("delete_release_plan", "release_plan", p.id, { release_order: p.ro, project: p.projectCode, kept_lots: lots.map((L) => L.no), pdfs_removed: (dr && dr.pdfs) || 0 });
+    mlsToast(lots.length ? `ลบใบหลัก ${p.ro} แล้ว — ล็อตที่ปล่อยแล้วอยู่ครบ` : `ลบใบ ${p.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้${pdfDelNote(dr)}`, "success");
     return true;
   } catch (e) { mlsToast("ลบไม่สำเร็จ: " + (e?.message || e), "error"); return false; }
 }
@@ -8594,13 +8596,13 @@ async function offerDeleteEmptyPlan(projectId, order) {
     if (all.some((r) => r.part_master?.project_id === projectId && roNumOf(r.release_order) === n)) return false;
     const ok = await askConfirm({
       title: `ลบใบหลัก ${plan.ro} ด้วยไหม?`,
-      message: `ใบหลัก ${plan.ro} ไม่มีล็อตเหลือแล้ว\n\n• ลบใบหลัก = ใช้เลข ${plan.ro} ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)\n• เก็บไว้ = ปล่อยล็อตใหม่จากใบเดิมได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ทั้งสองแบบ`,
+      message: `ใบหลัก ${plan.ro} ไม่มีล็อตเหลือแล้ว\n\n• ลบใบหลัก = ใช้เลข ${plan.ro} ลงใหม่ได้ (เช่น ใส่เบอร์ผิด)\n• เก็บไว้ = ปล่อยล็อตใหม่จากใบเดิมได้\n\nเบอร์ / BOM ในคลังของโปรเจคยังอยู่ทั้งสองแบบ · ลบใบหลัก = ไฟล์ PDF ของเบอร์ที่ใบนี้ใช้ใบเดียวถูกลบด้วย`,
       tone: "danger", confirmText: "ลบใบหลัก", cancelText: "เก็บไว้",
     });
     if (!ok) return false;
-    await realReleaseApi.deletePlan(plan);
-    auditRecord("delete_release_plan", "release_plan", plan.id, { release_order: plan.ro, project: plan.projectCode });
-    mlsToast(`ลบใบหลัก ${plan.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้`, "success");
+    const dr = await realReleaseApi.deletePlan(plan);
+    auditRecord("delete_release_plan", "release_plan", plan.id, { release_order: plan.ro, project: plan.projectCode, pdfs_removed: (dr && dr.pdfs) || 0 });
+    mlsToast(`ลบใบหลัก ${plan.ro} แล้ว — ใช้เลขนี้ลงใหม่ได้${pdfDelNote(dr)}`, "success");
     return true;
   } catch (e) { mlsToast("ลบใบหลักไม่สำเร็จ: " + (e?.message || e), "error"); return false; }
 }
@@ -14182,8 +14184,11 @@ function ProjectEditModal({ project, impact, onClose, onSaved, onDeleted, admin,
 
     setBusy(true); setErr("");
     try {
+      // ★ 2026-11-24 เก็บรายชื่อไฟล์ PDF ของโปรเจคก่อนลบ (ลบแล้วอ่านคลังไม่ได้) → ลบโปรเจคสำเร็จแล้วจึงลบไฟล์
+      let pdfPaths = []; try { pdfPaths = await realReleaseApi.projectPdfPaths(project.id, project.code); } catch { pdfPaths = []; }
       await deleteProjectCascade(project.id);
-      auditRecord("delete_project", "project", project.id, { code: project.code, name: project.name });
+      let pdfGone = 0; if (pdfPaths.length) { try { pdfGone = (await realReleaseApi.removePdfFiles(pdfPaths)).removed; } catch { pdfGone = 0; } if (pdfGone < pdfPaths.length) mlsToast(`ลบโปรเจคแล้ว แต่ไฟล์ PDF ยังค้าง ${pdfPaths.length - pdfGone} ไฟล์ (ฐานข้อมูลยังไม่เปิดสิทธิ์ลบไฟล์)`, "warn"); }
+      auditRecord("delete_project", "project", project.id, { code: project.code, name: project.name, pdfs_removed: pdfGone });
       onDeleted();
     } catch (e) {
       setErr("ลบไม่สำเร็จ: " + e.message);

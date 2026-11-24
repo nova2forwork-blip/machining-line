@@ -194,6 +194,32 @@ async function uploadLibPdf(projectKey, d) {
 }
 // ดูโฟลเดอร์ใน Storage (เฉพาะ bucket ที่ระบุ) · คืน [{ name, file:boolean, size, updated }] โฟลเดอร์มาก่อน
 const BROWSE_OK = new Set([PDF_BUCKET, "packing-photos"]);
+// ★ 2026-11-24 ผู้ใช้: "ตอนลบ release หรือตอนลบ project pdf ไม่ลบด้วย" — ลบตัวไฟล์ในที่เก็บ (ต้องรัน migration-pdf-delete-2026-11-24.sql ให้มีสิทธิ์ลบ)
+export async function removePdfFiles(paths) {
+  const u = [...new Set((paths || []).filter(Boolean))]; let n = 0;
+  for (let i = 0; i < u.length; i += 100) { const { data, error } = await supabase.storage.from(PDF_BUCKET).remove(u.slice(i, i + 100)); if (error) throw error; n += (data || []).length; }
+  return { asked: u.length, removed: n };
+}
+// ไฟล์ PDF ทั้งหมดของโปรเจค (เรียก "ก่อน" ลบโปรเจค — ลบแล้วอ่านคลังไม่ได้) : ที่อยู่ในคลัง + ที่ค้างในโฟลเดอร์ของโปรเจค
+//   โฟลเดอร์ = ของโปรเจคนี้โปรเจคเดียว (pdfFolderOf) · ไฟล์เก่าในโฟลเดอร์ที่ใช้ร่วมกับโปรเจครหัสเดียวกันไม่แตะ
+export async function projectPdfPaths(projectId, projectCode) {
+  const folder = safeSeg(await pdfFolderOf(projectId, projectCode)); const out = new Set();
+  try { const r = await listPlans(projectId); for (const d of ((r && r.lib && r.lib.pdfs) || [])) if (d && d.path && String(d.path).startsWith(folder + "/")) out.add(d.path); } catch (_) { /* ไม่มีคลัง */ }
+  for (const sub of ["part", "sub"]) { try { const { data } = await supabase.storage.from(PDF_BUCKET).list(`${folder}/${sub}`, { limit: 1000 }); for (const x of data || []) if (x && x.id && x.name) out.add(`${folder}/${sub}/${x.name}`); } catch (_) { /* ignore */ } }
+  return [...out];
+}
+// ลบใบ Release (ไม่มีล็อตเหลือ) → ไฟล์แบบในคลังของเบอร์ที่ "ใบนี้ใช้ใบเดียว" ลบด้วย · เบอร์ที่ใบอื่นของโปรเจคยังใช้ = เก็บไว้
+//   คืน { paths, keepPdfs, lib } สำหรับลบหลังลบใบสำเร็จ
+async function planOnlyPdfs(plan) {
+  const r = await listPlans(plan.projectId); const lib = r && r.lib; if (!lib || !(lib.pdfs || []).length) return null;
+  const codesOf = (p) => { const s = new Set(); for (const d of p.pdfs || []) if (d && d.code) s.add(NC(d.code)); const b = p.bom || {}; for (const k of ["panels", "subs", "parts"]) for (const c of Object.keys(b[k] || {})) s.add(NC(c)); for (const u of p.units || []) if (u && u.unit) s.add(NC(u.unit)); for (const x of p.picks || []) if (x && x.code) s.add(NC(x.code)); for (const x of p.extra || []) if (x && x.code) s.add(NC(x.code)); return s; };
+  const mine = codesOf(plan); const used = new Set();
+  for (const p of r.plans || []) { if (p.id === plan.id) continue; for (const c of codesOf(p)) used.add(c); }
+  const drop = (lib.pdfs || []).filter((d) => d && d.code && mine.has(NC(d.code)) && !used.has(NC(d.code)));
+  if (!drop.length) return null;
+  const keepPdfs = (lib.pdfs || []).filter((d) => !drop.includes(d)); const stillUsed = new Set(keepPdfs.map((d) => d.path).filter(Boolean));
+  return { lib, keepPdfs, paths: [...new Set(drop.map((d) => d.path).filter((x) => x && !stillUsed.has(x)))], n: drop.length };
+}
 export async function listStorage(bucket, prefix = "") {
   if (!BROWSE_OK.has(bucket)) throw new Error("bucket not allowed");
   const { data, error } = await supabase.storage.from(bucket).list(prefix, { limit: 500, sortBy: { column: "name", order: "asc" } });
@@ -373,11 +399,20 @@ async function planRpc(projectId, ro, plan, id = null, baseAt = null) {
 //   (ต้องรัน migration-release-plans.sql รอบใหม่ — ฝั่ง DB เช็คล็อต + ปลดเลขซ้ำ)
 //   keepLots = ลบเฉพาะใบหลัก ล็อตที่ปล่อยแล้ว (QR) อยู่ครบ — เช่น สร้างใบหลักซ้ำโดยไม่ตั้งใจ
 export async function deletePlan(plan, { keepLots = false } = {}) {
+  // ★ 2026-11-24 ลบใบที่ไม่มีล็อตเหลือ → ลบไฟล์ PDF ของเบอร์ที่ใบนี้ใช้ใบเดียวด้วย (เก็บล็อตไว้ = ไม่ลบไฟล์ · ล็อตยังต้องดูแบบ)
+  let pdfDrop = null; if (!keepLots) { try { pdfDrop = await planOnlyPdfs(plan); } catch (_) { pdfDrop = null; } }
   const { data, error } = await supabase.rpc("release_plan_set_status", { p_token: tok(), p_id: plan.id, p_status: "cancelled", ...(keepLots ? { p_keep_lots: true } : {}) });
   if (error) { if (missingFn(error)) throw notInstalled(); throw error; }
   if (data && data.ok === false) {
     const e = new Error(data.reason === "has_lots" ? `${plan.ro} ยังมีล็อตที่ปล่อยแล้ว — ลบล็อตทั้งหมดก่อน แล้วจึงลบใบหลัก` : data.reason === "admin_only" ? `ลบใบหลัก ${plan.ro} ได้เฉพาะแอดมิน` : `ลบใบ ${plan.ro} ไม่สำเร็จ (${data.reason})`);
     e.code = data.reason; throw e;
+  }
+  if (pdfDrop) {
+    try {
+      const rm = await removePdfFiles(pdfDrop.paths);
+      if (rm.removed >= rm.asked) { const { id: _i, projectId: _p, ro: _r, status: _s, _at: _a, by: _b, ...keep } = pdfDrop.lib; await planRpc(plan.projectId, "LIB", { ...keep, pdfs: pdfDrop.keepPdfs, updatedAt: new Date().toISOString() }, pdfDrop.lib.id); return { pdfs: pdfDrop.n }; }
+      return { pdfs: 0, pdfErr: "no_rights" };
+    } catch (e) { return { pdfs: 0, pdfErr: String(e?.message || e) }; }
   }
   return true;
 }
@@ -745,4 +780,4 @@ export async function unreleaseRows(rows, onProgress = () => {}) {
   for (const r of rows) { onProgress(`ยกเลิก ${n + 1}/${rows.length}…`); await deleteReleaseCascade(r.id); n++; }
   return n;
 }
-export const realReleaseApi = { syncModDate, weightIndex, showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
+export const realReleaseApi = { removePdfFiles, projectPdfPaths, syncModDate, weightIndex, showPdfTab, pdfFolderOf, siblingProjects, libPdfsWithFallback, checkUnrelease, unreleaseRows, moveReleasedSheet, syncReleasedRows, monthReleases, projectContext, loadBomLibrary, saveLibrary, getLibPdfUrl, downloadLibPdf, listStorage, signedUrls, orderExists, saveRelease, savePlan, updatePlan, deletePlan, listPlans, listDrafts, saveDraft, dropDraft, releaseLot, lotLimits, modifyRelease, undoModify, storeLibPdfs };
