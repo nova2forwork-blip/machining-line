@@ -217,6 +217,11 @@ export async function readShopPdf(pdfjsLib, data, fileName) {
           const t = {}; const mids = bc.map(([, p, q]) => (p + q) / 2);
           for (const v of r.w) { const cx = (v.x0 + v.x1) / 2; let bi2 = -1, bd = 1e9; mids.forEach((m, i) => { const [, p, q] = bc[i]; const d = cx >= p - 3 && cx <= q + 3 ? 0 : Math.abs(cx - m); if (d < bd) { bd = d; bi2 = i; } }); if (bi2 >= 0 && bd < 30) t[bc[bi2][0]] = (t[bc[bi2][0]] ? t[bc[bi2][0]] + " " : "") + v.text; }
           if (!/[A-Z]{1,}\d+-?\d*/i.test(t["PART NO."] || "")) break;
+          // ★ 2026-11-28 บรรทัดหมายเหตุใต้ตาราง ("ใช้เบอร์ HZ02-001 V มาแก้ไขเป็นเบอร์ HZ02-021 A" ในแบบ HZ02-021) เคยถูกอ่านเป็นเบอร์ที่ 2 (ไม่มีความยาว / INV)
+          //   → แถวเบอร์จริง: ช่อง PART NO. ขึ้นต้นด้วยเบอร์ · บรรทัดเดียวกันไม่มีภาษาไทย (ตัวไทยพิมพ์ใหญ่กว่า ไม่อยู่ใน below — ดูจากทุกคำ) · ไม่มีเบอร์โผล่ในช่องอื่น
+          const lineW = words.filter((w) => Math.abs(w.top - r.top) < 6 && w.x0 >= bx0 && w.x0 <= bx1);
+          if (lineW.some((v) => /[฀-๿]/.test(v.text)) || !/^[A-Z]{1,}\d+-?\d*/i.test(t["PART NO."])
+            || bc.some(([lab]) => lab !== "PART NO." && /(^|\s)[A-Z]{2,}\d+-\d+/i.test(t[lab] || ""))) break;
           bc.forEach(([lab]) => { if (t[lab] == null) t[lab] = null; });
           // ★ 2026-11-24 ผู้ใช้: "แบบที่มีหลาย part อ่านได้ครบไหม" — คอลัมน์ DEVELOP SIZE อยู่ขวาของ INV.CODE (นอกช่วงที่อ่าน) → ทุกเบอร์ได้ค่ารวมมั่วๆ ("77.1 77.1 x x x 866.78 917.58")
           //   → อ่าน DEVELOP SIZE ของแถวตัวเอง (งานพับ: ขนาดแผ่นคลี่ของแต่ละเบอร์ไม่เท่ากัน)
